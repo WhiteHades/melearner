@@ -30,3 +30,7 @@ export function formatTimestamp(value: Date | string) {
   const date = typeof value === "string" ? new Date(value) : value
   return format(date, "MMM d, yyyy p")
 }
+
+export function cleanSectionName(name: string): string {
+  return name.replace(/^\d+[\s.-]*(?:section\s+\d+\s*)?/i, "").trim()
+}

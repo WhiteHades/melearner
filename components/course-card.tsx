@@ -82,9 +82,9 @@ export function CourseCard({ course, onClick }: CourseCardProps) {
           </div>
         </CardContent>
 
-        <CardFooter className="items-center justify-between border-t border-border/70 pt-4 text-sm text-muted-foreground">
-          <span className="text-pretty">{lastAccessedLabel}</span>
-          <span className="font-medium text-foreground">Open course</span>
+        <CardFooter className="flex-wrap gap-2 border-t border-border/70 pt-4 text-sm text-muted-foreground">
+          <span className="truncate text-pretty">{lastAccessedLabel}</span>
+          <span className="ml-auto shrink-0 font-medium text-foreground">Open course</span>
         </CardFooter>
       </Card>
     </button>

@@ -4,7 +4,7 @@ import { ChevronLeft, CheckCircle2, Circle, PlayCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
-import { cn } from "@/lib/utils"
+import { cn, cleanSectionName } from "@/lib/utils"
 import type { Course, Lesson, Section } from "@/types"
 
 interface SidebarProps {
@@ -56,10 +56,9 @@ export function Sidebar({ className, onBack, course, currentLessonId, onSelectLe
         <div className="space-y-6 px-4 py-5 sm:px-5">
           {course.sections.map((section: Section, sectionIndex: number) => (
             <section key={section.id} className="space-y-3">
-              <div className="space-y-1">
-                <p className="text-sm font-semibold text-foreground">Module {sectionIndex + 1}</p>
-                <p className="text-sm text-muted-foreground">{section.name}</p>
-              </div>
+              <p className="break-words text-sm font-semibold text-foreground">
+                Module {sectionIndex + 1} <span className="font-normal text-muted-foreground">&mdash; {cleanSectionName(section.name)}</span>
+              </p>
 
               <div className="flex flex-col gap-2">
                 {section.lessons.map((lesson: Lesson) => {

@@ -118,7 +118,7 @@ export function ContentViewer({ lesson, onPrevious, onNext }: ContentViewerProps
         </div>
         <iframe
           src={assetSrc}
-          className="h-[70vh] w-full border-0 bg-white"
+          className="min-h-[50vh] w-full flex-1 border-0 bg-white"
           title={lesson.name}
           sandbox="allow-same-origin allow-scripts"
         />
@@ -136,7 +136,7 @@ export function ContentViewer({ lesson, onPrevious, onNext }: ContentViewerProps
           </div>
           {navButtons}
         </div>
-        <ScrollArea className="h-[60vh]">
+        <ScrollArea className="min-h-[40vh] flex-1">
           <div className="prose max-w-none p-4 dark:prose-invert">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
           </div>
@@ -155,8 +155,8 @@ export function ContentViewer({ lesson, onPrevious, onNext }: ContentViewerProps
           </div>
           {navButtons}
         </div>
-        <ScrollArea className="h-[60vh]">
-          <pre className="whitespace-pre-wrap p-4 font-mono text-sm">{content}</pre>
+        <ScrollArea className="min-h-[40vh] flex-1">
+          <pre className="whitespace-pre-wrap break-all p-4 font-mono text-sm">{content}</pre>
         </ScrollArea>
       </div>
     )

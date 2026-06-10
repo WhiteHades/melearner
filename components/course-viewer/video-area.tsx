@@ -11,7 +11,7 @@ import { ContentViewer } from "@/components/content-viewer"
 import { VideoPlayer } from "@/components/video-player"
 import { trpc } from "@/lib/trpc/client"
 import { isTauri } from "@/lib/tauri"
-import { cn, formatDuration } from "@/lib/utils"
+import { cleanSectionName, cn, formatDuration } from "@/lib/utils"
 import type { Lesson } from "@/types"
 
 interface VideoAreaProps {
@@ -221,7 +221,7 @@ export function VideoArea({ className, lesson, onNext, onPrevious }: VideoAreaPr
           <div className="space-y-3">
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground tabular-nums">
               <Badge variant="secondary" className="rounded-full px-2.5 py-1 text-xs font-medium">
-                {lesson.sectionName || "Module"}
+                {cleanSectionName(lesson.sectionName) || "Module"}
               </Badge>
               <Badge variant="outline" className="rounded-full px-2.5 py-1 uppercase tracking-wide">
                 {lesson.type}
