@@ -147,10 +147,8 @@ function LibraryHeader() {
 
   return (
     <>
-      <header
-        data-tauri-drag-region
-        className="flex h-12 shrink-0 items-center gap-2 border-b px-3"
-      >
+      <header className="relative flex h-12 shrink-0 items-center gap-2 border-b px-3">
+        <div data-tauri-drag-region className="absolute inset-x-0 top-0 h-3" />
         <div className="flex items-center gap-1">
           <Button
             type="button"
