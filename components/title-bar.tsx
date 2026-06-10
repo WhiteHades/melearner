@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useMemo, useRef } from "react"
+import { useEffect, useState, useMemo } from "react"
 import { getCurrentWindow } from "@tauri-apps/api/window"
 import { isTauri } from "@/lib/tauri"
 import { X, Minus, Copy, Square } from "lucide-react"
@@ -102,15 +102,11 @@ function WinLinuxButtons({
 }
 
 export function TitleBar() {
-  const [isTauriApp, setIsTauriApp] = useState(false)
+  const isTauriApp = useMemo(() => isTauri(), [])
   const [isMaximized, setIsMaximized] = useState(false)
   const [hovering, setHovering] = useState(false)
 
   const platform = useMemo(() => detectPlatform(), [])
-
-  useEffect(() => {
-    setIsTauriApp(isTauri())
-  }, [])
 
   useEffect(() => {
     if (!isTauriApp) return
