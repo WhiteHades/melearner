@@ -60,7 +60,7 @@ export function CourseViewerLayout({
   }
 
   return (
-    <SidebarProvider style={{ "--sidebar-width": "11rem" } as React.CSSProperties}>
+    <SidebarProvider style={{ "--sidebar-width": "8rem" } as React.CSSProperties}>
       <CourseViewerSidebar
         course={course}
         currentLessonId={currentLesson?.id}
