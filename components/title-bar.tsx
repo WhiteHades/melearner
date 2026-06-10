@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useMemo } from "react"
+import { useEffect, useState, useMemo, useRef } from "react"
 import { getCurrentWindow } from "@tauri-apps/api/window"
 import { isTauri } from "@/lib/tauri"
 import { X, Minus, Copy, Square } from "lucide-react"
@@ -29,12 +29,12 @@ function MacButtons({
   const [hovered, setHovered] = useState<string | null>(null)
 
   return (
-    <div className="flex items-center gap-2 px-3 py-2">
+    <div className="flex items-center gap-1.5 px-2.5 py-2">
       <button
         onClick={onClose}
         onMouseEnter={() => setHovered("close")}
         onMouseLeave={() => setHovered(null)}
-        className="relative flex size-3 items-center justify-center rounded-full bg-[#ff5f57] transition-opacity hover:opacity-100"
+        className="relative flex size-3 items-center justify-center rounded-full bg-[#ff5f57] transition-opacity"
         aria-label="close"
       >
         {hovered === "close" && <X className="size-2 text-[#4d0000]" />}
@@ -43,7 +43,7 @@ function MacButtons({
         onClick={onMinimize}
         onMouseEnter={() => setHovered("minimize")}
         onMouseLeave={() => setHovered(null)}
-        className="relative flex size-3 items-center justify-center rounded-full bg-[#febc2e] transition-opacity hover:opacity-100"
+        className="relative flex size-3 items-center justify-center rounded-full bg-[#febc2e] transition-opacity"
         aria-label="minimize"
       >
         {hovered === "minimize" && <Minus className="size-2 text-[#593c00]" />}
@@ -52,7 +52,7 @@ function MacButtons({
         onClick={onMaximize}
         onMouseEnter={() => setHovered("maximize")}
         onMouseLeave={() => setHovered(null)}
-        className="relative flex size-3 items-center justify-center rounded-full bg-[#28c840] transition-opacity hover:opacity-100"
+        className="relative flex size-3 items-center justify-center rounded-full bg-[#28c840] transition-opacity"
         aria-label={isMaximized ? "restore" : "maximize"}
       >
         {hovered === "maximize" && (
@@ -78,24 +78,24 @@ function WinLinuxButtons({
     <div className="flex items-center">
       <button
         onClick={onMinimize}
-        className="flex size-10 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        className="flex size-9 items-center justify-center rounded-lg text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground"
         aria-label="minimize"
       >
-        <Minus className="size-4" />
+        <Minus className="size-3.5" />
       </button>
       <button
         onClick={onMaximize}
-        className="flex size-10 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        className="flex size-9 items-center justify-center rounded-lg text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground"
         aria-label={isMaximized ? "restore" : "maximize"}
       >
         {isMaximized ? <Copy className="size-3 rotate-180" /> : <Square className="size-3" />}
       </button>
       <button
         onClick={onClose}
-        className="flex size-10 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive hover:text-destructive-foreground"
+        className="flex size-9 items-center justify-center rounded-lg text-muted-foreground/60 transition-colors hover:bg-destructive hover:text-destructive-foreground"
         aria-label="close"
       >
-        <X className="size-4" />
+        <X className="size-3.5" />
       </button>
     </div>
   )
@@ -104,6 +104,7 @@ function WinLinuxButtons({
 export function TitleBar() {
   const [isTauriApp, setIsTauriApp] = useState(false)
   const [isMaximized, setIsMaximized] = useState(false)
+  const [hovering, setHovering] = useState(false)
 
   const platform = useMemo(() => detectPlatform(), [])
 
@@ -135,22 +136,34 @@ export function TitleBar() {
   const handleClose = () => getCurrentWindow().close()
 
   return (
-    <div className="fixed right-0 top-0 z-50">
-      {platform === "macos" ? (
-        <MacButtons
-          onMinimize={handleMinimize}
-          onMaximize={handleMaximize}
-          onClose={handleClose}
-          isMaximized={isMaximized}
-        />
-      ) : (
-        <WinLinuxButtons
-          onMinimize={handleMinimize}
-          onMaximize={handleMaximize}
-          onClose={handleClose}
-          isMaximized={isMaximized}
-        />
-      )}
+    <div
+      className="fixed right-2 top-2 z-50"
+      onMouseEnter={() => setHovering(true)}
+      onMouseLeave={() => setHovering(false)}
+    >
+      <div
+        className={`rounded-xl border bg-background/60 shadow-sm backdrop-blur-sm transition-all duration-150 ${
+          hovering
+            ? "translate-y-0 opacity-100 pointer-events-auto"
+            : "translate-y-0 opacity-0 pointer-events-none"
+        }`}
+      >
+        {platform === "macos" ? (
+          <MacButtons
+            onMinimize={handleMinimize}
+            onMaximize={handleMaximize}
+            onClose={handleClose}
+            isMaximized={isMaximized}
+          />
+        ) : (
+          <WinLinuxButtons
+            onMinimize={handleMinimize}
+            onMaximize={handleMaximize}
+            onClose={handleClose}
+            isMaximized={isMaximized}
+          />
+        )}
+      </div>
     </div>
   )
 }
