@@ -32,7 +32,7 @@ export default function RootLayout({
       <body className={`${atkinson.variable} ${geistMono.variable} flex h-screen min-h-screen flex-col overflow-hidden bg-background font-sans text-foreground antialiased`}>
         <AppProviders>
           <TitleBar />
-          <div className="flex-1 w-full overflow-hidden">
+          <div className="min-h-0 flex-1 w-full overflow-hidden">
             {children}
           </div>
         </AppProviders>

@@ -5,19 +5,19 @@ import { FolderOpen } from "lucide-react"
 import { CourseCard } from "@/components/course-card"
 import { Card, CardContent } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
+import { Skeleton } from "@/components/ui/skeleton"
 import { search } from "@/lib/search"
-import { trpc } from "@/lib/trpc/client"
 import type { Course } from "@/types"
 
 interface CourseGridProps {
+  courses: Course[]
+  hasHydrated?: boolean
   onCourseSelect: (course: Course) => void
   searchQuery?: string
   viewMode?: "grid" | "list"
 }
 
-export function CourseGrid({ onCourseSelect, searchQuery, viewMode = "grid" }: CourseGridProps) {
-  const { data: courses = [] } = trpc.courses.list.useQuery()
-
+export function CourseGrid({ courses, hasHydrated = true, onCourseSelect, searchQuery, viewMode = "grid" }: CourseGridProps) {
   const normalizedQuery = searchQuery?.trim() ?? ""
 
   const visibleCourses = useMemo<Course[]>(() => {
@@ -42,7 +42,20 @@ export function CourseGrid({ onCourseSelect, searchQuery, viewMode = "grid" }: C
 
       <Separator />
 
-      {courses.length === 0 ? (
+      {!hasHydrated ? (
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <Card key={index} className="border-border/70 bg-card/80">
+              <CardContent className="flex flex-col gap-4 p-5">
+                <Skeleton className="h-4 w-20" />
+                <Skeleton className="h-7 w-3/4" />
+                <Skeleton className="h-16 w-full" />
+                <Skeleton className="h-4 w-1/2" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      ) : courses.length === 0 ? (
         <Card className="border-dashed border-border/80 bg-card/75 shadow-none">
           <CardContent className="flex flex-col items-center gap-5 px-6 py-12 text-center">
             <div className="flex size-14 items-center justify-center rounded-full bg-secondary text-secondary-foreground">
@@ -51,7 +64,7 @@ export function CourseGrid({ onCourseSelect, searchQuery, viewMode = "grid" }: C
             <div className="space-y-2">
               <h3 className="text-lg font-semibold tracking-tight text-foreground">No courses yet</h3>
               <p className="max-w-md text-sm text-muted-foreground">
-                Choose a folder above to scan for courses, or drag a course folder here.
+                Choose a folder above to scan your course library.
               </p>
             </div>
           </CardContent>

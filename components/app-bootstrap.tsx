@@ -1,57 +1,43 @@
 "use client"
 
-import { useEffect, useRef } from "react"
-import { trpc } from "@/lib/trpc/client"
+import { useEffect } from "react"
 import { initDatabase } from "@/lib/database"
-import { isTauri } from "@/lib/tauri"
+import { indexCourses } from "@/lib/search"
 import { useCourseStore } from "@/lib/stores/course-store"
 
 export function AppBootstrap() {
-  const libraryPath = useCourseStore(
-    (state: ReturnType<typeof useCourseStore.getState>) => state.libraryPath
-  )
-  const setIsScanning = useCourseStore(
-    (state: ReturnType<typeof useCourseStore.getState>) => state.setIsScanning
-  )
-  const utils = trpc.useUtils()
-  const scanLibrary = trpc.library.scan.useMutation()
-  const restoredPathRef = useRef<string | null>(null)
+  const courses = useCourseStore((state) => state.courses)
+  const hasHydrated = useCourseStore((state) => state.hasHydrated)
+  const setHasHydrated = useCourseStore((state) => state.setHasHydrated)
 
   useEffect(() => {
-    let cancelled = false
+    let isActive = true
 
-    const bootstrap = async () => {
-      await initDatabase()
+    initDatabase().catch((error) => {
+      console.error("Failed to initialize database", error)
+    })
 
-      if (!isTauri() || !libraryPath || restoredPathRef.current === libraryPath) {
-        return
-      }
+    const stopListening = useCourseStore.persist.onFinishHydration((state) => {
+      if (!isActive) return
+      indexCourses(state.courses)
+      setHasHydrated(true)
+    })
 
-      restoredPathRef.current = libraryPath
-
-      try {
-        if (!cancelled) {
-          setIsScanning(true)
-        }
-
-        await scanLibrary.mutateAsync({ path: libraryPath })
-        await utils.courses.list.invalidate()
-      } catch (error) {
-        restoredPathRef.current = null
-        console.error("Failed to restore course library", error)
-      } finally {
-        if (!cancelled) {
-          setIsScanning(false)
-        }
-      }
+    if (useCourseStore.persist.hasHydrated()) {
+      indexCourses(useCourseStore.getState().courses)
+      setHasHydrated(true)
     }
-
-    bootstrap()
 
     return () => {
-      cancelled = true
+      isActive = false
+      stopListening()
     }
-  }, [libraryPath, scanLibrary, setIsScanning, utils])
+  }, [setHasHydrated])
+
+  useEffect(() => {
+    if (!hasHydrated) return
+    indexCourses(courses)
+  }, [courses, hasHydrated])
 
   return null
 }

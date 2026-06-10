@@ -4,7 +4,6 @@ import React, { useState } from "react"
 import { useCourseStore } from "@/lib/stores/course-store"
 import { selectFolderDialog, isTauri } from "@/lib/tauri"
 import { BookOpen, FolderOpen, Search, Settings, Moon, Sun, Loader2, RefreshCw } from "lucide-react"
-import { Button } from "@/components/ui/button"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { trpc } from "@/lib/trpc/client"
 import { useTheme } from "next-themes"
@@ -21,7 +20,6 @@ import {
   SidebarRail,
   SidebarTrigger,
   SidebarSeparator,
-  useSidebar,
 } from "@/components/ui/sidebar"
 import {
   CommandDialog,
@@ -39,22 +37,16 @@ const navItems = [
 ]
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
-  const isScanning = useCourseStore((state) => state.isScanning)
+  const scanMode = useCourseStore((state) => state.scanMode)
   const libraryPath = useCourseStore((state) => state.libraryPath)
-  const setIsScanning = useCourseStore((state) => state.setIsScanning)
+  const courses = useCourseStore((state) => state.courses)
+  const setScanMode = useCourseStore((state) => state.setScanMode)
   const [error, setError] = useState<string | null>(null)
   const [cmdOpen, setCmdOpen] = useState(false)
   const [activeView, setActiveView] = useState<string>("library")
-  const { setOpen } = useSidebar()
   const { resolvedTheme, setTheme } = useTheme()
   const isDark = resolvedTheme === "dark"
-  const utils = trpc.useUtils()
-  const { data: courses = [] } = trpc.courses.list.useQuery()
-  const scanLibrary = trpc.library.scan.useMutation({
-    onSuccess: async () => {
-      await utils.courses.list.invalidate()
-    },
-  })
+  const scanLibrary = trpc.library.scan.useMutation()
 
   async function handleSelectFolder() {
     if (!isTauri()) {
@@ -66,13 +58,13 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       const path = await selectFolderDialog()
       if (!path) return
 
-      setIsScanning(true)
+      setScanMode("selecting")
       setError(null)
       await scanLibrary.mutateAsync({ path })
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to scan the selected folder.")
     } finally {
-      setIsScanning(false)
+      setScanMode("idle")
     }
   }
 
@@ -80,13 +72,13 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     if (!libraryPath) return
 
     try {
-      setIsScanning(true)
+      setScanMode("refreshing")
       setError(null)
       await scanLibrary.mutateAsync({ path: libraryPath })
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to refresh the current library.")
     } finally {
-      setIsScanning(false)
+      setScanMode("idle")
     }
   }
 
@@ -155,16 +147,16 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             <div className="flex flex-col gap-1">
               <SidebarMenu>
                 <SidebarMenuItem>
-                  <SidebarMenuButton onClick={handleSelectFolder} disabled={isScanning} tooltip={libraryPath ? "Change folder" : "Choose folder"}>
+                  <SidebarMenuButton onClick={handleSelectFolder} disabled={scanMode !== "idle"} tooltip={libraryPath ? "Change folder" : "Choose folder"}>
                     <FolderOpen className="size-4" />
                     <span>{libraryPath ? "Change folder" : "Choose folder"}</span>
-                    {isScanning && <Loader2 className="ml-auto size-3 animate-spin" />}
+                    {scanMode === "selecting" && <Loader2 className="ml-auto size-3 animate-spin" />}
                   </SidebarMenuButton>
                 </SidebarMenuItem>
                 {libraryPath && (
                   <SidebarMenuItem>
-                    <SidebarMenuButton onClick={handleRefresh} disabled={isScanning} tooltip="Refresh library">
-                      <RefreshCw className={`size-4 ${isScanning ? "animate-spin" : ""}`} />
+                    <SidebarMenuButton onClick={handleRefresh} disabled={scanMode !== "idle"} tooltip="Refresh library">
+                      <RefreshCw className={`size-4 ${scanMode === "refreshing" ? "animate-spin" : ""}`} />
                       <span>Refresh</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>

@@ -30,7 +30,18 @@ export function CourseCard({ course, onClick }: CourseCardProps) {
     : "Not started yet"
 
   return (
-    <Card className="h-full overflow-hidden border-border/70 bg-card/90 transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-0.5 hover:border-border hover:shadow-[0_24px_64px_-44px_rgba(15,23,42,0.45)] active:scale-[0.99]" onClick={onClick}>
+    <Card
+      role="button"
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault()
+          onClick()
+        }
+      }}
+      className="h-full cursor-pointer select-none overflow-hidden border-border/70 bg-card/90 transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-0.5 hover:border-border hover:shadow-[0_24px_64px_-44px_rgba(15,23,42,0.45)] active:scale-[0.99]"
+    >
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-2 min-w-0">
