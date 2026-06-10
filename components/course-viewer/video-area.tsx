@@ -77,7 +77,6 @@ const parseTranscript = (content: string): TranscriptCue[] => {
 }
 
 export function VideoArea({ className, lesson, onNext, onPrevious }: VideoAreaProps) {
-  const utils = trpc.useUtils()
   const lastUpdateRef = useRef(0)
   const transcriptRef = useRef<HTMLDivElement>(null)
   const isTranscriptScrolling = useRef(false)
@@ -90,11 +89,7 @@ export function VideoArea({ className, lesson, onNext, onPrevious }: VideoAreaPr
   const [transcript, setTranscript] = useState<TranscriptCue[]>([])
   const [transcriptLabel, setTranscriptLabel] = useState<string | null>(null)
   const [transcriptError, setTranscriptError] = useState<string | null>(null)
-  const updateProgress = trpc.lessons.updateProgress.useMutation({
-    onSuccess: async () => {
-      await utils.courses.list.invalidate()
-    },
-  })
+  const updateProgress = trpc.lessons.updateProgress.useMutation()
 
   useEffect(() => {
     let isActive = true
@@ -278,16 +273,14 @@ export function VideoArea({ className, lesson, onNext, onPrevious }: VideoAreaPr
 
         <Card className="overflow-hidden rounded-[28px] border-border/70 shadow-[0_28px_80px_-52px_rgba(15,23,42,0.55)]">
           {isVideo ? (
-            <div className="aspect-video w-full bg-black">
-              <VideoPlayer
-                lesson={lesson}
-                onProgress={handleProgress}
-                onComplete={handleComplete}
-                onNext={onNext}
-                onPrevious={onPrevious}
-                seekTo={seekTo}
-              />
-            </div>
+            <VideoPlayer
+              lesson={lesson}
+              onProgress={handleProgress}
+              onComplete={handleComplete}
+              onNext={onNext}
+              onPrevious={onPrevious}
+              seekTo={seekTo}
+            />
           ) : (
             <ContentViewer lesson={lesson} onNext={onNext} onPrevious={onPrevious} />
           )}

@@ -60,15 +60,18 @@ export function CourseViewerLayout({
   }
 
   return (
-    <SidebarProvider style={{ "--sidebar-width": "8rem" } as React.CSSProperties}>
+    <SidebarProvider
+      className="h-full min-h-0"
+      style={{ "--sidebar-width": "7.5rem" } as React.CSSProperties}
+    >
       <CourseViewerSidebar
         course={course}
         currentLessonId={currentLesson?.id}
         onSelectLesson={handleLessonSelect}
         onBack={onBack}
       />
-      <SidebarInset>
-        <div className="mx-auto flex h-full w-full max-w-5xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
+      <SidebarInset className="min-h-0 overflow-hidden">
+        <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col gap-6 overflow-y-auto px-4 py-6 sm:px-6 lg:px-8">
           <VideoArea
             key={currentLesson?.id ?? "empty-lesson"}
             lesson={currentLesson}

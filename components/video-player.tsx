@@ -10,6 +10,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { readTextFile } from "@tauri-apps/plugin-fs"
+import { createSubtitleTrackId, toVttContent, type VideoSubtitleTrack } from "@/lib/subtitles"
 import { cn, formatDuration } from "@/lib/utils"
 import { isTauri } from "@/lib/tauri"
 import type { Lesson } from "@/types"
@@ -55,7 +57,8 @@ function VideoPlayerComponent({
   const videoRef = useRef<HTMLVideoElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [videoSrc, setVideoSrc] = useState<string | null>(null)
-  const [subtitleSrc, setSubtitleSrc] = useState<string | null>(null)
+  const [subtitleTracks, setSubtitleTracks] = useState<VideoSubtitleTrack[]>([])
+  const [activeSubtitleId, setActiveSubtitleId] = useState("off")
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
@@ -70,6 +73,7 @@ function VideoPlayerComponent({
   const [error, setError] = useState<string | null>(null)
   const lastTimeUpdateRef = useRef(0)
   const isSeekingRef = useRef(false)
+  const subtitleUrlRefs = useRef<string[]>([])
 
   const isVideoFile = lesson.type === "video"
 
@@ -78,28 +82,73 @@ function VideoPlayerComponent({
       if (!isVideoFile) return
 
       try {
+        setError(null)
+        setVideoSrc(null)
+        setSubtitleTracks([])
+        setActiveSubtitleId("off")
+        subtitleUrlRefs.current.forEach((url) => URL.revokeObjectURL(url))
+        subtitleUrlRefs.current = []
+
         if (isTauri()) {
           const port = await invoke<number>("get_video_server_port")
           const src = createMediaUrl(port, lesson.path)
           setVideoSrc(src)
 
-          const subtitleFile = lesson.subtitles?.[0]
-          if (subtitleFile) {
-            const subtitleUrl = createMediaUrl(port, subtitleFile.path)
-            setSubtitleSrc(subtitleUrl)
-          } else {
-            setSubtitleSrc(null)
-          }
+          const builtTracks = await Promise.allSettled(
+            lesson.subtitles.map(async (subtitle, index) => {
+              const content = await readTextFile(subtitle.path)
+              const blob = new Blob([toVttContent(content, subtitle.path)], { type: "text/vtt" })
+              const url = URL.createObjectURL(blob)
+              subtitleUrlRefs.current.push(url)
+
+              return {
+                id: createSubtitleTrackId(subtitle, index),
+                label: subtitle.label || subtitle.language || `Track ${index + 1}`,
+                language: subtitle.language || "und",
+                src: url,
+              }
+            })
+          )
+
+          const resolvedTracks = builtTracks
+            .filter((result): result is PromiseFulfilledResult<VideoSubtitleTrack> => result.status === "fulfilled")
+            .map((result) => result.value)
+
+          setSubtitleTracks(resolvedTracks)
+          setActiveSubtitleId(resolvedTracks[0]?.id ?? "off")
         } else {
           setVideoSrc(lesson.path)
-          setSubtitleSrc(lesson.subtitles?.[0]?.path ?? null)
+          const builtTracks = lesson.subtitles.map((subtitle, index) => ({
+            id: createSubtitleTrackId(subtitle, index),
+            label: subtitle.label || subtitle.language || `Track ${index + 1}`,
+            language: subtitle.language || "und",
+            src: subtitle.path,
+          }))
+          setSubtitleTracks(builtTracks)
+          setActiveSubtitleId(builtTracks[0]?.id ?? "off")
         }
       } catch {
         setError("failed to load video source")
       }
     }
     loadVideoSrc()
+
+    return () => {
+      subtitleUrlRefs.current.forEach((url) => URL.revokeObjectURL(url))
+      subtitleUrlRefs.current = []
+    }
   }, [lesson.path, lesson.subtitles, isVideoFile])
+
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video) return
+
+    subtitleTracks.forEach((track, index) => {
+      const textTrack = video.textTracks[index]
+      if (!textTrack) return
+      textTrack.mode = activeSubtitleId !== "off" && track.id === activeSubtitleId ? "showing" : "disabled"
+    })
+  }, [activeSubtitleId, subtitleTracks])
 
   useEffect(() => {
     const video = videoRef.current
@@ -156,8 +205,9 @@ function VideoPlayerComponent({
     const video = videoRef.current
     if (!video) return
     video.currentTime = seekTo
-    setCurrentTime(seekTo)
+    const frame = window.requestAnimationFrame(() => setCurrentTime(seekTo))
     onProgress(seekTo, video.duration)
+    return () => window.cancelAnimationFrame(frame)
   }, [seekTo, onProgress])
 
   const togglePlay = useCallback(() => {
@@ -236,6 +286,11 @@ function VideoPlayerComponent({
     }, 2500)
   }, [isPlaying])
 
+  const subtitleButtonLabel =
+    activeSubtitleId === "off"
+      ? "CC Off"
+      : subtitleTracks.find((track) => track.id === activeSubtitleId)?.label ?? "CC"
+
   if (!isVideoFile) {
     return (
       <div className="flex aspect-video w-full items-center justify-center bg-muted">
@@ -276,7 +331,7 @@ function VideoPlayerComponent({
       <video
         ref={videoRef}
         src={videoSrc}
-        className="size-full"
+        className="size-full object-cover"
         onClick={togglePlay}
         playsInline
         preload="auto"
@@ -285,15 +340,17 @@ function VideoPlayerComponent({
           transform: "translateZ(0)",
         }}
       >
-        {subtitleSrc && (
+        {subtitleTracks.map((track) => (
           <track
+            key={track.id}
+            id={track.id}
             kind="subtitles"
-            src={subtitleSrc}
-            srcLang="en"
-            label="English"
-            default
+            src={track.src}
+            srcLang={track.language}
+            label={track.label}
+            default={track.id === activeSubtitleId}
           />
-        )}
+        ))}
       </video>
 
       {error && (
@@ -386,6 +443,28 @@ function VideoPlayerComponent({
                 ))}
               </DropdownMenuContent>
             </DropdownMenu>
+
+            {subtitleTracks.length > 0 && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="sm" className="h-8 gap-1 px-2 text-white hover:bg-white/20">
+                    <span className="text-xs font-bold">{subtitleButtonLabel}</span>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="min-w-32 border-white/10 bg-black text-white [&_[data-highlighted]]:bg-white/10 [&_[data-highlighted]]:text-white">
+                  <DropdownMenuItem onClick={() => setActiveSubtitleId("off")}>
+                    {activeSubtitleId === "off" && <Check className="mr-2 size-3" />}
+                    Off
+                  </DropdownMenuItem>
+                  {subtitleTracks.map((track) => (
+                    <DropdownMenuItem key={track.id} onClick={() => setActiveSubtitleId(track.id)}>
+                      {activeSubtitleId === track.id && <Check className="mr-2 size-3" />}
+                      {track.label}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
 
             <Button variant="ghost" size="icon" onClick={toggleFullscreen} className="text-white hover:bg-white/20" aria-label={isFullscreen ? "exit fullscreen" : "fullscreen"}>
               {isFullscreen ? <Minimize className="size-5" aria-hidden="true" /> : <Maximize className="size-5" aria-hidden="true" />}

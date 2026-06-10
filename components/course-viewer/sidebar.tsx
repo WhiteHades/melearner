@@ -2,10 +2,8 @@
 
 import * as React from "react"
 import { ChevronLeft, ChevronRight, CheckCircle2, Circle, PlayCircle, FolderOpen } from "lucide-react"
-import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { cn, cleanSectionName } from "@/lib/utils"
 import type { Course, Lesson, Section } from "@/types"
 import {
   Sidebar,
@@ -82,13 +80,13 @@ export function CourseViewerSidebar({ course, currentLessonId, onSelectLesson, o
                             {section.lessons.map((lesson: Lesson) => (
                               <SidebarMenuItem key={lesson.id}>
                                 <SidebarMenuButton
-                                  asChild
                                   size="sm"
                                   variant={currentLessonId === lesson.id ? "default" : "outline"}
                                   isActive={currentLessonId === lesson.id}
                                   onClick={() => onSelectLesson?.(lesson)}
+                                  className="h-auto px-1.5 py-1.5"
                                 >
-                                  <div className="flex w-full items-start gap-1.5 py-1.5">
+                                  <div className="flex w-full items-start gap-1.5">
                                     <div className="mt-0.5 flex size-3.5 shrink-0 items-center justify-center">
                                       {lesson.completed ? (
                                         <CheckCircle2 className="size-3.5 text-primary" />
@@ -98,7 +96,7 @@ export function CourseViewerSidebar({ course, currentLessonId, onSelectLesson, o
                                         <Circle className="size-3.5 text-muted-foreground" />
                                       )}
                                     </div>
-                                    <span className="text-[11px] leading-snug break-words">{lesson.name}</span>
+                                    <span className="whitespace-normal text-left text-[11px] leading-snug break-words">{lesson.name}</span>
                                   </div>
                                 </SidebarMenuButton>
                               </SidebarMenuItem>
