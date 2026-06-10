@@ -50,7 +50,7 @@ export function CourseGrid({ onCourseSelect, searchQuery }: CourseGridProps) {
             <div className="space-y-2">
               <h3 className="text-lg font-semibold tracking-tight text-foreground">No courses yet</h3>
               <p className="max-w-md text-sm text-muted-foreground">
-                Choose a folder from the sidebar to scan for courses.
+                Choose a folder above to scan for courses, or drag a course folder here.
               </p>
             </div>
           </CardContent>
