@@ -80,6 +80,8 @@ export function VideoArea({ className, lesson, onNext, onPrevious }: VideoAreaPr
   const utils = trpc.useUtils()
   const lastUpdateRef = useRef(0)
   const transcriptRef = useRef<HTMLDivElement>(null)
+  const isTranscriptScrolling = useRef(false)
+  const transcriptScrollTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
   const lessonId = lesson?.id ?? ""
   const lessonDuration = lesson?.duration ?? 0
   const lessonLastPosition = lesson?.lastPosition ?? 0
@@ -183,14 +185,31 @@ export function VideoArea({ className, lesson, onNext, onPrevious }: VideoAreaPr
   }, [playhead, transcript])
 
   useEffect(() => {
-    if (activeCueIndex < 0) return
+    const el = transcriptRef.current
+    if (!el) return
+    const onScroll = () => {
+      isTranscriptScrolling.current = true
+      clearTimeout(transcriptScrollTimer.current)
+      transcriptScrollTimer.current = setTimeout(() => {
+        isTranscriptScrolling.current = false
+      }, 1000)
+    }
+    el.addEventListener("scroll", onScroll, { passive: true })
+    return () => {
+      el.removeEventListener("scroll", onScroll)
+      clearTimeout(transcriptScrollTimer.current)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (activeCueIndex < 0 || isTranscriptScrolling.current) return
     const container = transcriptRef.current
     const activeNode = container?.querySelector(
       `[data-cue-index="${activeCueIndex}"]`
     ) as HTMLElement | null
 
     if (!activeNode) return
-    activeNode.scrollIntoView({ block: "nearest", behavior: "smooth" })
+    activeNode.scrollIntoView({ block: "nearest", behavior: "instant" })
   }, [activeCueIndex])
 
   if (!lesson) {

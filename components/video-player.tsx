@@ -37,6 +37,7 @@ interface VideoPlayerProps {
 }
 
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
+const TIME_UPDATE_THROTTLE = 250
 
 function createMediaUrl(port: number, filePath: string): string {
   return `http://127.0.0.1:${port}/video/${encodeURIComponent(filePath)}`
@@ -67,6 +68,8 @@ function VideoPlayerComponent({
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const hasInitialSeekRef = useRef(false)
   const [error, setError] = useState<string | null>(null)
+  const lastTimeUpdateRef = useRef(0)
+  const isSeekingRef = useRef(false)
 
   const isVideoFile = lesson.type === "video"
 
@@ -74,18 +77,18 @@ function VideoPlayerComponent({
     async function loadVideoSrc() {
       if (!isVideoFile) return
 
-        try {
-          if (isTauri()) {
-            const port = await invoke<number>("get_video_server_port")
-            const src = createMediaUrl(port, lesson.path)
-            setVideoSrc(src)
+      try {
+        if (isTauri()) {
+          const port = await invoke<number>("get_video_server_port")
+          const src = createMediaUrl(port, lesson.path)
+          setVideoSrc(src)
 
-            const subtitleFile = lesson.subtitles?.[0]
-            if (subtitleFile) {
-              const subtitleUrl = createMediaUrl(port, subtitleFile.path)
-              setSubtitleSrc(subtitleUrl)
-            } else {
-              setSubtitleSrc(null)
+          const subtitleFile = lesson.subtitles?.[0]
+          if (subtitleFile) {
+            const subtitleUrl = createMediaUrl(port, subtitleFile.path)
+            setSubtitleSrc(subtitleUrl)
+          } else {
+            setSubtitleSrc(null)
           }
         } else {
           setVideoSrc(lesson.path)
@@ -103,8 +106,13 @@ function VideoPlayerComponent({
     if (!video || !videoSrc) return
 
     const handleTimeUpdate = () => {
-      setCurrentTime(video.currentTime)
-      onProgress(video.currentTime, video.duration)
+      if (isSeekingRef.current) return
+      const now = Date.now()
+      if (now - lastTimeUpdateRef.current < TIME_UPDATE_THROTTLE) return
+      lastTimeUpdateRef.current = now
+      const t = video.currentTime
+      setCurrentTime(t)
+      onProgress(t, video.duration)
     }
 
     const handleDurationChange = () => setDuration(video.duration)
@@ -145,63 +153,70 @@ function VideoPlayerComponent({
 
   useEffect(() => {
     if (seekTo === null || seekTo === undefined) return
-    if (!videoRef.current) return
-    videoRef.current.currentTime = seekTo
-    onProgress(seekTo, videoRef.current.duration)
+    const video = videoRef.current
+    if (!video) return
+    video.currentTime = seekTo
+    setCurrentTime(seekTo)
+    onProgress(seekTo, video.duration)
   }, [seekTo, onProgress])
 
   const togglePlay = useCallback(() => {
-    if (videoRef.current) {
-      if (isPlaying) {
-        videoRef.current.pause()
-      } else {
-        videoRef.current.play()
-      }
+    const video = videoRef.current
+    if (!video) return
+    if (isPlaying) {
+      video.pause()
+    } else {
+      video.play()
     }
   }, [isPlaying])
 
-  const handleSeek = useCallback((value: number[]) => {
-    if (videoRef.current) {
-      videoRef.current.currentTime = value[0]
-      setCurrentTime(value[0])
-    }
-  }, [])
+  const handleSeekCommit = useCallback(
+    (value: number[]) => {
+      const video = videoRef.current
+      if (!video) return
+      const t = value[0]
+      video.currentTime = t
+      setCurrentTime(t)
+      onProgress(t, video.duration)
+      isSeekingRef.current = false
+    },
+    [onProgress]
+  )
 
   const handleVolumeChange = useCallback((value: number[]) => {
     const newVolume = value[0]
-    if (videoRef.current) {
-      videoRef.current.volume = newVolume
-      setVolume(newVolume)
-      setIsMuted(newVolume === 0)
-    }
+    const video = videoRef.current
+    if (!video) return
+    video.volume = newVolume
+    setVolume(newVolume)
+    setIsMuted(newVolume === 0)
   }, [])
 
   const toggleMute = useCallback(() => {
-    if (videoRef.current) {
-      const newMuted = !isMuted
-      videoRef.current.muted = newMuted
-      setIsMuted(newMuted)
-    }
+    const video = videoRef.current
+    if (!video) return
+    const newMuted = !isMuted
+    video.muted = newMuted
+    setIsMuted(newMuted)
   }, [isMuted])
 
   const changeSpeed = useCallback((newSpeed: number) => {
-    if (videoRef.current) {
-      videoRef.current.playbackRate = newSpeed
-      setSpeed(newSpeed)
-    }
+    const video = videoRef.current
+    if (!video) return
+    video.playbackRate = newSpeed
+    setSpeed(newSpeed)
   }, [])
 
   const handleReplay = useCallback(() => {
-    if (videoRef.current) {
-      videoRef.current.currentTime = 0
-      videoRef.current.play()
-      setIsEnded(false)
-    }
+    const video = videoRef.current
+    if (!video) return
+    video.currentTime = 0
+    video.play()
+    setIsEnded(false)
   }, [])
 
   const toggleFullscreen = useCallback(() => {
     if (!containerRef.current) return
-
     if (!document.fullscreenElement) {
       containerRef.current.requestFullscreen()
       setIsFullscreen(true)
@@ -265,11 +280,10 @@ function VideoPlayerComponent({
         onClick={togglePlay}
         playsInline
         preload="auto"
-        style={{ 
-          WebkitTransform: 'translateZ(0)',
-          transform: 'translateZ(0)',
-          willChange: 'contents',
-        } as React.CSSProperties}
+        style={{
+          willChange: "transform",
+          transform: "translateZ(0)",
+        }}
       >
         {subtitleSrc && (
           <track
@@ -304,16 +318,17 @@ function VideoPlayerComponent({
       )}
 
       <div
-         className={cn(
-           "absolute inset-x-0 bottom-0 z-10 bg-linear-to-t from-black/90 to-transparent p-4 transition-opacity duration-300",
-           showControls || !isPlaying ? "opacity-100" : "opacity-0"
-         )}
+        className={cn(
+          "absolute inset-x-0 bottom-0 z-10 bg-linear-to-t from-black/90 to-transparent p-4 transition-opacity duration-300",
+          showControls || !isPlaying ? "opacity-100" : "pointer-events-none opacity-0"
+        )}
       >
         <Slider
           value={[currentTime]}
           max={duration || 100}
           step={0.1}
-          onValueChange={handleSeek}
+          onValueChange={() => { isSeekingRef.current = true }}
+          onValueCommit={handleSeekCommit}
           className="mb-4 cursor-pointer"
           aria-label="video progress"
         />
@@ -321,23 +336,23 @@ function VideoPlayerComponent({
         <div className="flex items-center justify-between text-white">
           <div className="flex items-center gap-2">
             {onPrevious && (
-              <Button variant="ghost" size="icon-sm" onClick={onPrevious} className="text-white hover:bg-white/20" aria-label="previous lesson">
+              <Button variant="ghost" size="icon" onClick={onPrevious} className="text-white hover:bg-white/20" aria-label="previous lesson">
                 <SkipBack className="size-5" aria-hidden="true" />
               </Button>
             )}
-            
+
             <Button variant="ghost" size="icon" onClick={togglePlay} className="text-white hover:bg-white/20" aria-label={isPlaying ? "pause" : "play"}>
               {isPlaying ? <Pause className="size-6" aria-hidden="true" /> : <Play className="size-6" aria-hidden="true" />}
             </Button>
 
             {onNext && (
-              <Button variant="ghost" size="icon-sm" onClick={onNext} className="text-white hover:bg-white/20" aria-label="next lesson">
+              <Button variant="ghost" size="icon" onClick={onNext} className="text-white hover:bg-white/20" aria-label="next lesson">
                 <SkipForward className="size-5" aria-hidden="true" />
               </Button>
             )}
 
             <div className="group/vol ml-2 flex items-center gap-2">
-              <Button variant="ghost" size="icon-sm" onClick={toggleMute} className="text-white hover:bg-white/20" aria-label={isMuted ? "unmute" : "mute"}>
+              <Button variant="ghost" size="icon" onClick={toggleMute} className="text-white hover:bg-white/20" aria-label={isMuted ? "unmute" : "mute"}>
                 {isMuted ? <VolumeX className="size-5" aria-hidden="true" /> : <Volume2 className="size-5" aria-hidden="true" />}
               </Button>
               <Slider
@@ -356,23 +371,23 @@ function VideoPlayerComponent({
           </div>
 
           <div className="flex items-center gap-2">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="sm" className="h-8 gap-1 px-2 text-white hover:bg-white/20">
-                    <span className="text-xs font-bold">{speed}x</span>
-                  </Button>
-                </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-20 min-w-20 bg-black text-white border-white/10 [&_[data-highlighted]]:bg-white/10 [&_[data-highlighted]]:text-white">
-            {SPEEDS.map((s) => (
-              <DropdownMenuItem key={s} onClick={() => changeSpeed(s)}>
-                {speed === s && <Check className="mr-2 size-3" />}
-                {s}x
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="sm" className="h-8 gap-1 px-2 text-white hover:bg-white/20">
+                  <span className="text-xs font-bold">{speed}x</span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-20 min-w-20 bg-black text-white border-white/10 [&_[data-highlighted]]:bg-white/10 [&_[data-highlighted]]:text-white">
+                {SPEEDS.map((s) => (
+                  <DropdownMenuItem key={s} onClick={() => changeSpeed(s)}>
+                    {speed === s && <Check className="mr-2 size-3" />}
+                    {s}x
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
 
-            <Button variant="ghost" size="icon-sm" onClick={toggleFullscreen} className="text-white hover:bg-white/20" aria-label={isFullscreen ? "exit fullscreen" : "fullscreen"}>
+            <Button variant="ghost" size="icon" onClick={toggleFullscreen} className="text-white hover:bg-white/20" aria-label={isFullscreen ? "exit fullscreen" : "fullscreen"}>
               {isFullscreen ? <Minimize className="size-5" aria-hidden="true" /> : <Maximize className="size-5" aria-hidden="true" />}
             </Button>
           </div>

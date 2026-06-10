@@ -7,21 +7,25 @@ import { X, Minus, Square, Copy } from "lucide-react"
 import { Button } from "@/components/ui/button"
 
 export function TitleBar() {
-  const isTauriApp = isTauri()
+  const [isTauriApp, setIsTauriApp] = useState(false)
   const [isMaximized, setIsMaximized] = useState(false)
   const [hovering, setHovering] = useState(false)
 
   useEffect(() => {
-    if (isTauriApp) {
-      getCurrentWindow().isMaximized().then(setIsMaximized)
+    setIsTauriApp(isTauri())
+  }, [])
 
-      const unlisten = getCurrentWindow().listen("tauri://resize", async () => {
-        setIsMaximized(await getCurrentWindow().isMaximized())
-      })
+  useEffect(() => {
+    if (!isTauriApp) return
 
-      return () => {
-        unlisten.then((listener) => listener())
-      }
+    getCurrentWindow().isMaximized().then(setIsMaximized)
+
+    const unlisten = getCurrentWindow().listen("tauri://resize", async () => {
+      setIsMaximized(await getCurrentWindow().isMaximized())
+    })
+
+    return () => {
+      unlisten.then((listener) => listener())
     }
   }, [isTauriApp])
 
@@ -51,12 +55,12 @@ export function TitleBar() {
         }`}
       >
         <div className="flex items-center gap-0.5 rounded-lg border bg-background/85 px-1 py-0.5 shadow-sm backdrop-blur-sm">
-          <Button variant="ghost" size="icon-sm" onClick={handleMinimize} aria-label="minimize">
+          <Button variant="ghost" size="icon" onClick={handleMinimize} aria-label="minimize">
             <Minus className="size-3.5" />
           </Button>
           <Button
             variant="ghost"
-            size="icon-sm"
+            size="icon"
             onClick={handleMaximize}
             aria-label={isMaximized ? "restore" : "maximize"}
           >
@@ -68,7 +72,7 @@ export function TitleBar() {
           </Button>
           <Button
             variant="ghost"
-            size="icon-sm"
+            size="icon"
             onClick={handleClose}
             className="hover:bg-destructive hover:text-destructive-foreground"
             aria-label="close"

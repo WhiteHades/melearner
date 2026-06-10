@@ -68,6 +68,18 @@ fn get_migrations() -> Vec<Migration> {
                   DROP TABLE IF EXISTS settings;",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 6,
+            description: "noop_migration_6",
+            sql: "SELECT 1;",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 7,
+            description: "noop_migration_7",
+            sql: "SELECT 1;",
+            kind: MigrationKind::Up,
+        },
     ]
 }
 

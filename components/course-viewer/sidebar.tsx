@@ -1,107 +1,124 @@
 "use client"
 
-import { ChevronLeft, CheckCircle2, Circle, PlayCircle } from "lucide-react"
+import * as React from "react"
+import { ChevronLeft, ChevronRight, CheckCircle2, Circle, PlayCircle, FolderOpen } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { cn, cleanSectionName } from "@/lib/utils"
 import type { Course, Lesson, Section } from "@/types"
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarRail,
+} from "@/components/ui/sidebar"
 
-interface SidebarProps {
-  className?: string
-  onBack?: () => void
+interface CourseViewerSidebarProps {
   course: Course | null
   currentLessonId?: string
   onSelectLesson?: (lesson: Lesson) => void
+  onBack?: () => void
 }
 
-export function Sidebar({ className, onBack, course, currentLessonId, onSelectLesson }: SidebarProps) {
+export function CourseViewerSidebar({ course, currentLessonId, onSelectLesson, onBack }: CourseViewerSidebarProps) {
   if (!course) return null
 
-  const totalLessons = course.sections.reduce((sum, section) => sum + section.lessons.length, 0)
-  const completedLessons = course.sections.reduce(
-    (sum, section) => sum + section.lessons.filter((lesson) => lesson.completed).length,
-    0
-  )
-
   return (
-    <div
-      className={cn(
-        "flex h-full min-h-0 min-w-0 flex-col bg-sidebar text-sidebar-foreground",
-        className
-      )}
-    >
-      <div className="space-y-5 px-4 py-5 sm:px-5">
-        <Button variant="ghost" size="sm" onClick={onBack} className="h-9 w-fit px-3">
-          <ChevronLeft data-icon="inline-start" />
-          Back to library
-        </Button>
+    <Sidebar collapsible="offcanvas" side="left" variant="sidebar">
+      <SidebarHeader>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton variant="outline" size="lg" onClick={onBack} className="w-full justify-start gap-2">
+              <ChevronLeft className="size-4" />
+              <span className="truncate font-medium">Back to library</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarHeader>
 
-        <div className="space-y-3">
-          <p className="text-sm font-medium text-muted-foreground">Course outline</p>
-          <div className="space-y-2">
-            <h2 className="text-xl font-bold leading-tight tracking-tight text-balance">{course.name}</h2>
-            <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
-              <span>{course.sections.length} sections</span>
-              <span>{totalLessons} lessons</span>
-              <span>{completedLessons} completed</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <Separator className="bg-sidebar-border" />
-
-      <ScrollArea className="flex-1 min-h-0 min-w-0">
-        <div className="space-y-6 px-4 py-5 sm:px-5">
-          {course.sections.map((section: Section, sectionIndex: number) => (
-            <section key={section.id} className="space-y-3">
-              <p className="break-words text-sm font-semibold text-foreground">
-                Module {sectionIndex + 1} <span className="font-normal text-muted-foreground">&mdash; {cleanSectionName(section.name)}</span>
-              </p>
-
-              <div className="flex flex-col gap-2">
-                {section.lessons.map((lesson: Lesson) => {
-                  const isActive = currentLessonId === lesson.id
-
-                  return (
-                    <button
-                      key={lesson.id}
-                      type="button"
-                      onClick={() => onSelectLesson?.(lesson)}
-                      className={cn(
-                        "w-full rounded-2xl border px-3 py-3 text-left transition-[transform,box-shadow,border-color,background-color] duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-                        isActive
-                          ? "border-sidebar-primary/25 bg-sidebar-primary/10 shadow-[0_18px_40px_-36px_rgba(15,23,42,0.45)]"
-                          : "border-transparent bg-background/65 hover:-translate-y-0.5 hover:border-sidebar-border hover:bg-background"
-                      )}
-                    >
-                      <div className="flex items-start gap-3">
-                        <div className="mt-0.5 shrink-0">
-                          {lesson.completed ? (
-                            <CheckCircle2 className="size-4 text-primary" />
-                          ) : isActive ? (
-                            <PlayCircle className="size-4 text-primary" />
-                          ) : (
-                            <Circle className="size-4 text-muted-foreground" />
-                          )}
-                        </div>
-
-                        <div className="min-w-0 space-y-1">
-                          <p className="truncate text-sm font-medium text-foreground">{lesson.name}</p>
-                          <p className="text-xs text-muted-foreground capitalize">
-                            {lesson.completed ? "Completed" : lesson.type}
-                          </p>
-                        </div>
-                      </div>
-                    </button>
-                  )
-                })}
+      <SidebarContent>
+        <SidebarGroup>
+          <SidebarGroupLabel>{course.name}</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <div className="space-y-2 px-2">
+              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                <span>{course.sections.length} sections</span>
+                <span>·</span>
+                <span>{course.sections.reduce((s, sec) => s + sec.lessons.length, 0)} lessons</span>
               </div>
-            </section>
-          ))}
-        </div>
-      </ScrollArea>
-    </div>
+            </div>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
+          <SidebarGroupLabel>Course outline</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <ScrollArea className="flex-1">
+              <SidebarMenu>
+                {course.sections.map((section: Section, sectionIndex: number) => (
+                  <SidebarMenuItem key={section.id}>
+                    <Collapsible open defaultOpen>
+                      <CollapsibleTrigger asChild>
+                        <SidebarGroupLabel className="flex items-center gap-2 px-2 py-1.5 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground cursor-pointer rounded-md transition-colors">
+                          <FolderOpen className="size-4 shrink-0" />
+                          <span className="truncate font-medium">Module {sectionIndex + 1}</span>
+                          <span className="text-muted-foreground ml-auto text-xs">
+                            {section.lessons.length} lessons
+                          </span>
+                          <ChevronRight className="size-4 shrink-0 transition-transform duration-200 data-[state=open]:rotate-90" />
+                        </SidebarGroupLabel>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent>
+                        <SidebarGroupContent className="pl-2">
+                          <SidebarMenu>
+                            {section.lessons.map((lesson: Lesson) => (
+                              <SidebarMenuItem key={lesson.id}>
+                                <SidebarMenuButton
+                                  asChild
+                                  size="sm"
+                                  variant={currentLessonId === lesson.id ? "default" : "outline"}
+                                  isActive={currentLessonId === lesson.id}
+                                  onClick={() => onSelectLesson?.(lesson)}
+                                >
+                                  <div className="flex w-full items-center gap-2">
+                                    <div className="flex size-4 shrink-0 items-center justify-center">
+                                      {lesson.completed ? (
+                                        <CheckCircle2 className="size-4 text-primary" />
+                                      ) : currentLessonId === lesson.id ? (
+                                        <PlayCircle className="size-4 text-primary" />
+                                      ) : (
+                                        <Circle className="size-4 text-muted-foreground" />
+                                      )}
+                                    </div>
+                                    <span className="truncate text-sm">{lesson.name}</span>
+                                    <span className="ml-auto text-xs text-muted-foreground capitalize">
+                                      {lesson.completed ? "Completed" : lesson.type}
+                                    </span>
+                                  </div>
+                                </SidebarMenuButton>
+                              </SidebarMenuItem>
+                            ))}
+                          </SidebarMenu>
+                        </SidebarGroupContent>
+                      </CollapsibleContent>
+                    </Collapsible>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </ScrollArea>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      </SidebarContent>
+
+      <SidebarRail />
+    </Sidebar>
   )
 }

@@ -2,9 +2,10 @@
 
 import { useEffect, useMemo } from "react"
 import { NotesPanel } from "./notes-panel"
-import { Sidebar } from "./sidebar"
+import { CourseViewerSidebar } from "./sidebar"
 import { VideoArea } from "./video-area"
 import type { Course, Lesson } from "@/types"
+import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 
 interface CourseViewerLayoutProps {
   course: Course | null
@@ -29,9 +30,7 @@ export function CourseViewerLayout({
 
     if (selectedLessonId) {
       const selectedLesson = orderedLessons.find((lesson) => lesson.id === selectedLessonId)
-      if (selectedLesson) {
-        return selectedLesson
-      }
+      if (selectedLesson) return selectedLesson
     }
 
     return orderedLessons[0] ?? null
@@ -61,29 +60,24 @@ export function CourseViewerLayout({
   }
 
   return (
-    <div className="h-full w-full bg-background text-foreground">
-      <div className="mx-auto flex h-full w-full max-w-[1600px] flex-col lg:flex-row">
-        <aside className="border-b border-border/70 bg-sidebar/85 lg:w-[320px] lg:border-b-0 lg:border-r">
-          <Sidebar
-            onBack={onBack}
-            course={course}
-            currentLessonId={currentLesson?.id}
-            onSelectLesson={handleLessonSelect}
+    <SidebarProvider style={{ "--sidebar-width": "11rem" } as React.CSSProperties}>
+      <CourseViewerSidebar
+        course={course}
+        currentLessonId={currentLesson?.id}
+        onSelectLesson={handleLessonSelect}
+        onBack={onBack}
+      />
+      <SidebarInset>
+        <div className="mx-auto flex h-full w-full max-w-5xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
+          <VideoArea
+            key={currentLesson?.id ?? "empty-lesson"}
+            lesson={currentLesson}
+            onNext={nextLesson ? () => onLessonChange?.(nextLesson.id) : undefined}
+            onPrevious={previousLesson ? () => onLessonChange?.(previousLesson.id) : undefined}
           />
-        </aside>
-
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
-            <VideoArea
-              key={currentLesson?.id ?? "empty-lesson"}
-              lesson={currentLesson}
-              onNext={nextLesson ? () => onLessonChange?.(nextLesson.id) : undefined}
-              onPrevious={previousLesson ? () => onLessonChange?.(previousLesson.id) : undefined}
-            />
-            <NotesPanel lesson={currentLesson} />
-          </div>
+          <NotesPanel lesson={currentLesson} />
         </div>
-      </div>
-    </div>
+      </SidebarInset>
+    </SidebarProvider>
   )
 }
