@@ -13,6 +13,7 @@ const PARTIAL_EXTENSIONS: &[&str] = &["part", "crdownload", "download"];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileEntry {
+    pub id: String,
     pub path: String,
     pub name: String,
     pub file_type: FileType,
@@ -32,6 +33,7 @@ pub enum FileType {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SectionData {
+    pub id: String,
     pub name: String,
     pub files: Vec<FileEntry>,
     pub order: usize,
@@ -125,6 +127,16 @@ fn generate_id(path: &Path) -> String {
     format!("{:x}", hasher.finish())
 }
 
+fn generate_id_from_parts(parts: &[&str]) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    for part in parts {
+        part.hash(&mut hasher);
+    }
+    format!("{:x}", hasher.finish())
+}
+
 fn scan_directory(dir: &Path) -> Vec<FileEntry> {
     WalkDir::new(dir)
         .skip_hidden(true)
@@ -138,6 +150,7 @@ fn scan_directory(dir: &Path) -> Vec<FileEntry> {
             let file_type = get_file_type(&path);
             let size = e.metadata().map(|m| m.len()).unwrap_or(0);
             FileEntry {
+                id: generate_id(&path),
                 path: path.to_string_lossy().to_string(),
                 name: path.file_name().unwrap_or_default().to_string_lossy().to_string(),
                 file_type,
@@ -172,6 +185,7 @@ fn scan_course(course_path: &Path) -> CourseData {
             let files = scan_directory(&path);
             if !files.is_empty() {
                 sections.push(SectionData {
+                    id: generate_id(&path),
                     name: path.file_name().unwrap_or_default().to_string_lossy().to_string(),
                     files,
                     order: index,
@@ -182,6 +196,7 @@ fn scan_course(course_path: &Path) -> CourseData {
             if is_media_file(&file_type) || file_type == FileType::Subtitle {
                 let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
                 root_files.push(FileEntry {
+                    id: generate_id(&path),
                     path: path.to_string_lossy().to_string(),
                     name: path.file_name().unwrap_or_default().to_string_lossy().to_string(),
                     file_type,
@@ -193,6 +208,10 @@ fn scan_course(course_path: &Path) -> CourseData {
 
     if !root_files.is_empty() {
         sections.insert(0, SectionData {
+            id: generate_id_from_parts(&[
+                &course_path.to_string_lossy(),
+                "_introduction",
+            ]),
             name: "introduction".to_string(),
             files: root_files,
             order: 0,
@@ -292,6 +311,7 @@ pub async fn get_file_info(path: String) -> Result<FileEntry, String> {
     let size = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
     
     Ok(FileEntry {
+        id: generate_id(&p),
         path,
         name: p.file_name().unwrap_or_default().to_string_lossy().to_string(),
         file_type,

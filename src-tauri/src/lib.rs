@@ -56,32 +56,9 @@ fn get_migrations() -> Vec<Migration> {
         },
         Migration {
             version: 4,
-            description: "create_bookmarks_table",
-            sql: "CREATE TABLE IF NOT EXISTS bookmarks (
-                id TEXT PRIMARY KEY,
-                lesson_id TEXT NOT NULL,
-                timestamp REAL NOT NULL,
-                label TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (lesson_id) REFERENCES lessons(id) ON DELETE CASCADE
-            );",
-            kind: MigrationKind::Up,
-        },
-        Migration {
-            version: 5,
-            description: "create_settings_table",
-            sql: "CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
-                value TEXT
-            );",
-            kind: MigrationKind::Up,
-        },
-        Migration {
-            version: 6,
             description: "create_indexes",
             sql: "CREATE INDEX IF NOT EXISTS idx_lessons_course ON lessons(course_id);
-                  CREATE INDEX IF NOT EXISTS idx_notes_lesson ON notes(lesson_id);
-                  CREATE INDEX IF NOT EXISTS idx_bookmarks_lesson ON bookmarks(lesson_id);",
+                  CREATE INDEX IF NOT EXISTS idx_notes_lesson ON notes(lesson_id);",
             kind: MigrationKind::Up,
         },
     ]

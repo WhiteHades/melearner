@@ -2,6 +2,7 @@ import { invoke, isTauri as tauriIsTauri } from "@tauri-apps/api/core"
 import { open } from "@tauri-apps/plugin-dialog"
 
 export interface FileEntry {
+  id: string
   path: string
   name: string
   file_type: "video" | "audio" | "document" | "subtitle" | "quiz" | "unknown"
@@ -9,6 +10,7 @@ export interface FileEntry {
 }
 
 export interface SectionData {
+  id: string
   name: string
   files: FileEntry[]
   order: number

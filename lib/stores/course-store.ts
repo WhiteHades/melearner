@@ -1,18 +1,15 @@
 import { create, type StoreApi } from "zustand"
 import { persist } from "zustand/middleware"
-import type { Course, Lesson, Note, Section } from "@/types"
+import type { Course, Lesson, Section } from "@/types"
 
 interface CourseState {
   courses: Course[]
-  notes: Note[]
   isScanning: boolean
   libraryPath: string | null
 }
 
 interface CourseActions {
   setCourses: (courses: Course[]) => void
-  addNote: (note: Note) => void
-  deleteNote: (id: string) => void
   updateLessonProgress: (lessonId: string, watchedTime: number, lastPosition: number) => void
   markLessonComplete: (lessonId: string, completed: boolean) => void
   setIsScanning: (isScanning: boolean) => void
@@ -23,7 +20,6 @@ type CourseStore = CourseState & CourseActions
 
 const initialState: CourseState = {
   courses: [],
-  notes: [],
   isScanning: false,
   libraryPath: null,
 }
@@ -34,16 +30,6 @@ const createCourseStore = (set: CourseStoreSet): CourseStore => ({
   ...initialState,
 
   setCourses: (courses: Course[]) => set({ courses }),
-
-  addNote: (note: Note) =>
-    set((state: CourseStore) => ({
-      notes: [...state.notes, note],
-    })),
-
-  deleteNote: (id: string) =>
-    set((state: CourseStore) => ({
-      notes: state.notes.filter((n: Note) => n.id !== id),
-    })),
 
   updateLessonProgress: (lessonId: string, watchedTime: number, lastPosition: number) =>
     set((state: CourseStore) => {

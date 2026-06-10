@@ -1,19 +1,17 @@
 import { TRPCError, initTRPC } from "@trpc/server"
 import { z } from "zod"
 import { nanoid } from "nanoid"
-import type { Course, Lesson, Note } from "@/types"
+import type { Course, Lesson } from "@/types"
 import { useCourseStore } from "@/lib/stores/course-store"
 import { processScanResult } from "@/lib/course-utils"
 import { indexCourses } from "@/lib/search"
 import { scanFolder, isTauri } from "@/lib/tauri"
 import {
-  listNotesByLesson,
-  saveNote,
-  deleteNote as removeNote,
   syncLibrary,
   updateCourseLastAccessed,
   updateLessonProgress as persistLessonProgress,
 } from "@/lib/database"
+import { getNoteStore } from "@/lib/notes-store"
 
 const t = initTRPC.create({
   allowOutsideOfServer: true,
@@ -135,11 +133,7 @@ export const appRouter = t.router({
           return []
         }
 
-        if (isTauri()) {
-          return listNotesByLesson(input.lessonId)
-        }
-
-        return getStore().notes.filter((note: Note) => note.lessonId === input.lessonId)
+        return getNoteStore().list(input.lessonId)
       }),
     add: t.procedure
       .input(
@@ -167,22 +161,14 @@ export const appRouter = t.router({
           createdAt: new Date().toISOString(),
         }
 
-        if (isTauri()) {
-          await saveNote(note)
-        } else {
-          getStore().addNote(note)
-        }
+        await getNoteStore().save(note)
 
         return note
       }),
     remove: t.procedure
       .input(z.object({ noteId: z.string().min(1) }))
       .mutation(async ({ input }) => {
-        if (isTauri()) {
-          await removeNote(input.noteId)
-        } else {
-          getStore().deleteNote(input.noteId)
-        }
+        await getNoteStore().remove(input.noteId)
         return true
       }),
   }),
