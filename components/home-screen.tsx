@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useMemo } from "react"
 import { parseAsString, useQueryState } from "nuqs"
-import { Search, Moon, Sun, FolderOpen, RefreshCw, Loader2, BookOpen } from "lucide-react"
+import { Search, Moon, Sun, FolderOpen, RefreshCw, Loader2, BookOpen, LayoutGrid, List } from "lucide-react"
 import { useTheme } from "next-themes"
 import { CourseViewerLayout } from "@/components/course-viewer/layout"
 import { CourseGrid } from "@/components/course-grid"
@@ -74,17 +74,19 @@ export function HomeScreen() {
     )
   }
 
+  const [viewMode, setViewMode] = useState<"grid" | "list">("grid")
+
   return (
-    <div className="flex flex-1 flex-col">
-      <LibraryHeader />
-      <div className="flex-1 overflow-auto p-4 md:p-6">
-        <CourseGrid onCourseSelect={handleCourseSelect} />
+    <div className="flex h-full flex-col">
+      <LibraryHeader viewMode={viewMode} onViewModeChange={setViewMode} />
+      <div className="min-h-0 flex-1 overflow-auto p-4 md:p-6">
+        <CourseGrid viewMode={viewMode} onCourseSelect={handleCourseSelect} />
       </div>
     </div>
   )
 }
 
-function LibraryHeader() {
+function LibraryHeader({ viewMode, onViewModeChange }: { viewMode: "grid" | "list"; onViewModeChange: (v: "grid" | "list") => void }) {
   const isScanning = useCourseStore((state) => state.isScanning)
   const libraryPath = useCourseStore((state) => state.libraryPath)
   const setIsScanning = useCourseStore((state) => state.setIsScanning)
@@ -159,6 +161,16 @@ function LibraryHeader() {
           >
             <Search className="size-4" />
             <span className="hidden sm:inline text-xs">Search</span>
+          </Button>
+
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={() => onViewModeChange(viewMode === "grid" ? "list" : "grid")}
+            className="size-8"
+          >
+            {viewMode === "grid" ? <List className="size-4" /> : <LayoutGrid className="size-4" />}
           </Button>
 
           <Button
