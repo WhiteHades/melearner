@@ -149,13 +149,8 @@ function LibraryHeader() {
     <>
       <header
         data-tauri-drag-region
-        className="flex h-12 shrink-0 items-center gap-2 border-b px-4"
+        className="flex h-12 shrink-0 items-center gap-2 border-b px-3"
       >
-        <div data-tauri-drag-region className="flex items-center gap-2 font-semibold text-sm mr-auto">
-          <BookOpen className="size-4" />
-          Library
-        </div>
-
         <div className="flex items-center gap-1">
           <Button
             type="button"
@@ -202,6 +197,8 @@ function LibraryHeader() {
             </Button>
           )}
         </div>
+
+        <div data-tauri-drag-region className="ml-auto" />
       </header>
 
       {error && (
