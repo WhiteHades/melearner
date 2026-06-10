@@ -33,7 +33,7 @@ export function CourseCard({ course, onClick }: CourseCardProps) {
       onClick={onClick}
       className="block h-full w-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
     >
-      <Card className="flex h-full rounded-[28px] border-border/70 bg-card/90 transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-0.5 hover:border-border hover:shadow-[0_24px_64px_-44px_rgba(15,23,42,0.45)] active:scale-[0.99]">
+      <Card className="flex h-full overflow-hidden rounded-[28px] border-border/70 bg-card/90 transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-0.5 hover:border-border hover:shadow-[0_24px_64px_-44px_rgba(15,23,42,0.45)] active:scale-[0.99]">
         <CardHeader className="gap-4 pb-4">
           <div className="flex items-start justify-between gap-4">
             <div className="space-y-3">
