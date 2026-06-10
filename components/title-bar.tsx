@@ -1,15 +1,111 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useMemo } from "react"
 import { getCurrentWindow } from "@tauri-apps/api/window"
 import { isTauri } from "@/lib/tauri"
-import { X, Minus, Square, Copy } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { X, Minus, Copy, Square } from "lucide-react"
+
+type Platform = "macos" | "windows" | "linux"
+
+function detectPlatform(): Platform {
+  if (typeof navigator === "undefined") return "linux"
+  const ua = navigator.userAgent
+  if (/Mac/i.test(ua)) return "macos"
+  if (/Win/i.test(ua)) return "windows"
+  return "linux"
+}
+
+function MacButtons({
+  onMinimize,
+  onMaximize,
+  onClose,
+  isMaximized,
+}: {
+  onMinimize: () => void
+  onMaximize: () => void
+  onClose: () => void
+  isMaximized: boolean
+}) {
+  const [hovered, setHovered] = useState<string | null>(null)
+
+  return (
+    <div className="flex items-center gap-2 px-3 py-2">
+      <button
+        onClick={onClose}
+        onMouseEnter={() => setHovered("close")}
+        onMouseLeave={() => setHovered(null)}
+        className="relative flex size-3 items-center justify-center rounded-full bg-[#ff5f57] transition-opacity hover:opacity-100"
+        aria-label="close"
+      >
+        {hovered === "close" && <X className="size-2 text-[#4d0000]" />}
+      </button>
+      <button
+        onClick={onMinimize}
+        onMouseEnter={() => setHovered("minimize")}
+        onMouseLeave={() => setHovered(null)}
+        className="relative flex size-3 items-center justify-center rounded-full bg-[#febc2e] transition-opacity hover:opacity-100"
+        aria-label="minimize"
+      >
+        {hovered === "minimize" && <Minus className="size-2 text-[#593c00]" />}
+      </button>
+      <button
+        onClick={onMaximize}
+        onMouseEnter={() => setHovered("maximize")}
+        onMouseLeave={() => setHovered(null)}
+        className="relative flex size-3 items-center justify-center rounded-full bg-[#28c840] transition-opacity hover:opacity-100"
+        aria-label={isMaximized ? "restore" : "maximize"}
+      >
+        {hovered === "maximize" && (
+          isMaximized ? <Copy className="size-2 text-[#003d00]" /> : <Square className="size-2 text-[#003d00]" />
+        )}
+      </button>
+    </div>
+  )
+}
+
+function WinLinuxButtons({
+  onMinimize,
+  onMaximize,
+  onClose,
+  isMaximized,
+}: {
+  onMinimize: () => void
+  onMaximize: () => void
+  onClose: () => void
+  isMaximized: boolean
+}) {
+  return (
+    <div className="flex items-center">
+      <button
+        onClick={onMinimize}
+        className="flex size-10 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        aria-label="minimize"
+      >
+        <Minus className="size-4" />
+      </button>
+      <button
+        onClick={onMaximize}
+        className="flex size-10 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        aria-label={isMaximized ? "restore" : "maximize"}
+      >
+        {isMaximized ? <Copy className="size-3 rotate-180" /> : <Square className="size-3" />}
+      </button>
+      <button
+        onClick={onClose}
+        className="flex size-10 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive hover:text-destructive-foreground"
+        aria-label="close"
+      >
+        <X className="size-4" />
+      </button>
+    </div>
+  )
+}
 
 export function TitleBar() {
   const [isTauriApp, setIsTauriApp] = useState(false)
   const [isMaximized, setIsMaximized] = useState(false)
-  const [hovering, setHovering] = useState(false)
+
+  const platform = useMemo(() => detectPlatform(), [])
 
   useEffect(() => {
     setIsTauriApp(isTauri())
@@ -39,48 +135,22 @@ export function TitleBar() {
   const handleClose = () => getCurrentWindow().close()
 
   return (
-    <div
-      className="fixed inset-x-0 top-0 z-50 h-10"
-      onMouseEnter={() => setHovering(true)}
-      onMouseLeave={() => setHovering(false)}
-    >
-      <div data-tauri-drag-region className="h-4" />
-
-      <div
-        data-tauri-drag-region
-        className={`flex justify-end px-3 transition-all duration-200 ${
-          hovering
-            ? "translate-y-0 opacity-100"
-            : "pointer-events-none -translate-y-3 opacity-0"
-        }`}
-      >
-        <div className="flex items-center gap-0.5 rounded-lg border bg-background/85 px-1 py-0.5 shadow-sm backdrop-blur-sm">
-          <Button variant="ghost" size="icon" onClick={handleMinimize} aria-label="minimize">
-            <Minus className="size-3.5" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={handleMaximize}
-            aria-label={isMaximized ? "restore" : "maximize"}
-          >
-            {isMaximized ? (
-              <Copy className="size-3 rotate-180" />
-            ) : (
-              <Square className="size-3" />
-            )}
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={handleClose}
-            className="hover:bg-destructive hover:text-destructive-foreground"
-            aria-label="close"
-          >
-            <X className="size-3.5" />
-          </Button>
-        </div>
-      </div>
+    <div className="fixed right-0 top-0 z-50">
+      {platform === "macos" ? (
+        <MacButtons
+          onMinimize={handleMinimize}
+          onMaximize={handleMaximize}
+          onClose={handleClose}
+          isMaximized={isMaximized}
+        />
+      ) : (
+        <WinLinuxButtons
+          onMinimize={handleMinimize}
+          onMaximize={handleMaximize}
+          onClose={handleClose}
+          isMaximized={isMaximized}
+        />
+      )}
     </div>
   )
 }
