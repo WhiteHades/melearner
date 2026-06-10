@@ -61,6 +61,13 @@ fn get_migrations() -> Vec<Migration> {
                   CREATE INDEX IF NOT EXISTS idx_notes_lesson ON notes(lesson_id);",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 5,
+            description: "drop_orphan_tables",
+            sql: "DROP TABLE IF EXISTS bookmarks;
+                  DROP TABLE IF EXISTS settings;",
+            kind: MigrationKind::Up,
+        },
     ]
 }
 
