@@ -297,9 +297,9 @@ pub fn scan_library(root_path: &str) -> ScanResult {
 
 #[tauri::command]
 pub async fn scan_folder(path: String) -> Result<ScanResult, String> {
-    tokio::task::spawn_blocking(move || scan_library(&path))
+    Ok(tokio::task::spawn_blocking(move || scan_library(&path))
         .await
-        .map_err(|e| format!("scan task failed: {e}"))?
+        .map_err(|e| format!("scan task failed: {e}"))?)
 }
 
 #[tauri::command]
