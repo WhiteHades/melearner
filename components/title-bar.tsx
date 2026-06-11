@@ -102,11 +102,14 @@ function WinLinuxButtons({
 }
 
 export function TitleBar() {
-  const isTauriApp = useMemo(() => isTauri(), [])
+  const [mounted, setMounted] = useState(false)
   const [isMaximized, setIsMaximized] = useState(false)
   const [hovering, setHovering] = useState(false)
 
+  const isTauriApp = useMemo(() => isTauri(), [])
   const platform = useMemo(() => detectPlatform(), [])
+
+  useEffect(() => { setMounted(true) }, []) // eslint-disable-line react-hooks/set-state-in-effect
 
   useEffect(() => {
     if (!isTauriApp) return
@@ -122,7 +125,7 @@ export function TitleBar() {
     }
   }, [isTauriApp])
 
-  if (!isTauriApp) return null
+  if (!isTauriApp || !mounted) return null
 
   const handleMinimize = () => getCurrentWindow().minimize()
   const handleMaximize = async () => {

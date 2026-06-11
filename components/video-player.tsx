@@ -37,6 +37,14 @@ interface VideoPlayerProps {
   autoplay?: boolean
 }
 
+let cachedPort: number | null = null
+
+async function getVideoServerPort(): Promise<number> {
+  if (cachedPort !== null) return cachedPort
+  cachedPort = await invoke<number>("get_video_server_port")
+  return cachedPort
+}
+
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
 const TIME_UPDATE_THROTTLE = 250
 
@@ -88,7 +96,7 @@ function VideoPlayerComponent({
         subtitleUrlRefs.current = []
 
         if (isTauri()) {
-          const port = await invoke<number>("get_video_server_port")
+          const port = await getVideoServerPort()
           const src = createMediaUrl(port, lesson.path)
           setVideoSrc(src)
 

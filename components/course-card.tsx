@@ -1,3 +1,4 @@
+import { useMemo } from "react"
 import { formatDistanceToNow } from "date-fns"
 import { BookOpen, Clock3, PlayCircle, CheckCircle2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
@@ -19,15 +20,21 @@ interface CourseCardProps {
 }
 
 export function CourseCard({ course, onClick }: CourseCardProps) {
-  const totalLessons = course.sections.reduce((sum, section) => sum + section.lessons.length, 0)
-  const completedLessons = course.sections.reduce(
-    (sum, section) => sum + section.lessons.filter((lesson) => lesson.completed).length,
-    0
-  )
-  const progress = totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0
-  const lastAccessedLabel = course.lastAccessed
-    ? formatDistanceToNow(new Date(course.lastAccessed), { addSuffix: true })
-    : "Not started yet"
+  const { totalLessons, completedLessons, progress, lastAccessedLabel } = useMemo(() => {
+    const total = course.sections.reduce((sum, section) => sum + section.lessons.length, 0)
+    const completed = course.sections.reduce(
+      (sum, section) => sum + section.lessons.filter((lesson) => lesson.completed).length,
+      0
+    )
+    return {
+      totalLessons: total,
+      completedLessons: completed,
+      progress: total > 0 ? Math.round((completed / total) * 100) : 0,
+      lastAccessedLabel: course.lastAccessed
+        ? formatDistanceToNow(new Date(course.lastAccessed), { addSuffix: true })
+        : "Not started yet",
+    }
+  }, [course])
 
   return (
     <Card

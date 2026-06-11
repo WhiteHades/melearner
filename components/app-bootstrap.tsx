@@ -17,9 +17,8 @@ export function AppBootstrap() {
       console.error("Failed to initialize database", error)
     })
 
-    const stopListening = useCourseStore.persist.onFinishHydration((state) => {
+    const stopListening = useCourseStore.persist.onFinishHydration(() => {
       if (!isActive) return
-      indexCourses(state.courses)
       setHasHydrated(true)
     })
 

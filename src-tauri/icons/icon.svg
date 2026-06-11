@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="g" x1="0.5" y1="0" x2="0.5" y2="1">
+      <stop stop-color="#6366f1"/>
+      <stop offset="1" stop-color="#4f46e5"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="96" fill="url(#g)"/>
+  <g fill="none" stroke="#fff" stroke-width="24" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Left leg of 'm' extends down to form 'L' -->
+    <path d="M140 364 V140 L256 256 L320 192 L384 256 L372 364"/>
+    <!-- Inner detail line forming the crossbar of 'L' -->
+    <path d="M140 364 H200" stroke-width="16"/>
+  </g>
+</svg>

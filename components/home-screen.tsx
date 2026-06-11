@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useCallback, useEffect, useMemo } from "react"
+import { useShallow } from "zustand/react/shallow"
 import { parseAsString, useQueryState } from "nuqs"
 import { Search, Moon, Sun, FolderOpen, RefreshCw, Loader2, BookOpen, LayoutGrid, List, Sparkles, Clock3, PlayCircle } from "lucide-react"
 import { useTheme } from "next-themes"
@@ -32,7 +33,7 @@ export function HomeScreen() {
   const [lessonId, setLessonId] = useQueryState("lesson", parseAsString)
 
   const view = viewParam === "viewer" ? ("viewer" satisfies View) : "library"
-  const courses = useCourseStore((state) => state.courses)
+  const courses = useCourseStore(useShallow((state) => state.courses))
   const hasHydrated = useCourseStore((state) => state.hasHydrated)
   const markAccessed = trpc.courses.markAccessed.useMutation()
 
@@ -120,17 +121,26 @@ function LibraryHeader({
   const isDark = resolvedTheme === "dark"
   const scanLibrary = trpc.library.scan.useMutation()
 
-  const totalLessons = courses.reduce((sum, course) => sum + course.sections.reduce((count, section) => count + section.lessons.length, 0), 0)
-  const completedLessons = courses.reduce(
-    (sum, course) =>
-      sum +
-      course.sections.reduce(
-        (count, section) => count + section.lessons.filter((lesson) => lesson.completed).length,
-        0
-      ),
-    0
+  const totalLessons = useMemo(
+    () => courses.reduce((sum, course) => sum + course.sections.reduce((count, section) => count + section.lessons.length, 0), 0),
+    [courses]
   )
-  const totalDuration = courses.reduce((sum, course) => sum + course.totalDuration, 0)
+  const completedLessons = useMemo(
+    () => courses.reduce(
+      (sum, course) =>
+        sum +
+        course.sections.reduce(
+          (count, section) => count + section.lessons.filter((lesson) => lesson.completed).length,
+          0
+        ),
+      0
+    ),
+    [courses]
+  )
+  const totalDuration = useMemo(
+    () => courses.reduce((sum, course) => sum + course.totalDuration, 0),
+    [courses]
+  )
   const continueCourse = useMemo(
     () =>
       [...courses]
