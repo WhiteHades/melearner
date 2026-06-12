@@ -32,14 +32,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: install pnpm
+        run: npm install -g pnpm@10
+
       - name: setup node
         uses: actions/setup-node@v4
         with:
           node-version: lts/*
           cache: pnpm
-
-      - name: install pnpm
-        run: npm install -g pnpm@10
 
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
