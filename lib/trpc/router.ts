@@ -22,34 +22,77 @@ const getStore = () => useCourseStore.getState()
 const courseIdSchema = z.string().min(1)
 const lessonIdSchema = z.string().min(1)
 
-function findCourse(courses: Course[], courseId: string): Course | null {
-  return courses.find((course) => course.id === courseId) ?? null
+type CourseIndex = {
+  courses: ReadonlyArray<Course>
+  byId: Map<string, Course>
+  lessonsById: Map<string, Lesson>
 }
 
-function findLesson(courses: Course[], lessonId: string): Lesson | null {
+const courseIndex: CourseIndex = {
+  courses: [],
+  byId: new Map(),
+  lessonsById: new Map(),
+}
+
+function buildCourseIndex(courses: ReadonlyArray<Course>): CourseIndex {
+  const byId = new Map<string, Course>()
+  const lessonsById = new Map<string, Lesson>()
   for (const course of courses) {
+    byId.set(course.id, course)
     for (const section of course.sections) {
-      const lesson = section.lessons.find((entry) => entry.id === lessonId)
-      if (lesson) {
-        return lesson
+      for (const lesson of section.lessons) {
+        lessonsById.set(lesson.id, lesson)
       }
     }
   }
+  return { courses, byId, lessonsById }
+}
 
-  return null
+function getCourseIndex(): CourseIndex {
+  const courses = getStore().courses
+  if (courses !== courseIndex.courses) {
+    const next = buildCourseIndex(courses)
+    courseIndex.courses = courses
+    courseIndex.byId = next.byId
+    courseIndex.lessonsById = next.lessonsById
+  }
+  return courseIndex
+}
+
+function findCourseById(courseId: string): Course | null {
+  return getCourseIndex().byId.get(courseId) ?? null
+}
+
+function findLessonById(lessonId: string): Lesson | null {
+  return getCourseIndex().lessonsById.get(lessonId) ?? null
+}
+
+function mapCourseLastAccessed(courses: ReadonlyArray<Course>, courseId: string, timestamp: string): Course[] {
+  let changed = false
+  const out = new Array<Course>(courses.length)
+  for (let i = 0; i < courses.length; i++) {
+    const c = courses[i]
+    if (c.id === courseId && c.lastAccessed !== timestamp) {
+      out[i] = { ...c, lastAccessed: timestamp }
+      changed = true
+    } else {
+      out[i] = c
+    }
+  }
+  return changed ? out : (courses as Course[])
 }
 
 export const appRouter = t.router({
   courses: t.router({
     list: t.procedure.query(() => getStore().courses),
     byId: t.procedure.input(courseIdSchema).query(({ input }) => {
-      return findCourse(getStore().courses, input)
+      return findCourseById(input)
     }),
     markAccessed: t.procedure
       .input(z.object({ courseId: courseIdSchema }))
       .mutation(async ({ input }) => {
-        const { courses, setCourses } = getStore()
-        const existingCourse = findCourse(courses, input.courseId)
+        const idx = getCourseIndex()
+        const existingCourse = idx.byId.get(input.courseId)
 
         if (!existingCourse) {
           throw new TRPCError({
@@ -59,19 +102,15 @@ export const appRouter = t.router({
         }
 
         const timestamp = new Date().toISOString()
-        const updated = courses.map((course: Course) =>
-          course.id === input.courseId
-            ? { ...course, lastAccessed: timestamp }
-            : course
-        )
-        const current = findCourse(updated, input.courseId)
+        const { courses, setCourses } = getStore()
+        const updated = mapCourseLastAccessed(courses, input.courseId, timestamp)
 
         if (isTauri()) {
           await updateCourseLastAccessed(input.courseId, timestamp)
         }
 
         setCourses(updated)
-        return current
+        return { ...existingCourse, lastAccessed: timestamp }
       }),
   }),
   library: t.router({
@@ -99,8 +138,7 @@ export const appRouter = t.router({
         })
       )
       .mutation(async ({ input }) => {
-        const store = getStore()
-        const lesson = findLesson(store.courses, input.lessonId)
+        const lesson = findLessonById(input.lessonId)
 
         if (!lesson) {
           throw new TRPCError({
@@ -118,8 +156,9 @@ export const appRouter = t.router({
           )
         }
 
-        store.updateLessonProgress(input.lessonId, input.watchedTime, input.lastPosition)
-        store.markLessonComplete(input.lessonId, input.completed)
+        const { updateLessonProgress, markLessonComplete } = getStore()
+        updateLessonProgress(input.lessonId, input.watchedTime, input.lastPosition)
+        markLessonComplete(input.lessonId, input.completed)
 
         return true
       }),
@@ -128,8 +167,7 @@ export const appRouter = t.router({
     list: t.procedure
       .input(z.object({ lessonId: lessonIdSchema }))
       .query(async ({ input }) => {
-        const lesson = findLesson(getStore().courses, input.lessonId)
-        if (!lesson) {
+        if (!findLessonById(input.lessonId)) {
           return []
         }
 
@@ -144,9 +182,7 @@ export const appRouter = t.router({
         })
       )
       .mutation(async ({ input }) => {
-        const lesson = findLesson(getStore().courses, input.lessonId)
-
-        if (!lesson) {
+        if (!findLessonById(input.lessonId)) {
           throw new TRPCError({
             code: "NOT_FOUND",
             message: "Lesson not found",
