@@ -1,128 +1,146 @@
+<div align="center">
+
+<img src="src-tauri/icons/icon.svg" width="120" height="120" alt="melearn logo" />
+
 # melearn
 
-simple offline course learner with a tauri desktop app.
+a beautiful, native desktop app for learning from your **legally obtained** local course library. scan a folder of files you already own, open a lesson, take notes — everything stays on your machine.
 
-## requirements
+melearn is a **viewer only**. it does not download, stream, distribute, or provide any content. see the [legal disclaimer](#legal-disclaimer).
 
-- node 20+
-- pnpm 10+
-- rust + cargo
-- tauri desktop prerequisites for your os
+<br />
+
+[![platform](https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-6366f1?style=for-the-badge)](https://tauri.app)
+[![stack](https://img.shields.io/badge/tauri%202%20%C2%B7%20next.js%2016%20%C2%B7%20rust-0f172a?style=for-the-badge)](https://nextjs.org)
+[![storage](https://img.shields.io/badge/data-100%25%20local-22c55e?style=for-the-badge)](#privacy)
+[![license](https://img.shields.io/badge/license-source%20available-a855f7?style=for-the-badge)](#license)
+
+</div>
+
+---
 
 ## features
 
-- scan and organize local course folders
-- custom video and document viewer
-- timestamped lesson notes
-- progress saved locally in sqlite
-- light and dark themes
+- **scan local folders** — point at a directory, get an instant library of courses, sections, and lessons
+- **native video player** — smooth scrubbing, resume-position memory, keyboard shortcuts
+- **lesson notes** — timestamped notes that save with the lesson
+- **progress tracking** — watched-time, completion state, last-accessed, all in sqlite
+- **instant search** — full-text search across courses, sections, and lessons
+- **dark and light themes** — system-aware
+- **frameless window** — feels native, not webby
+- **works fully offline** — no accounts, no telemetry, no network
 
-## tech stack
+## stack
 
-- frontend: next.js 16, react 19, tailwind css 4, shadcn ui components
-- data: trpc, @tanstack/react-query
-- forms: react-hook-form, zod
-- state: zustand with persist
-- search: minisearch
-- url state: nuqs
-- date utils: date-fns
-- desktop: tauri 2.x with rust backend
+| layer            | what                                                                |
+| ---------------- | ------------------------------------------------------------------- |
+| desktop shell    | tauri 2                                                             |
+| frontend         | next.js 16 (static export), react 19, tailwind 4                    |
+| ui               | shadcn/ui (radix primitives)                                        |
+| backend          | rust (axum for the local video server)                              |
+| storage          | sqlite via tauri plugin-sql, persisted to `~/.local/share/melearn`  |
+| search           | minisearch                                                          |
+| forms / schema   | react-hook-form, zod                                                |
+| state            | zustand (with persist)                                              |
+| url state        | nuqs                                                                |
 
-## development
+## getting started
+
+### prerequisites
+
+- node 20+
+- pnpm 10+
+- rust toolchain (`rustup`)
+- tauri 2 system dependencies for your os ([guide](https://tauri.app/start/prerequisites/))
+
+### develop
 
 ```bash
-# install dependencies
 pnpm install
-
-# run the web shell
-pnpm dev
-
-# run the tauri desktop app
 pnpm tauri:dev
 ```
 
-note: folder scanning and local file playback are desktop-first. the web shell is mainly for ui work and static smoke checks.
+this boots the next.js dev server and opens the native desktop window in one step.
 
-`pnpm tauri:dev` already starts the web dev server for you through Tauri. don't run `pnpm dev` in a second terminal before it unless you intentionally want to manage the web server yourself.
-
-## verification
+### verify
 
 ```bash
-# typecheck + lint + production web build + rust check
-pnpm verify
-
-# or run them one by one
-pnpm type-check
-pnpm lint
-pnpm build
-pnpm tauri:check
+pnpm verify   # type-check + lint + web build + cargo check
 ```
 
-## manual smoke test
-
-desktop / tauri:
-
-1. run `pnpm tauri:dev`
-2. click `Choose folder`
-3. select a course library with nested folders and media/docs
-4. confirm the library populates
-5. open a course
-6. play a video, seek, pause, resume, and reload the app
-7. confirm progress restores
-8. save a note on a lesson
-9. reopen the lesson and confirm the note persists
-10. open a markdown or pdf lesson and confirm it renders correctly
-
-linux note: tauri dev needs a real desktop session. in a headless shell without x11/wayland, gtk/webview startup will fail.
-
-web shell:
-
-1. run `pnpm dev`
-2. open `http://localhost:3000`
-3. verify the home screen, theme toggle, empty states, and responsive layout
-4. use `pnpm build` before shipping any ui changes
-
-## build
-
-### web app
+### build
 
 ```bash
-pnpm web:build
-# output in /out directory
+pnpm tauri:build                 # current platform
+pnpm tauri:build:linux           # deb + appimage
+pnpm tauri:build:windows         # msi + nsis
+pnpm tauri:build:macos           # intel
+pnpm tauri:build:macos-arm       # apple silicon
 ```
 
-### desktop app
+install on linux:
 
 ```bash
-# build for current platform
-pnpm tauri:build
-
-# platform-specific builds
-pnpm tauri:build:linux    # linux (deb, appimage)
-pnpm tauri:build:windows  # windows (msi, exe)
-pnpm tauri:build:macos    # macos intel
-pnpm tauri:build:macos-arm # macos apple silicon
+sudo cp src-tauri/target/release/melearn /usr/local/bin/melearn
 ```
-
-build outputs:
-
-- linux: `src-tauri/target/release/bundle/deb/` and `appimage/`
-- windows: `src-tauri/target/release/bundle/msi/` and `nsis/`
-- macos: `src-tauri/target/release/bundle/dmg/` and `macos/`
 
 ## keyboard shortcuts
 
-| key     | action           |
-| ------- | ---------------- |
-| space/k | play/pause       |
-| m       | mute/unmute      |
-| f       | fullscreen       |
-| j/←     | seek back 10s    |
-| l/→     | seek forward 10s |
-| ↑/↓     | volume up/down   |
-| n       | next lesson      |
-| p       | previous lesson  |
+| key       | action             |
+| --------- | ------------------ |
+| space / k | play / pause       |
+| m         | mute / unmute      |
+| f         | fullscreen         |
+| j / ←     | seek back 10s      |
+| l / →     | seek forward 10s   |
+| ↑ / ↓     | volume up / down   |
+| n         | next lesson        |
+| p         | previous lesson    |
+
+## architecture notes
+
+- **all data is local** — sqlite database at `$HOME/.local/share/melearn/melearn.db`, no network calls.
+- **video files stream from a local axum server** bound to `127.0.0.1` (started lazily on first video open).
+- **no `trpc` / `react-query` runtime overhead** — the frontend calls tauri commands directly.
+- **lazy async init** — background services initialize on first use, never block window setup.
+- **rAF-driven video player** — zero React re-renders per frame.
+
+## privacy
+
+melearn does not phone home. there is no analytics, no telemetry, no auto-update check, no network request of any kind. your library is yours.
+
+## legal disclaimer
+
+**melearn is a local media player and course organizer. it does not distribute, stream, download, host, or facilitate access to any content.**
+
+melearn does not:
+
+- ❌ provide any course, video, audio, or document
+- ❌ include any built-in library, catalog, or content source
+- ❌ connect to udemy, coursera, skillshare, pluralsight, or any other platform
+- ❌ bypass, crack, decrypt, or circumvent any drm, paywall, or access control
+- ❌ download, scrape, mirror, or index any third-party content
+- ❌ promote, encourage, or facilitate piracy or copyright infringement in any form
+
+melearn is a **viewer for files that already exist on your device**. it only plays media located inside folders you explicitly point it at. you are solely responsible for the legality of the files on your machine and the rights you hold to view them.
+
+by using melearn you confirm that:
+
+- ✅ you own the media you load, **or**
+- ✅ you have a valid license, subscription, or other legal right to access and view the media, **or**
+- ✅ the media is in the public domain or otherwise free of copyright restrictions
+
+the developers of melearn **do not endorse, condone, or support**:
+
+- the illegal downloading, copying, or redistribution of copyrighted material
+- the use of this app to access content you have not legitimately acquired
+- bypassing the terms of service of any course platform, streaming service, or content provider
+- sharing, selling, or distributing pirated media
+
+if you obtained a course from a piracy site, torrent, file locker, telegram channel, discord server, or any other unauthorized source — **do not use melearn for it**. support the creators and pay for the courses you want to learn from. piracy harms the educators, authors, and small creators who make learning accessible.
+
+melearn is provided "as is" without warranty of any kind. the developers are not liable for any user action that violates copyright law, terms of service, or any applicable regulation in your jurisdiction.
 
 ## license
 
-source available - see license for details.
+source available — see [license](LICENSE) for details.
