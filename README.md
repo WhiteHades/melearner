@@ -4,7 +4,7 @@
 
 # melearner
 
-a beautiful, native desktop app for learning from your **legally obtained** local course library. point it at a folder, open a lesson, take notes. everything stays on your machine.
+a native desktop app for learning from your **legally obtained** local course library. point it at a folder, open a lesson, take notes. everything stays on your machine.
 
 melearner is a viewer. it doesn't download, stream, or share anything. see the [legal disclaimer](#legal-disclaimer).
 
