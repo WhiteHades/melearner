@@ -35,3 +35,4 @@ tower-http = { version = "0.5", features = ["fs", "cors", "trace"] }
 http-range = "0.1"
 urlencoding = "2.1"
 tower = { version = "0.5.3", features = ["util"] }
+seahash = "4.1"

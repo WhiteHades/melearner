@@ -2264,6 +2264,7 @@ dependencies = [
  "log",
  "notify 6.1.1",
  "rayon",
+ "seahash",
  "serde",
  "serde_json",
  "tauri",
