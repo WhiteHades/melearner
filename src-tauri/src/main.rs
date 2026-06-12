@@ -3,10 +3,7 @@
 fn main() {
     #[cfg(target_os = "linux")]
     {
-        let session = std::env::var("XDG_SESSION_TYPE").unwrap_or_default();
-        if session == "wayland" {
-            std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
-        }
+        std::env::set_var("GDK_BACKEND", "x11");
     }
     melearn_lib::run();
 }

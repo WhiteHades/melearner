@@ -55,6 +55,7 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "date-fns": "^4.1.0",
+    "evlog": "^2.19.0",
     "lucide-react": "^0.511.0",
     "minisearch": "^7.1.2",
     "nanoid": "^5.1.5",
