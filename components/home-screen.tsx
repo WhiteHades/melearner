@@ -7,8 +7,8 @@ import { Search, Moon, Sun, FolderOpen, RefreshCw, Loader2, BookOpen, LayoutGrid
 import { useTheme } from "next-themes"
 import { CourseViewerLayout } from "@/components/course-viewer/layout"
 import { CourseGrid } from "@/components/course-grid"
-import { trpc } from "@/lib/trpc/client"
 import { useCourseStore } from "@/lib/stores/course-store"
+import { markCourseAccessed, scanLibraryAt } from "@/lib/operations"
 import { selectFolderDialog, isTauri } from "@/lib/tauri"
 import { Button } from "@/components/ui/button"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
@@ -35,7 +35,6 @@ export function HomeScreen() {
   const view = viewParam === "viewer" ? ("viewer" satisfies View) : "library"
   const courses = useCourseStore(useShallow((state) => state.courses))
   const hasHydrated = useCourseStore((state) => state.hasHydrated)
-  const markAccessed = trpc.courses.markAccessed.useMutation()
 
   const selectedCourse = useMemo(() => {
     return courses.find((course: Course) => course.id === courseId) ?? null
@@ -54,9 +53,9 @@ export function HomeScreen() {
       setCourseId(course.id)
       setLessonId(null)
       setViewParam("viewer")
-      markAccessed.mutate({ courseId: course.id })
+      void markCourseAccessed(course.id)
     },
-    [setCourseId, setLessonId, setViewParam, markAccessed]
+    [setCourseId, setLessonId, setViewParam]
   )
 
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid")
@@ -119,7 +118,6 @@ function LibraryHeader({
   const [cmdOpen, setCmdOpen] = useState(false)
   const { resolvedTheme, setTheme } = useTheme()
   const isDark = resolvedTheme === "dark"
-  const scanLibrary = trpc.library.scan.useMutation()
 
   const totalLessons = useMemo(
     () => courses.reduce((sum, course) => sum + course.sections.reduce((count, section) => count + section.lessons.length, 0), 0),
@@ -172,7 +170,7 @@ function LibraryHeader({
 
       setScanMode("selecting")
       setError(null)
-      await scanLibrary.mutateAsync({ path })
+      await scanLibraryAt(path)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to scan the selected folder.")
     } finally {
@@ -186,7 +184,7 @@ function LibraryHeader({
     try {
       setScanMode("refreshing")
       setError(null)
-      await scanLibrary.mutateAsync({ path: libraryPath })
+      await scanLibraryAt(libraryPath)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to refresh the current library.")
     } finally {

@@ -3,9 +3,9 @@
 import React, { useState } from "react"
 import { useCourseStore } from "@/lib/stores/course-store"
 import { selectFolderDialog, isTauri } from "@/lib/tauri"
+import { scanLibraryAt } from "@/lib/operations"
 import { BookOpen, FolderOpen, Search, Settings, Moon, Sun, Loader2, RefreshCw } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { trpc } from "@/lib/trpc/client"
 import { useTheme } from "next-themes"
 import {
   Sidebar,
@@ -46,7 +46,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const [activeView, setActiveView] = useState<string>("library")
   const { resolvedTheme, setTheme } = useTheme()
   const isDark = resolvedTheme === "dark"
-  const scanLibrary = trpc.library.scan.useMutation()
 
   async function handleSelectFolder() {
     if (!isTauri()) {
@@ -60,7 +59,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
       setScanMode("selecting")
       setError(null)
-      await scanLibrary.mutateAsync({ path })
+      await scanLibraryAt(path)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to scan the selected folder.")
     } finally {
@@ -74,7 +73,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     try {
       setScanMode("refreshing")
       setError(null)
-      await scanLibrary.mutateAsync({ path: libraryPath })
+      await scanLibraryAt(libraryPath)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to refresh the current library.")
     } finally {

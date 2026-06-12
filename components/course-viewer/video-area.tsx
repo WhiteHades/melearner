@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { ContentViewer } from "@/components/content-viewer"
 import { VideoPlayer } from "@/components/video-player"
-import { trpc } from "@/lib/trpc/client"
+import { recordLessonProgress } from "@/lib/operations"
 import { cleanSectionName, cn, formatDuration } from "@/lib/utils"
 import type { Lesson } from "@/types"
 
@@ -24,7 +24,6 @@ export function VideoArea({ className, lesson, onNext, onPrevious }: VideoAreaPr
   const lessonDuration = lesson?.duration ?? 0
   const lessonLastPosition = lesson?.lastPosition ?? 0
   const [playhead, setPlayhead] = useState(0)
-  const updateProgress = trpc.lessons.updateProgress.useMutation()
 
   const handleProgress = useCallback(
     (currentTime: number, duration: number) => {
@@ -36,37 +35,34 @@ export function VideoArea({ className, lesson, onNext, onPrevious }: VideoAreaPr
       if (!shouldUpdate) return
       lastUpdateRef.current = now
 
-      updateProgress.mutate({
-        lessonId,
+      void recordLessonProgress(lessonId, {
         watchedTime: currentTime,
         lastPosition: currentTime,
         completed: duration > 0 ? currentTime >= duration - 1 : false,
       })
     },
-    [lessonId, updateProgress]
+    [lessonId]
   )
 
   const handleComplete = useCallback(() => {
     if (!lessonId) return
     const completionTime = lessonDuration > 0 ? lessonDuration : lessonLastPosition
-    updateProgress.mutate({
-      lessonId,
+    void recordLessonProgress(lessonId, {
       watchedTime: completionTime,
       lastPosition: completionTime,
       completed: true,
     })
-  }, [lessonDuration, lessonId, lessonLastPosition, updateProgress])
+  }, [lessonDuration, lessonId, lessonLastPosition])
 
   const toggleComplete = useCallback(() => {
     if (!lesson || !lessonId) return
     const completionTime = Math.max(playhead, lesson.lastPosition)
-    updateProgress.mutate({
-      lessonId,
+    void recordLessonProgress(lessonId, {
       watchedTime: completionTime,
       lastPosition: completionTime,
       completed: !lesson.completed,
     })
-  }, [lesson, lessonId, playhead, updateProgress])
+  }, [lesson, lessonId, playhead])
 
   if (!lesson) {
     return (
