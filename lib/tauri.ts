@@ -45,3 +45,15 @@ export async function selectFolderDialog(): Promise<string | null> {
 export function isTauri(): boolean {
   return tauriIsTauri()
 }
+
+export interface BuildInfo {
+  version: string
+  git_sha: string
+  git_sha_long: string
+  build_timestamp: string
+  rust_version: string
+}
+
+export async function getBuildInfo(): Promise<BuildInfo> {
+  return invoke<BuildInfo>("get_build_info")
+}

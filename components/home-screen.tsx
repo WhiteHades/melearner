@@ -9,7 +9,7 @@ import { CourseViewerLayout } from "@/components/course-viewer/layout"
 import { CourseGrid } from "@/components/course-grid"
 import { useCourseStore } from "@/lib/stores/course-store"
 import { markCourseAccessed, scanLibraryAt } from "@/lib/operations"
-import { selectFolderDialog, isTauri } from "@/lib/tauri"
+import { selectFolderDialog, isTauri, getBuildInfo, type BuildInfo } from "@/lib/tauri"
 import { Button } from "@/components/ui/button"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import {
@@ -116,6 +116,7 @@ function LibraryHeader({
   const setScanMode = useCourseStore((state) => state.setScanMode)
   const [error, setError] = useState<string | null>(null)
   const [cmdOpen, setCmdOpen] = useState(false)
+  const [buildInfo, setBuildInfo] = useState<BuildInfo | null>(null)
   const { resolvedTheme, setTheme } = useTheme()
   const isDark = resolvedTheme === "dark"
 
@@ -156,6 +157,13 @@ function LibraryHeader({
     }
     document.addEventListener("keydown", handleKeyDown)
     return () => document.removeEventListener("keydown", handleKeyDown)
+  }, [])
+
+  useEffect(() => {
+    if (!isTauri()) return
+    getBuildInfo()
+      .then(setBuildInfo)
+      .catch(() => setBuildInfo(null))
   }, [])
 
   async function handleSelectFolder() {
@@ -288,6 +296,12 @@ function LibraryHeader({
       {libraryPath && (
         <div className="px-4 pt-1.5">
           <p className="text-[10px] text-muted-foreground truncate">{libraryPath}</p>
+        </div>
+      )}
+
+      {buildInfo && (
+        <div className="mt-auto px-4 py-1.5 text-[10px] text-muted-foreground tabular-nums">
+          v{buildInfo.version} · {buildInfo.git_sha} · built {new Date(Number(buildInfo.build_timestamp) * 1000).toISOString().slice(0, 10)}
         </div>
       )}
 

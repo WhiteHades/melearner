@@ -165,6 +165,7 @@ pub fn run() {
             video_server::get_video_server_port,
             log_frontend,
             open_native,
+            get_build_info,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -254,4 +255,24 @@ fn open_native(path: String) -> Result<(), String> {
         .spawn()
         .map(|_| ())
         .map_err(|e| format!("failed to open file: {e}"))
+}
+
+#[derive(serde::Serialize)]
+struct BuildInfo {
+    version: &'static str,
+    git_sha: &'static str,
+    git_sha_long: &'static str,
+    build_timestamp: &'static str,
+    rust_version: &'static str,
+}
+
+#[tauri::command]
+fn get_build_info() -> BuildInfo {
+    BuildInfo {
+        version: env!("CARGO_PKG_VERSION"),
+        git_sha: env!("MELEARNER_GIT_SHA"),
+        git_sha_long: env!("MELEARNER_GIT_SHA_LONG"),
+        build_timestamp: env!("MELEARNER_BUILD_TIMESTAMP"),
+        rust_version: env!("CARGO_PKG_RUST_VERSION"),
+    }
 }
