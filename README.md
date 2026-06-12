@@ -13,7 +13,7 @@ melearn is a viewer. it doesn't download, stream, or share anything. see the [le
 [![platform](https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-6366f1?style=for-the-badge)](https://tauri.app)
 [![stack](https://img.shields.io/badge/tauri%202%20%C2%B7%20next.js%2016%20%C2%B7%20rust-0f172a?style=for-the-badge)](https://nextjs.org)
 [![storage](https://img.shields.io/badge/storage-local%20sqlite-22c55e?style=for-the-badge)](#privacy)
-[![license](https://img.shields.io/badge/license-source%20available-a855f7?style=for-the-badge)](#license)
+[![license](https://img.shields.io/badge/license-MIT-a855f7?style=for-the-badge)](LICENSE)
 
 </div>
 
@@ -160,4 +160,4 @@ melearn is provided "as is" without warranty of any kind. the developers aren't 
 
 ## license
 
-source available. see [license](LICENSE) for details.
+MIT. see [license](LICENSE) for details.
