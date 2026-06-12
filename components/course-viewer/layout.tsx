@@ -62,7 +62,12 @@ export function CourseViewerLayout({
   return (
     <SidebarProvider
       className="h-full min-h-0"
-      style={{ "--sidebar-width": "7.5rem" } as React.CSSProperties}
+      style={
+        {
+          "--sidebar-width": "clamp(9rem, 18vw, 14rem)",
+          "--sidebar-width-icon": "3rem",
+        } as React.CSSProperties
+      }
     >
       <CourseViewerSidebar
         course={course}
