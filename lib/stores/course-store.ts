@@ -1,6 +1,6 @@
 import { create, type StoreApi } from "zustand"
 import { persist } from "zustand/middleware"
-import type { Course, Lesson, Section } from "@/types"
+import type { Course, Lesson } from "@/types"
 
 interface CourseState {
   courses: Course[]
@@ -29,40 +29,77 @@ const initialState: CourseState = {
 
 type CourseStoreSet = StoreApi<CourseStore>["setState"]
 
+type LessonPath = readonly [courseIndex: number, sectionIndex: number, lessonIndex: number]
+
+let lessonIndex: ReadonlyArray<Course> = []
+const lessonPathById = new Map<string, LessonPath>()
+
+function rebuildLessonIndex(courses: ReadonlyArray<Course>) {
+  lessonIndex = courses
+  lessonPathById.clear()
+  for (let ci = 0; ci < courses.length; ci++) {
+    const sections = courses[ci].sections
+    for (let si = 0; si < sections.length; si++) {
+      const lessons = sections[si].lessons
+      for (let li = 0; li < lessons.length; li++) {
+        lessonPathById.set(lessons[li].id, [ci, si, li] as const)
+      }
+    }
+  }
+}
+
+function applyLessonUpdate(
+  courses: ReadonlyArray<Course>,
+  path: LessonPath,
+  patch: Partial<Lesson>,
+): Course[] {
+  const [ci, si, li] = path
+  const course = courses[ci]
+  const section = course.sections[si]
+  const lesson = section.lessons[li]
+  const updatedLesson: Lesson = { ...lesson, ...patch }
+  const updatedSection = {
+    ...section,
+    lessons: section.lessons.map((l, i) => (i === li ? updatedLesson : l)),
+  }
+  const updatedCourse = {
+    ...course,
+    sections: course.sections.map((s, i) => (i === si ? updatedSection : s)),
+  }
+  const out = courses.slice()
+  out[ci] = updatedCourse
+  return out
+}
+
 const createCourseStore = (set: CourseStoreSet): CourseStore => ({
   ...initialState,
 
-  setCourses: (courses: Course[]) => set({ courses }),
+  setCourses: (courses: Course[]) => {
+    rebuildLessonIndex(courses)
+    set({ courses })
+  },
 
-  updateLessonProgress: (lessonId: string, watchedTime: number, lastPosition: number) =>
-    set((state: CourseStore) => {
-      const updatedCourses = state.courses.map((course: Course) => ({
-        ...course,
-        sections: course.sections.map((section: Section) => ({
-          ...section,
-          lessons: section.lessons.map((lesson: Lesson) =>
-            lesson.id === lessonId
-              ? { ...lesson, watchedTime, lastPosition }
-              : lesson
-          ),
-        })),
-      }))
-      return { courses: updatedCourses }
-    }),
+  updateLessonProgress: (lessonId: string, watchedTime: number, lastPosition: number) => {
+    const state = useCourseStoreInternal.getState()
+    if (state.courses !== lessonIndex) {
+      rebuildLessonIndex(state.courses)
+    }
+    const path = lessonPathById.get(lessonId)
+    if (!path) return
+    const updated = applyLessonUpdate(state.courses, path, { watchedTime, lastPosition })
+    set({ courses: updated })
+  },
 
-  markLessonComplete: (lessonId: string, completed: boolean) =>
-    set((state: CourseStore) => {
-      const updatedCourses = state.courses.map((course: Course) => ({
-        ...course,
-        sections: course.sections.map((section: Section) => ({
-          ...section,
-          lessons: section.lessons.map((lesson: Lesson) =>
-            lesson.id === lessonId ? { ...lesson, completed } : lesson
-          ),
-        })),
-      }))
-      return { courses: updatedCourses }
-    }),
+  markLessonComplete: (lessonId: string, completed: boolean) => {
+    const state = useCourseStoreInternal.getState()
+    if (state.courses !== lessonIndex) {
+      rebuildLessonIndex(state.courses)
+    }
+    const path = lessonPathById.get(lessonId)
+    if (!path) return
+    const updated = applyLessonUpdate(state.courses, path, { completed })
+    set({ courses: updated })
+  },
 
   setLibraryPath: (libraryPath: string | null) => set({ libraryPath }),
 
@@ -71,12 +108,19 @@ const createCourseStore = (set: CourseStoreSet): CourseStore => ({
   setHasHydrated: (hasHydrated) => set({ hasHydrated }),
 })
 
-export const useCourseStore = create<CourseStore>()(
+const useCourseStoreInternal = create<CourseStore>()(
   persist(createCourseStore, {
     name: "melearn-storage",
     partialize: (state: CourseStore) => ({
       courses: state.courses,
       libraryPath: state.libraryPath,
     }),
-  })
+    onRehydrateStorage: () => (state) => {
+      if (state) {
+        rebuildLessonIndex(state.courses)
+      }
+    },
+  }),
 )
+
+export const useCourseStore = useCourseStoreInternal
