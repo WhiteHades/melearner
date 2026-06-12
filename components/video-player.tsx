@@ -46,7 +46,8 @@ async function getVideoServerPort(): Promise<number> {
 }
 
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
-const TIME_UPDATE_THROTTLE = 250
+const PROGRESS_SAVE_THROTTLE = 1000
+const SLIDER_SYNC_THROTTLE = 250
 
 function createMediaUrl(port: number, filePath: string): string {
   return `http://127.0.0.1:${port}/video/${encodeURIComponent(filePath)}`
@@ -66,7 +67,6 @@ function VideoPlayerComponent({
   const [subtitleTracks, setSubtitleTracks] = useState<VideoSubtitleTrack[]>([])
   const [activeSubtitleId, setActiveSubtitleId] = useState("off")
   const [isPlaying, setIsPlaying] = useState(false)
-  const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [volume, setVolume] = useState(1)
   const [isMuted, setIsMuted] = useState(false)
@@ -74,12 +74,19 @@ function VideoPlayerComponent({
   const [isEnded, setIsEnded] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [showControls, setShowControls] = useState(true)
-  const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const hasInitialSeekRef = useRef(false)
   const [error, setError] = useState<string | null>(null)
-  const lastTimeUpdateRef = useRef(0)
-  const isSeekingRef = useRef(false)
+
+  const progressRef = useRef(0)
+  const lastProgressSaveRef = useRef(0)
+  const lastSliderSyncRef = useRef(0)
+  const hasInitialSeekRef = useRef(false)
+  const isScrubbingRef = useRef(false)
+  const [sliderValue, setSliderValue] = useState(0)
+  const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const subtitleUrlRefs = useRef<string[]>([])
+  const rafRef = useRef<number | null>(null)
+  const timeDisplayRef = useRef<HTMLSpanElement>(null)
+  const progressBarFillRef = useRef<HTMLDivElement>(null)
 
   const isVideoFile = lesson.type === "video"
 
@@ -92,6 +99,8 @@ function VideoPlayerComponent({
         setVideoSrc(null)
         setSubtitleTracks([])
         setActiveSubtitleId("off")
+        progressRef.current = 0
+        setSliderValue(0)
         subtitleUrlRefs.current.forEach((url) => URL.revokeObjectURL(url))
         subtitleUrlRefs.current = []
 
@@ -149,6 +158,47 @@ function VideoPlayerComponent({
     const video = videoRef.current
     if (!video) return
 
+    const tick = () => {
+      const t = video.currentTime
+      progressRef.current = t
+      const dur = video.duration
+      if (timeDisplayRef.current) {
+        timeDisplayRef.current.textContent = `${formatDuration(t)} / ${formatDuration(dur)}`
+      }
+      if (progressBarFillRef.current) {
+        const pct = dur > 0 ? (t / dur) * 100 : 0
+        progressBarFillRef.current.style.transform = `scaleX(${pct / 100})`
+      }
+      const now = Date.now()
+      if (!isScrubbingRef.current) {
+        if (now - lastProgressSaveRef.current > PROGRESS_SAVE_THROTTLE) {
+          lastProgressSaveRef.current = now
+          onProgress(t, dur)
+        }
+        if (now - lastSliderSyncRef.current > SLIDER_SYNC_THROTTLE) {
+          lastSliderSyncRef.current = now
+          setSliderValue(t)
+        }
+      }
+      rafRef.current = requestAnimationFrame(tick)
+    }
+
+    if (videoSrc) {
+      rafRef.current = requestAnimationFrame(tick)
+    }
+
+    return () => {
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current)
+        rafRef.current = null
+      }
+    }
+  }, [videoSrc, onProgress])
+
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video) return
+
     subtitleTracks.forEach((track, index) => {
       const textTrack = video.textTracks[index]
       if (!textTrack) return
@@ -160,16 +210,6 @@ function VideoPlayerComponent({
     const video = videoRef.current
     if (!video || !videoSrc) return
 
-    const handleTimeUpdate = () => {
-      if (isSeekingRef.current) return
-      const now = Date.now()
-      if (now - lastTimeUpdateRef.current < TIME_UPDATE_THROTTLE) return
-      lastTimeUpdateRef.current = now
-      const t = video.currentTime
-      setCurrentTime(t)
-      onProgress(t, video.duration)
-    }
-
     const handleDurationChange = () => setDuration(video.duration)
     const handleEnded = () => {
       setIsEnded(true)
@@ -179,13 +219,16 @@ function VideoPlayerComponent({
     const handlePlay = () => setIsPlaying(true)
     const handlePause = () => setIsPlaying(false)
     const handleError = () => setError("video playback failed")
+    const handleSeeked = () => { isScrubbingRef.current = false }
+    const handleSeeking = () => { isScrubbingRef.current = true }
 
-    video.addEventListener("timeupdate", handleTimeUpdate)
     video.addEventListener("durationchange", handleDurationChange)
     video.addEventListener("ended", handleEnded)
     video.addEventListener("play", handlePlay)
     video.addEventListener("pause", handlePause)
     video.addEventListener("error", handleError)
+    video.addEventListener("seeking", handleSeeking)
+    video.addEventListener("seeked", handleSeeked)
 
     if (lesson.lastPosition > 0 && !hasInitialSeekRef.current) {
       video.currentTime = lesson.lastPosition
@@ -197,14 +240,15 @@ function VideoPlayerComponent({
     }
 
     return () => {
-      video.removeEventListener("timeupdate", handleTimeUpdate)
       video.removeEventListener("durationchange", handleDurationChange)
       video.removeEventListener("ended", handleEnded)
       video.removeEventListener("play", handlePlay)
       video.removeEventListener("pause", handlePause)
       video.removeEventListener("error", handleError)
+      video.removeEventListener("seeking", handleSeeking)
+      video.removeEventListener("seeked", handleSeeked)
     }
-  }, [videoSrc, autoplay, lesson.lastPosition, onProgress, onComplete])
+  }, [videoSrc, autoplay, lesson.lastPosition, onComplete])
 
   const togglePlay = useCallback(() => {
     const video = videoRef.current
@@ -216,15 +260,29 @@ function VideoPlayerComponent({
     }
   }, [isPlaying])
 
-  const handleSeekCommit = useCallback(
+  const handleScrubChange = useCallback((value: number[]) => {
+    const t = value[0]
+    setSliderValue(t)
+    isScrubbingRef.current = true
+    if (progressBarFillRef.current) {
+      const dur = duration
+      const pct = dur > 0 ? (t / dur) * 100 : 0
+      progressBarFillRef.current.style.transform = `scaleX(${pct / 100})`
+    }
+    if (timeDisplayRef.current) {
+      timeDisplayRef.current.textContent = `${formatDuration(t)} / ${formatDuration(duration)}`
+    }
+  }, [duration])
+
+  const handleScrubCommit = useCallback(
     (value: number[]) => {
       const video = videoRef.current
       if (!video) return
       const t = value[0]
       video.currentTime = t
-      setCurrentTime(t)
+      progressRef.current = t
       onProgress(t, video.duration)
-      isSeekingRef.current = false
+      lastProgressSaveRef.current = Date.now()
     },
     [onProgress]
   )
@@ -331,10 +389,6 @@ function VideoPlayerComponent({
         onClick={togglePlay}
         playsInline
         preload="auto"
-        style={{
-          willChange: "transform",
-          transform: "translateZ(0)",
-        }}
       >
         {subtitleTracks.map((track) => (
           <track
@@ -376,15 +430,23 @@ function VideoPlayerComponent({
           showControls || !isPlaying ? "opacity-100" : "pointer-events-none opacity-0"
         )}
       >
-        <Slider
-          value={[currentTime]}
-          max={duration || 100}
-          step={0.1}
-          onValueChange={() => { isSeekingRef.current = true }}
-          onValueCommit={handleSeekCommit}
-          className="mb-4 cursor-pointer"
-          aria-label="video progress"
-        />
+        <div className="relative mb-4 h-1.5 cursor-pointer" aria-label="video progress">
+          <div className="absolute inset-0 rounded-full bg-white/20" />
+          <div
+            ref={progressBarFillRef}
+            className="absolute inset-y-0 left-0 origin-left rounded-full bg-white"
+            style={{ width: "100%", transform: "scaleX(0)" }}
+          />
+          <Slider
+            value={[sliderValue]}
+            max={duration || 100}
+            step={0.1}
+            onValueChange={handleScrubChange}
+            onValueCommit={handleScrubCommit}
+            className="absolute inset-0 cursor-pointer opacity-0"
+            aria-label="video progress"
+          />
+        </div>
 
         <div className="flex items-center justify-between text-white">
           <div className="flex items-center gap-2">
@@ -418,8 +480,8 @@ function VideoPlayerComponent({
               />
             </div>
 
-            <span className="ml-2 text-xs font-medium tabular-nums opacity-90">
-              {formatDuration(currentTime)} / {formatDuration(duration)}
+            <span ref={timeDisplayRef} className="ml-2 text-xs font-medium tabular-nums opacity-90">
+              0:00 / 0:00
             </span>
           </div>
 
