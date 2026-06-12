@@ -22,6 +22,8 @@ jobs:
             args: "--target x86_64-apple-darwin"
           - platform: ubuntu-22.04
             args: ""
+          - platform: ubuntu-22.04-arm
+            args: ""
           - platform: windows-latest
             args: ""
 
@@ -45,7 +47,7 @@ jobs:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: install linux deps
-        if: matrix.platform == 'ubuntu-22.04'
+        if: matrix.platform == 'ubuntu-22.04' || matrix.platform == 'ubuntu-22.04-arm'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -54,6 +56,11 @@ jobs:
             librsvg2-dev \
             patchelf \
             libssl-dev
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
 
       - name: install frontend deps
         run: pnpm install --frozen-lockfile

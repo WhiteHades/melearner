@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../out",
     "devUrl": "http://localhost:3000",
-    "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build"
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm build"
   },
   "app": {
     "windows": [
@@ -44,8 +44,8 @@
       "icons/icon.ico"
     ],
     "category": "Education",
-    "shortDescription": "modern offline course viewer",
-    "longDescription": "melearner is a modern, shadcn-powered offline course viewer for video courses with notes, bookmarks, and progress tracking.",
+    "shortDescription": "native local course viewer",
+    "longDescription": "melearner is a native desktop app for learning from your local course library. scan a folder, open a lesson, take notes — everything stays on your machine.",
     "linux": {
       "appimage": {
         "bundleMediaFramework": true
