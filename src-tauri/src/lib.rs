@@ -119,13 +119,23 @@ pub fn run() {
     {
         std::env::set_var("GST_PLUGIN_FEATURE_RANK", "avdec_h264:MAX");
     }
-    
+
+    let db_path = std::env::var("HOME")
+        .map(|h| std::path::PathBuf::from(h).join(".local").join("share").join("melearn").join("melearn.db"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("melearn.db"));
+
+    if let Some(parent) = db_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    let db_url = format!("sqlite:{}", db_path.display());
+
     tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(
             SqlBuilder::default()
-                .add_migrations("sqlite:melearn.db", get_migrations())
+                .add_migrations(&db_url, get_migrations())
                 .build(),
         )
         .setup(|app| {
