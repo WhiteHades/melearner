@@ -155,7 +155,35 @@ pub fn run() {
             scanner::scan_folder,
             scanner::get_file_info,
             video_server::get_video_server_port,
+            log_frontend,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[tauri::command]
+fn log_frontend(message: String) {
+    use std::fs;
+    use std::io::Write;
+
+    let log_path = std::env::var("HOME")
+        .map(|h| std::path::PathBuf::from(h).join(".melearn").join("frontend.log"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("/tmp/melearn-frontend.log"));
+
+    if let Some(parent) = log_path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0);
+
+    if let Ok(mut f) = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    {
+        let _ = writeln!(f, "[{timestamp}] {message}");
+    }
 }

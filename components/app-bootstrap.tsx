@@ -6,6 +6,7 @@ import { initDatabase } from "@/lib/database"
 import { indexCourses } from "@/lib/search"
 import { useCourseStore } from "@/lib/stores/course-store"
 import { isTauri } from "@/lib/tauri"
+import { frontendLog } from "@/lib/frontend-log"
 
 export function AppBootstrap() {
   const courses = useCourseStore((state) => state.courses)
@@ -13,6 +14,13 @@ export function AppBootstrap() {
   const setHasHydrated = useCourseStore((state) => state.setHasHydrated)
 
   useEffect(() => {
+    frontendLog("info", "app.bootstrap", {
+      isTauri: isTauri(),
+      userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "no-navigator",
+      url: typeof window !== "undefined" ? window.location.href : "no-window",
+      documentReadyState:
+        typeof document !== "undefined" ? document.readyState : "no-document",
+    })
     log.info({
       action: "app.bootstrap",
       runtime: {
@@ -26,6 +34,13 @@ export function AppBootstrap() {
 
     if (typeof window !== "undefined") {
       const onError = (event: ErrorEvent) => {
+        frontendLog("error", "app.error", {
+          message: event.message,
+          filename: event.filename,
+          line: event.lineno,
+          col: event.colno,
+          stack: event.error instanceof Error ? event.error.stack : undefined,
+        })
         log.error({
           action: "app.error",
           message: event.message,
@@ -36,6 +51,12 @@ export function AppBootstrap() {
         })
       }
       const onUnhandledRejection = (event: PromiseRejectionEvent) => {
+        frontendLog("error", "app.unhandledRejection", {
+          reason:
+            event.reason instanceof Error
+              ? { message: event.reason.message, stack: event.reason.stack }
+              : event.reason,
+        })
         log.error({
           action: "app.unhandledRejection",
           reason:
