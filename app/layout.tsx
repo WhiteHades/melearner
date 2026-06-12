@@ -9,13 +9,19 @@ const atkinson = Atkinson_Hyperlegible({
   subsets: ["latin"],
   weight: ["400", "700"],
   variable: "--font-sans",
-  display: "swap",
+  display: "optional",
+  preload: true,
+  fallback: ["system-ui", "-apple-system", "Segoe UI", "sans-serif"],
+  adjustFontFallback: false,
 })
 
 const geistMono = Geist_Mono({
   subsets: ["latin"],
   variable: "--font-mono",
-  display: "swap",
+  display: "optional",
+  preload: true,
+  fallback: ["ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
+  adjustFontFallback: false,
 })
 
 export const metadata: Metadata = {

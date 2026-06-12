@@ -114,6 +114,8 @@ fn get_migrations() -> Vec<Migration> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let _ = write_startup_log("start");
+
     #[cfg(target_os = "linux")]
     {
         std::env::set_var("GST_PLUGIN_FEATURE_RANK", "avdec_h264:MAX");
@@ -128,6 +130,7 @@ pub fn run() {
     }
 
     let db_url = format!("sqlite:{}", db_path.display());
+    let _ = write_startup_log("paths.ready");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
@@ -138,6 +141,7 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
+            let _ = write_startup_log("builder.setup.entry");
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
@@ -147,10 +151,12 @@ pub fn run() {
             }
 
             tauri::async_runtime::spawn(async {
+                let _ = write_startup_log("video.spawn");
                 let port = VideoServer::get_or_start().await;
-                log::info!("video server ready on port {port}");
+                let _ = write_startup_log(&format!("video.ready:{port}"));
             });
 
+            let _ = write_startup_log("builder.setup.exit");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -162,6 +168,27 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+fn write_startup_log(event: &str) -> std::io::Result<()> {
+    use std::fs::OpenOptions;
+    use std::io::Write;
+
+    let log_path = std::env::var("HOME")
+        .map(|h| std::path::PathBuf::from(h).join(".melearn").join("startup.log"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("/tmp/melearn-startup.log"));
+
+    if let Some(parent) = log_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0);
+
+    let mut f = OpenOptions::new().create(true).append(true).open(&log_path)?;
+    writeln!(f, "[{ts}] {event}")
 }
 
 #[tauri::command]

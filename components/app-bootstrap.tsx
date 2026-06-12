@@ -8,6 +8,9 @@ import { useCourseStore } from "@/lib/stores/course-store"
 import { isTauri } from "@/lib/tauri"
 import { frontendLog } from "@/lib/frontend-log"
 
+const t0 = typeof performance !== "undefined" ? performance.now() : 0
+const t = () => (typeof performance !== "undefined" ? performance.now() - t0 : 0)
+
 export function AppBootstrap() {
   const courses = useCourseStore((state) => state.courses)
   const hasHydrated = useCourseStore((state) => state.hasHydrated)
@@ -15,6 +18,7 @@ export function AppBootstrap() {
 
   useEffect(() => {
     frontendLog("info", "app.bootstrap", {
+      ms: Math.round(t()),
       isTauri: isTauri(),
       userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "no-navigator",
       url: typeof window !== "undefined" ? window.location.href : "no-window",
@@ -24,6 +28,7 @@ export function AppBootstrap() {
     log.info({
       action: "app.bootstrap",
       runtime: {
+        ms: Math.round(t()),
         isTauri: isTauri(),
         userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "no-navigator",
         url: typeof window !== "undefined" ? window.location.href : "no-window",
@@ -67,9 +72,20 @@ export function AppBootstrap() {
       }
       window.addEventListener("error", onError)
       window.addEventListener("unhandledrejection", onUnhandledRejection)
+
+      const onLoad = () => {
+        frontendLog("info", "window.load", { ms: Math.round(t()) })
+      }
+      if (document.readyState === "complete") {
+        onLoad()
+      } else {
+        window.addEventListener("load", onLoad, { once: true })
+      }
+
       return () => {
         window.removeEventListener("error", onError)
         window.removeEventListener("unhandledrejection", onUnhandledRejection)
+        window.removeEventListener("load", onLoad)
       }
     }
   }, [])
@@ -77,12 +93,23 @@ export function AppBootstrap() {
   useEffect(() => {
     let isActive = true
 
-    initDatabase().catch((error) => {
-      console.error("Failed to initialize database", error)
-    })
+    frontendLog("info", "app.bootstrap.dbInit.start", { ms: Math.round(t()) })
+    initDatabase()
+      .then(() => {
+        if (isActive) {
+          frontendLog("info", "app.bootstrap.dbInit.done", { ms: Math.round(t()) })
+        }
+      })
+      .catch((error) => {
+        frontendLog("error", "app.bootstrap.dbInit.failed", {
+          ms: Math.round(t()),
+          error: String(error),
+        })
+      })
 
     const stopListening = useCourseStore.persist.onFinishHydration(() => {
       if (!isActive) return
+      frontendLog("info", "app.bootstrap.zustandHydrated", { ms: Math.round(t()) })
       setHasHydrated(true)
     })
 
@@ -99,7 +126,9 @@ export function AppBootstrap() {
 
   useEffect(() => {
     if (!hasHydrated) return
+    const start = t()
     indexCourses(courses)
+    frontendLog("info", "app.bootstrap.indexDone", { ms: Math.round(t()), coursesCount: courses.length, durMs: Math.round(t() - start) })
   }, [courses, hasHydrated])
 
   return null
