@@ -1,9 +1,9 @@
 "use client"
 
-import { useState, useEffect } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import { Button } from "@/components/ui/button"
 import { frontendLog } from "@/lib/frontend-log"
+import { useAsyncResource } from "@/lib/hooks/use-async-resource"
 import { isTauri } from "@/lib/tauri"
 import type { Lesson } from "@/types"
 import { SkipBack, SkipForward, FileText, File, FileCode } from "lucide-react"
@@ -15,10 +15,6 @@ interface ContentViewerProps {
 }
 
 export function ContentViewer({ lesson, onPrevious, onNext }: ContentViewerProps) {
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [openedExternally, setOpenedExternally] = useState(false)
-
   const ext = lesson.path.toLowerCase().split(".").pop() || ""
   const isPdf = ext === "pdf"
   const isHtml = ext === "html" || ext === "htm"
@@ -31,41 +27,25 @@ export function ContentViewer({ lesson, onPrevious, onNext }: ContentViewerProps
     return <File className="size-8 text-muted-foreground" />
   }
 
-  useEffect(() => {
-    let isActive = true
-
-    async function openInNative() {
-      setLoading(true)
-      setError(null)
-      setOpenedExternally(false)
-
-      if (!isTauri()) {
-        setError("file viewing requires desktop app")
-        setLoading(false)
-        return
-      }
-
-      try {
-        await invoke("open_native", { path: lesson.path })
-        if (!isActive) return
-        setOpenedExternally(true)
+  const resource = useAsyncResource<true>(
+    async () => {
+      if (!isTauri()) throw new Error("file viewing requires desktop app")
+      await invoke("open_native", { path: lesson.path })
+      return true
+    },
+    [lesson.path, lesson.type],
+    {
+      onSuccess: () => {
         frontendLog("info", "content.openNative", { path: lesson.path, type: lesson.type })
-      } catch (err) {
-        if (!isActive) return
-        const message = err instanceof Error ? err.message : String(err)
-        setError(`failed to open file: ${message}`)
-        frontendLog("error", "content.openNative.failed", { path: lesson.path, error: message })
-      } finally {
-        if (isActive) setLoading(false)
-      }
-    }
-
-    openInNative()
-
-    return () => {
-      isActive = false
-    }
-  }, [lesson.path, lesson.type])
+      },
+      onError: (error) => {
+        frontendLog("error", "content.openNative.failed", {
+          path: lesson.path,
+          error,
+        })
+      },
+    },
+  )
 
   const navButtons = (
     <div className="flex gap-2">
@@ -82,7 +62,7 @@ export function ContentViewer({ lesson, onPrevious, onNext }: ContentViewerProps
     </div>
   )
 
-  if (loading) {
+  if (resource.status === "loading") {
     return (
       <div className="flex aspect-video w-full items-center justify-center bg-muted">
         <p className="text-muted-foreground">opening in default app...</p>
@@ -90,7 +70,7 @@ export function ContentViewer({ lesson, onPrevious, onNext }: ContentViewerProps
     )
   }
 
-  if (openedExternally) {
+  if (resource.status === "success") {
     return (
       <div className="flex aspect-video w-full flex-col items-center justify-center gap-4 bg-muted">
         {getIcon()}
@@ -106,24 +86,14 @@ export function ContentViewer({ lesson, onPrevious, onNext }: ContentViewerProps
     )
   }
 
-  if (error) {
+  if (resource.status === "error") {
     return (
       <div className="flex aspect-video w-full flex-col items-center justify-center gap-4 bg-muted">
-        <p className="text-destructive">{error}</p>
+        <p className="text-destructive">{`failed to open file: ${resource.error}`}</p>
         {navButtons}
       </div>
     )
   }
 
-  return (
-    <div className="flex aspect-video w-full flex-col items-center justify-center gap-4 bg-muted">
-      {getIcon()}
-      <div className="text-center">
-        <p className="text-lg font-medium">{lesson.name}</p>
-        <p className="mt-1 text-sm text-muted-foreground">{lesson.type} file</p>
-        <p className="mt-2 max-w-md truncate text-xs text-muted-foreground">{lesson.path}</p>
-      </div>
-      {navButtons}
-    </div>
-  )
+  return null
 }
