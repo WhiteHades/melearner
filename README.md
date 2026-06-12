@@ -19,6 +19,38 @@ melearn is a viewer. it doesn't download, stream, or share anything. see the [le
 
 ---
 
+## install
+
+grab the latest release for your platform from the [releases page](https://github.com/WhiteHades/melearn/releases). download the file, open it, done.
+
+| platform    | what to download          |
+| ----------- | ------------------------- |
+| linux       | `.deb` or `.AppImage`     |
+| macos       | `.dmg` (intel or apple silicon) |
+| windows     | `.msi` or `.exe`          |
+
+on linux, after downloading the deb:
+
+```bash
+sudo dpkg -i melearn_*.deb
+```
+
+or, if you built it yourself from source:
+
+```bash
+sudo cp src-tauri/target/release/melearn /usr/local/bin/melearn
+```
+
+## first run
+
+1. launch melearn from your app drawer (linux), launchpad (mac), or start menu (windows)
+2. click **choose folder** and pick a directory that holds your course files
+3. melearn walks the folder, groups files into courses, sections, and lessons, and drops you in the library
+4. click a course to open it, click a lesson to play or read
+5. press `space` to play, `f` for fullscreen, `n` to jump to the next lesson
+
+notes go in the card under the player. progress saves automatically. close the app, come back tomorrow, and you're exactly where you left off.
+
 ## what it does
 
 you pick a folder. melearn walks it, groups files into courses, sections, and lessons, and gives you a clean player plus a place to write notes against timestamps. progress is saved locally so you can close the app, come back tomorrow, and pick up where you stopped.
@@ -36,21 +68,22 @@ that's the whole product.
 - frameless window, native title bar drag regions
 - works offline. no accounts, no telemetry, no network
 
-## stack
+## keyboard shortcuts
 
-| layer        | what                                            |
-| ------------ | ----------------------------------------------- |
-| desktop      | tauri 2                                         |
-| frontend     | next.js 16 (static export), react 19, tailwind 4 |
-| ui           | shadcn/ui on radix primitives                   |
-| backend      | rust, with axum for the local video server      |
-| storage      | sqlite via tauri plugin-sql, in `~/.local/share/melearn` |
-| search       | minisearch                                      |
-| forms        | react-hook-form, zod                            |
-| state        | zustand, persisted                              |
-| url state    | nuqs                                            |
+| key       | action           |
+| --------- | ---------------- |
+| space / k | play / pause     |
+| m         | mute / unmute    |
+| f         | fullscreen       |
+| j / ←     | seek back 10s    |
+| l / →     | seek forward 10s |
+| ↑ / ↓     | volume up / down |
+| n         | next lesson      |
+| p         | previous lesson  |
 
-## getting started
+## for developers
+
+if you want to build melearn yourself, hack on it, or send a patch, keep reading.
 
 ### prerequisites
 
@@ -83,25 +116,6 @@ pnpm tauri:build:windows         # msi + nsis
 pnpm tauri:build:macos           # intel
 pnpm tauri:build:macos-arm       # apple silicon
 ```
-
-on linux, after the build:
-
-```bash
-sudo cp src-tauri/target/release/melearn /usr/local/bin/melearn
-```
-
-## keyboard shortcuts
-
-| key       | action           |
-| --------- | ---------------- |
-| space / k | play / pause     |
-| m         | mute / unmute    |
-| f         | fullscreen       |
-| j / ←     | seek back 10s    |
-| l / →     | seek forward 10s |
-| ↑ / ↓     | volume up / down |
-| n         | next lesson      |
-| p         | previous lesson  |
 
 ## how it's built
 
