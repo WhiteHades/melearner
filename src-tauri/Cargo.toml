@@ -30,11 +30,5 @@ jwalk = "0.8"
 rayon = "1.10"
 dashmap = "6.1"
 notify = "6.1"
-tokio = { version = "1", features = ["full"] }
-tokio-util = { version = "0.7", features = ["io"] }
-axum = "0.7"
-tower-http = { version = "0.5", features = ["fs", "cors", "trace"] }
-http-range = "0.1"
-urlencoding = "2.1"
-tower = { version = "0.5.3", features = ["util"] }
+tokio = { version = "1", features = ["rt", "macros"] }
 seahash = "4.1"

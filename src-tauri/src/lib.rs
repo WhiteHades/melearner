@@ -1,8 +1,6 @@
 mod scanner;
-mod video_server;
 
 use tauri_plugin_sql::{Builder as SqlBuilder, Migration, MigrationKind};
-use video_server::VideoServer;
 
 fn get_migrations() -> Vec<Migration> {
     vec![
@@ -150,19 +148,12 @@ pub fn run() {
                 )?;
             }
 
-            tauri::async_runtime::spawn(async {
-                let _ = write_startup_log("video.spawn");
-                let port = VideoServer::get_or_start().await;
-                let _ = write_startup_log(&format!("video.ready:{port}"));
-            });
-
             let _ = write_startup_log("builder.setup.exit");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             scanner::scan_folder,
             scanner::get_file_info,
-            video_server::get_video_server_port,
             log_frontend,
             open_native,
             get_build_info,

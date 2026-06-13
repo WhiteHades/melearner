@@ -1,7 +1,8 @@
 "use client"
 
 import { useRef, useState, useEffect, useCallback, memo } from "react"
-import { invoke } from "@tauri-apps/api/core"
+import { convertFileSrc } from "@tauri-apps/api/core"
+import { readTextFile } from "@tauri-apps/plugin-fs"
 import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
 import {
@@ -10,7 +11,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { readTextFile } from "@tauri-apps/plugin-fs"
 import { createSubtitleTrackId, toVttContent, type VideoSubtitleTrack } from "@/lib/subtitles"
 import { cn, formatDuration } from "@/lib/utils"
 import { isTauri } from "@/lib/tauri"
@@ -37,20 +37,12 @@ interface VideoPlayerProps {
   autoplay?: boolean
 }
 
-let cachedPort: number | null = null
-
-async function getVideoServerPort(): Promise<number> {
-  if (cachedPort !== null) return cachedPort
-  cachedPort = await invoke<number>("get_video_server_port")
-  return cachedPort
-}
-
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
 const PROGRESS_SAVE_THROTTLE = 1000
 const SLIDER_SYNC_THROTTLE = 250
 
-function createMediaUrl(port: number, filePath: string): string {
-  return `http://127.0.0.1:${port}/video/${encodeURIComponent(filePath)}`
+function createMediaUrl(filePath: string): string {
+  return isTauri() ? convertFileSrc(filePath) : filePath
 }
 
 function VideoPlayerComponent({
@@ -105,9 +97,7 @@ function VideoPlayerComponent({
         subtitleUrlRefs.current = []
 
         if (isTauri()) {
-          const port = await getVideoServerPort()
-          const src = createMediaUrl(port, lesson.path)
-          setVideoSrc(src)
+          setVideoSrc(createMediaUrl(lesson.path))
 
           const builtTracks = await Promise.allSettled(
             lesson.subtitles.map(async (subtitle, index) => {
