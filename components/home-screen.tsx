@@ -10,6 +10,7 @@ import { CourseGrid } from "@/components/course-grid"
 import { useCourseStore } from "@/lib/stores/course-store"
 import { markCourseAccessed, scanLibraryAt } from "@/lib/operations"
 import { selectFolderDialog, isTauri, getBuildInfo, type BuildInfo } from "@/lib/tauri"
+import { frontendLog } from "@/lib/frontend-log"
 import { Button } from "@/components/ui/button"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import {
@@ -166,6 +167,29 @@ function LibraryHeader({
       .catch(() => setBuildInfo(null))
   }, [])
 
+  useEffect(() => {
+    if (!isTauri()) return
+    if (typeof window === "undefined") return
+    if (window.location.search.includes("autoScan=")) {
+      const url = new URL(window.location.href)
+      const path = url.searchParams.get("autoScan")
+      if (path) {
+        setScanMode("selecting")
+        scanLibraryAt(path)
+          .then(() => setError(null))
+          .catch((err) => {
+            const detail = err instanceof Error
+              ? `${err.name}: ${err.message}\n${err.stack ?? ""}`
+              : `non-Error throw: ${JSON.stringify(err)}`
+            frontendLog("error", `autoScan failed: ${detail}`)
+            setError(`autoScan failed: ${detail}`)
+          })
+          .finally(() => setScanMode("idle"))
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   async function handleSelectFolder() {
     if (!isTauri()) {
       setError("Folder selection is only available in the desktop app.")
@@ -180,7 +204,11 @@ function LibraryHeader({
       setError(null)
       await scanLibraryAt(path)
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to scan the selected folder.")
+      const detail = err instanceof Error
+        ? `${err.name}: ${err.message}`
+        : `non-Error throw: ${JSON.stringify(err)}`
+      frontendLog("error", `scan failed at path: ${detail}`)
+      setError(err instanceof Error ? err.message : `Failed to scan the selected folder (${detail}).`)
     } finally {
       setScanMode("idle")
     }

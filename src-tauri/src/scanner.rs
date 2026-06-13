@@ -276,11 +276,28 @@ pub fn scan_library(root_path: &str) -> ScanResult {
         return ScanResult {
             scan_type: ScanType::Library,
             courses: Box::new([]),
-            warnings: Box::new(["path does not exist".to_string()]),
+            warnings: Box::new([format!("path does not exist: {root_path}")]),
         };
     }
 
-    let entries = read_dir_sorted(&root);
+    if !root.is_dir() {
+        return ScanResult {
+            scan_type: ScanType::Library,
+            courses: Box::new([]),
+            warnings: Box::new([format!("not a directory: {root_path}")]),
+        };
+    }
+
+    let entries = match std::fs::read_dir(&root) {
+        Ok(entries) => entries.filter_map(|e| e.ok()).collect::<Vec<_>>(),
+        Err(e) => {
+            return ScanResult {
+                scan_type: ScanType::Library,
+                courses: Box::new([]),
+                warnings: Box::new([format!("cannot read directory {}: {e}", root.display())]),
+            };
+        }
+    };
 
     let root_files_exist = entries
         .iter()
@@ -312,7 +329,7 @@ pub fn scan_library(root_path: &str) -> ScanResult {
 
     let courses: Box<[CourseData]> = subdirs
         .par_iter()
-        .map(|dir| scan_course(dir))
+        .filter_map(|dir| std::panic::catch_unwind(|| scan_course(dir)).ok())
         .filter(|c| !c.sections.is_empty())
         .collect::<Vec<_>>()
         .into_boxed_slice();
