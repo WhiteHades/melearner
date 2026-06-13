@@ -343,9 +343,53 @@ pub fn scan_library(root_path: &str) -> ScanResult {
 
 #[tauri::command]
 pub async fn scan_folder(path: String) -> Result<ScanResult, String> {
-    Ok(tokio::task::spawn_blocking(move || scan_library(&path))
-        .await
-        .map_err(|e| format!("scan task failed: {e}"))?)
+    use std::io::Write;
+    use std::fs::OpenOptions;
+
+    let path_for_log = path.clone();
+    let log_path = std::env::var("HOME")
+        .map(|h| std::path::PathBuf::from(h).join(".melearner").join("scan.log"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("/tmp/melearner-scan.log"));
+
+    let _ = std::fs::create_dir_all(log_path.parent().unwrap());
+
+    let log = move |msg: &str| {
+        if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&log_path) {
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs_f64())
+                .unwrap_or(0.0);
+            let _ = writeln!(f, "[{ts}] {msg}");
+        }
+    };
+
+    log(&format!("scan_folder start: path={path_for_log}"));
+
+    let log_for_thread = log.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        log_for_thread(&format!("scan_library called: path={path_for_log}"));
+        let r = scan_library(&path_for_log);
+        log_for_thread(&format!(
+            "scan_library returned: scan_type={:?} courses={} warnings={}",
+            r.scan_type,
+            r.courses.len(),
+            r.warnings.join(" | ")
+        ));
+        r
+    })
+    .await;
+
+    match result {
+        Ok(r) => {
+            log(&format!("scan_folder done: {} courses", r.courses.len()));
+            Ok(r)
+        }
+        Err(e) => {
+            let msg = format!("scan task panicked: {e}");
+            log(&msg);
+            Err(msg)
+        }
+    }
 }
 
 #[tauri::command]

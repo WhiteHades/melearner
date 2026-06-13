@@ -78,9 +78,14 @@ export class OperationError extends Error {
 }
 
 export async function scanLibraryAt(path: string): Promise<{ courses: Course[]; warnings: string[] }> {
+  const { frontendLog } = await import("@/lib/frontend-log")
+  frontendLog("info", `scanLibraryAt start: path=${path}`)
   const result = await scanFolder(path)
+  frontendLog("info", `scanFolder returned: ${result.courses.length} courses, ${result.warnings.length} warnings: ${result.warnings.join(" | ")}`)
   const scanned = processScanResult(result)
+  frontendLog("info", `processScanResult returned: ${scanned.length} courses`)
   const hydrated = isTauri() ? await syncLibrary(scanned) : scanned
+  frontendLog("info", `syncLibrary returned: ${hydrated.length} courses`)
   const store = useCourseStore.getState()
   store.setCourses(hydrated)
   store.setLibraryPath(path)
