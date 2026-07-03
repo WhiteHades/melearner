@@ -2,13 +2,13 @@ use jwalk::WalkDir;
 use rayon::prelude::*;
 use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 use std::hash::Hasher;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 
 const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mkv", "webm", "mov", "avi", "m4v"];
 const AUDIO_EXTENSIONS: &[&str] = &["mp3", "wav", "aac", "m4a", "flac", "ogg"];
-const DOCUMENT_EXTENSIONS: &[&str] = &["pdf", "txt", "md", "html", "docx"];
+const DOCUMENT_EXTENSIONS: &[&str] = &["pdf", "txt", "md", "markdown", "html", "htm", "docx"];
 const SUBTITLE_EXTENSIONS: &[&str] = &["srt", "vtt"];
 const IGNORED_FOLDERS: &[&str] = &[".git", "node_modules", "__MACOSX", ".DS_Store", "Thumbs.db"];
 const RESOURCE_FOLDERS: &[&str] = &["resources", "assets", "downloads", "extras", "materials"];
@@ -65,26 +65,13 @@ pub struct ScanResult {
     pub warnings: Box<[String]>,
 }
 
-static HASHER_SEED: OnceLock<[u64; 4]> = OnceLock::new();
-
 fn new_hasher() -> SeaHasher {
-    let seed = HASHER_SEED.get_or_init(|| {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_nanos() as u64)
-            .unwrap_or(0);
-        let mut h = SeaHasher::new();
-        h.write_u64(now);
-        h.write_u64(now.wrapping_mul(0x9E3779B97F4A7C15));
-        h.write_u64(now.rotate_left(17));
-        let a = h.finish();
-        h.write_u64(a.wrapping_add(0xDEADBEEF));
-        [h.finish(), a, a.rotate_left(31), a.rotate_left(47)]
-    });
-    let mut h = SeaHasher::with_seeds(seed[0], seed[1], seed[2], seed[3]);
-    h.write_u64(0xC0FFEE_BEEF);
-    h
+    SeaHasher::with_seeds(
+        0xD6E8FEB86659FD93,
+        0xA5A3564E27F8862E,
+        0x510E527FADE682D1,
+        0x9B05688C2B3E6C1F,
+    )
 }
 
 fn hash_str_to_id(s: &str) -> Box<str> {
@@ -150,11 +137,68 @@ fn is_resource_folder(path: &Path) -> bool {
     RESOURCE_FOLDERS.contains(&name.to_ascii_lowercase().as_str())
 }
 
+fn is_ignored_or_resource_path(path: &Path, base: &Path) -> bool {
+    let relative = path.strip_prefix(base).unwrap_or(path);
+    relative.components().any(|component| {
+        let part = component.as_os_str().to_string_lossy();
+        let lower = part.to_ascii_lowercase();
+        part.starts_with('.')
+            || IGNORED_FOLDERS.contains(&part.as_ref())
+            || RESOURCE_FOLDERS.contains(&lower.as_str())
+    })
+}
+
 fn is_media_file(file_type: FileType) -> bool {
     matches!(
         file_type,
         FileType::Video | FileType::Audio | FileType::Document | FileType::Quiz
     )
+}
+
+fn natural_cmp(a: &str, b: &str) -> Ordering {
+    let mut ai = 0;
+    let mut bi = 0;
+    let ab = a.as_bytes();
+    let bb = b.as_bytes();
+
+    while ai < ab.len() && bi < bb.len() {
+        if ab[ai].is_ascii_digit() && bb[bi].is_ascii_digit() {
+            let a_start = ai;
+            let b_start = bi;
+            while ai < ab.len() && ab[ai].is_ascii_digit() {
+                ai += 1;
+            }
+            while bi < bb.len() && bb[bi].is_ascii_digit() {
+                bi += 1;
+            }
+            let an = a[a_start..ai].trim_start_matches('0');
+            let bn = b[b_start..bi].trim_start_matches('0');
+            let an = if an.is_empty() { "0" } else { an };
+            let bn = if bn.is_empty() { "0" } else { bn };
+            let number_order = an.len().cmp(&bn.len()).then_with(|| an.cmp(bn));
+            if number_order != Ordering::Equal {
+                return number_order;
+            }
+            continue;
+        }
+
+        let ac = ab[ai].to_ascii_lowercase();
+        let bc = bb[bi].to_ascii_lowercase();
+        if ac != bc {
+            return ac.cmp(&bc);
+        }
+        ai += 1;
+        bi += 1;
+    }
+
+    ab.len().cmp(&bb.len())
+}
+
+fn path_name(path: &Path) -> String {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default()
+        .to_string()
 }
 
 fn read_dir_sorted(path: &Path) -> Vec<std::fs::DirEntry> {
@@ -163,7 +207,7 @@ fn read_dir_sorted(path: &Path) -> Vec<std::fs::DirEntry> {
         .flatten()
         .filter_map(|e| e.ok())
         .collect();
-    entries.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+    entries.sort_by(|a, b| natural_cmp(&path_name(&a.path()), &path_name(&b.path())));
     entries
 }
 
@@ -186,12 +230,11 @@ fn file_entry(path: &Path, file_type: FileType) -> Option<FileEntry> {
 fn scan_directory(dir: &Path) -> Box<[FileEntry]> {
     WalkDir::new(dir)
         .skip_hidden(true)
-        .max_depth(1)
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
         .map(|e| e.path())
-        .filter(|p| !is_ignored(p))
+        .filter(|p| !is_ignored_or_resource_path(p, dir))
         .filter_map(|p| {
             let ft = get_file_type(&p);
             (is_media_file(ft) || ft == FileType::Subtitle)
@@ -255,7 +298,11 @@ fn scan_course(course_path: &Path) -> CourseData {
         }
     }
 
-    sections.sort_by(|a, b| a.order.cmp(&b.order).then_with(|| a.name.cmp(&b.name)));
+    sections.sort_by(|a, b| {
+        a.order
+            .cmp(&b.order)
+            .then_with(|| natural_cmp(&a.name, &b.name))
+    });
 
     CourseData {
         id: hash_path_to_id(course_path),

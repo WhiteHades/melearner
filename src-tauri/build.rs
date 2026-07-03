@@ -59,7 +59,7 @@ fn build_frontend(repo_root: &PathBuf) {
 fn emit_build_info(manifest_dir: &PathBuf) {
     let git_sha = run_capture("git", &["rev-parse", "--short=12", "HEAD"], manifest_dir)
         .unwrap_or_else(|| "unknown".to_string());
-    let git_sha_long = run_capture("git", &rev_parse_long(), manifest_dir)
+    let git_sha_long = run_capture("git", &["rev-parse", "HEAD"], manifest_dir)
         .unwrap_or_else(|| "unknown".to_string());
     let build_ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -70,12 +70,9 @@ fn emit_build_info(manifest_dir: &PathBuf) {
     println!("cargo:rustc-env=MELEARNER_GIT_SHA_LONG={git_sha_long}");
     println!("cargo:rustc-env=MELEARNER_BUILD_TIMESTAMP={build_ts}");
 
-    println!("cargo:rerun-if-changed=../../.git/HEAD");
-    println!("cargo:rerun-if-changed=../../.git/refs/heads/main");
-}
-
-fn rev_parse_long() -> [&'static str; 3] {
-    ["git", "rev-parse", "HEAD"]
+    let git_dir = manifest_dir.join("..").join(".git");
+    println!("cargo:rerun-if-changed={}", git_dir.join("HEAD").display());
+    println!("cargo:rerun-if-changed={}", git_dir.join("refs/heads/main").display());
 }
 
 fn run_capture(cmd: &str, args: &[&str], cwd: &PathBuf) -> Option<String> {
