@@ -61,3 +61,7 @@ export async function getBuildInfo(): Promise<BuildInfo> {
 export async function getDatabasePath(): Promise<string> {
   return invoke<string>("get_database_path")
 }
+
+export async function openNativeFile(path: string): Promise<void> {
+  return invoke<void>("open_native", { path })
+}

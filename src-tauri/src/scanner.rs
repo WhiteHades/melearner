@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mkv", "webm", "mov", "avi", "m4v"];
 const AUDIO_EXTENSIONS: &[&str] = &["mp3", "wav", "aac", "m4a", "flac", "ogg"];
-const DOCUMENT_EXTENSIONS: &[&str] = &["pdf", "txt", "md", "markdown", "html", "htm", "docx"];
+const DOCUMENT_EXTENSIONS: &[&str] = &["pdf", "txt", "md", "markdown", "html", "htm", "docx", "doc"];
 const SUBTITLE_EXTENSIONS: &[&str] = &["srt", "vtt"];
 const IGNORED_FOLDERS: &[&str] = &[".git", "node_modules", "__MACOSX", ".DS_Store", "Thumbs.db"];
 const RESOURCE_FOLDERS: &[&str] = &["resources", "assets", "downloads", "extras", "materials"];

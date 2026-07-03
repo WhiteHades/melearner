@@ -24,7 +24,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' 'unsafe-inline' 'unsafe-eval' tauri: ipc:; img-src 'self' asset: http://asset.localhost https://asset.localhost data: blob:; media-src 'self' asset: http://asset.localhost https://asset.localhost blob: data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost data: blob:; font-src 'self' data:",
+      "csp": "default-src 'self' 'unsafe-inline' 'unsafe-eval' tauri: ipc:; img-src 'self' asset: http://asset.localhost https://asset.localhost data: blob:; media-src 'self' asset: http://asset.localhost https://asset.localhost blob: data:; frame-src 'self' asset: http://asset.localhost https://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost data: blob:; font-src 'self' data:",
       "assetProtocol": {
         "enable": true,
         "scope": ["$HOME/**", "$VIDEO/**", "$DOCUMENT/**", "$DOWNLOAD/**", "$DESKTOP/**", "$APPDATA/**", "$LOCALAPPDATA/**", "/**"]
