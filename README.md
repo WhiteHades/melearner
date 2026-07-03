@@ -119,7 +119,7 @@ the CI release pipeline (`.github/workflows/release.yml`) builds all platforms a
 a few things worth knowing if you're going to read the code:
 
 - the database lives at `$HOME/.local/share/melearner/melearner.db`. there's no remote sync, no fallback, no shadow copy.
-- video files stream through a tiny axum server bound to `127.0.0.1`. it starts lazily on the first video you open and never touches the network.
+- video and audio files load through Tauri's asset protocol. there is no localhost media server.
 - the frontend calls tauri commands directly. no trpc, no react-query, no extra runtime layer between you and the rust backend.
 - background services init on first use, never in the window setup callback. the app opens fast.
 - the video player updates the time text and progress bar in a `requestAnimationFrame` loop. no React re-renders per frame.
