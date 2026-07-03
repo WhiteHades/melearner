@@ -1,10 +1,9 @@
 "use client"
 
 import { useCallback, useRef, useState } from "react"
-import { CheckCircle2, Circle } from "lucide-react"
+import { CheckCircle2, ChevronLeft, ChevronRight, Circle } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
 import { ContentViewer } from "@/components/content-viewer"
 import { VideoPlayer } from "@/components/video-player"
 import { recordLessonProgress } from "@/lib/operations"
@@ -23,14 +22,14 @@ export function VideoArea({ className, lesson, onNext, onPrevious }: VideoAreaPr
   const lessonId = lesson?.id ?? ""
   const lessonDuration = lesson?.duration ?? 0
   const lessonLastPosition = lesson?.lastPosition ?? 0
-  const [playhead, setPlayhead] = useState(0)
+  const [playhead, setPlayhead] = useState(lessonLastPosition)
 
   const handleProgress = useCallback(
     (currentTime: number, duration: number) => {
       if (!lessonId) return
       setPlayhead(currentTime)
       const now = Date.now()
-      const shouldUpdate = now - lastUpdateRef.current > 5000 || currentTime >= duration - 1
+      const shouldUpdate = now - lastUpdateRef.current > 5000 || (duration > 0 && currentTime >= duration - 1)
 
       if (!shouldUpdate) return
       lastUpdateRef.current = now
@@ -66,80 +65,63 @@ export function VideoArea({ className, lesson, onNext, onPrevious }: VideoAreaPr
 
   if (!lesson) {
     return (
-      <Card className={className}>
-        <CardContent className="flex min-h-72 items-center justify-center px-6 py-12 text-center">
-          <div className="space-y-2">
-            <h3 className="text-xl font-semibold tracking-tight text-foreground">
-              Select a lesson to start learning
-            </h3>
-            <p className="text-sm text-muted-foreground">
-              Pick any lesson from the outline to open the player or document viewer.
-            </p>
-          </div>
-        </CardContent>
-      </Card>
+      <div className={cn("flex min-h-[70vh] items-center justify-center rounded-2xl border border-border bg-card px-6 py-12 text-center", className)}>
+        <div className="flex flex-col gap-2">
+          <h3 className="text-xl font-semibold tracking-tight">Select a lesson to start learning</h3>
+          <p className="text-sm text-muted-foreground">Pick any item from the outline.</p>
+        </div>
+      </div>
     )
   }
 
-  const isVideo = lesson.type === "video"
+  const isPlayable = lesson.type === "video" || lesson.type === "audio"
 
   return (
-    <div className={cn("flex flex-col gap-6", className)}>
-      <div className="space-y-4">
+    <div className={cn("flex min-h-[calc(100vh-7rem)] flex-col gap-5", className)}>
+      <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-[0_28px_90px_-72px_rgb(96_165_250/0.7)]">
+        {isPlayable ? (
+          <VideoPlayer
+            lesson={lesson}
+            onProgress={handleProgress}
+            onComplete={handleComplete}
+            onNext={onNext}
+            onPrevious={onPrevious}
+          />
+        ) : (
+          <ContentViewer lesson={lesson} onNext={onNext} onPrevious={onPrevious} />
+        )}
+      </div>
+
+      <section className="flex flex-col gap-5 rounded-2xl border border-border bg-card p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div className="space-y-3">
-            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground tabular-nums">
-              <Badge variant="secondary" className="rounded-full px-2.5 py-1 text-xs font-medium">
-                {cleanSectionName(lesson.sectionName) || "Module"}
-              </Badge>
-              <Badge variant="outline" className="rounded-full px-2.5 py-1 uppercase tracking-wide">
-                {lesson.type}
-              </Badge>
+          <div className="min-w-0 flex-1">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <Badge variant="secondary" className="rounded-full">{cleanSectionName(lesson.sectionName) || "Module"}</Badge>
+              <Badge variant="outline" className="rounded-full uppercase tracking-wide">{lesson.type}</Badge>
+              {lesson.subtitles.length > 0 && <Badge variant="outline" className="rounded-full">Subtitles</Badge>}
             </div>
-            <div className="space-y-2">
-              <h1 className="text-3xl font-bold tracking-tight text-foreground text-balance">
-                {lesson.name}
-              </h1>
-              <p className="text-sm leading-6 text-muted-foreground">
-                {lesson.completed
-                  ? "Completed"
-                  : `Last position ${formatDuration(lesson.lastPosition ?? 0)}`}
-              </p>
-            </div>
+            <h1 className="text-2xl font-semibold tracking-tight md:text-3xl">{lesson.name}</h1>
+            <p className="mt-2 text-sm text-muted-foreground">
+              {lesson.completed ? "Completed" : `Last position ${formatDuration(Math.max(playhead, lesson.lastPosition ?? 0))}`}
+            </p>
           </div>
 
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={onPrevious} disabled={!onPrevious}>
+            <Button type="button" variant="outline" onClick={onPrevious} disabled={!onPrevious} className="gap-2">
+              <ChevronLeft className="size-4" />
               Previous
             </Button>
-            <Button
-              variant={lesson.completed ? "secondary" : "outline"}
-              onClick={toggleComplete}
-              className="gap-2"
-            >
-              {lesson.completed ? <CheckCircle2 data-icon="inline-start" /> : <Circle data-icon="inline-start" />}
+            <Button type="button" variant={lesson.completed ? "secondary" : "outline"} onClick={toggleComplete} className="gap-2">
+              {lesson.completed ? <CheckCircle2 className="size-4" /> : <Circle className="size-4" />}
               {lesson.completed ? "Completed" : "Mark complete"}
             </Button>
-            <Button onClick={onNext} disabled={!onNext}>
-              Next lesson
+            <Button type="button" onClick={onNext} disabled={!onNext} className="gap-2">
+              Next item
+              <ChevronRight className="size-4" />
             </Button>
           </div>
         </div>
-
-        <Card className="overflow-hidden rounded-[28px] border-border/70 shadow-[0_28px_80px_-52px_rgba(15,23,42,0.55)]">
-          {isVideo ? (
-            <VideoPlayer
-              lesson={lesson}
-              onProgress={handleProgress}
-              onComplete={handleComplete}
-              onNext={onNext}
-              onPrevious={onPrevious}
-            />
-          ) : (
-            <ContentViewer lesson={lesson} onNext={onNext} onPrevious={onPrevious} />
-          )}
-        </Card>
-      </div>
+      </section>
     </div>
   )
 }

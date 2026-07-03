@@ -53,7 +53,7 @@ function VideoPlayerComponent({
   onNext,
   autoplay = false,
 }: VideoPlayerProps) {
-  const videoRef = useRef<HTMLVideoElement>(null)
+  const videoRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [videoSrc, setVideoSrc] = useState<string | null>(null)
   const [subtitleTracks, setSubtitleTracks] = useState<VideoSubtitleTrack[]>([])
@@ -81,10 +81,16 @@ function VideoPlayerComponent({
   const progressBarFillRef = useRef<HTMLDivElement>(null)
 
   const isVideoFile = lesson.type === "video"
+  const isAudioFile = lesson.type === "audio"
+  const isPlayableFile = isVideoFile || isAudioFile
+
+  const setMediaRef = useCallback((node: HTMLVideoElement | HTMLAudioElement | null) => {
+    videoRef.current = node
+  }, [])
 
   useEffect(() => {
     async function loadVideoSrc() {
-      if (!isVideoFile) return
+      if (!isPlayableFile) return
 
       try {
         setError(null)
@@ -99,21 +105,23 @@ function VideoPlayerComponent({
         if (isTauri()) {
           setVideoSrc(createMediaUrl(lesson.path))
 
-          const builtTracks = await Promise.allSettled(
-            lesson.subtitles.map(async (subtitle, index) => {
-              const content = await readTextFile(subtitle.path)
-              const blob = new Blob([toVttContent(content, subtitle.path)], { type: "text/vtt" })
-              const url = URL.createObjectURL(blob)
-              subtitleUrlRefs.current.push(url)
+          const builtTracks = isVideoFile
+            ? await Promise.allSettled(
+                lesson.subtitles.map(async (subtitle, index) => {
+                  const content = await readTextFile(subtitle.path)
+                  const blob = new Blob([toVttContent(content, subtitle.path)], { type: "text/vtt" })
+                  const url = URL.createObjectURL(blob)
+                  subtitleUrlRefs.current.push(url)
 
-              return {
-                id: createSubtitleTrackId(subtitle, index),
-                label: subtitle.label || subtitle.language || `Track ${index + 1}`,
-                language: subtitle.language || "und",
-                src: url,
-              }
-            })
-          )
+                  return {
+                    id: createSubtitleTrackId(subtitle, index),
+                    label: subtitle.label || subtitle.language || `Track ${index + 1}`,
+                    language: subtitle.language || "und",
+                    src: url,
+                  }
+                })
+              )
+            : []
 
           const resolvedTracks = builtTracks
             .filter((result): result is PromiseFulfilledResult<VideoSubtitleTrack> => result.status === "fulfilled")
@@ -123,12 +131,12 @@ function VideoPlayerComponent({
           setActiveSubtitleId(resolvedTracks[0]?.id ?? "off")
         } else {
           setVideoSrc(lesson.path)
-          const builtTracks = lesson.subtitles.map((subtitle, index) => ({
+          const builtTracks = isVideoFile ? lesson.subtitles.map((subtitle, index) => ({
             id: createSubtitleTrackId(subtitle, index),
             label: subtitle.label || subtitle.language || `Track ${index + 1}`,
             language: subtitle.language || "und",
             src: subtitle.path,
-          }))
+          })) : []
           setSubtitleTracks(builtTracks)
           setActiveSubtitleId(builtTracks[0]?.id ?? "off")
         }
@@ -142,7 +150,7 @@ function VideoPlayerComponent({
       subtitleUrlRefs.current.forEach((url) => URL.revokeObjectURL(url))
       subtitleUrlRefs.current = []
     }
-  }, [lesson.path, lesson.subtitles, isVideoFile])
+  }, [lesson.path, lesson.subtitles, isPlayableFile, isVideoFile])
 
   useEffect(() => {
     const video = videoRef.current
@@ -151,7 +159,7 @@ function VideoPlayerComponent({
     const tick = () => {
       const t = video.currentTime
       progressRef.current = t
-      const dur = video.duration
+      const dur = Number.isFinite(video.duration) ? video.duration : 0
       if (timeDisplayRef.current) {
         timeDisplayRef.current.textContent = `${formatDuration(t)} / ${formatDuration(dur)}`
       }
@@ -163,7 +171,7 @@ function VideoPlayerComponent({
       if (!isScrubbingRef.current) {
         if (now - lastProgressSaveRef.current > PROGRESS_SAVE_THROTTLE) {
           lastProgressSaveRef.current = now
-          onProgress(t, dur)
+          if (!video.paused) onProgress(t, dur)
         }
         if (now - lastSliderSyncRef.current > SLIDER_SYNC_THROTTLE) {
           lastSliderSyncRef.current = now
@@ -200,14 +208,17 @@ function VideoPlayerComponent({
     const video = videoRef.current
     if (!video || !videoSrc) return
 
-    const handleDurationChange = () => setDuration(video.duration)
+    const handleDurationChange = () => setDuration(Number.isFinite(video.duration) ? video.duration : 0)
     const handleEnded = () => {
       setIsEnded(true)
       setIsPlaying(false)
       onComplete()
     }
     const handlePlay = () => setIsPlaying(true)
-    const handlePause = () => setIsPlaying(false)
+    const handlePause = () => {
+      setIsPlaying(false)
+      if (Number.isFinite(video.duration)) onProgress(video.currentTime, video.duration)
+    }
     const handleError = () => setError("video playback failed")
     const handleSeeked = () => { isScrubbingRef.current = false }
     const handleSeeking = () => { isScrubbingRef.current = true }
@@ -238,7 +249,13 @@ function VideoPlayerComponent({
       video.removeEventListener("seeking", handleSeeking)
       video.removeEventListener("seeked", handleSeeked)
     }
-  }, [videoSrc, autoplay, lesson.lastPosition, onComplete])
+  }, [videoSrc, autoplay, lesson.lastPosition, onComplete, onProgress])
+
+  useEffect(() => {
+    const handleFullscreenChange = () => setIsFullscreen(document.fullscreenElement === containerRef.current)
+    document.addEventListener("fullscreenchange", handleFullscreenChange)
+    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange)
+  }, [])
 
   const togglePlay = useCallback(() => {
     const video = videoRef.current
@@ -246,7 +263,7 @@ function VideoPlayerComponent({
     if (isPlaying) {
       video.pause()
     } else {
-      video.play()
+      video.play().catch(() => setIsPlaying(false))
     }
   }, [isPlaying])
 
@@ -268,11 +285,11 @@ function VideoPlayerComponent({
     (value: number[]) => {
       const video = videoRef.current
       if (!video) return
-      const t = value[0]
-      video.currentTime = t
-      progressRef.current = t
-      onProgress(t, video.duration)
-      lastProgressSaveRef.current = Date.now()
+    const t = value[0]
+    video.currentTime = t
+    progressRef.current = t
+    onProgress(t, Number.isFinite(video.duration) ? video.duration : 0)
+    lastProgressSaveRef.current = Date.now()
     },
     [onProgress]
   )
@@ -282,6 +299,7 @@ function VideoPlayerComponent({
     const video = videoRef.current
     if (!video) return
     video.volume = newVolume
+    video.muted = newVolume === 0
     setVolume(newVolume)
     setIsMuted(newVolume === 0)
   }, [])
@@ -291,6 +309,10 @@ function VideoPlayerComponent({
     if (!video) return
     const newMuted = !isMuted
     video.muted = newMuted
+    if (!newMuted && video.volume === 0) {
+      video.volume = 0.75
+      setVolume(0.75)
+    }
     setIsMuted(newMuted)
   }, [isMuted])
 
@@ -312,13 +334,46 @@ function VideoPlayerComponent({
   const toggleFullscreen = useCallback(() => {
     if (!containerRef.current) return
     if (!document.fullscreenElement) {
-      containerRef.current.requestFullscreen()
-      setIsFullscreen(true)
+      containerRef.current.requestFullscreen().catch(() => setIsFullscreen(false))
     } else {
-      document.exitFullscreen()
-      setIsFullscreen(false)
+      document.exitFullscreen().catch(() => setIsFullscreen(false))
     }
   }, [])
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null
+      if (target?.closest("input, textarea, select, [contenteditable='true']")) return
+
+      const video = videoRef.current
+      if (!video) return
+
+      if (event.key === " " || event.key.toLowerCase() === "k") {
+        event.preventDefault()
+        if (video.paused) video.play().catch(() => setIsPlaying(false))
+        else video.pause()
+      }
+      if (event.key.toLowerCase() === "m") {
+        event.preventDefault()
+        toggleMute()
+      }
+      if (event.key.toLowerCase() === "f") {
+        event.preventDefault()
+        toggleFullscreen()
+      }
+      if (event.key.toLowerCase() === "j" || event.key === "ArrowLeft") {
+        event.preventDefault()
+        video.currentTime = Math.max(0, video.currentTime - 10)
+      }
+      if (event.key.toLowerCase() === "l" || event.key === "ArrowRight") {
+        event.preventDefault()
+        video.currentTime = Math.min(Number.isFinite(video.duration) ? video.duration : video.currentTime + 10, video.currentTime + 10)
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown)
+    return () => document.removeEventListener("keydown", handleKeyDown)
+  }, [toggleFullscreen, toggleMute])
 
   const handleMouseMove = useCallback(() => {
     setShowControls(true)
@@ -335,7 +390,7 @@ function VideoPlayerComponent({
       ? "CC Off"
       : subtitleTracks.find((track) => track.id === activeSubtitleId)?.label ?? "CC"
 
-  if (!isVideoFile) {
+  if (!isPlayableFile) {
     return (
       <div className="flex aspect-video w-full items-center justify-center bg-muted">
         <div className="text-center">
@@ -368,30 +423,48 @@ function VideoPlayerComponent({
   return (
     <div
       ref={containerRef}
-      className="group relative flex aspect-video w-full flex-col overflow-hidden rounded-xl bg-black shadow-lg ring-1 ring-white/10"
+      className={cn(
+        "group relative flex w-full flex-col overflow-hidden rounded-xl bg-black shadow-lg ring-1 ring-white/10",
+        isVideoFile ? "aspect-video" : "min-h-[360px]"
+      )}
       onMouseMove={handleMouseMove}
       onMouseLeave={() => isPlaying && setShowControls(false)}
     >
-      <video
-        ref={videoRef}
-        src={videoSrc}
-        className="size-full object-cover"
-        onClick={togglePlay}
-        playsInline
-        preload="auto"
-      >
-        {subtitleTracks.map((track) => (
-          <track
-            key={track.id}
-            id={track.id}
-            kind="subtitles"
-            src={track.src}
-            srcLang={track.language}
-            label={track.label}
-            default={track.id === activeSubtitleId}
-          />
-        ))}
-      </video>
+      {isVideoFile ? (
+        <video
+          ref={setMediaRef}
+          src={videoSrc}
+          className="size-full object-contain"
+          onClick={togglePlay}
+          playsInline
+          preload="auto"
+        >
+          {subtitleTracks.map((track) => (
+            <track
+              key={track.id}
+              id={track.id}
+              kind="subtitles"
+              src={track.src}
+              srcLang={track.language}
+              label={track.label}
+              default={track.id === activeSubtitleId}
+            />
+          ))}
+        </video>
+      ) : (
+        <div className="flex min-h-[360px] flex-1 items-center justify-center p-8">
+          <audio ref={setMediaRef} src={videoSrc} preload="auto" />
+          <div className="flex max-w-lg flex-col items-center gap-5 text-center text-white">
+            <div className="flex size-20 items-center justify-center rounded-2xl bg-white/10 ring-1 ring-white/10">
+              <Play className="size-9" />
+            </div>
+            <div className="flex flex-col gap-2">
+              <h2 className="text-2xl font-semibold tracking-tight">{lesson.name}</h2>
+              <p className="text-sm text-white/60">Audio lesson</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/80">
