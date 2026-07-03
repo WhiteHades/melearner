@@ -59,6 +59,7 @@ function sectionDataToSection(
       path: file.path,
       type: mapFileType(file.file_type),
       duration: 0,
+      fileSize: file.size,
       completed: false,
       watchedTime: 0,
       lastPosition: 0,
@@ -91,6 +92,7 @@ function courseDataToCourse(data: CourseData): Course {
     watchedDuration: 0,
     lastAccessed: null,
     thumbnail: null,
+    thumbnailSourcePath: sections.flatMap((section) => section.lessons).find((lesson) => lesson.type === "video")?.path ?? null,
   }
 }
 

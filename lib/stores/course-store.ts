@@ -1,5 +1,4 @@
 import { create, type StoreApi } from "zustand"
-import { persist } from "zustand/middleware"
 import type { Course, Lesson } from "@/types"
 
 interface CourseState {
@@ -108,19 +107,6 @@ const createCourseStore = (set: CourseStoreSet): CourseStore => ({
   setHasHydrated: (hasHydrated) => set({ hasHydrated }),
 })
 
-const useCourseStoreInternal = create<CourseStore>()(
-  persist(createCourseStore, {
-    name: "melearner-storage",
-    partialize: (state: CourseStore) => ({
-      courses: state.courses,
-      libraryPath: state.libraryPath,
-    }),
-    onRehydrateStorage: () => (state) => {
-      if (state) {
-        rebuildLessonIndex(state.courses)
-      }
-    },
-  }),
-)
+const useCourseStoreInternal = create<CourseStore>()(createCourseStore)
 
 export const useCourseStore = useCourseStoreInternal

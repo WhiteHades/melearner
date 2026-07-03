@@ -8,6 +8,7 @@ export interface Course {
   watchedDuration: number
   lastAccessed: string | null
   thumbnail: string | null
+  thumbnailSourcePath: string | null
 }
 
 export interface Section {
@@ -25,6 +26,7 @@ export interface Lesson {
   path: string
   type: "video" | "audio" | "document" | "quiz"
   duration: number
+  fileSize: number
   completed: boolean
   watchedTime: number
   lastPosition: number
@@ -50,7 +52,7 @@ export type FileType = "video" | "audio" | "document" | "subtitle" | "quiz" | "u
 
 export const VIDEO_EXTENSIONS = [".mp4", ".mkv", ".webm", ".mov", ".avi", ".m4v"]
 export const AUDIO_EXTENSIONS = [".mp3", ".wav", ".aac", ".m4a", ".flac", ".ogg"]
-export const DOCUMENT_EXTENSIONS = [".pdf", ".txt", ".md", ".html", ".docx"]
+export const DOCUMENT_EXTENSIONS = [".pdf", ".txt", ".md", ".markdown", ".html", ".htm", ".docx", ".doc"]
 export const SUBTITLE_EXTENSIONS = [".srt", ".vtt"]
 export const PARTIAL_EXTENSIONS = [".part", ".crdownload", ".download"]
 export const IGNORED_FOLDERS = [".git", "node_modules", "__MACOSX", ".DS_Store", "Thumbs.db"]

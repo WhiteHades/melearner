@@ -107,6 +107,81 @@ fn get_migrations() -> Vec<Migration> {
             sql: "SELECT 1;",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 11,
+            description: "create_sections_subtitles_settings",
+            sql: "CREATE TABLE IF NOT EXISTS sections (
+                id TEXT PRIMARY KEY,
+                course_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                order_index INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                metadata TEXT,
+                UNIQUE(course_id, name),
+                FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS lesson_subtitles (
+                id TEXT PRIMARY KEY,
+                lesson_id TEXT NOT NULL,
+                path TEXT NOT NULL,
+                language TEXT,
+                label TEXT,
+                order_index INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(lesson_id, path),
+                FOREIGN KEY (lesson_id) REFERENCES lessons(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_sections_course ON sections(course_id);
+            CREATE INDEX IF NOT EXISTS idx_lesson_subtitles_lesson ON lesson_subtitles(lesson_id);",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 12,
+            description: "add_structured_lesson_metadata",
+            sql: "ALTER TABLE lessons ADD COLUMN section_id TEXT;
+                  ALTER TABLE lessons ADD COLUMN file_size INTEGER DEFAULT 0;
+                  ALTER TABLE lessons ADD COLUMN updated_at TEXT;
+                  ALTER TABLE lessons ADD COLUMN metadata TEXT;
+                  ALTER TABLE courses ADD COLUMN thumbnail_source_path TEXT;
+                  ALTER TABLE courses ADD COLUMN last_scanned_at TEXT;",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 13,
+            description: "create_structured_metadata_indexes",
+            sql: "CREATE INDEX IF NOT EXISTS idx_lessons_section ON lessons(section_id);
+                  CREATE INDEX IF NOT EXISTS idx_courses_path ON courses(path);
+                  CREATE INDEX IF NOT EXISTS idx_lessons_path ON lessons(path);",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 14,
+            description: "backfill_sections_from_existing_lessons",
+            sql: "INSERT OR IGNORE INTO sections (id, course_id, name, order_index, updated_at)
+                  SELECT course_id || ':section:' || lower(hex(COALESCE(section_name, 'Course'))),
+                         course_id,
+                         COALESCE(section_name, 'Course'),
+                         MIN(COALESCE(order_index, 0)),
+                         CURRENT_TIMESTAMP
+                  FROM lessons
+                  GROUP BY course_id, COALESCE(section_name, 'Course');
+                  UPDATE lessons
+                  SET section_id = (
+                    SELECT sections.id
+                    FROM sections
+                    WHERE sections.course_id = lessons.course_id
+                      AND sections.name = COALESCE(lessons.section_name, 'Course')
+                    LIMIT 1
+                  )
+                  WHERE section_id IS NULL;",
+            kind: MigrationKind::Up,
+        },
     ]
 }
 

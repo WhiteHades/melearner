@@ -84,7 +84,7 @@ export async function scanLibraryAt(path: string): Promise<{ courses: Course[]; 
   frontendLog("info", `scanFolder returned: ${result.courses.length} courses, ${result.warnings.length} warnings: ${result.warnings.join(" | ")}`)
   const scanned = processScanResult(result)
   frontendLog("info", `processScanResult returned: ${scanned.length} courses`)
-  const hydrated = isTauri() ? await syncLibrary(scanned) : scanned
+  const hydrated = isTauri() ? await syncLibrary(scanned, path) : scanned
   frontendLog("info", `syncLibrary returned: ${hydrated.length} courses`)
   const store = useCourseStore.getState()
   store.setCourses(hydrated)
