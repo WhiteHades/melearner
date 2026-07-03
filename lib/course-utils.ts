@@ -6,6 +6,21 @@ function getFileStem(value: string): string {
   return basename.replace(/\.[^.]+$/, "")
 }
 
+const LANGUAGE_SUFFIXES: Record<string, string> = {
+  english: "en",
+  en: "en",
+  spanish: "es",
+  es: "es",
+  french: "fr",
+  fr: "fr",
+  german: "de",
+  de: "de",
+  portuguese: "pt",
+  pt: "pt",
+  italian: "it",
+  it: "it",
+}
+
 function mapFileType(type: FileEntry["file_type"]): Lesson["type"] {
   switch (type) {
     case "video":
@@ -21,21 +36,35 @@ function mapFileType(type: FileEntry["file_type"]): Lesson["type"] {
   }
 }
 
+function getSubtitleLanguage(subtitleName: string, mediaStem: string): string | null {
+  const subtitleStem = getFileStem(subtitleName)
+  if (subtitleStem === mediaStem) return "default"
+
+  const suffix = subtitleStem.slice(mediaStem.length)
+  if (suffix.startsWith(".") || suffix.startsWith("_")) {
+    return suffix.slice(1).trim() || null
+  }
+
+  if (suffix.startsWith(" ")) {
+    const languageName = suffix.trim().toLowerCase()
+    return LANGUAGE_SUFFIXES[languageName] ?? null
+  }
+
+  return null
+}
+
+function isSubtitleForMedia(subtitleName: string, mediaStem: string): boolean {
+  return getSubtitleLanguage(subtitleName, mediaStem) !== null
+}
+
 function extractSubtitles(files: FileEntry[], videoPath: string): Lesson["subtitles"] {
   const videoBasename = getFileStem(videoPath)
 
   return files
     .filter((f) => f.file_type === "subtitle")
-    .filter((f) => {
-      const subtitleBasename = getFileStem(f.name)
-      return (
-        subtitleBasename === videoBasename ||
-        subtitleBasename.startsWith(videoBasename + ".")
-      )
-    })
+    .filter((f) => isSubtitleForMedia(f.name, videoBasename))
     .map((f) => {
-      const parts = f.name.split(".")
-      const lang = parts.length > 2 ? parts[parts.length - 2] : "default"
+      const lang = getSubtitleLanguage(f.name, videoBasename) ?? "default"
       return {
         path: f.path,
         language: lang,

@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 
 const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mkv", "webm", "mov", "avi", "m4v"];
 const AUDIO_EXTENSIONS: &[&str] = &["mp3", "wav", "aac", "m4a", "flac", "ogg"];
-const DOCUMENT_EXTENSIONS: &[&str] = &["pdf", "txt", "md", "markdown", "html", "htm", "docx", "doc"];
+const DOCUMENT_EXTENSIONS: &[&str] =
+    &["pdf", "txt", "md", "markdown", "html", "htm", "docx", "doc"];
 const SUBTITLE_EXTENSIONS: &[&str] = &["srt", "vtt"];
 const IGNORED_FOLDERS: &[&str] = &[".git", "node_modules", "__MACOSX", ".DS_Store", "Thumbs.db"];
 const RESOURCE_FOLDERS: &[&str] = &["resources", "assets", "downloads", "extras", "materials"];
@@ -284,10 +285,7 @@ fn scan_course(course_path: &Path) -> CourseData {
         sections.insert(
             0,
             SectionData {
-                id: hash_str_to_id(&format!(
-                    "{}_introduction",
-                    course_path.to_string_lossy()
-                )),
+                id: hash_str_to_id(&format!("{}_introduction", course_path.to_string_lossy())),
                 name: "introduction".into(),
                 files: root_files.into_boxed_slice(),
                 order: 0,
@@ -390,12 +388,16 @@ pub fn scan_library(root_path: &str) -> ScanResult {
 
 #[tauri::command]
 pub async fn scan_folder(path: String) -> Result<ScanResult, String> {
-    use std::io::Write;
     use std::fs::OpenOptions;
+    use std::io::Write;
 
     let path_for_log = path.clone();
     let log_path = std::env::var("HOME")
-        .map(|h| std::path::PathBuf::from(h).join(".melearner").join("scan.log"))
+        .map(|h| {
+            std::path::PathBuf::from(h)
+                .join(".melearner")
+                .join("scan.log")
+        })
         .unwrap_or_else(|_| std::path::PathBuf::from("/tmp/melearner-scan.log"));
 
     let _ = std::fs::create_dir_all(log_path.parent().unwrap());
@@ -448,4 +450,114 @@ pub async fn get_file_info(path: String) -> Result<FileEntry, String> {
 
     let file_type = get_file_type(&p);
     file_entry(&p, file_type).ok_or_else(|| "failed to read file metadata".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_root(name: &str) -> PathBuf {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("melearner-{name}-{suffix}"));
+        fs::create_dir_all(&root).expect("create temp root");
+        root
+    }
+
+    fn touch(path: &Path) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create parent");
+        }
+        fs::write(path, b"fixture").expect("write fixture");
+    }
+
+    fn cleanup(path: &Path) {
+        let _ = fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn scans_course_subdirectories_and_filters_non_learning_folders() {
+        let root = temp_root("library");
+        touch(&root.join("Rust Basics/01 Intro/01 welcome.mp4"));
+        touch(&root.join("Rust Basics/01 Intro/01 welcome.en.srt"));
+        touch(&root.join("Rust Basics/resources/ignored.pdf"));
+        touch(&root.join("Rust Basics/.hidden/ignored.mp4"));
+        touch(&root.join("Docs Course/Reading/guide.markdown"));
+        touch(&root.join("Docs Course/Reading/legacy.doc"));
+
+        let result = scan_library(&root.to_string_lossy());
+
+        assert_eq!(result.scan_type, ScanType::Library);
+        assert_eq!(result.courses.len(), 2);
+
+        let all_files = result
+            .courses
+            .iter()
+            .flat_map(|course| course.sections.iter())
+            .flat_map(|section| section.files.iter())
+            .collect::<Vec<_>>();
+
+        assert!(all_files.iter().any(
+            |file| file.name.as_ref() == "01 welcome.mp4" && file.file_type == FileType::Video
+        ));
+        assert!(all_files
+            .iter()
+            .any(|file| file.name.as_ref() == "01 welcome.en.srt"
+                && file.file_type == FileType::Subtitle));
+        assert!(all_files
+            .iter()
+            .any(|file| file.name.as_ref() == "guide.markdown"
+                && file.file_type == FileType::Document));
+        assert!(
+            all_files
+                .iter()
+                .any(|file| file.name.as_ref() == "legacy.doc"
+                    && file.file_type == FileType::Document)
+        );
+        assert!(!all_files
+            .iter()
+            .any(|file| file.name.as_ref() == "ignored.pdf"));
+        assert!(!all_files
+            .iter()
+            .any(|file| file.name.as_ref() == "ignored.mp4"));
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn treats_mixed_root_content_as_single_course() {
+        let root = temp_root("mixed");
+        touch(&root.join("00 overview.mp4"));
+        touch(&root.join("00 overview.srt"));
+        touch(&root.join("Chapter 01/01 details.pdf"));
+
+        let result = scan_library(&root.to_string_lossy());
+
+        assert_eq!(result.scan_type, ScanType::SingleCourse);
+        assert_eq!(result.courses.len(), 1);
+        assert_eq!(
+            result.warnings.as_ref(),
+            &["mixed content at root level".to_string()]
+        );
+
+        let course = &result.courses[0];
+        assert_eq!(course.sections[0].name.as_ref(), "introduction");
+        assert!(course.sections[0]
+            .files
+            .iter()
+            .any(
+                |file| file.name.as_ref() == "00 overview.mp4" && file.file_type == FileType::Video
+            ));
+        assert!(course.sections[0]
+            .files
+            .iter()
+            .any(|file| file.name.as_ref() == "00 overview.srt"
+                && file.file_type == FileType::Subtitle));
+
+        cleanup(&root);
+    }
 }
