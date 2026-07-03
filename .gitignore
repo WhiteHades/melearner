@@ -3,6 +3,7 @@ node_modules
 out
 .DS_Store
 *.log
+*.tsbuildinfo
 .env
 .env.local
 src-tauri/target

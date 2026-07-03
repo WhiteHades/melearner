@@ -16,6 +16,8 @@ export function useAsyncResource<T>(
 
   useEffect(() => {
     let isActive = true
+    // This hook intentionally resets to loading whenever its dependency key changes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setState({ status: "loading" })
 
     loader()

@@ -139,20 +139,15 @@ const chartConfig = {
 export function ChartAreaInteractive() {
   const isMobile = useIsMobile()
   const [timeRange, setTimeRange] = React.useState("30d")
-
-  React.useEffect(() => {
-    if (isMobile) {
-      setTimeRange("7d")
-    }
-  }, [isMobile])
+  const selectedTimeRange = isMobile && timeRange === "90d" ? "7d" : timeRange
 
   const filteredData = chartData.filter((item) => {
     const date = new Date(item.date)
     const referenceDate = new Date("2024-06-30")
     let daysToSubtract = 90
-    if (timeRange === "30d") {
+    if (selectedTimeRange === "30d") {
       daysToSubtract = 30
-    } else if (timeRange === "7d") {
+    } else if (selectedTimeRange === "7d") {
       daysToSubtract = 7
     }
     const startDate = new Date(referenceDate)
@@ -173,7 +168,7 @@ export function ChartAreaInteractive() {
         <div className="absolute right-4 top-4">
           <ToggleGroup
             type="single"
-            value={timeRange}
+            value={selectedTimeRange}
             onValueChange={setTimeRange}
             variant="outline"
             className="@[767px]/card:flex hidden"
@@ -188,7 +183,7 @@ export function ChartAreaInteractive() {
               Last 7 days
             </ToggleGroupItem>
           </ToggleGroup>
-          <Select value={timeRange} onValueChange={setTimeRange}>
+          <Select value={selectedTimeRange} onValueChange={setTimeRange}>
             <SelectTrigger
               className="@[767px]/card:hidden flex w-40"
               aria-label="Select a value"

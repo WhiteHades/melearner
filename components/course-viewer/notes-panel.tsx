@@ -44,6 +44,8 @@ export function NotesPanel({ className, lesson }: NotesPanelProps) {
 
   useEffect(() => {
     if (!lessonId) {
+      // Reset stale lesson-local data when the panel is detached from a lesson.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setNotes([])
       return
     }
