@@ -1,68 +1,121 @@
 @import "tailwindcss";
 
-@custom-variant dark (&:is(.dark *));
+@custom-variant dark (&:is(.dark *, .cozy *));
 
 :root {
-  --radius: 0.75rem;
-  --background: #030712;
-  --foreground: #f8fafc;
-  --card: #05070b;
-  --card-foreground: #f8fafc;
-  --popover: #070b12;
-  --popover-foreground: #f8fafc;
-  --primary: #74a9ff;
-  --primary-foreground: #06121f;
-  --secondary: #111827;
-  --secondary-foreground: #e5edf8;
-  --muted: #111827;
-  --muted-foreground: #91a4bd;
-  --accent: #082753;
-  --accent-foreground: #dcecff;
-  --destructive: #fb7185;
-  --destructive-foreground: #21040a;
-  --border: #1f2937;
-  --input: #263244;
-  --ring: #60a5fa;
+  /* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V3 · designed-as-app */
+  --radius: 0.65rem;
+  --background: #f5f4ed;
+  --foreground: #141413;
+  --card: #faf9f5;
+  --card-foreground: #141413;
+  --popover: #faf9f5;
+  --popover-foreground: #141413;
+  --primary: #1b365d;
+  --primary-foreground: #faf9f5;
+  --secondary: #e8e6dc;
+  --secondary-foreground: #30302e;
+  --muted: #eeece3;
+  --muted-foreground: #646159;
+  --accent: #e4ecf5;
+  --accent-foreground: #1b365d;
+  --destructive: #a94345;
+  --destructive-foreground: #faf9f5;
+  --border: #e3e0d3;
+  --input: #d7d3c5;
+  --ring: #1b365d;
 
-  --sidebar: #05070b;
-  --sidebar-foreground: #eef4ff;
-  --sidebar-primary: #74a9ff;
-  --sidebar-primary-foreground: #06121f;
-  --sidebar-accent: #0b1e3a;
-  --sidebar-accent-foreground: #dcecff;
-  --sidebar-border: #1f2937;
-  --sidebar-ring: #60a5fa;
+  --sidebar: #eeece3;
+  --sidebar-foreground: #141413;
+  --sidebar-primary: #1b365d;
+  --sidebar-primary-foreground: #faf9f5;
+  --sidebar-accent: #e4ecf5;
+  --sidebar-accent-foreground: #1b365d;
+  --sidebar-border: #e3e0d3;
+  --sidebar-ring: #1b365d;
+
+  --app-shell-background: #f5f4ed;
+  --hero-background: #faf9f5;
+  --course-art-background: #e4ecf5;
+  --course-art-glow: linear-gradient(135deg, #eef2f7, #d0dce9);
+  --shadow-whisper: 0 4px 24px rgb(20 20 19 / 0.05);
+  --shadow-panel: 0 18px 48px rgb(20 20 19 / 0.08);
 }
 
 .dark {
-  --background: #030712;
-  --foreground: #f8fafc;
-  --card: #05070b;
-  --card-foreground: #f8fafc;
-  --popover: #070b12;
-  --popover-foreground: #f8fafc;
-  --primary: #74a9ff;
-  --primary-foreground: #06121f;
-  --secondary: #111827;
-  --secondary-foreground: #e5edf8;
-  --muted: #111827;
-  --muted-foreground: #91a4bd;
-  --accent: #082753;
-  --accent-foreground: #dcecff;
-  --destructive: #fb7185;
-  --destructive-foreground: #21040a;
-  --border: #1f2937;
-  --input: #263244;
-  --ring: #60a5fa;
+  --background: #101113;
+  --foreground: #ebe8df;
+  --card: #171719;
+  --card-foreground: #ebe8df;
+  --popover: #1b1b1c;
+  --popover-foreground: #ebe8df;
+  --primary: #9eb8dc;
+  --primary-foreground: #101113;
+  --secondary: #242321;
+  --secondary-foreground: #e0dbce;
+  --muted: #222222;
+  --muted-foreground: #a6a095;
+  --accent: #263447;
+  --accent-foreground: #dbe7f6;
+  --destructive: #d36b70;
+  --destructive-foreground: #1f0e10;
+  --border: #2d2c29;
+  --input: #3a3834;
+  --ring: #9eb8dc;
 
-  --sidebar: #05070b;
-  --sidebar-foreground: #eef4ff;
-  --sidebar-primary: #74a9ff;
-  --sidebar-primary-foreground: #06121f;
-  --sidebar-accent: #0b1e3a;
-  --sidebar-accent-foreground: #dcecff;
-  --sidebar-border: #1f2937;
-  --sidebar-ring: #60a5fa;
+  --sidebar: #171719;
+  --sidebar-foreground: #ebe8df;
+  --sidebar-primary: #9eb8dc;
+  --sidebar-primary-foreground: #101113;
+  --sidebar-accent: #263447;
+  --sidebar-accent-foreground: #dbe7f6;
+  --sidebar-border: #2d2c29;
+  --sidebar-ring: #9eb8dc;
+
+  --app-shell-background: #101113;
+  --hero-background: #171719;
+  --course-art-background: #263447;
+  --course-art-glow: linear-gradient(135deg, #263447, #1d252f);
+  --shadow-whisper: 0 4px 24px rgb(0 0 0 / 0.18);
+  --shadow-panel: 0 18px 48px rgb(0 0 0 / 0.24);
+}
+
+.cozy {
+  --background: #11100d;
+  --foreground: #ece3d2;
+  --card: #17140f;
+  --card-foreground: #ece3d2;
+  --popover: #1b1711;
+  --popover-foreground: #ece3d2;
+  --primary: #d39b63;
+  --primary-foreground: #20150c;
+  --secondary: #252017;
+  --secondary-foreground: #e9dcc8;
+  --muted: #211d16;
+  --muted-foreground: #aa9a83;
+  --accent: #302416;
+  --accent-foreground: #f0d3aa;
+  --destructive: #d07174;
+  --destructive-foreground: #241011;
+  --border: #312a20;
+  --input: #3b3328;
+  --ring: #c99260;
+
+  --sidebar: #17140f;
+  --sidebar-foreground: #ece3d2;
+  --sidebar-primary: #d39b63;
+  --sidebar-primary-foreground: #20150c;
+  --sidebar-accent: #302416;
+  --sidebar-accent-foreground: #f0d3aa;
+  --sidebar-border: #312a20;
+  --sidebar-ring: #c99260;
+
+  --app-shell-background: #11100d;
+  --hero-background: #17140f;
+  --course-art-background: #302416;
+  --course-art-glow: linear-gradient(135deg, #302416, #211d16);
+  --shadow-whisper: 0 4px 24px rgb(0 0 0 / 0.2);
+  --shadow-panel: 0 18px 48px rgb(0 0 0 / 0.28);
 }
 
 @layer base {
@@ -71,10 +124,12 @@
   }
 
   html {
-    color-scheme: dark;
+    color-scheme: light;
+    overflow-x: clip;
   }
 
-  html.dark {
+  html.dark,
+  html.cozy {
     color-scheme: dark;
   }
 
@@ -82,6 +137,7 @@
     background: var(--background);
     color: var(--foreground);
     font-family: var(--font-sans);
+    overflow-x: clip;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
@@ -107,6 +163,11 @@
   [role="button"]:not([aria-disabled="true"]) {
     cursor: pointer;
   }
+
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
 }
 
 @layer components {
@@ -116,21 +177,136 @@
   [data-radix-popover-content] {
     background-color: var(--popover);
     border: 1px solid var(--border);
-    box-shadow: 0 26px 80px -52px rgb(15 23 42 / 0.55);
+    box-shadow: var(--shadow-panel);
   }
 
   .app-shell {
-    background-image:
-      radial-gradient(circle at 18% 0%, rgb(59 130 246 / 0.22), transparent 28%),
-      radial-gradient(circle at 82% 12%, rgb(146 64 14 / 0.24), transparent 34%),
-      linear-gradient(180deg, rgb(3 7 18), rgb(0 0 0));
+    background-image: var(--app-shell-background);
   }
 
-  .dark .app-shell {
-    background-image:
-      radial-gradient(circle at 18% 0%, rgb(59 130 246 / 0.22), transparent 28%),
-      radial-gradient(circle at 82% 12%, rgb(146 64 14 / 0.24), transparent 34%),
-      linear-gradient(180deg, rgb(3 7 18), rgb(0 0 0));
+  .hero-panel {
+    background: var(--hero-background);
+  }
+
+  .course-art {
+    background: var(--course-art-background);
+  }
+
+  .course-art::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: var(--course-art-glow);
+  }
+
+  .paper-panel {
+    border: 1px solid var(--border);
+    background: var(--card);
+    box-shadow: var(--shadow-whisper);
+  }
+
+  .paper-panel-strong {
+    border: 1px solid var(--border);
+    background: var(--card);
+    box-shadow: var(--shadow-panel);
+  }
+
+  .document-prose {
+    max-width: 72ch;
+    color: var(--card-foreground);
+    font-size: 0.95rem;
+    line-height: 1.75;
+  }
+
+  .document-prose h1,
+  .document-prose h2,
+  .document-prose h3,
+  .document-prose h4 {
+    margin-block: 1.4em 0.55em;
+    color: var(--foreground);
+    font-weight: 700;
+    line-height: 1.2;
+  }
+
+  .document-prose h1 {
+    font-size: 2rem;
+  }
+
+  .document-prose h2 {
+    font-size: 1.45rem;
+  }
+
+  .document-prose h3 {
+    font-size: 1.15rem;
+  }
+
+  .document-prose p,
+  .document-prose ul,
+  .document-prose ol,
+  .document-prose blockquote,
+  .document-prose table,
+  .document-prose pre {
+    margin-block: 0 1rem;
+  }
+
+  .document-prose ul,
+  .document-prose ol {
+    padding-inline-start: 1.4rem;
+  }
+
+  .document-prose li + li {
+    margin-top: 0.25rem;
+  }
+
+  .document-prose a {
+    color: var(--primary);
+    text-decoration: underline;
+    text-underline-offset: 0.18em;
+  }
+
+  .document-prose blockquote {
+    border-inline-start: 3px solid var(--border);
+    color: var(--muted-foreground);
+    padding-inline-start: 1rem;
+  }
+
+  .document-prose code {
+    border-radius: 0.35rem;
+    background: var(--muted);
+    padding: 0.1rem 0.3rem;
+    font-size: 0.9em;
+  }
+
+  .document-prose pre {
+    overflow: auto;
+    border-radius: 0.75rem;
+    border: 1px solid var(--border);
+    background: var(--muted);
+    padding: 1rem;
+  }
+
+  .document-prose pre code {
+    background: transparent;
+    padding: 0;
+  }
+
+  .document-prose table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+  }
+
+  .document-prose th,
+  .document-prose td {
+    border: 1px solid var(--border);
+    padding: 0.5rem 0.65rem;
+    text-align: start;
+    vertical-align: top;
+  }
+
+  .document-prose img {
+    max-width: 100%;
+    border-radius: 0.75rem;
   }
 
   @keyframes fade-scale-in {

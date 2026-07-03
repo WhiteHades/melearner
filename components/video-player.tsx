@@ -473,7 +473,7 @@ function VideoPlayerComponent({
       )}
 
       {isEnded && (
-        <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+        <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/70">
           <div className="flex gap-4">
             <Button variant="outline" onClick={handleReplay}>
               <RotateCcw className="mr-2 size-4" /> replay
@@ -538,7 +538,7 @@ function VideoPlayerComponent({
                 max={1}
                 step={0.01}
                 onValueChange={handleVolumeChange}
-                className="w-0 scale-x-0 transition-all duration-200 group-hover/vol:w-20 group-hover/vol:scale-x-100"
+                className="pointer-events-none w-20 origin-left scale-x-95 opacity-0 transition-[opacity,transform] duration-200 group-hover/vol:pointer-events-auto group-hover/vol:scale-x-100 group-hover/vol:opacity-100"
                 aria-label="volume"
               />
             </div>

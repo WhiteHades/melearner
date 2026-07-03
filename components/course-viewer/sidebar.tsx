@@ -51,7 +51,7 @@ export function CourseViewerSidebar({ course, currentLessonId, onSelectLesson, o
     <aside className="hidden min-h-0 bg-card md:flex md:flex-col">
       <div className="border-b border-border p-4">
         <div className="flex flex-col gap-4">
-          <Button type="button" variant="outline" size="sm" onClick={onBack} className="w-fit gap-2 rounded-full">
+          <Button type="button" variant="outline" size="sm" onClick={onBack} className="w-fit gap-2 rounded-md">
             <ChevronLeft className="size-4" />
             Back
           </Button>
@@ -108,7 +108,7 @@ function SectionOutline({
     <Collapsible open={isOpen} onOpenChange={onOpenChange}>
       <CollapsibleTrigger asChild>
         <button type="button" className="flex w-full items-start gap-3 rounded-lg px-3 py-3 text-left transition-colors hover:bg-accent hover:text-accent-foreground">
-          <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-secondary text-xs font-semibold text-secondary-foreground">
+          <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md bg-secondary text-xs font-semibold text-secondary-foreground tabular-nums">
             {index + 1}
           </div>
           <div className="min-w-0 flex-1">

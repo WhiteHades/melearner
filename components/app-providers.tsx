@@ -7,13 +7,14 @@ import { ThemeProvider } from "next-themes"
 export function AppProviders({ children }: { children: React.ReactNode }) {
   return (
     <NuqsAdapter>
-      <ThemeProvider
-        attribute="class"
-        defaultTheme="dark"
-        enableSystem={false}
-        themes={["light", "dark"]}
-        disableTransitionOnChange
-      >
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="cozy"
+          enableSystem={false}
+          themes={["light", "dark", "cozy"]}
+          storageKey="melearner-theme"
+          disableTransitionOnChange
+        >
         <AppBootstrap />
         {children}
       </ThemeProvider>

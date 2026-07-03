@@ -97,13 +97,13 @@ export function CourseViewerLayout({
           <Badge variant="secondary" className="hidden rounded-md sm:inline-flex">local course</Badge>
         </div>
 
-        <div className="mx-auto hidden min-w-0 max-w-md flex-1 items-center gap-3 rounded-full border border-border bg-background px-4 py-2 lg:flex">
+        <div className="mx-auto hidden min-w-0 max-w-md flex-1 items-center gap-3 rounded-lg border border-border bg-background px-4 py-2 lg:flex">
           <span className="shrink-0 text-sm tabular-nums">{progress.completed}/{progress.total} learning items</span>
           <Progress value={progress.percent} className="h-2" />
         </div>
 
         <div className="ml-auto flex items-center gap-2">
-          <Button type="button" variant="ghost" size="sm" onClick={onBack} className="gap-2 rounded-full">
+          <Button type="button" variant="ghost" size="sm" onClick={onBack} className="gap-2 rounded-md">
             <ChevronLeft className="size-4" />
             Library
           </Button>
@@ -118,7 +118,7 @@ export function CourseViewerLayout({
           onBack={onBack}
         />
 
-        <ScrollArea className="min-h-0 border-x border-border bg-black">
+        <ScrollArea className="min-h-0 border-x border-border bg-background">
           <div className="mx-auto flex min-h-full max-w-6xl flex-col gap-5 px-4 py-5 lg:px-6">
             <VideoArea
               key={currentLesson?.id ?? "empty-lesson"}
@@ -152,7 +152,7 @@ function LessonUtilityPanel({
   const resourceLessons = currentSection?.lessons.filter((item) => item.type === "document" || item.type === "quiz") ?? []
 
   return (
-    <aside className="hidden min-h-0 bg-card xl:flex xl:flex-col">
+    <aside className="hidden min-h-0 border-l border-border bg-card xl:flex xl:flex-col">
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-6 p-5">
           <div className="flex items-start justify-between gap-3">
@@ -160,7 +160,7 @@ function LessonUtilityPanel({
               <h2 className="text-base font-semibold">Learning progress</h2>
               <p className="text-sm text-muted-foreground">{progress.completed} of {progress.total} items complete</p>
             </div>
-            <Badge variant="outline" className="rounded-full">{progress.percent}%</Badge>
+            <Badge variant="outline" className="rounded-md">{progress.percent}%</Badge>
           </div>
           <Progress value={progress.percent} className="h-2" />
 
@@ -169,9 +169,9 @@ function LessonUtilityPanel({
           <div className="flex flex-col gap-3">
             <h3 className="text-sm font-semibold">Current item</h3>
             {lesson ? (
-              <div className="rounded-xl border border-border bg-background p-4">
+              <div className="rounded-xl border border-border bg-background p-4 shadow-[var(--shadow-whisper)]">
                 <div className="flex flex-col gap-2">
-                  <Badge variant="secondary" className="w-fit rounded-full">{lesson.type}</Badge>
+                  <Badge variant="secondary" className="w-fit rounded-md">{lesson.type}</Badge>
                   <h4 className="text-sm font-semibold leading-snug">{lesson.name}</h4>
                   <p className="text-xs text-muted-foreground">{cleanSectionName(lesson.sectionName) || "Module"}</p>
                   <p className="text-xs text-muted-foreground">Last position {formatDuration(lesson.lastPosition)}</p>

@@ -58,7 +58,7 @@ export function CourseGrid({ courses, hasHydrated = true, onCourseSelect, search
       ) : courses.length === 0 ? (
         <Card className="border-dashed border-border/80 bg-card/75 shadow-none">
           <CardContent className="flex flex-col items-center gap-5 px-6 py-12 text-center">
-            <div className="flex size-14 items-center justify-center rounded-full bg-secondary text-secondary-foreground">
+            <div className="flex size-14 items-center justify-center rounded-xl bg-secondary text-secondary-foreground">
               <FolderOpen className="size-6" />
             </div>
             <div className="space-y-2">

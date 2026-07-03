@@ -78,7 +78,7 @@ export function VideoArea({ className, lesson, onNext, onPrevious }: VideoAreaPr
 
   return (
     <div className={cn("flex min-h-[calc(100vh-7rem)] flex-col gap-5", className)}>
-      <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-[0_28px_90px_-72px_rgb(96_165_250/0.7)]">
+      <div className="paper-panel-strong overflow-hidden rounded-2xl">
         {isPlayable ? (
           <VideoPlayer
             lesson={lesson}
@@ -92,13 +92,13 @@ export function VideoArea({ className, lesson, onNext, onPrevious }: VideoAreaPr
         )}
       </div>
 
-      <section className="flex flex-col gap-5 rounded-2xl border border-border bg-card p-5">
+      <section className="paper-panel flex flex-col gap-5 rounded-2xl p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0 flex-1">
             <div className="mb-3 flex flex-wrap items-center gap-2">
-              <Badge variant="secondary" className="rounded-full">{cleanSectionName(lesson.sectionName) || "Module"}</Badge>
-              <Badge variant="outline" className="rounded-full uppercase tracking-wide">{lesson.type}</Badge>
-              {lesson.subtitles.length > 0 && <Badge variant="outline" className="rounded-full">Subtitles</Badge>}
+              <Badge variant="secondary" className="rounded-md">{cleanSectionName(lesson.sectionName) || "Module"}</Badge>
+              <Badge variant="outline" className="rounded-md uppercase tracking-wide">{lesson.type}</Badge>
+              {lesson.subtitles.length > 0 && <Badge variant="outline" className="rounded-md">Subtitles</Badge>}
             </div>
             <h1 className="text-2xl font-semibold tracking-tight md:text-3xl">{lesson.name}</h1>
             <p className="mt-2 text-sm text-muted-foreground">

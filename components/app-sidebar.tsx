@@ -4,9 +4,9 @@ import React, { useState } from "react"
 import { useCourseStore } from "@/lib/stores/course-store"
 import { selectFolderDialog, isTauri } from "@/lib/tauri"
 import { scanLibraryAt } from "@/lib/operations"
-import { BookOpen, FolderOpen, Search, Settings, Moon, Sun, Loader2, RefreshCw } from "lucide-react"
+import { BookOpen, FolderOpen, Search, Settings, Loader2, RefreshCw } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { useTheme } from "next-themes"
+import { ThemeMenu } from "@/components/theme-menu"
 import {
   Sidebar,
   SidebarContent,
@@ -44,8 +44,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const [error, setError] = useState<string | null>(null)
   const [cmdOpen, setCmdOpen] = useState(false)
   const [activeView, setActiveView] = useState<string>("library")
-  const { resolvedTheme, setTheme } = useTheme()
-  const isDark = resolvedTheme === "dark"
 
   async function handleSelectFolder() {
     if (!isTauri()) {
@@ -125,10 +123,10 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             <SidebarGroupContent>
               <SidebarMenu>
                 <SidebarMenuItem>
-                  <SidebarMenuButton onClick={() => setTheme(isDark ? "light" : "dark")} tooltip={isDark ? "Light mode" : "Dark mode"}>
-                    {isDark ? <Sun className="size-4" /> : <Moon className="size-4" />}
-                    <span>{isDark ? "Light mode" : "Dark mode"}</span>
-                  </SidebarMenuButton>
+                  <div className="flex items-center gap-2 rounded-lg px-2 py-1 text-sm text-sidebar-foreground">
+                    <ThemeMenu className="size-8" />
+                    <span>Theme</span>
+                  </div>
                 </SidebarMenuItem>
               </SidebarMenu>
             </SidebarGroupContent>

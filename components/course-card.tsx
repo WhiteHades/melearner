@@ -47,17 +47,17 @@ export function CourseCard({ course, onClick }: CourseCardProps) {
           onClick()
         }
       }}
-      className="h-full cursor-pointer select-none overflow-hidden border-border/70 bg-card/90 transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-0.5 hover:border-border hover:shadow-[0_24px_64px_-44px_rgba(15,23,42,0.45)] active:scale-[0.99]"
+      className="h-full cursor-pointer select-none overflow-hidden border-border bg-card transition-[box-shadow,border-color] duration-200 hover:border-primary/60 hover:shadow-[var(--shadow-whisper)]"
     >
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-2 min-w-0">
             <div className="flex items-center gap-2">
-              <Badge variant="secondary" className="rounded-full px-2.5 py-1 text-xs font-medium">
+              <Badge variant="secondary" className="rounded-md px-2.5 py-1 text-xs font-medium">
                 {course.sections.length} sections
               </Badge>
               {progress > 0 && (
-                <Badge variant="outline" className="rounded-full font-mono text-xs">
+                <Badge variant="outline" className="rounded-md font-mono text-xs">
                   {progress}%
                 </Badge>
               )}

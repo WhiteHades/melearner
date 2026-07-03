@@ -141,7 +141,7 @@ export function TitleBar() {
       onMouseLeave={() => setHovering(false)}
     >
       <div
-        className={`rounded-xl border bg-background/60 shadow-sm backdrop-blur-sm transition-all duration-150 ${
+        className={`rounded-xl border bg-background shadow-[var(--shadow-whisper)] transition-opacity duration-150 ${
           hovering
             ? "translate-y-0 opacity-100 pointer-events-auto"
             : "translate-y-0 opacity-0 pointer-events-none"

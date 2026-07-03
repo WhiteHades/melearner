@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { useShallow } from "zustand/react/shallow"
 import { parseAsString, useQueryState } from "nuqs"
-import { useTheme } from "next-themes"
 import {
   BookOpen,
   CheckCircle2,
@@ -12,13 +11,13 @@ import {
   GraduationCap,
   LayoutGrid,
   Loader2,
-  Moon,
   PlayCircle,
   RefreshCw,
   Search,
-  Sun,
 } from "lucide-react"
 import { CourseViewerLayout } from "@/components/course-viewer/layout"
+import { CourseArtwork } from "@/components/course-artwork"
+import { ThemeMenu } from "@/components/theme-menu"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -112,8 +111,6 @@ function LibraryDashboard({
   const [buildInfo, setBuildInfo] = useState<BuildInfo | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>("grid")
   const [searchQuery, setSearchQuery] = useState("")
-  const { resolvedTheme, setTheme } = useTheme()
-  const isDark = resolvedTheme === "dark"
   const loadedCourses = useMemo(() => (hasHydrated ? courses : []), [courses, hasHydrated])
 
   const stats = useMemo(() => summarizeLibrary(loadedCourses), [loadedCourses])
@@ -208,7 +205,7 @@ function LibraryDashboard({
 
   return (
     <div className="app-shell flex h-full min-h-0 flex-col bg-background text-foreground">
-      <header className="relative z-10 flex h-14 shrink-0 items-center gap-4 border-b border-border bg-card/95 px-4 backdrop-blur">
+      <header className="relative z-10 flex h-14 shrink-0 items-center gap-4 border-b border-border bg-card px-4">
         <div data-tauri-drag-region className="absolute inset-x-0 top-0 h-3" />
         <div className="flex items-center gap-3">
           <div className="text-2xl font-bold tracking-tight">melearner</div>
@@ -220,7 +217,7 @@ function LibraryDashboard({
         <button
           type="button"
           onClick={() => setCmdOpen(true)}
-          className="hidden h-9 min-w-0 flex-1 items-center gap-2 rounded-full border border-input bg-background px-4 text-left text-sm text-muted-foreground transition-colors hover:border-ring md:flex"
+            className="hidden h-9 min-w-0 flex-1 items-center gap-2 rounded-lg border border-input bg-background px-4 text-left text-sm text-muted-foreground transition-colors hover:border-ring md:flex"
         >
           <Search className="size-4" />
           <span className="truncate">What do you want to learn?</span>
@@ -236,7 +233,7 @@ function LibraryDashboard({
             }}
             variant="outline"
             size="sm"
-            className="hidden rounded-full border bg-background px-0.5 sm:flex"
+            className="hidden rounded-lg border bg-background px-0.5 sm:flex"
           >
             <ToggleGroupItem value="grid" aria-label="Grid view" className="size-8 px-0">
               <LayoutGrid className="size-4" />
@@ -249,10 +246,8 @@ function LibraryDashboard({
           <Button type="button" variant="ghost" size="icon" onClick={() => setCmdOpen(true)} className="size-9 md:hidden" aria-label="Search">
             <Search className="size-4" />
           </Button>
-          <Button type="button" variant="ghost" size="icon" onClick={() => setTheme(isDark ? "light" : "dark")} className="size-9" aria-label={isDark ? "Switch to light theme" : "Switch to dark theme"}>
-            {isDark ? <Sun className="size-4" /> : <Moon className="size-4" />}
-          </Button>
-          <Button type="button" variant="outline" size="sm" onClick={handleSelectFolder} disabled={scanMode !== "idle"} className="gap-2 rounded-full">
+          <ThemeMenu />
+          <Button type="button" variant="outline" size="sm" onClick={handleSelectFolder} disabled={scanMode !== "idle"} className="gap-2 rounded-md">
             {scanMode === "selecting" ? <Loader2 className="size-4 animate-spin" /> : <FolderOpen className="size-4" />}
             <span className="hidden sm:inline">Choose folder</span>
           </Button>
@@ -281,11 +276,11 @@ function LibraryDashboard({
           )}
 
           <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-            <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-[0_28px_90px_-72px_rgb(96_165_250/0.7)]">
-              <div className="relative grid min-h-[280px] gap-6 overflow-hidden bg-[radial-gradient(circle_at_75%_10%,rgba(146,64,14,0.55),transparent_32%),linear-gradient(135deg,#2b1205,#06111f_62%,#030712)] p-6 md:grid-cols-[minmax(0,1fr)_minmax(320px,0.85fr)] md:p-8">
+            <div className="paper-panel-strong overflow-hidden rounded-2xl">
+              <div className="hero-panel relative grid min-h-[280px] gap-6 overflow-hidden p-6 md:grid-cols-[minmax(0,1fr)_minmax(320px,0.85fr)] md:p-8">
                 <div className="relative z-10 flex flex-col justify-between gap-8">
                   <div className="flex flex-col gap-4">
-                    <Badge variant="secondary" className="w-fit rounded-full">Welcome back</Badge>
+                    <Badge variant="secondary" className="w-fit rounded-md">Welcome back</Badge>
                     <div className="flex flex-col gap-2">
                       <p className="text-sm font-semibold text-primary">Your learning is local and ready offline.</p>
                       <h1 className="max-w-2xl text-3xl font-bold tracking-tight md:text-4xl">
@@ -315,15 +310,15 @@ function LibraryDashboard({
                   </div>
                 </div>
 
-                <div className="relative z-10 hidden min-h-56 overflow-hidden rounded-xl border border-white/10 bg-black md:block">
-                  <div className="absolute inset-y-0 right-0 w-1/2 bg-[radial-gradient(circle_at_center,rgba(116,169,255,0.35),transparent_48%)]" />
+                  <div className="relative z-10 hidden min-h-56 overflow-hidden rounded-xl border border-border bg-background md:block">
+                  <div className="course-art absolute inset-y-0 right-0 w-1/2" />
                   <div className="relative flex h-full flex-col justify-between p-6">
                     <div className="flex items-center justify-between text-xs text-muted-foreground">
                       <span>Up next</span>
                       <span>{continueLesson?.type ?? "course"}</span>
                     </div>
                     <div className="flex flex-col gap-3">
-                      <div className="flex size-14 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+                        <div className="flex size-14 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-[0_0_0_1px_var(--primary)]">
                         <PlayCircle className="size-7" />
                       </div>
                       <div className="flex flex-col gap-1">
@@ -351,7 +346,7 @@ function LibraryDashboard({
                 <h2 className="text-xl font-semibold tracking-tight">Resume your exploration</h2>
                 <p className="text-sm text-muted-foreground">Recent and in-progress courses stay close to the top.</p>
               </div>
-              <label className="flex h-10 min-w-0 items-center gap-2 rounded-full border border-input bg-background px-3 text-sm md:w-80">
+              <label className="flex h-10 min-w-0 items-center gap-2 rounded-lg border border-input bg-background px-3 text-sm md:w-80">
                 <Search className="size-4 text-muted-foreground" />
                 <input
                   value={searchQuery}
@@ -511,11 +506,11 @@ function allLessons(courses: Course[]): Array<{ course: Course; lesson: Lesson }
 
 function GoalCard({ label, value, progress }: { label: string; value: string; progress: number }) {
   return (
-    <div className="rounded-2xl border border-border bg-card p-5">
+    <div className="paper-panel rounded-xl p-5">
       <div className="flex flex-col gap-4">
         <div className="flex items-center justify-between gap-3">
           <span className="text-sm font-medium text-muted-foreground">{label}</span>
-          <Badge variant="outline" className="rounded-full">{progress}%</Badge>
+          <Badge variant="outline" className="rounded-md">{progress}%</Badge>
         </div>
         <div className="flex flex-col gap-2">
           <div className="text-2xl font-semibold tabular-nums">{value}</div>
@@ -528,14 +523,14 @@ function GoalCard({ label, value, progress }: { label: string; value: string; pr
 
 function MetricCard({ icon: Icon, label, value, hint }: { icon: typeof BookOpen; label: string; value: string; hint: string }) {
   return (
-    <div className="rounded-2xl border border-border bg-card p-5">
+    <div className="paper-panel rounded-xl p-5">
       <div className="flex items-start justify-between gap-4">
         <div className="flex flex-col gap-2">
           <span className="text-sm text-muted-foreground">{label}</span>
           <span className="text-2xl font-semibold tracking-tight">{value}</span>
           <span className="text-xs text-muted-foreground">{hint}</span>
         </div>
-        <div className="flex size-10 items-center justify-center rounded-full bg-secondary text-secondary-foreground">
+        <div className="flex size-10 items-center justify-center rounded-lg bg-secondary text-secondary-foreground">
           <Icon className="size-4" />
         </div>
       </div>
@@ -571,21 +566,16 @@ function DashboardCourseCard({ course, viewMode, onOpenCourse }: { course: Cours
         }
       }}
       className={cn(
-        "group cursor-pointer overflow-hidden rounded-xl border border-border bg-card transition-[border-color,transform] hover:-translate-y-0.5 hover:border-primary/70",
+        "paper-panel group cursor-pointer overflow-hidden rounded-xl transition-[border-color,box-shadow] hover:border-primary/70 hover:shadow-[var(--shadow-panel)]",
         isList ? "grid gap-0 md:grid-cols-[240px_minmax(0,1fr)]" : "flex flex-col"
       )}
     >
-      <div className={cn("relative min-h-36 bg-[linear-gradient(135deg,#0b1e3a,#082753_48%,#2b1205)]", isList && "min-h-full")}>
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_75%_20%,rgba(116,169,255,0.36),transparent_36%)]" />
-        <div className="absolute bottom-3 left-3 flex size-11 items-center justify-center rounded-lg bg-background/90 text-primary">
-          <GraduationCap className="size-5" />
-        </div>
-      </div>
+      <CourseArtwork course={course} className={cn("min-h-36", isList && "min-h-full")} />
       <div className="flex min-w-0 flex-1 flex-col gap-4 p-4">
         <div className="flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="secondary" className="rounded-full">{course.sections.length} modules</Badge>
-            {summary.progress === 100 && <Badge className="rounded-full"><CheckCircle2 className="size-3" /> Complete</Badge>}
+            <Badge variant="secondary" className="rounded-md">{course.sections.length} modules</Badge>
+            {summary.progress === 100 && <Badge className="rounded-md"><CheckCircle2 className="size-3" /> Complete</Badge>}
           </div>
           <h3 className="line-clamp-2 text-base font-semibold leading-snug tracking-tight">{course.name}</h3>
           <p className="line-clamp-1 text-xs text-muted-foreground">{cleanSectionName(firstSection?.name ?? "Course") || "Course"}</p>
@@ -604,9 +594,9 @@ function DashboardCourseCard({ course, viewMode, onOpenCourse }: { course: Cours
 
 function EmptyLibrary({ onSelectFolder, disabled }: { onSelectFolder: () => void; disabled: boolean }) {
   return (
-    <div className="rounded-2xl border border-dashed border-border bg-card p-10 text-center">
+    <div className="paper-panel rounded-2xl border-dashed p-10 text-center">
       <div className="mx-auto flex max-w-md flex-col items-center gap-5">
-        <div className="flex size-14 items-center justify-center rounded-full bg-secondary text-secondary-foreground">
+        <div className="flex size-14 items-center justify-center rounded-xl bg-secondary text-secondary-foreground">
           <FolderOpen className="size-6" />
         </div>
         <div className="flex flex-col gap-2">
@@ -626,7 +616,7 @@ function CourseSkeletonRail() {
   return (
     <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
       {Array.from({ length: 4 }).map((_, index) => (
-        <div key={index} className="rounded-xl border border-border bg-card p-4">
+        <div key={index} className="paper-panel rounded-xl p-4">
           <div className="flex flex-col gap-4">
             <Skeleton className="h-32 w-full" />
             <Skeleton className="h-4 w-24" />
