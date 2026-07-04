@@ -96,7 +96,7 @@ export function VideoArea({ className, lesson, onNext, onPrevious }: VideoAreaPr
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0 flex-1">
             <div className="mb-3 flex flex-wrap items-center gap-2">
-              <Badge variant="secondary" className="rounded-md">{cleanSectionName(lesson.sectionName) || "Module"}</Badge>
+              <Badge variant="secondary" className="rounded-md">{cleanSectionName(lesson.sectionName) || "Section"}</Badge>
               <Badge variant="outline" className="rounded-md uppercase tracking-wide">{lesson.type}</Badge>
               {lesson.subtitles.length > 0 && <Badge variant="outline" className="rounded-md">Subtitles</Badge>}
             </div>

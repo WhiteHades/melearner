@@ -10,4 +10,6 @@ for linux x86_64 releases, publish these assets when available:
 
 the manual GitHub release workflow builds appimage and deb assets. the arch asset is built from `packaging/arch/PKGBUILD` after the release binary exists.
 
+when building appimage on arch, set `NO_STRIP=true`; the arch PKGBUILD's `options=("!strip")` only covers pacman packaging.
+
 do not upload rpm, app tarballs, updater json, msi, nsis, dmg, or duplicated architecture variants unless that platform is being intentionally supported and tested for the release.

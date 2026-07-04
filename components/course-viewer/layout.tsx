@@ -174,7 +174,7 @@ function LessonUtilityPanel({
                 <div className="flex flex-col gap-2">
                   <Badge variant="secondary" className="w-fit rounded-md">{lesson.type}</Badge>
                   <h4 className="text-sm font-semibold leading-snug">{lesson.name}</h4>
-                  <p className="text-xs text-muted-foreground">{cleanSectionName(lesson.sectionName) || "Module"}</p>
+                  <p className="text-xs text-muted-foreground">{cleanSectionName(lesson.sectionName) || "Section"}</p>
                   <p className="text-xs text-muted-foreground">Last position {formatDuration(lesson.lastPosition)}</p>
                   {lesson.subtitles.length > 0 && (
                     <p className="text-xs text-primary">{lesson.subtitles.length} subtitle track{lesson.subtitles.length === 1 ? "" : "s"} available</p>
@@ -189,7 +189,7 @@ function LessonUtilityPanel({
           <Separator />
 
           <div className="flex flex-col gap-3">
-            <h3 className="text-sm font-semibold">Files in this module</h3>
+            <h3 className="text-sm font-semibold">Supporting learning items in this section</h3>
             {resourceLessons.length > 0 ? (
               <div className="flex flex-col gap-2">
                 {resourceLessons.map((item) => (
@@ -200,7 +200,7 @@ function LessonUtilityPanel({
                 ))}
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground">No extra files detected in this module.</p>
+              <p className="text-sm text-muted-foreground">No supporting learning items detected in this section.</p>
             )}
           </div>
         </div>

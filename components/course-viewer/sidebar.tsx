@@ -112,7 +112,7 @@ function SectionOutline({
             {index + 1}
           </div>
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 text-xs font-medium text-primary">Module {index + 1}</div>
+            <div className="flex items-center gap-2 text-xs font-medium text-primary">Section {index + 1}</div>
             <div className="line-clamp-2 text-sm font-semibold leading-snug">{sectionTitle}</div>
             <div className="mt-1 text-xs text-muted-foreground">{completed}/{section.lessons.length} complete</div>
           </div>

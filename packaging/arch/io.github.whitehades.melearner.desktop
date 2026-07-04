@@ -1,8 +1,8 @@
 [Desktop Entry]
 Name=melearner
-Comment=native local course viewer
+Comment=Local-first course learner for local files
 Exec=melearner
-Icon=melearner
+Icon=io.github.whitehades.melearner
 Type=Application
 Categories=Education;
 Terminal=false

@@ -1,10 +1,10 @@
-# Design — melearner
+# Design: melearner
 
 A locked visual system for the app. Every visual change should preserve the current product structure and component ownership while applying this system.
 
 ## Register
 
-Product UI. Design serves a focused learning task: scan a local course folder, resume a lesson, and move through local videos, audio, and documents without distraction.
+Product UI. Design serves a focused learning task: scan a root folder, resume a lesson, and move through local videos, audio, and documents without distraction.
 
 ## Genre
 

@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "melearner",
-  "version": "0.1.2",
-  "identifier": "com.melearner.app",
+  "version": "0.1.3",
+  "identifier": "io.github.whitehades.melearner",
   "build": {
     "frontendDist": "../out",
     "devUrl": "http://localhost:3000",
@@ -44,8 +44,8 @@
       "icons/icon.ico"
     ],
     "category": "Education",
-    "shortDescription": "native local course viewer",
-    "longDescription": "melearner is a native desktop app for learning from your local course library. scan a folder, open a lesson, take notes — everything stays on your machine.",
+    "shortDescription": "local-first course learner",
+    "longDescription": "melearner is a native desktop app for learning from local content. scan a root folder, open a lesson, and keep progress on your machine.",
     "linux": {
       "appimage": {
         "bundleMediaFramework": true

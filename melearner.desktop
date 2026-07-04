@@ -1,8 +1,0 @@
-[Desktop Entry]
-Name=melearner
-Comment=modern offline course viewer
-Exec=/usr/local/bin/melearner
-Icon=melearner
-Type=Application
-Categories=Education;
-Terminal=false

@@ -56,7 +56,6 @@ pub struct CourseData {
 pub enum ScanType {
     Library,
     SingleCourse,
-    Bundle,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -533,7 +532,7 @@ mod tests {
         let root = temp_root("mixed");
         touch(&root.join("00 overview.mp4"));
         touch(&root.join("00 overview.srt"));
-        touch(&root.join("Chapter 01/01 details.pdf"));
+        touch(&root.join("Section 01/01 details.pdf"));
 
         let result = scan_library(&root.to_string_lossy());
 

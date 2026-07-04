@@ -24,7 +24,7 @@ export interface CourseData {
 }
 
 export interface ScanResult {
-  scan_type: "library" | "singlecourse" | "bundle"
+  scan_type: "library" | "singlecourse"
   courses: CourseData[]
   warnings: string[]
 }
@@ -37,7 +37,7 @@ export async function selectFolderDialog(): Promise<string | null> {
   const result = await open({
     directory: true,
     multiple: false,
-    title: "select course folder",
+    title: "select root folder",
   })
   return result as string | null
 }

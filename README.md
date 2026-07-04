@@ -4,9 +4,9 @@
 
 # melearner
 
-a native desktop app for learning from your **legally obtained** local course library. point it at a folder, open a lesson, take notes. everything stays on your machine.
+a native desktop app for learning from your **legally obtained** local course library. point it at a root folder, open a lesson, and keep progress on your machine.
 
-melearner is a viewer. it doesn't download, stream, or share anything. see the [legal disclaimer](#legal-disclaimer).
+melearner is a local-first course learner. it doesn't download, stream, or share anything. see the [legal disclaimer](#legal-disclaimer).
 
 <br />
 
@@ -54,24 +54,23 @@ cargo install --git https://github.com/WhiteHades/melearner --locked
 ## first run
 
 1. launch melearner from your app drawer (linux), launchpad (mac), or start menu (windows)
-2. click **choose folder** and pick a directory that holds your course files
+2. click **Scan root folder** and pick a directory that holds your course files
 3. melearner walks the folder, groups files into courses, sections, and lessons, and drops you in the library
 4. click a course to open it, click a lesson to play or read
 5. press `space` to play, `f` for fullscreen, `n` to jump to the next lesson
 
-notes go in the card under the player. progress saves automatically. close the app, come back tomorrow, and you're exactly where you left off.
+progress saves automatically. close the app, come back tomorrow, and you're exactly where you left off.
 
 ## what it does
 
-you pick a folder. melearner walks it, groups files into courses, sections, and lessons, and gives you a clean player plus a place to write notes against timestamps. progress is saved locally so you can close the app, come back tomorrow, and pick up where you stopped.
+you pick a root folder. melearner walks it, groups files into courses, sections, and lessons, and gives you a clean player. progress is saved locally so you can close the app, come back tomorrow, and pick up where you stopped.
 
 that's the whole product.
 
 ## features
 
-- scans a folder and builds a library on the spot
+- scans a root folder and builds a library on the spot
 - video player with resume position, keyboard shortcuts, and fullscreen
-- notes tied to a timestamp on the lesson
 - progress tracking in sqlite
 - full-text search across courses, sections, and lessons
 - light and dark themes
@@ -114,7 +113,7 @@ pnpm verify   # type-check + lint + web build + cargo check
 
 ```bash
 pnpm tauri:build                 # current platform
-pnpm tauri:build:linux           # linux bundles for the current machine
+pnpm tauri:build:linux           # linux bundles for the current machine, with NO_STRIP=true
 pnpm tauri:build:windows         # msi + nsis
 pnpm tauri:build:macos           # intel
 pnpm tauri:build:macos-arm       # apple silicon
@@ -128,7 +127,7 @@ release uploads are curated, not every file Tauri can produce. for linux x86_64,
 
 the arch package recipe lives in `packaging/arch/` and packages the release binary plus the desktop entry and icon.
 
-the manual CI release workflow (`.github/workflows/release.yml`) builds and uploads the appimage and deb assets for a tag. build the arch asset from `packaging/arch/` and upload it with the same release. do not upload duplicate formats for the same install path unless we intentionally support that channel.
+the manual CI release workflow (`.github/workflows/release.yml`) builds and uploads the appimage and deb assets for a tag. build the arch asset from `packaging/arch/` and upload it with the same release. appimage builds set `NO_STRIP=true` because linuxdeploy can fail on newer linux shared libraries with `.relr.dyn` sections. do not upload duplicate formats for the same install path unless we intentionally support that channel.
 
 ## how it's built
 
@@ -152,7 +151,7 @@ melearner doesn't phone home. no analytics, no telemetry, no update check, no ne
 what melearner does not do:
 
 - it doesn't provide any course, video, audio, or document
-- it doesn't include any built-in library, catalog, or content source
+- it doesn't include any built-in course collection or content source
 - it doesn't connect to udemy, coursera, skillshare, pluralsight, or any other platform
 - it doesn't bypass, crack, decrypt, or circumvent any drm or paywall
 - it doesn't download, scrape, mirror, or index any third-party content

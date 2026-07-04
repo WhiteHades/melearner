@@ -1,7 +1,7 @@
 pkgname=melearner-bin
-pkgver=0.1.2
+pkgver=0.1.3
 pkgrel=1
-pkgdesc="native local course viewer"
+pkgdesc="local-first course learner"
 arch=("x86_64")
 url="https://github.com/WhiteHades/melearner"
 license=("MIT")
@@ -16,7 +16,7 @@ package() {
   local repo_root="${startdir}/../.."
 
   install -Dm755 "${repo_root}/src-tauri/target/release/melearner" "${pkgdir}/usr/bin/melearner"
-  install -Dm644 "${startdir}/melearner.desktop" "${pkgdir}/usr/share/applications/melearner.desktop"
-  install -Dm644 "${repo_root}/src-tauri/icons/icon.svg" "${pkgdir}/usr/share/icons/hicolor/scalable/apps/melearner.svg"
+  install -Dm644 "${startdir}/io.github.whitehades.melearner.desktop" "${pkgdir}/usr/share/applications/io.github.whitehades.melearner.desktop"
+  install -Dm644 "${repo_root}/src-tauri/icons/icon.svg" "${pkgdir}/usr/share/icons/hicolor/scalable/apps/io.github.whitehades.melearner.svg"
   install -Dm644 "${repo_root}/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
 }

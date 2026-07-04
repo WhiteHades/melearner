@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: release tag to package, for example v0.1.2
+        description: release tag to package, for example v0.1.3
         required: true
         type: string
 
@@ -52,6 +52,8 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: build linux bundles
+        env:
+          NO_STRIP: "true"
         run: pnpm tauri build --bundles deb,appimage
 
       - name: stage curated assets

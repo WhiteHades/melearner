@@ -170,7 +170,7 @@ function RenderedContent({ resource, lesson }: { resource: ContentResource; less
       <ScrollDocument>
         {resource.warnings.length > 0 && (
           <Alert className="mb-4">
-            <AlertTitle>Import notes</AlertTitle>
+            <AlertTitle>Document conversion notes</AlertTitle>
             <AlertDescription>{resource.warnings.slice(0, 3).join(" | ")}</AlertDescription>
           </Alert>
         )}
@@ -206,7 +206,7 @@ function RenderedContent({ resource, lesson }: { resource: ContentResource; less
       <div className="max-w-xl">
         <h3 className="text-lg font-semibold">Preview is not available for this file type</h3>
         <p className="mt-2 text-sm text-muted-foreground">
-          Files ending in .{resource.ext || "unknown"} can stay in the course outline, but this version can render txt, markdown, html, pdf, and docx directly.
+          Learning items ending in .{resource.ext || "unknown"} can stay in the course outline, but this version can render txt, markdown, html, pdf, and docx directly.
         </p>
       </div>
       <Button type="button" variant="outline" onClick={() => void openNativeFile(lesson.path)}>

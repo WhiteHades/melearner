@@ -232,7 +232,7 @@ function LibraryDashboard({
           {hasCourses && (
             <Button type="button" variant="outline" size="sm" onClick={handleSelectFolder} disabled={scanMode !== "idle"} className="gap-2 rounded-md">
               {scanMode === "selecting" ? <Loader2 className="size-4 animate-spin" /> : <FolderOpen className="size-4" />}
-              <span className="hidden sm:inline">Choose folder</span>
+              <span className="hidden sm:inline">Change root folder</span>
             </Button>
           )}
           {libraryPath && (
@@ -277,7 +277,7 @@ function LibraryDashboard({
                       <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
                         {continueLesson
                           ? `Up next: ${continueLesson.name}`
-                          : "Choose a course folder to scan videos, documents, audio, subtitles, and progress into one learning workspace."}
+                          : "Select a root folder to scan videos, documents, audio, subtitles, and progress into one learning workspace."}
                       </p>
                     </div>
                   </div>
@@ -291,7 +291,7 @@ function LibraryDashboard({
                     ) : (
                       <Button type="button" onClick={handleSelectFolder} disabled={scanMode !== "idle"} className="rounded-md">
                         <FolderOpen className="size-4" />
-                        Scan course folder
+                        Scan root folder
                       </Button>
                     )}
                     {libraryPath && <p className="max-w-lg truncate text-xs text-muted-foreground">{libraryPath}</p>}
@@ -529,7 +529,7 @@ function DashboardCourseCard({ course, viewMode, onOpenCourse }: { course: Cours
       <div className={cn("flex min-w-0 flex-col gap-4 p-4", isList && "flex-1")}>
         <div className="flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="secondary" className="rounded-md">{course.sections.length} modules</Badge>
+            <Badge variant="secondary" className="rounded-md">{course.sections.length} sections</Badge>
             {summary.progress === 100 && <Badge className="rounded-md"><CheckCircle2 className="size-3" /> Complete</Badge>}
           </div>
           <h3 className="line-clamp-2 text-base font-semibold leading-snug tracking-tight">{course.name}</h3>
