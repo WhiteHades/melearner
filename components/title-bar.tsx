@@ -104,7 +104,6 @@ function WinLinuxButtons({
 export function TitleBar() {
   const [mounted, setMounted] = useState(false)
   const [isMaximized, setIsMaximized] = useState(false)
-  const [hovering, setHovering] = useState(false)
 
   const isTauriApp = useMemo(() => isTauri(), [])
   const platform = useMemo(() => detectPlatform(), [])
@@ -135,34 +134,22 @@ export function TitleBar() {
   const handleClose = () => getCurrentWindow().close()
 
   return (
-    <div
-      className="fixed right-2 top-2 z-50"
-      onMouseEnter={() => setHovering(true)}
-      onMouseLeave={() => setHovering(false)}
-    >
-      <div
-        className={`rounded-xl border bg-background shadow-[var(--shadow-whisper)] transition-opacity duration-150 ${
-          hovering
-            ? "translate-y-0 opacity-100 pointer-events-auto"
-            : "translate-y-0 opacity-0 pointer-events-none"
-        }`}
-      >
-        {platform === "macos" ? (
-          <MacButtons
-            onMinimize={handleMinimize}
-            onMaximize={handleMaximize}
-            onClose={handleClose}
-            isMaximized={isMaximized}
-          />
-        ) : (
-          <WinLinuxButtons
-            onMinimize={handleMinimize}
-            onMaximize={handleMaximize}
-            onClose={handleClose}
-            isMaximized={isMaximized}
-          />
-        )}
-      </div>
+    <div className="fixed right-2 top-2 z-50 rounded-xl border bg-background shadow-[var(--shadow-whisper)]">
+      {platform === "macos" ? (
+        <MacButtons
+          onMinimize={handleMinimize}
+          onMaximize={handleMaximize}
+          onClose={handleClose}
+          isMaximized={isMaximized}
+        />
+      ) : (
+        <WinLinuxButtons
+          onMinimize={handleMinimize}
+          onMaximize={handleMaximize}
+          onClose={handleClose}
+          isMaximized={isMaximized}
+        />
+      )}
     </div>
   )
 }
