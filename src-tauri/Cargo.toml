@@ -1,6 +1,6 @@
 [package]
 name = "melearner"
-version = "0.1.1"
+version = "0.1.2"
 description = "modern local course viewer"
 authors = ["WhiteHades"]
 license = "MIT"
