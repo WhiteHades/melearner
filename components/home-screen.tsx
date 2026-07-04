@@ -13,6 +13,7 @@ import {
   RefreshCw,
   Search,
 } from "lucide-react"
+import { BrandLogo } from "@/components/brand-logo"
 import { CourseViewerLayout } from "@/components/course-viewer/layout"
 import { CourseArtwork } from "@/components/course-artwork"
 import { ThemeMenu } from "@/components/theme-menu"
@@ -116,6 +117,7 @@ function LibraryDashboard({
   const continueCourse = resumeCourses[0] ?? null
   const continueLesson = continueCourse ? selectContinueLesson(continueCourse) : null
   const visibleCourses = useMemo(() => filterCourses(loadedCourses, searchQuery), [loadedCourses, searchQuery])
+  const hasCourses = loadedCourses.length > 0
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -205,9 +207,7 @@ function LibraryDashboard({
     <div className="app-shell flex h-full min-h-0 flex-col bg-background text-foreground">
       <header className="relative z-10 flex h-14 shrink-0 items-center gap-4 border-b border-border bg-card px-4 md:pr-32">
         <div data-tauri-drag-region className="absolute inset-x-0 top-0 h-3" />
-        <div className="flex items-center gap-3">
-          <div className="text-2xl font-bold tracking-tight">melearner</div>
-        </div>
+        <BrandLogo className="shrink-0" />
 
         <button
           type="button"
@@ -229,10 +229,12 @@ function LibraryDashboard({
             <TooltipContent>Search</TooltipContent>
           </Tooltip>
           <ThemeMenu />
-          <Button type="button" variant="outline" size="sm" onClick={handleSelectFolder} disabled={scanMode !== "idle"} className="gap-2 rounded-md">
-            {scanMode === "selecting" ? <Loader2 className="size-4 animate-spin" /> : <FolderOpen className="size-4" />}
-            <span className="hidden sm:inline">Choose folder</span>
-          </Button>
+          {hasCourses && (
+            <Button type="button" variant="outline" size="sm" onClick={handleSelectFolder} disabled={scanMode !== "idle"} className="gap-2 rounded-md">
+              {scanMode === "selecting" ? <Loader2 className="size-4 animate-spin" /> : <FolderOpen className="size-4" />}
+              <span className="hidden sm:inline">Choose folder</span>
+            </Button>
+          )}
           {libraryPath && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -264,7 +266,7 @@ function LibraryDashboard({
 
           <section>
             <div className="paper-panel-strong overflow-hidden rounded-2xl">
-              <div className="hero-panel relative grid gap-6 overflow-hidden p-6 md:grid-cols-[minmax(0,0.8fr)_minmax(360px,1fr)] md:p-8">
+              <div className={cn("hero-panel relative grid gap-6 overflow-hidden p-6 md:p-8", resumeCourses.length > 0 && "md:grid-cols-[minmax(0,0.8fr)_minmax(360px,1fr)]")}>
                 <div className="relative z-10 flex flex-col justify-between gap-8">
                   <div className="flex flex-col gap-4">
                     <Badge variant="secondary" className="w-fit rounded-md">Welcome back</Badge>
@@ -296,37 +298,20 @@ function LibraryDashboard({
                   </div>
                 </div>
 
-                <div className="relative z-10 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                  {resumeCourses.length > 0 ? (
-                    resumeCourses.map((course) => (
+                {resumeCourses.length > 0 && (
+                  <div className="relative z-10 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                    {resumeCourses.map((course) => (
                       <ResumeCourseCard key={course.id} course={course} onOpenCourse={onOpenCourse} />
-                    ))
-                  ) : (
-                    <div className="rounded-xl border border-dashed border-border bg-background/80 p-5 sm:col-span-2 xl:col-span-3">
-                      <div className="flex h-full min-h-40 flex-col justify-between gap-6">
-                        <div className="flex flex-col gap-2">
-                          <h2 className="text-lg font-semibold tracking-tight">No active courses yet</h2>
-                          <p className="text-sm leading-6 text-muted-foreground">Scan a folder to create resumable course cards from your local videos, documents, audio, and subtitles.</p>
-                        </div>
-                        <Button type="button" onClick={handleSelectFolder} disabled={scanMode !== "idle"} className="w-fit rounded-md">
-                          <FolderOpen className="size-4" />
-                          Scan course folder
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </section>
 
           {!hasHydrated && <CourseSkeletonRail />}
 
-          {hasHydrated && loadedCourses.length === 0 && (
-            <EmptyLibrary onSelectFolder={handleSelectFolder} disabled={scanMode !== "idle"} />
-          )}
-
-          {loadedCourses.length > 0 && (
+          {hasCourses && (
             <section className="flex flex-col gap-4">
               <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
                 <div className="flex flex-col gap-1">
@@ -559,26 +544,6 @@ function DashboardCourseCard({ course, viewMode, onOpenCourse }: { course: Cours
         </div>
       </div>
     </article>
-  )
-}
-
-function EmptyLibrary({ onSelectFolder, disabled }: { onSelectFolder: () => void; disabled: boolean }) {
-  return (
-    <div className="paper-panel rounded-2xl border-dashed p-10 text-center">
-      <div className="mx-auto flex max-w-md flex-col items-center gap-5">
-        <div className="flex size-14 items-center justify-center rounded-xl bg-secondary text-secondary-foreground">
-          <FolderOpen className="size-6" />
-        </div>
-        <div className="flex flex-col gap-2">
-          <h3 className="text-lg font-semibold tracking-tight">No courses yet</h3>
-          <p className="text-sm text-muted-foreground">Choose a root folder. Each subfolder becomes a course, with videos and files grouped into modules.</p>
-        </div>
-        <Button type="button" onClick={onSelectFolder} disabled={disabled}>
-          <FolderOpen className="size-4" />
-          Choose folder
-        </Button>
-      </div>
-    </div>
   )
 }
 

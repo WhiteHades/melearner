@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo } from "react"
 import { ChevronLeft, ChevronRight, FileText, FolderOpen } from "lucide-react"
+import { BrandLogo } from "@/components/brand-logo"
 import { CourseViewerSidebar } from "./sidebar"
 import { VideoArea } from "./video-area"
 import { Badge } from "@/components/ui/badge"
@@ -93,7 +94,7 @@ export function CourseViewerLayout({
       <header className="relative flex h-16 shrink-0 items-center gap-4 border-b border-border bg-card px-4">
         <div data-tauri-drag-region className="absolute inset-x-0 top-0 h-3" />
         <div className="flex items-center gap-3">
-          <div className="text-2xl font-bold tracking-tight">melearner</div>
+          <BrandLogo className="shrink-0" />
           <Badge variant="secondary" className="hidden rounded-md sm:inline-flex">local course</Badge>
         </div>
 
