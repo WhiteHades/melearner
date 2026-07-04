@@ -21,15 +21,23 @@ melearner is a viewer. it doesn't download, stream, or share anything. see the [
 
 ## install
 
-**arch linux:**
+**linux, portable:** download `melearner-linux-x86_64.appimage` from the [releases page](https://github.com/WhiteHades/melearner/releases/latest), then:
 ```bash
-yay -S melearner-bin
+chmod +x melearner-linux-x86_64.appimage
+./melearner-linux-x86_64.appimage
 ```
 
-**debian / ubuntu:** download the `.deb` from the [releases page](https://github.com/WhiteHades/melearner/releases/latest), then:
+**arch linux:** download `melearner-arch-x86_64.pkg.tar.zst` from the [releases page](https://github.com/WhiteHades/melearner/releases/latest), then:
 ```bash
-sudo dpkg -i melearner_*.deb
+sudo pacman -U melearner-arch-x86_64.pkg.tar.zst
 ```
+
+**debian / ubuntu:** download `melearner-linux-x86_64.deb` from the [releases page](https://github.com/WhiteHades/melearner/releases/latest), then:
+```bash
+sudo dpkg -i melearner-linux-x86_64.deb
+```
+
+use the appimage if you are on another linux distro and do not want a package-manager install.
 
 **macos:**
 ```bash
@@ -102,17 +110,25 @@ pnpm tauri:dev
 pnpm verify   # type-check + lint + web build + cargo check
 ```
 
-### build a release binary
+### build release assets
 
 ```bash
 pnpm tauri:build                 # current platform
-pnpm tauri:build:linux           # deb + appimage
+pnpm tauri:build:linux           # linux bundles for the current machine
 pnpm tauri:build:windows         # msi + nsis
 pnpm tauri:build:macos           # intel
 pnpm tauri:build:macos-arm       # apple silicon
 ```
 
-the CI release pipeline (`.github/workflows/release.yml`) builds all platforms automatically on every `v*` tag push and uploads the artifacts to the matching github release.
+release uploads are curated, not every file Tauri can produce. for linux x86_64, the release page should have:
+
+- `melearner-linux-x86_64.appimage` for portable linux installs
+- `melearner-linux-x86_64.deb` for debian and ubuntu
+- `melearner-arch-x86_64.pkg.tar.zst` for arch and pacman-based installs
+
+the arch package recipe lives in `packaging/arch/` and packages the release binary plus the desktop entry and icon.
+
+the manual CI release workflow (`.github/workflows/release.yml`) builds and uploads the appimage and deb assets for a tag. build the arch asset from `packaging/arch/` and upload it with the same release. do not upload duplicate formats for the same install path unless we intentionally support that channel.
 
 ## how it's built
 

@@ -1,39 +1,28 @@
 name: release
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: release tag to package, for example v0.1.2
+        required: true
+        type: string
 
 permissions:
   contents: write
 
 jobs:
-  build:
-    permissions:
-      contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: macos-latest
-            args: "--target aarch64-apple-darwin"
-          - platform: macos-latest
-            args: "--target x86_64-apple-darwin"
-          - platform: ubuntu-22.04
-            args: ""
-          - platform: ubuntu-22.04-arm
-            args: ""
-          - platform: windows-latest
-            args: ""
-
-    runs-on: ${{ matrix.platform }}
+  linux-x86-64:
+    name: linux x86_64 assets
+    runs-on: ubuntu-22.04
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
 
       - name: install pnpm
-        run: npm install -g pnpm@10
+        run: npm install -g pnpm@11.9.0
 
       - name: setup node
         uses: actions/setup-node@v4
@@ -41,13 +30,10 @@ jobs:
           node-version: lts/*
           cache: pnpm
 
-      - name: install Rust stable
+      - name: install rust stable
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: install linux deps
-        if: matrix.platform == 'ubuntu-22.04' || matrix.platform == 'ubuntu-22.04-arm'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -57,7 +43,7 @@ jobs:
             patchelf \
             libssl-dev
 
-      - name: Rust cache
+      - name: rust cache
         uses: swatinem/rust-cache@v2
         with:
           workspaces: "./src-tauri -> target"
@@ -65,13 +51,23 @@ jobs:
       - name: install frontend deps
         run: pnpm install --frozen-lockfile
 
-      - uses: tauri-apps/tauri-action@v0
+      - name: build linux bundles
+        run: pnpm tauri build --bundles deb,appimage
+
+      - name: stage curated assets
+        run: |
+          mkdir -p dist/release
+          cp src-tauri/target/release/bundle/deb/*.deb dist/release/melearner-linux-x86_64.deb
+          cp src-tauri/target/release/bundle/appimage/*.AppImage dist/release/melearner-linux-x86_64.appimage
+
+      - name: ensure release exists
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "melearner ${{ github.ref_name }}"
-          releaseBody: "see the assets below to download and install. full release notes are tracked in the project's commit log."
-          releaseDraft: true
-          prerelease: false
-          args: ${{ matrix.args }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "${{ inputs.tag }}" >/dev/null || \
+            gh release create "${{ inputs.tag }}" --title "melearner ${{ inputs.tag }}" --notes "release assets for ${{ inputs.tag }}."
+
+      - name: upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ inputs.tag }}" dist/release/* --clobber

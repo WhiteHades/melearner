@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=melearner
+Comment=native local course viewer
+Exec=melearner
+Icon=melearner
+Type=Application
+Categories=Education;
+Terminal=false

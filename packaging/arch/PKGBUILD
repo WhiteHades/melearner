@@ -1,0 +1,22 @@
+pkgname=melearner-bin
+pkgver=0.1.2
+pkgrel=1
+pkgdesc="native local course viewer"
+arch=("x86_64")
+url="https://github.com/WhiteHades/melearner"
+license=("MIT")
+depends=("webkit2gtk-4.1" "gtk3" "libayatana-appindicator" "ffmpeg" "xdg-utils")
+provides=("melearner=${pkgver}")
+conflicts=("melearner")
+options=("!strip")
+source=()
+sha256sums=()
+
+package() {
+  local repo_root="${startdir}/../.."
+
+  install -Dm755 "${repo_root}/src-tauri/target/release/melearner" "${pkgdir}/usr/bin/melearner"
+  install -Dm644 "${startdir}/melearner.desktop" "${pkgdir}/usr/share/applications/melearner.desktop"
+  install -Dm644 "${repo_root}/src-tauri/icons/icon.svg" "${pkgdir}/usr/share/icons/hicolor/scalable/apps/melearner.svg"
+  install -Dm644 "${repo_root}/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}
