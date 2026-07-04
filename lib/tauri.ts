@@ -65,3 +65,7 @@ export async function getDatabasePath(): Promise<string> {
 export async function openNativeFile(path: string): Promise<void> {
   return invoke<void>("open_native", { path })
 }
+
+export async function generateVideoThumbnail(path: string, seed: number): Promise<number[]> {
+  return invoke<number[]>("generate_video_thumbnail", { path, seed })
+}

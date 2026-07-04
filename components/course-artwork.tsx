@@ -2,22 +2,30 @@
 
 import { useEffect, useMemo, useRef, useState } from "react"
 import { convertFileSrc } from "@tauri-apps/api/core"
-import { GraduationCap } from "lucide-react"
-import { isTauri } from "@/lib/tauri"
+import { generateVideoThumbnail, isTauri } from "@/lib/tauri"
 import { cn } from "@/lib/utils"
 import type { Course } from "@/types"
 
 const thumbnailCache = new Map<string, string | null>()
+const courseVideoCache = new Map<string, string | null>()
 
-function firstVideoPath(course: Course): string | null {
-  if (course.thumbnailSourcePath) return course.thumbnailSourcePath
+function randomVideoPath(course: Course): string | null {
+  const cached = courseVideoCache.get(course.id)
+  if (cached !== undefined) return cached
+
+  const paths = new Set<string>()
+  if (course.thumbnailSourcePath) paths.add(course.thumbnailSourcePath)
 
   for (const section of course.sections) {
-    const lesson = section.lessons.find((item) => item.type === "video")
-    if (lesson) return lesson.path
+    for (const lesson of section.lessons) {
+      if (lesson.type === "video") paths.add(lesson.path)
+    }
   }
 
-  return null
+  const videos = Array.from(paths)
+  const selected = videos.length > 0 ? videos[Math.floor(Math.random() * videos.length)] : null
+  courseVideoCache.set(course.id, selected)
+  return selected
 }
 
 function buildMediaUrl(path: string): string {
@@ -29,6 +37,21 @@ async function captureVideoThumbnail(path: string): Promise<string | null> {
 
   const cached = thumbnailCache.get(path)
   if (cached !== undefined) return cached
+
+  const seed = Math.random()
+
+  if (isTauri()) {
+    try {
+      const bytes = await generateVideoThumbnail(path, seed)
+      if (bytes.length > 0) {
+        const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: "image/jpeg" }))
+        thumbnailCache.set(path, url)
+        return url
+      }
+    } catch {
+      // Fall back to browser capture when ffmpeg is unavailable or cannot decode a file.
+    }
+  }
 
   const video = document.createElement("video")
   video.muted = true
@@ -55,7 +78,9 @@ async function captureVideoThumbnail(path: string): Promise<string | null> {
 
     video.addEventListener("loadedmetadata", () => {
       const duration = Number.isFinite(video.duration) ? video.duration : 0
-      video.currentTime = duration > 12 ? Math.min(24, duration * 0.08) : Math.max(0, duration * 0.5)
+      video.currentTime = duration > 12
+        ? Math.min(duration - 1, Math.max(1, duration * (0.08 + seed * 0.45)))
+        : Math.max(0, duration * 0.5)
     }, { once: true })
 
     video.addEventListener("seeked", () => {
@@ -85,11 +110,11 @@ async function captureVideoThumbnail(path: string): Promise<string | null> {
   return result
 }
 
-export function CourseArtwork({ course, className, iconClassName }: { course: Course; className?: string; iconClassName?: string }) {
+export function CourseArtwork({ course, className }: { course: Course; className?: string }) {
   const ref = useRef<HTMLDivElement | null>(null)
   const [isVisible, setIsVisible] = useState(false)
   const [thumbnail, setThumbnail] = useState<string | null>(course.thumbnail)
-  const videoPath = useMemo(() => firstVideoPath(course), [course])
+  const videoPath = useMemo(() => randomVideoPath(course), [course])
 
   useEffect(() => {
     const node = ref.current
@@ -131,9 +156,6 @@ export function CourseArtwork({ course, className, iconClassName }: { course: Co
         />
       )}
       <div className="absolute inset-0 bg-background/45" />
-      <div className={cn("absolute bottom-3 left-3 flex size-11 items-center justify-center rounded-md border border-border bg-background/90 text-primary shadow-[var(--shadow-whisper)]", iconClassName)}>
-        <GraduationCap className="size-5" />
-      </div>
     </div>
   )
 }
