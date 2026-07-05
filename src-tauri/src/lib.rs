@@ -191,7 +191,8 @@ pub fn run() {
 
     #[cfg(target_os = "linux")]
     {
-        std::env::set_var("GST_PLUGIN_FEATURE_RANK", "avdec_h264:MAX");
+        // This runs before Tauri starts app threads, so no other thread can read the env concurrently.
+        unsafe { std::env::set_var("GST_PLUGIN_FEATURE_RANK", "avdec_h264:MAX") };
     }
 
 fn get_db_path() -> std::path::PathBuf {
