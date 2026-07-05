@@ -2,7 +2,7 @@ use seahash::SeaHasher;
 use serde::Serialize;
 use std::hash::Hasher;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::UNIX_EPOCH;
 
 #[derive(Debug, Serialize)]
@@ -88,8 +88,25 @@ fn output_path(input: &Path, media_type: &str) -> Result<PathBuf, String> {
     )))
 }
 
+fn media_tool_program(env_name: &str, program: &str) -> String {
+    if let Ok(path) = std::env::var(env_name) {
+        if !path.trim().is_empty() {
+            return path;
+        }
+    }
+
+    for prefix in ["/usr/bin", "/usr/local/bin", "/opt/homebrew/bin", "/opt/local/bin"] {
+        let candidate = Path::new(prefix).join(program);
+        if candidate.is_file() {
+            return candidate.to_string_lossy().to_string();
+        }
+    }
+
+    program.to_string()
+}
+
 fn ffmpeg_program() -> String {
-    std::env::var("MELEARNER_FFMPEG").unwrap_or_else(|_| "ffmpeg".to_string())
+    media_tool_program("MELEARNER_FFMPEG", "ffmpeg")
 }
 
 fn ffmpeg_args(input: &Path, output: &Path, media_type: &str) -> Vec<String> {
@@ -97,6 +114,7 @@ fn ffmpeg_args(input: &Path, output: &Path, media_type: &str) -> Vec<String> {
         "-hide_banner".to_string(),
         "-loglevel".to_string(),
         "error".to_string(),
+        "-nostdin".to_string(),
         "-y".to_string(),
         "-i".to_string(),
         input.to_string_lossy().to_string(),
@@ -172,15 +190,26 @@ pub async fn prepare_playback_media(
                 .map_err(|err| format!("failed to create media cache: {err}"))?;
         }
 
-        let status = Command::new(ffmpeg_program())
+        let ffmpeg_output = Command::new(ffmpeg_program())
             .args(ffmpeg_args(&input, &output, normalized_type))
-            .status()
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output()
             .map_err(|err| format!("failed to start ffmpeg: {err}"))?;
 
-        if !status.success() {
+        if !ffmpeg_output.status.success() {
             let _ = std::fs::remove_file(&output);
+            let stderr = String::from_utf8_lossy(&ffmpeg_output.stderr)
+                .trim()
+                .to_string();
+            let details = if stderr.is_empty() {
+                ffmpeg_output.status.to_string()
+            } else {
+                format!("{}: {stderr}", ffmpeg_output.status)
+            };
             return Err(format!(
-                "ffmpeg could not prepare this media file: {status}"
+                "ffmpeg could not prepare this media file: {details}"
             ));
         }
 
@@ -244,6 +273,7 @@ mod tests {
             args.windows(2)
                 .any(|pair| pair[0] == "-movflags" && pair[1] == "+faststart")
         );
+        assert!(args.iter().any(|arg| arg == "-nostdin"));
         assert_eq!(args.last().map(String::as_str), Some("prepared.mp4"));
     }
 }

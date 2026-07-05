@@ -11,12 +11,10 @@ import { frontendLog } from "@/lib/frontend-log"
 import { useAsyncResource } from "@/lib/hooks/use-async-resource"
 import { isTauri, openNativeFile } from "@/lib/tauri"
 import type { Lesson } from "@/types"
-import { SkipBack, SkipForward, FileText, File, FileCode, ExternalLink } from "lucide-react"
+import { FileText, File, FileCode, ExternalLink } from "lucide-react"
 
 interface ContentViewerProps {
   lesson: Lesson
-  onPrevious?: () => void
-  onNext?: () => void
 }
 
 type ContentResource =
@@ -79,7 +77,7 @@ async function loadContent(lesson: Lesson): Promise<ContentResource> {
   return { kind: "unsupported", ext }
 }
 
-export function ContentViewer({ lesson, onPrevious, onNext }: ContentViewerProps) {
+export function ContentViewer({ lesson }: ContentViewerProps) {
   const ext = getExtension(lesson.path)
   const resource = useAsyncResource<ContentResource>(
     () => loadContent(lesson),
@@ -94,24 +92,9 @@ export function ContentViewer({ lesson, onPrevious, onNext }: ContentViewerProps
     },
   )
 
-  const navButtons = (
-    <div className="flex flex-wrap gap-2">
-      {onPrevious && (
-        <Button variant="outline" size="sm" onClick={onPrevious}>
-          <SkipBack className="mr-1 size-4" /> Previous
-        </Button>
-      )}
-      {onNext && (
-        <Button size="sm" onClick={onNext}>
-          Next <SkipForward className="ml-1 size-4" />
-        </Button>
-      )}
-    </div>
-  )
-
   return (
     <div className="flex min-h-[68vh] w-full flex-col bg-card">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
+      <div className="border-b border-border px-4 py-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
             {ext === "pdf" ? <FileText className="size-4" /> : ext === "html" || ext === "htm" || ext === "md" || ext === "markdown" ? <FileCode className="size-4" /> : <File className="size-4" />}
@@ -119,7 +102,6 @@ export function ContentViewer({ lesson, onPrevious, onNext }: ContentViewerProps
           </div>
           <h2 className="truncate text-base font-semibold">{lesson.name}</h2>
         </div>
-        {navButtons}
       </div>
 
       {resource.status === "loading" && (

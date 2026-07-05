@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo } from "react"
-import { ChevronLeft, ChevronRight, FileText, FolderOpen } from "lucide-react"
+import { ChevronLeft, FileText, FolderOpen } from "lucide-react"
 import { BrandLogo } from "@/components/brand-logo"
 import { CourseViewerSidebar } from "./sidebar"
 import { VideoArea } from "./video-area"
@@ -130,7 +130,7 @@ export function CourseViewerLayout({
           </div>
         </ScrollArea>
 
-        <LessonUtilityPanel course={course} lesson={currentLesson} progress={progress} nextLesson={nextLesson} onNext={nextLesson ? () => onLessonChange?.(nextLesson.id) : undefined} />
+        <LessonUtilityPanel course={course} lesson={currentLesson} progress={progress} />
       </main>
     </div>
   )
@@ -140,14 +140,10 @@ function LessonUtilityPanel({
   course,
   lesson,
   progress,
-  nextLesson,
-  onNext,
 }: {
   course: Course
   lesson: Lesson | null
   progress: { completed: number; total: number; percent: number }
-  nextLesson: Lesson | null
-  onNext?: () => void
 }) {
   const currentSection = course.sections.find((section) => section.lessons.some((item) => item.id === lesson?.id))
   const resourceLessons = currentSection?.lessons.filter((item) => item.type === "document" || item.type === "quiz") ?? []
@@ -206,12 +202,6 @@ function LessonUtilityPanel({
         </div>
       </ScrollArea>
 
-      <div className="border-t border-border p-4">
-        <Button type="button" onClick={onNext} disabled={!onNext} className="w-full justify-between rounded-md">
-          <span>{nextLesson ? "Go to next item" : "Course complete"}</span>
-          <ChevronRight className="size-4" />
-        </Button>
-      </div>
     </aside>
   )
 }

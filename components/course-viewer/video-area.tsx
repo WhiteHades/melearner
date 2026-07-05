@@ -85,10 +85,9 @@ export function VideoArea({ className, lesson, onNext, onPrevious }: VideoAreaPr
             onProgress={handleProgress}
             onComplete={handleComplete}
             onNext={onNext}
-            onPrevious={onPrevious}
           />
         ) : (
-          <ContentViewer lesson={lesson} onNext={onNext} onPrevious={onPrevious} />
+          <ContentViewer lesson={lesson} />
         )}
       </div>
 

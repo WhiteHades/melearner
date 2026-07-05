@@ -19,7 +19,6 @@ import type { Lesson } from "@/types"
 import {
   Play,
   Pause,
-  SkipBack,
   SkipForward,
   Volume2,
   VolumeX,
@@ -33,7 +32,6 @@ interface VideoPlayerProps {
   lesson: Lesson
   onProgress: (currentTime: number, duration: number) => void
   onComplete: () => void
-  onPrevious?: () => void
   onNext?: () => void
   autoplay?: boolean
 }
@@ -61,7 +59,6 @@ function VideoPlayerComponent({
   lesson,
   onProgress,
   onComplete,
-  onPrevious,
   onNext,
   autoplay = false,
 }: VideoPlayerProps) {
@@ -438,18 +435,6 @@ function VideoPlayerComponent({
       <div className="flex aspect-video w-full items-center justify-center bg-muted">
         <div className="text-center">
           <p className="text-lg font-medium">{lesson.name}</p>
-          <div className="mt-4 flex justify-center gap-2">
-            {onPrevious && (
-              <Button variant="outline" size="sm" onClick={onPrevious}>
-                <SkipBack className="mr-1 size-4" /> previous
-              </Button>
-            )}
-            {onNext && (
-              <Button size="sm" onClick={onNext}>
-                next <SkipForward className="ml-1 size-4" />
-              </Button>
-            )}
-          </div>
         </div>
       </div>
     )
@@ -559,21 +544,9 @@ function VideoPlayerComponent({
 
         <div className="flex items-center justify-between text-white">
           <div className="flex items-center gap-2">
-            {onPrevious && (
-              <Button variant="ghost" size="icon" onClick={onPrevious} className="text-white hover:bg-white/20" aria-label="previous lesson">
-                <SkipBack className="size-5" aria-hidden="true" />
-              </Button>
-            )}
-
             <Button variant="ghost" size="icon" onClick={togglePlay} className="text-white hover:bg-white/20" aria-label={isPlaying ? "pause" : "play"}>
               {isPlaying ? <Pause className="size-6" aria-hidden="true" /> : <Play className="size-6" aria-hidden="true" />}
             </Button>
-
-            {onNext && (
-              <Button variant="ghost" size="icon" onClick={onNext} className="text-white hover:bg-white/20" aria-label="next lesson">
-                <SkipForward className="size-5" aria-hidden="true" />
-              </Button>
-            )}
 
             <div className="group/vol ml-2 flex items-center gap-2">
               <Button variant="ghost" size="icon" onClick={toggleMute} className="text-white hover:bg-white/20" aria-label={isMuted ? "unmute" : "mute"}>
