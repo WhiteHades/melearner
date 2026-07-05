@@ -1,8 +1,7 @@
 "use client"
 
 import { useEffect, useMemo } from "react"
-import { ChevronLeft, FileText, FolderOpen } from "lucide-react"
-import { BrandLogo } from "@/components/brand-logo"
+import { FileText, FolderOpen } from "lucide-react"
 import { CourseViewerSidebar } from "./sidebar"
 import { VideoArea } from "./video-area"
 import { Button } from "@/components/ui/button"
@@ -90,27 +89,10 @@ export function CourseViewerLayout({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
-      <header className="relative flex h-16 shrink-0 items-center gap-4 border-b border-border bg-card px-4">
-        <div data-tauri-drag-region className="absolute inset-x-0 top-0 h-3" />
-        <div className="flex items-center gap-3">
-          <BrandLogo className="shrink-0" />
-        </div>
+    <div className="relative flex h-full min-h-0 flex-col bg-background text-foreground">
+      <div data-tauri-drag-region className="absolute inset-x-0 top-0 z-40 h-6 md:right-32" />
 
-        <div className="mx-auto hidden min-w-0 max-w-md flex-1 items-center gap-3 rounded-lg border border-border bg-background px-4 py-2 lg:flex">
-          <span className="shrink-0 text-sm tabular-nums">{progress.completed}/{progress.total} learning items</span>
-          <Progress value={progress.percent} className="h-2" />
-        </div>
-
-        <div className="ml-auto flex items-center gap-2">
-          <Button type="button" variant="ghost" size="sm" onClick={onBack} className="gap-2 rounded-md">
-            <ChevronLeft className="size-4" />
-            Library
-          </Button>
-        </div>
-      </header>
-
-      <main className="grid min-h-0 flex-1 gap-0 overflow-hidden md:grid-cols-[21rem_minmax(0,1fr)] 2xl:grid-cols-[21rem_minmax(0,1fr)_24rem]">
+      <main className="grid min-h-0 flex-1 gap-0 overflow-hidden pt-6 md:grid-cols-[21rem_minmax(0,1fr)] 2xl:grid-cols-[21rem_minmax(0,1fr)_24rem]">
         <CourseViewerSidebar
           course={course}
           currentLessonId={currentLesson?.id}
