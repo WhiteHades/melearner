@@ -28,6 +28,7 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command"
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
 import { Progress } from "@/components/ui/progress"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -118,6 +119,7 @@ function LibraryDashboard({
   const continueLesson = continueCourse ? selectContinueLesson(continueCourse) : null
   const visibleCourses = useMemo(() => filterCourses(loadedCourses, searchQuery), [loadedCourses, searchQuery])
   const hasCourses = loadedCourses.length > 0
+  const displayLibraryPath = libraryPath ? formatDisplayPath(libraryPath) : null
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -212,7 +214,7 @@ function LibraryDashboard({
         <button
           type="button"
           onClick={() => setCmdOpen(true)}
-          className="hidden h-9 min-w-0 flex-1 items-center gap-2 rounded-lg border border-input bg-background px-4 text-left text-sm text-muted-foreground transition-colors hover:border-ring md:flex"
+          className="hidden h-9 w-80 shrink-0 items-center gap-2 rounded-lg border border-input bg-background px-4 text-left text-sm text-muted-foreground transition-colors hover:border-ring lg:flex xl:w-96"
         >
           <Search className="size-4" />
           <span className="truncate">What do you want to learn?</span>
@@ -249,7 +251,7 @@ function LibraryDashboard({
       </header>
 
       <main className="min-h-0 flex-1 overflow-auto">
-        <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-4 py-4 md:px-6 md:py-6">
+        <div className="mx-auto flex w-full max-w-[92rem] flex-col gap-9 px-4 py-5 md:px-7 md:py-7">
           {error && (
             <Alert variant="destructive" className="border-destructive/30 bg-destructive/10">
               <AlertTitle>Error</AlertTitle>
@@ -266,15 +268,15 @@ function LibraryDashboard({
 
           <section>
             <div className="paper-panel-strong overflow-hidden rounded-2xl">
-              <div className={cn("hero-panel relative grid gap-6 overflow-hidden p-6 md:p-8", resumeCourses.length > 0 && "md:grid-cols-[minmax(0,0.8fr)_minmax(360px,1fr)]")}>
+              <div className={cn("hero-panel relative grid gap-7 overflow-hidden p-7 md:p-9", resumeCourses.length > 0 && "md:grid-cols-[minmax(22rem,0.8fr)_minmax(0,1fr)]")}>
                 <div className="relative z-10 flex flex-col justify-between gap-8">
                   <div className="flex flex-col gap-4">
                     <Badge variant="secondary" className="w-fit rounded-md">Welcome back</Badge>
                     <div className="flex flex-col gap-2">
-                      <h1 className="max-w-2xl text-3xl font-bold tracking-tight md:text-4xl">
+                      <h1 className="max-w-2xl text-4xl font-bold tracking-tight md:text-5xl">
                         {continueCourse ? continueCourse.name : "Build your learning library"}
                       </h1>
-                      <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+                      <p className="max-w-2xl text-base leading-7 text-muted-foreground">
                         {continueLesson
                           ? `Up next: ${continueLesson.name}`
                           : "Select a root folder to scan videos, documents, audio, subtitles, and progress into one learning workspace."}
@@ -284,22 +286,26 @@ function LibraryDashboard({
 
                   <div className="flex flex-wrap items-center gap-3">
                     {continueCourse ? (
-                      <Button type="button" onClick={() => onOpenCourse(continueCourse, continueLesson?.id ?? null)} className="rounded-md">
-                        <PlayCircle className="size-4" />
+                      <Button type="button" size="lg" onClick={() => onOpenCourse(continueCourse, continueLesson?.id ?? null)} className="rounded-md">
+                        <PlayCircle data-icon="inline-start" />
                         Resume learning
                       </Button>
                     ) : (
-                      <Button type="button" onClick={handleSelectFolder} disabled={scanMode !== "idle"} className="rounded-md">
-                        <FolderOpen className="size-4" />
+                      <Button type="button" size="lg" onClick={handleSelectFolder} disabled={scanMode !== "idle"} className="rounded-md">
+                        <FolderOpen data-icon="inline-start" />
                         Scan root folder
                       </Button>
                     )}
-                    {libraryPath && <p className="max-w-lg truncate text-xs text-muted-foreground">{libraryPath}</p>}
                   </div>
                 </div>
 
                 {resumeCourses.length > 0 && (
-                  <div className="relative z-10 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                  <div className={cn(
+                    "relative z-10 grid gap-4",
+                    resumeCourses.length === 1 && "grid-cols-1",
+                    resumeCourses.length === 2 && "sm:grid-cols-2",
+                    resumeCourses.length >= 3 && "sm:grid-cols-2 xl:grid-cols-3"
+                  )}>
                     {resumeCourses.map((course) => (
                       <ResumeCourseCard key={course.id} course={course} onOpenCourse={onOpenCourse} />
                     ))}
@@ -313,43 +319,45 @@ function LibraryDashboard({
 
           {hasCourses && (
             <section className="flex flex-col gap-4">
-              <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-                <div className="flex flex-col gap-1">
-                  <h2 className="text-xl font-semibold tracking-tight">Your courses</h2>
-                  <p className="text-sm text-muted-foreground">{visibleCourses.length} course{visibleCourses.length === 1 ? "" : "s"} shown</p>
+              <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+                <div className="flex flex-col gap-1.5">
+                  <h2 className="text-2xl font-semibold tracking-tight">Your courses</h2>
+                  <p className="text-sm text-muted-foreground">
+                    {visibleCourses.length} course{visibleCourses.length === 1 ? "" : "s"} shown{displayLibraryPath ? ` from ${displayLibraryPath}` : ""}
+                  </p>
                 </div>
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                  <label className="flex h-10 min-w-0 items-center gap-2 rounded-lg border border-input bg-background px-3 text-sm sm:w-80">
-                    <Search className="size-4 text-muted-foreground" />
-                    <input
+                  <InputGroup className="h-10 bg-background sm:w-80">
+                    <InputGroupAddon>
+                      <Search />
+                    </InputGroupAddon>
+                    <InputGroupInput
                       value={searchQuery}
                       onChange={(event) => setSearchQuery(event.target.value)}
                       placeholder="Filter courses"
-                      className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground"
                     />
-                  </label>
+                  </InputGroup>
                   <ToggleGroup
                     type="single"
                     value={viewMode}
                     onValueChange={(value) => {
                       if (value === "grid" || value === "list") setViewMode(value)
                     }}
-                    variant="outline"
-                    size="sm"
-                    className="hidden rounded-lg border bg-background px-0.5 sm:flex"
+                    size="lg"
+                    className="hidden gap-1 sm:flex"
                   >
                     <Tooltip>
                       <TooltipTrigger asChild>
-                        <ToggleGroupItem value="grid" aria-label="Grid view" className="size-8 px-0">
-                          <LayoutGrid className="size-4" />
+                        <ToggleGroupItem value="grid" aria-label="Grid view" className="size-10 px-0">
+                          <LayoutGrid />
                         </ToggleGroupItem>
                       </TooltipTrigger>
                       <TooltipContent>Grid view</TooltipContent>
                     </Tooltip>
                     <Tooltip>
                       <TooltipTrigger asChild>
-                        <ToggleGroupItem value="list" aria-label="List view" className="size-8 px-0">
-                          <BookOpen className="size-4" />
+                        <ToggleGroupItem value="list" aria-label="List view" className="size-10 px-0">
+                          <BookOpen />
                         </ToggleGroupItem>
                       </TooltipTrigger>
                       <TooltipContent>List view</TooltipContent>
@@ -357,7 +365,7 @@ function LibraryDashboard({
                   </ToggleGroup>
                 </div>
               </div>
-              <div className={viewMode === "list" ? "flex flex-col gap-3" : "grid items-start gap-4 sm:grid-cols-2 xl:grid-cols-4"}>
+              <div className={viewMode === "list" ? "flex flex-col gap-3" : "grid items-start gap-5 sm:grid-cols-2 xl:grid-cols-4"}>
                 {visibleCourses.map((course) => (
                   <DashboardCourseCard key={course.id} course={course} viewMode={viewMode} onOpenCourse={onOpenCourse} />
                 ))}
@@ -464,6 +472,17 @@ function allLessons(courses: Course[]): Array<{ course: Course; lesson: Lesson }
   return courses.flatMap((course) => course.sections.flatMap((section) => section.lessons.map((lesson) => ({ course, lesson }))))
 }
 
+function formatDisplayPath(path: string): string {
+  const normalized = path.replace(/\\/g, "/")
+  const unixHome = normalized.match(/^\/(home|Users)\/[^/]+(?:\/(.*))?$/)
+  if (unixHome) return unixHome[2] ? `~/${unixHome[2]}` : "~"
+
+  const windowsHome = path.match(/^[A-Za-z]:\\Users\\[^\\]+(?:\\(.*))?$/)
+  if (windowsHome) return windowsHome[1] ? `~\\${windowsHome[1]}` : "~"
+
+  return path
+}
+
 function ResumeCourseCard({ course, onOpenCourse }: { course: Course; onOpenCourse: (course: Course, lessonId?: string | null) => void }) {
   const summary = summarizeCourse(course)
   const nextLesson = selectContinueLesson(course)
@@ -479,22 +498,22 @@ function ResumeCourseCard({ course, onOpenCourse }: { course: Course; onOpenCour
           onOpenCourse(course, nextLesson?.id ?? null)
         }
       }}
-      className="group flex min-h-52 cursor-pointer flex-col overflow-hidden rounded-xl border border-border bg-background/90 transition-[border-color,box-shadow] hover:border-primary/70 hover:shadow-[var(--shadow-panel)]"
+      className="group flex min-h-60 cursor-pointer flex-col overflow-hidden rounded-xl border border-border bg-background/90 transition-[border-color,box-shadow] hover:border-primary/70 hover:shadow-[var(--shadow-panel)]"
     >
-      <CourseArtwork course={course} className="h-24 min-h-24 shrink-0" />
-      <div className="flex min-h-0 flex-1 flex-col justify-between gap-4 p-4">
+      <CourseArtwork course={course} className="h-32 min-h-32 shrink-0" />
+      <div className="flex min-h-0 flex-1 flex-col justify-between gap-4 p-5">
         <div className="flex min-h-0 flex-col gap-1.5">
           <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
             <span className="truncate">Resume</span>
             <span className="shrink-0 font-medium text-foreground tabular-nums">{summary.progress}%</span>
           </div>
-          <h2 className="line-clamp-2 text-sm font-semibold leading-snug tracking-tight">{course.name}</h2>
-          <p className="line-clamp-1 text-xs text-muted-foreground">{nextLesson?.name ?? "No lesson selected"}</p>
+          <h2 className="line-clamp-2 text-base font-semibold leading-snug tracking-tight">{course.name}</h2>
+          <p className="line-clamp-1 text-sm text-muted-foreground">{nextLesson?.name ?? "No lesson selected"}</p>
         </div>
         <div className="flex flex-col gap-2">
           <Progress value={summary.progress} className="h-1.5" />
-          <div className="flex items-center gap-1.5 text-xs font-medium text-primary">
-            <PlayCircle className="size-3.5" />
+          <div className="flex items-center gap-1.5 text-sm font-medium text-primary">
+            <PlayCircle className="size-4" />
             Continue
           </div>
         </div>
@@ -525,15 +544,15 @@ function DashboardCourseCard({ course, viewMode, onOpenCourse }: { course: Cours
         isList ? "grid gap-0 md:grid-cols-[240px_minmax(0,1fr)]" : "flex flex-col"
       )}
     >
-      <CourseArtwork course={course} className={cn("h-36 min-h-36 shrink-0", isList && "h-full min-h-40")} />
-      <div className={cn("flex min-w-0 flex-col gap-4 p-4", isList && "flex-1")}>
+      <CourseArtwork course={course} className={cn("h-40 min-h-40 shrink-0", isList && "h-full min-h-40")} />
+      <div className={cn("flex min-w-0 flex-col gap-4 p-5", isList && "flex-1")}>
         <div className="flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant="secondary" className="rounded-md">{course.sections.length} sections</Badge>
             {summary.progress === 100 && <Badge className="rounded-md"><CheckCircle2 className="size-3" /> Complete</Badge>}
           </div>
-          <h3 className="line-clamp-2 text-base font-semibold leading-snug tracking-tight">{course.name}</h3>
-          <p className="line-clamp-1 text-xs text-muted-foreground">{cleanSectionName(firstSection?.name ?? "Course") || "Course"}</p>
+          <h3 className="line-clamp-2 text-lg font-semibold leading-snug tracking-tight">{course.name}</h3>
+          <p className="line-clamp-1 text-sm text-muted-foreground">{cleanSectionName(firstSection?.name ?? "Course") || "Course"}</p>
         </div>
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between text-xs text-muted-foreground">
