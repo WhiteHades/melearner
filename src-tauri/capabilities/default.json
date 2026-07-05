@@ -33,6 +33,20 @@
       ]
     },
     {
+      "identifier": "fs:allow-read-file",
+      "allow": [
+        { "path": "$HOME/**" },
+        { "path": "$DOCUMENT/**" },
+        { "path": "$DOWNLOAD/**" },
+        { "path": "$VIDEO/**" },
+        { "path": "$AUDIO/**" },
+        { "path": "$DESKTOP/**" },
+        { "path": "$APPDATA/**" },
+        { "path": "$LOCALAPPDATA/**" },
+        { "path": "/**" }
+      ]
+    },
+    {
       "identifier": "fs:allow-read-text-file",
       "allow": [
         { "path": "$HOME/**" },

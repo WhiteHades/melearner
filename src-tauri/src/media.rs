@@ -1,5 +1,6 @@
 use seahash::SeaHasher;
 use serde::Serialize;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::hash::Hasher;
 use std::path::{Path, PathBuf};
@@ -13,6 +14,7 @@ pub struct PreparedMedia {
 }
 
 static ACTIVE_PLAYBACK_JOBS: OnceLock<Mutex<HashMap<String, u32>>> = OnceLock::new();
+const MEDIA_CACHE_VERSION: &[u8] = b"prepared-media-v3-h264-baseline-no-b";
 
 fn active_playback_jobs() -> &'static Mutex<HashMap<String, u32>> {
     ACTIVE_PLAYBACK_JOBS.get_or_init(|| Mutex::new(HashMap::new()))
@@ -73,6 +75,7 @@ fn cache_key(path: &Path, metadata: &std::fs::Metadata, media_type: &str) -> Str
     let mut hasher = new_hasher();
     hasher.write(path.to_string_lossy().as_bytes());
     hasher.write(media_type.as_bytes());
+    hasher.write(MEDIA_CACHE_VERSION);
     hasher.write(&metadata.len().to_le_bytes());
 
     if let Ok(modified) = metadata.modified() {
@@ -134,7 +137,112 @@ fn temp_output_path(output: &Path) -> PathBuf {
     output.with_file_name(format!("{file_name}.part"))
 }
 
-fn existing_output_ready(output: &Path) -> bool {
+fn first_stream<'a>(probe: &'a Value, stream_type: &str) -> Option<&'a Value> {
+    probe
+        .get("streams")
+        .and_then(Value::as_array)
+        .and_then(|streams| {
+            streams.iter().find(|stream| {
+                stream.get("codec_type").and_then(Value::as_str) == Some(stream_type)
+            })
+        })
+}
+
+fn stream_codec(stream: &Value) -> Option<&str> {
+    stream.get("codec_name").and_then(Value::as_str)
+}
+
+fn audio_stream_browser_safe(stream: Option<&Value>) -> bool {
+    stream.is_some_and(|stream| stream_codec(stream) == Some("aac"))
+}
+
+fn h264_stream_browser_safe(stream: &Value) -> bool {
+    if stream_codec(stream) != Some("h264") {
+        return false;
+    }
+
+    if stream.get("pix_fmt").and_then(Value::as_str) != Some("yuv420p") {
+        return false;
+    }
+
+    let Some(level) = stream.get("level").and_then(Value::as_i64) else {
+        return false;
+    };
+    if level > 42 {
+        return false;
+    }
+
+    if stream
+        .get("has_b_frames")
+        .and_then(Value::as_i64)
+        .unwrap_or(0)
+        > 0
+    {
+        return false;
+    }
+
+    let profile = stream
+        .get("profile")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_ascii_lowercase();
+
+    (profile.contains("baseline") || profile.contains("main") || profile == "high")
+        && !profile.contains("10")
+        && !profile.contains("4:2")
+        && !profile.contains("4:4")
+}
+
+fn probe_browser_safe(probe: &Value, media_type: &str) -> bool {
+    if media_type == "audio" {
+        return audio_stream_browser_safe(first_stream(probe, "audio"));
+    }
+
+    let Some(video) = first_stream(probe, "video") else {
+        return false;
+    };
+
+    h264_stream_browser_safe(video)
+        && first_stream(probe, "audio")
+            .map(|audio| audio_stream_browser_safe(Some(audio)))
+            .unwrap_or(true)
+}
+
+fn probe_media(path: &Path) -> Result<Value, String> {
+    let output = Command::new(ffprobe_program())
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=codec_type,codec_name,profile,level,pix_fmt,has_b_frames",
+            "-of",
+            "json",
+        ])
+        .arg(path)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|err| format!("failed to start ffprobe: {err}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            output.status.to_string()
+        } else {
+            format!("{}: {stderr}", output.status)
+        });
+    }
+
+    serde_json::from_slice(&output.stdout)
+        .map_err(|err| format!("failed to parse ffprobe output: {err}"))
+}
+
+fn media_browser_safe(path: &Path, media_type: &str) -> bool {
+    probe_media(path)
+        .map(|probe| probe_browser_safe(&probe, media_type))
+        .unwrap_or(false)
+}
+
+fn existing_output_ready(output: &Path, media_type: &str) -> bool {
     let has_bytes = output
         .metadata()
         .map(|metadata| metadata.len() > 0)
@@ -143,15 +251,7 @@ fn existing_output_ready(output: &Path) -> bool {
         return false;
     }
 
-    Command::new(ffprobe_program())
-        .args(["-v", "error"])
-        .arg(output)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(true)
+    media_browser_safe(output, media_type)
 }
 
 fn remux_args(input: &Path, output: &Path, media_type: &str) -> Vec<String> {
@@ -239,6 +339,12 @@ fn transcode_args(input: &Path, output: &Path, media_type: &str) -> Vec<String> 
             "23".to_string(),
             "-pix_fmt".to_string(),
             "yuv420p".to_string(),
+            "-profile:v".to_string(),
+            "baseline".to_string(),
+            "-level:v".to_string(),
+            "4.0".to_string(),
+            "-x264-params".to_string(),
+            "bframes=0".to_string(),
             "-c:a".to_string(),
             "aac".to_string(),
             "-b:a".to_string(),
@@ -337,8 +443,8 @@ fn run_ffmpeg(job_key: &str, args: Vec<String>) -> Result<(), String> {
     Err(details)
 }
 
-fn finalize_output(temp_output: &Path, output: &Path) -> Result<(), String> {
-    if !existing_output_ready(temp_output) {
+fn finalize_output(temp_output: &Path, output: &Path, media_type: &str) -> Result<(), String> {
+    if !existing_output_ready(temp_output, media_type) {
         let _ = std::fs::remove_file(temp_output);
         return Err("ffmpeg produced an unreadable media file".to_string());
     }
@@ -371,7 +477,7 @@ pub async fn prepare_playback_media(
         let temp_output = temp_output_path(&output);
         let job_key = output.to_string_lossy().to_string();
 
-        if existing_output_ready(&output) {
+        if existing_output_ready(&output, normalized_type) {
             return Ok(PreparedMedia {
                 path: output.to_string_lossy().to_string(),
             });
@@ -385,7 +491,11 @@ pub async fn prepare_playback_media(
         cancel_all_playback_jobs();
         let _ = std::fs::remove_file(&temp_output);
 
-        let remux_result = run_ffmpeg(&job_key, remux_args(&input, &temp_output, normalized_type));
+        let remux_result = if media_browser_safe(&input, normalized_type) {
+            run_ffmpeg(&job_key, remux_args(&input, &temp_output, normalized_type))
+        } else {
+            Err("input media requires transcoding for browser playback".to_string())
+        };
         if remux_result.is_err() {
             let _ = std::fs::remove_file(&temp_output);
             let transcode_result = run_ffmpeg(
@@ -400,7 +510,7 @@ pub async fn prepare_playback_media(
             }
         }
 
-        finalize_output(&temp_output, &output)?;
+        finalize_output(&temp_output, &output, normalized_type)?;
 
         Ok(PreparedMedia {
             path: output.to_string_lossy().to_string(),
@@ -502,6 +612,18 @@ mod tests {
         );
         assert!(
             args.windows(2)
+                .any(|pair| pair[0] == "-level:v" && pair[1] == "4.0")
+        );
+        assert!(
+            args.windows(2)
+                .any(|pair| pair[0] == "-profile:v" && pair[1] == "baseline")
+        );
+        assert!(
+            args.windows(2)
+                .any(|pair| pair[0] == "-x264-params" && pair[1] == "bframes=0")
+        );
+        assert!(
+            args.windows(2)
                 .any(|pair| pair[0] == "-c:a" && pair[1] == "aac")
         );
         assert!(
@@ -514,5 +636,97 @@ mod tests {
         );
         assert!(args.iter().any(|arg| arg == "-nostdin"));
         assert_eq!(args.last().map(String::as_str), Some("prepared.mp4"));
+    }
+
+    #[test]
+    fn browser_probe_rejects_h264_level_above_web_target() {
+        let probe = serde_json::json!({
+            "streams": [{
+                "codec_type": "video",
+                "codec_name": "h264",
+                "profile": "High",
+                "level": 51,
+                "pix_fmt": "yuv420p",
+                "has_b_frames": 0
+            }, {
+                "codec_type": "audio",
+                "codec_name": "aac"
+            }]
+        });
+
+        assert!(!probe_browser_safe(&probe, "video"));
+    }
+
+    #[test]
+    fn browser_probe_accepts_h264_level_four_aac_video() {
+        let probe = serde_json::json!({
+            "streams": [{
+                "codec_type": "video",
+                "codec_name": "h264",
+                "profile": "High",
+                "level": 40,
+                "pix_fmt": "yuv420p",
+                "has_b_frames": 0
+            }, {
+                "codec_type": "audio",
+                "codec_name": "aac"
+            }]
+        });
+
+        assert!(probe_browser_safe(&probe, "video"));
+    }
+
+    #[test]
+    fn browser_probe_rejects_video_with_non_aac_audio() {
+        let probe = serde_json::json!({
+            "streams": [{
+                "codec_type": "video",
+                "codec_name": "h264",
+                "profile": "High",
+                "level": 40,
+                "pix_fmt": "yuv420p",
+                "has_b_frames": 0
+            }, {
+                "codec_type": "audio",
+                "codec_name": "opus"
+            }]
+        });
+
+        assert!(!probe_browser_safe(&probe, "video"));
+    }
+
+    #[test]
+    fn browser_probe_rejects_audio_without_audio_stream() {
+        let probe = serde_json::json!({
+            "streams": [{
+                "codec_type": "video",
+                "codec_name": "h264",
+                "profile": "High",
+                "level": 40,
+                "pix_fmt": "yuv420p",
+                "has_b_frames": 0
+            }]
+        });
+
+        assert!(!probe_browser_safe(&probe, "audio"));
+    }
+
+    #[test]
+    fn browser_probe_rejects_video_with_b_frames() {
+        let probe = serde_json::json!({
+            "streams": [{
+                "codec_type": "video",
+                "codec_name": "h264",
+                "profile": "High",
+                "level": 40,
+                "pix_fmt": "yuv420p",
+                "has_b_frames": 2
+            }, {
+                "codec_type": "audio",
+                "codec_name": "aac"
+            }]
+        });
+
+        assert!(!probe_browser_safe(&probe, "video"));
     }
 }

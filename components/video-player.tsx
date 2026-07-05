@@ -2,7 +2,7 @@
 
 import { useRef, useState, useEffect, useCallback, memo } from "react"
 import { convertFileSrc } from "@tauri-apps/api/core"
-import { readTextFile } from "@tauri-apps/plugin-fs"
+import { readFile, readTextFile } from "@tauri-apps/plugin-fs"
 import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
 import {
@@ -42,6 +42,12 @@ const SLIDER_SYNC_THROTTLE = 250
 
 function createMediaUrl(filePath: string): string {
   return isTauri() ? convertFileSrc(filePath) : filePath
+}
+
+async function createPreparedMediaBlobUrl(filePath: string, mediaType: "video" | "audio"): Promise<string> {
+  const bytes = await readFile(filePath)
+  const arrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+  return URL.createObjectURL(new Blob([arrayBuffer], { type: mediaType === "audio" ? "audio/mp4" : "video/mp4" }))
 }
 
 function describeMediaError(media: HTMLMediaElement): string {
@@ -86,6 +92,7 @@ function VideoPlayerComponent({
   const [sliderValue, setSliderValue] = useState(0)
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const subtitleUrlRefs = useRef<string[]>([])
+  const preparedMediaUrlRef = useRef<string | null>(null)
   const rafRef = useRef<number | null>(null)
   const timeDisplayRef = useRef<HTMLSpanElement>(null)
   const progressBarFillRef = useRef<HTMLDivElement>(null)
@@ -117,6 +124,10 @@ function VideoPlayerComponent({
         hasInitialSeekRef.current = false
         progressRef.current = 0
         setSliderValue(0)
+        if (preparedMediaUrlRef.current) {
+          URL.revokeObjectURL(preparedMediaUrlRef.current)
+          preparedMediaUrlRef.current = null
+        }
         subtitleUrlRefs.current.forEach((url) => URL.revokeObjectURL(url))
         subtitleUrlRefs.current = []
 
@@ -169,6 +180,10 @@ function VideoPlayerComponent({
       fallbackRequestRef.current += 1
       if (isTauri() && isPlayableFile) {
         void cancelPlaybackMedia(currentPath, currentMediaType)
+      }
+      if (preparedMediaUrlRef.current) {
+        URL.revokeObjectURL(preparedMediaUrlRef.current)
+        preparedMediaUrlRef.current = null
       }
       subtitleUrlRefs.current.forEach((url) => URL.revokeObjectURL(url))
       subtitleUrlRefs.current = []
@@ -260,12 +275,18 @@ function VideoPlayerComponent({
       cancelPlaybackMedia(lesson.path, mediaType)
         .catch(() => undefined)
         .then(() => preparePlaybackMedia(lesson.path, mediaType))
-        .then((prepared) => {
-          if (fallbackRequestRef.current !== requestId) return
+        .then(async (prepared) => {
+          const preparedUrl = await createPreparedMediaBlobUrl(prepared.path, mediaType)
+          if (fallbackRequestRef.current !== requestId) {
+            URL.revokeObjectURL(preparedUrl)
+            return
+          }
+          if (preparedMediaUrlRef.current) URL.revokeObjectURL(preparedMediaUrlRef.current)
+          preparedMediaUrlRef.current = preparedUrl
           frontendLog("info", "media.playback.fallback.ready", { originalPath: lesson.path, preparedPath: prepared.path })
           hasInitialSeekRef.current = false
           setError(null)
-          setVideoSrc(createMediaUrl(prepared.path))
+          setVideoSrc(preparedUrl)
         })
         .catch((err) => {
           if (fallbackRequestRef.current !== requestId) return
@@ -476,6 +497,7 @@ function VideoPlayerComponent({
     >
       {isVideoFile ? (
         <video
+          key={videoSrc}
           ref={setMediaRef}
           src={videoSrc}
           className="size-full object-contain"
@@ -497,7 +519,7 @@ function VideoPlayerComponent({
         </video>
       ) : (
         <div className="flex min-h-[360px] flex-1 items-center justify-center p-8">
-          <audio ref={setMediaRef} src={videoSrc} preload="auto" />
+          <audio key={videoSrc} ref={setMediaRef} src={videoSrc} preload="auto" />
           <div className="flex max-w-lg flex-col items-center gap-5 text-center text-white">
             <div className="flex size-20 items-center justify-center rounded-2xl bg-white/10 ring-1 ring-white/10">
               <Play className="size-9" />
