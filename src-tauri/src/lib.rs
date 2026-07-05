@@ -1,3 +1,4 @@
+mod media;
 mod scanner;
 
 use tauri_plugin_sql::{Builder as SqlBuilder, Migration, MigrationKind};
@@ -243,6 +244,7 @@ fn get_database_path() -> String {
             log_frontend,
             open_native,
             generate_video_thumbnail,
+            media::prepare_playback_media,
             get_build_info,
             get_database_path,
         ])

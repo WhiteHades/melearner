@@ -69,3 +69,7 @@ export async function openNativeFile(path: string): Promise<void> {
 export async function generateVideoThumbnail(path: string, seed: number): Promise<number[]> {
   return invoke<number[]>("generate_video_thumbnail", { path, seed })
 }
+
+export async function preparePlaybackMedia(path: string, mediaType: "video" | "audio"): Promise<{ path: string }> {
+  return invoke<{ path: string }>("prepare_playback_media", { path, mediaType })
+}

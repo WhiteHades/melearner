@@ -111,7 +111,7 @@ export function CourseViewerLayout({
         </div>
       </header>
 
-      <main className="grid min-h-0 flex-1 gap-0 overflow-hidden xl:grid-cols-[360px_minmax(0,1fr)_300px]">
+      <main className="grid min-h-0 flex-1 gap-0 overflow-hidden md:grid-cols-[21rem_minmax(0,1fr)] 2xl:grid-cols-[21rem_minmax(0,1fr)_24rem]">
         <CourseViewerSidebar
           course={course}
           currentLessonId={currentLesson?.id}
@@ -120,7 +120,7 @@ export function CourseViewerLayout({
         />
 
         <ScrollArea className="min-h-0 border-x border-border bg-background">
-          <div className="mx-auto flex min-h-full max-w-6xl flex-col gap-5 px-4 py-5 lg:px-6">
+          <div className="mx-auto flex min-h-full w-full max-w-6xl flex-col gap-5 px-4 py-5 lg:px-6">
             <VideoArea
               key={currentLesson?.id ?? "empty-lesson"}
               lesson={currentLesson}
@@ -153,11 +153,11 @@ function LessonUtilityPanel({
   const resourceLessons = currentSection?.lessons.filter((item) => item.type === "document" || item.type === "quiz") ?? []
 
   return (
-    <aside className="hidden min-h-0 border-l border-border bg-card xl:flex xl:flex-col">
+    <aside className="hidden min-h-0 min-w-0 border-l border-border bg-card 2xl:flex 2xl:flex-col">
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-6 p-5">
           <div className="flex items-start justify-between gap-3">
-            <div className="flex flex-col gap-1">
+            <div className="min-w-0 flex flex-col gap-1">
               <h2 className="text-base font-semibold">Learning progress</h2>
               <p className="text-sm text-muted-foreground">{progress.completed} of {progress.total} items complete</p>
             </div>
@@ -170,11 +170,11 @@ function LessonUtilityPanel({
           <div className="flex flex-col gap-3">
             <h3 className="text-sm font-semibold">Current item</h3>
             {lesson ? (
-              <div className="rounded-xl border border-border bg-background p-4 shadow-[var(--shadow-whisper)]">
+              <div className="min-w-0 rounded-xl border border-border bg-background p-4 shadow-[var(--shadow-whisper)]">
                 <div className="flex flex-col gap-2">
                   <Badge variant="secondary" className="w-fit rounded-md">{lesson.type}</Badge>
-                  <h4 className="text-sm font-semibold leading-snug">{lesson.name}</h4>
-                  <p className="text-xs text-muted-foreground">{cleanSectionName(lesson.sectionName) || "Section"}</p>
+                  <h4 className="break-words text-sm font-semibold leading-snug">{lesson.name}</h4>
+                  <p className="break-words text-xs text-muted-foreground">{cleanSectionName(lesson.sectionName) || "Section"}</p>
                   <p className="text-xs text-muted-foreground">Last position {formatDuration(lesson.lastPosition)}</p>
                   {lesson.subtitles.length > 0 && (
                     <p className="text-xs text-primary">{lesson.subtitles.length} subtitle track{lesson.subtitles.length === 1 ? "" : "s"} available</p>
@@ -189,13 +189,13 @@ function LessonUtilityPanel({
           <Separator />
 
           <div className="flex flex-col gap-3">
-            <h3 className="text-sm font-semibold">Supporting learning items in this section</h3>
+            <h3 className="break-words text-sm font-semibold leading-snug">Supporting learning items in this section</h3>
             {resourceLessons.length > 0 ? (
               <div className="flex flex-col gap-2">
                 {resourceLessons.map((item) => (
-                  <div key={item.id} className="flex items-center gap-3 rounded-lg border border-border bg-background p-3 text-sm">
-                    <FileText className="size-4 text-muted-foreground" />
-                    <span className="min-w-0 flex-1 truncate">{item.name}</span>
+                  <div key={item.id} className="flex min-w-0 items-start gap-3 rounded-lg border border-border bg-background p-3 text-sm">
+                    <FileText className="size-4 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 flex-1 break-words leading-snug">{item.name}</span>
                   </div>
                 ))}
               </div>
