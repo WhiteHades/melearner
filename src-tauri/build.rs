@@ -72,7 +72,10 @@ fn emit_build_info(manifest_dir: &PathBuf) {
 
     let git_dir = manifest_dir.join("..").join(".git");
     println!("cargo:rerun-if-changed={}", git_dir.join("HEAD").display());
-    println!("cargo:rerun-if-changed={}", git_dir.join("refs/heads/main").display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        git_dir.join("refs/heads/main").display()
+    );
 }
 
 fn run_capture(cmd: &str, args: &[&str], cwd: &PathBuf) -> Option<String> {

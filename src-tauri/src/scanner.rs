@@ -39,7 +39,8 @@ const PARTIAL_FOLDER_NAMES: &[&str] = &[
     "temp",
     "tmp",
 ];
-const DOWNLOAD_SIDECAR_SUFFIXES: &[&str] = &["aria2", "part", "partial", "crdownload", "download", "!qB"];
+const DOWNLOAD_SIDECAR_SUFFIXES: &[&str] =
+    &["aria2", "part", "partial", "crdownload", "download", "!qB"];
 const WARNING_LIMIT: usize = 24;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -208,7 +209,10 @@ fn skip_file_reason(path: &Path, file_type: FileType) -> Option<String> {
     }
 
     if (is_media_file(file_type) || file_type == FileType::Subtitle) && has_download_sidecar(path) {
-        return Some(format!("skipped file with active download sidecar: {}", path.display()));
+        return Some(format!(
+            "skipped file with active download sidecar: {}",
+            path.display()
+        ));
     }
 
     let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
@@ -350,7 +354,10 @@ fn scan_course(course_path: &Path) -> (CourseData, Vec<String>) {
         let path = entry.path();
 
         if path.is_dir() && is_partial_folder(&path) {
-            push_warning(&mut warnings, format!("skipped incomplete folder: {}", path.display()));
+            push_warning(
+                &mut warnings,
+                format!("skipped incomplete folder: {}", path.display()),
+            );
             continue;
         }
 
@@ -470,7 +477,10 @@ pub fn scan_library(root_path: &str) -> ScanResult {
             }
         } else if path.is_dir() {
             if is_partial_folder(&path) {
-                push_warning(&mut warnings, format!("skipped incomplete folder: {}", path.display()));
+                push_warning(
+                    &mut warnings,
+                    format!("skipped incomplete folder: {}", path.display()),
+                );
                 continue;
             }
             if is_ignored(&path) || is_resource_folder(&path) {
@@ -647,26 +657,34 @@ mod tests {
         assert!(all_files.iter().any(
             |file| file.name.as_ref() == "01 welcome.mp4" && file.file_type == FileType::Video
         ));
-        assert!(all_files
-            .iter()
-            .any(|file| file.name.as_ref() == "01 welcome.en.srt"
-                && file.file_type == FileType::Subtitle));
-        assert!(all_files
-            .iter()
-            .any(|file| file.name.as_ref() == "guide.markdown"
-                && file.file_type == FileType::Document));
+        assert!(
+            all_files
+                .iter()
+                .any(|file| file.name.as_ref() == "01 welcome.en.srt"
+                    && file.file_type == FileType::Subtitle)
+        );
+        assert!(
+            all_files
+                .iter()
+                .any(|file| file.name.as_ref() == "guide.markdown"
+                    && file.file_type == FileType::Document)
+        );
         assert!(
             all_files
                 .iter()
                 .any(|file| file.name.as_ref() == "legacy.doc"
                     && file.file_type == FileType::Document)
         );
-        assert!(!all_files
-            .iter()
-            .any(|file| file.name.as_ref() == "ignored.pdf"));
-        assert!(!all_files
-            .iter()
-            .any(|file| file.name.as_ref() == "ignored.mp4"));
+        assert!(
+            !all_files
+                .iter()
+                .any(|file| file.name.as_ref() == "ignored.pdf")
+        );
+        assert!(
+            !all_files
+                .iter()
+                .any(|file| file.name.as_ref() == "ignored.mp4")
+        );
 
         cleanup(&root);
     }
@@ -689,17 +707,20 @@ mod tests {
 
         let course = &result.courses[0];
         assert_eq!(course.sections[0].name.as_ref(), "introduction");
-        assert!(course.sections[0]
-            .files
-            .iter()
-            .any(
-                |file| file.name.as_ref() == "00 overview.mp4" && file.file_type == FileType::Video
-            ));
-        assert!(course.sections[0]
-            .files
-            .iter()
-            .any(|file| file.name.as_ref() == "00 overview.srt"
-                && file.file_type == FileType::Subtitle));
+        assert!(
+            course.sections[0]
+                .files
+                .iter()
+                .any(|file| file.name.as_ref() == "00 overview.mp4"
+                    && file.file_type == FileType::Video)
+        );
+        assert!(
+            course.sections[0]
+                .files
+                .iter()
+                .any(|file| file.name.as_ref() == "00 overview.srt"
+                    && file.file_type == FileType::Subtitle)
+        );
 
         cleanup(&root);
     }
@@ -723,21 +744,39 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(result.courses.len(), 1);
-        assert!(files.iter().any(|file| file.name.as_ref() == "01 ready.mp4"));
-        assert!(!files.iter().any(|file| file.name.as_ref() == "02 active.mp4"));
-        assert!(!files.iter().any(|file| file.name.as_ref() == "03 browser.mp4.crdownload"));
-        assert!(result
-            .warnings
-            .iter()
-            .any(|warning| warning.contains("active download sidecar")));
-        assert!(result
-            .warnings
-            .iter()
-            .any(|warning| warning.contains("incomplete download")));
-        assert!(result
-            .warnings
-            .iter()
-            .any(|warning| warning.contains("incomplete folder")));
+        assert!(
+            files
+                .iter()
+                .any(|file| file.name.as_ref() == "01 ready.mp4")
+        );
+        assert!(
+            !files
+                .iter()
+                .any(|file| file.name.as_ref() == "02 active.mp4")
+        );
+        assert!(
+            !files
+                .iter()
+                .any(|file| file.name.as_ref() == "03 browser.mp4.crdownload")
+        );
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("active download sidecar"))
+        );
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("incomplete download"))
+        );
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("incomplete folder"))
+        );
 
         cleanup(&root);
     }

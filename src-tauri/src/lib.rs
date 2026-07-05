@@ -196,20 +196,26 @@ pub fn run() {
         unsafe { std::env::set_var("GST_PLUGIN_FEATURE_RANK", "avdec_h264:MAX") };
     }
 
-fn get_db_path() -> std::path::PathBuf {
-    std::env::var("HOME")
-        .map(|h| std::path::PathBuf::from(h).join(".local").join("share").join("melearner").join("melearner.db"))
-        .unwrap_or_else(|_| std::path::PathBuf::from("melearner.db"))
-}
+    fn get_db_path() -> std::path::PathBuf {
+        std::env::var("HOME")
+            .map(|h| {
+                std::path::PathBuf::from(h)
+                    .join(".local")
+                    .join("share")
+                    .join("melearner")
+                    .join("melearner.db")
+            })
+            .unwrap_or_else(|_| std::path::PathBuf::from("melearner.db"))
+    }
 
-fn get_db_url() -> String {
-    format!("sqlite:{}", get_db_path().display())
-}
+    fn get_db_url() -> String {
+        format!("sqlite:{}", get_db_path().display())
+    }
 
-#[tauri::command]
-fn get_database_path() -> String {
-    get_db_url()
-}
+    #[tauri::command]
+    fn get_database_path() -> String {
+        get_db_url()
+    }
     let _ = write_startup_log("paths.ready");
 
     let db_path = get_db_path();
@@ -257,7 +263,11 @@ fn write_startup_log(event: &str) -> std::io::Result<()> {
     use std::io::Write;
 
     let log_path = std::env::var("HOME")
-        .map(|h| std::path::PathBuf::from(h).join(".melearner").join("startup.log"))
+        .map(|h| {
+            std::path::PathBuf::from(h)
+                .join(".melearner")
+                .join("startup.log")
+        })
         .unwrap_or_else(|_| std::path::PathBuf::from("/tmp/melearner-startup.log"));
 
     if let Some(parent) = log_path.parent() {
@@ -269,7 +279,10 @@ fn write_startup_log(event: &str) -> std::io::Result<()> {
         .map(|d| d.as_secs_f64())
         .unwrap_or(0.0);
 
-    let mut f = OpenOptions::new().create(true).append(true).open(&log_path)?;
+    let mut f = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)?;
     writeln!(f, "[{ts}] {event}")
 }
 
@@ -279,7 +292,11 @@ fn log_frontend(message: String) {
     use std::io::Write;
 
     let log_path = std::env::var("HOME")
-        .map(|h| std::path::PathBuf::from(h).join(".melearner").join("frontend.log"))
+        .map(|h| {
+            std::path::PathBuf::from(h)
+                .join(".melearner")
+                .join("frontend.log")
+        })
         .unwrap_or_else(|_| std::path::PathBuf::from("/tmp/melearner-frontend.log"));
 
     if let Some(parent) = log_path.parent() {
