@@ -13,7 +13,8 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { createSubtitleTrackId, toVttContent, type VideoSubtitleTrack } from "@/lib/subtitles"
 import { cn, formatDuration } from "@/lib/utils"
-import { isTauri } from "@/lib/tauri"
+import { isTauri, preparePlaybackMedia } from "@/lib/tauri"
+import { frontendLog } from "@/lib/frontend-log"
 import type { Lesson } from "@/types"
 import {
   Play,
@@ -45,6 +46,17 @@ function createMediaUrl(filePath: string): string {
   return isTauri() ? convertFileSrc(filePath) : filePath
 }
 
+function describeMediaError(media: HTMLMediaElement): string {
+  const error = media.error
+  if (!error) return "unknown media error"
+
+  if (error.code === error.MEDIA_ERR_ABORTED) return "playback was aborted"
+  if (error.code === error.MEDIA_ERR_NETWORK) return "media could not be loaded from disk"
+  if (error.code === error.MEDIA_ERR_DECODE) return "media codec or container could not be decoded"
+  if (error.code === error.MEDIA_ERR_SRC_NOT_SUPPORTED) return "media source or codec is not supported"
+  return `media error code ${error.code}`
+}
+
 function VideoPlayerComponent({
   lesson,
   onProgress,
@@ -67,6 +79,7 @@ function VideoPlayerComponent({
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [showControls, setShowControls] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [isPreparingFallback, setIsPreparingFallback] = useState(false)
 
   const progressRef = useRef(0)
   const lastProgressSaveRef = useRef(0)
@@ -79,6 +92,7 @@ function VideoPlayerComponent({
   const rafRef = useRef<number | null>(null)
   const timeDisplayRef = useRef<HTMLSpanElement>(null)
   const progressBarFillRef = useRef<HTMLDivElement>(null)
+  const fallbackAttemptedRef = useRef(false)
 
   const isVideoFile = lesson.type === "video"
   const isAudioFile = lesson.type === "audio"
@@ -94,9 +108,12 @@ function VideoPlayerComponent({
 
       try {
         setError(null)
+        setIsPreparingFallback(false)
         setVideoSrc(null)
         setSubtitleTracks([])
         setActiveSubtitleId("off")
+        fallbackAttemptedRef.current = false
+        hasInitialSeekRef.current = false
         progressRef.current = 0
         setSliderValue(0)
         subtitleUrlRefs.current.forEach((url) => URL.revokeObjectURL(url))
@@ -140,8 +157,9 @@ function VideoPlayerComponent({
           setSubtitleTracks(builtTracks)
           setActiveSubtitleId(builtTracks[0]?.id ?? "off")
         }
-      } catch {
-        setError("failed to load video source")
+      } catch (err) {
+        frontendLog("error", "media.source.failed", { path: lesson.path, error: err })
+        setError("failed to load media source")
       }
     }
     loadVideoSrc()
@@ -219,7 +237,32 @@ function VideoPlayerComponent({
       setIsPlaying(false)
       if (Number.isFinite(video.duration)) onProgress(video.currentTime, video.duration)
     }
-    const handleError = () => setError("video playback failed")
+    const handleError = () => {
+      const detail = describeMediaError(video)
+      frontendLog("error", "media.playback.failed", { path: lesson.path, type: lesson.type, detail })
+
+      if (!isTauri() || fallbackAttemptedRef.current) {
+        setError(`playback failed: ${detail}`)
+        return
+      }
+
+      fallbackAttemptedRef.current = true
+      setIsPreparingFallback(true)
+      setError("preparing a compatible playback copy...")
+
+      preparePlaybackMedia(lesson.path, isAudioFile ? "audio" : "video")
+        .then((prepared) => {
+          frontendLog("info", "media.playback.fallback.ready", { originalPath: lesson.path, preparedPath: prepared.path })
+          hasInitialSeekRef.current = false
+          setError(null)
+          setVideoSrc(createMediaUrl(prepared.path))
+        })
+        .catch((err) => {
+          frontendLog("error", "media.playback.fallback.failed", { path: lesson.path, error: err })
+          setError(`playback failed: ${detail}`)
+        })
+        .finally(() => setIsPreparingFallback(false))
+    }
     const handleSeeked = () => { isScrubbingRef.current = false }
     const handleSeeking = () => { isScrubbingRef.current = true }
 
@@ -249,7 +292,7 @@ function VideoPlayerComponent({
       video.removeEventListener("seeking", handleSeeking)
       video.removeEventListener("seeked", handleSeeked)
     }
-  }, [videoSrc, autoplay, lesson.lastPosition, onComplete, onProgress])
+  }, [videoSrc, autoplay, isAudioFile, lesson.lastPosition, lesson.path, lesson.type, onComplete, onProgress])
 
   useEffect(() => {
     const handleFullscreenChange = () => setIsFullscreen(document.fullscreenElement === containerRef.current)
@@ -468,7 +511,10 @@ function VideoPlayerComponent({
 
       {error && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/80">
-          <p className="text-white">{error}</p>
+          <div className="max-w-md px-6 text-center text-white">
+            <p className="font-medium">{error}</p>
+            {isPreparingFallback && <p className="mt-2 text-sm text-white/70">This can take a moment for uncommon codecs.</p>}
+          </div>
         </div>
       )}
 
