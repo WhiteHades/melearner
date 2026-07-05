@@ -120,6 +120,7 @@ function LibraryDashboard({
   const visibleCourses = useMemo(() => filterCourses(loadedCourses, searchQuery), [loadedCourses, searchQuery])
   const hasCourses = loadedCourses.length > 0
   const displayLibraryPath = libraryPath ? formatDisplayPath(libraryPath) : null
+  const isBootstrapping = !hasHydrated
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -271,13 +272,15 @@ function LibraryDashboard({
               <div className={cn("hero-panel relative grid gap-7 overflow-hidden p-7 md:p-9", resumeCourses.length > 0 && "md:grid-cols-[minmax(22rem,0.8fr)_minmax(0,1fr)]")}>
                 <div className="relative z-10 flex flex-col justify-between gap-8">
                   <div className="flex flex-col gap-4">
-                    <Badge variant="secondary" className="w-fit rounded-md">Welcome back</Badge>
+                    <Badge variant="secondary" className="w-fit rounded-md">{isBootstrapping ? "Loading library" : "Welcome back"}</Badge>
                     <div className="flex flex-col gap-2">
                       <h1 className="max-w-2xl text-4xl font-bold tracking-tight md:text-5xl">
-                        {continueCourse ? continueCourse.name : "Build your learning library"}
+                        {isBootstrapping ? "Loading your library" : continueCourse ? continueCourse.name : "Build your learning library"}
                       </h1>
                       <p className="max-w-2xl text-base leading-7 text-muted-foreground">
-                        {continueLesson
+                        {isBootstrapping
+                          ? "Restoring your courses and progress from the local database."
+                          : continueLesson
                           ? `Up next: ${continueLesson.name}`
                           : "Select a root folder to scan videos, documents, audio, subtitles, and progress into one learning workspace."}
                       </p>
@@ -285,7 +288,12 @@ function LibraryDashboard({
                   </div>
 
                   <div className="flex flex-wrap items-center gap-3">
-                    {continueCourse ? (
+                    {isBootstrapping ? (
+                      <Button type="button" size="lg" disabled className="rounded-md">
+                        <Loader2 data-icon="inline-start" className="animate-spin" />
+                        Loading library
+                      </Button>
+                    ) : continueCourse ? (
                       <Button type="button" size="lg" onClick={() => onOpenCourse(continueCourse, continueLesson?.id ?? null)} className="rounded-md">
                         <PlayCircle data-icon="inline-start" />
                         Resume learning
