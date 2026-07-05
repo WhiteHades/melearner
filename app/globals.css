@@ -142,6 +142,17 @@
     outline: 2px solid var(--ring);
     outline-offset: 2px;
   }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    ::before,
+    ::after {
+      animation-duration: 1ms !important;
+      animation-iteration-count: 1 !important;
+      scroll-behavior: auto !important;
+      transition-duration: 1ms !important;
+    }
+  }
 }
 
 @layer components {
@@ -177,12 +188,14 @@
     border: 1px solid var(--border);
     background: var(--card);
     box-shadow: var(--shadow-whisper);
+    transition: border-color 150ms ease-out, box-shadow 150ms ease-out, background-color 150ms ease-out;
   }
 
   .paper-panel-strong {
     border: 1px solid var(--border);
     background: var(--card);
     box-shadow: var(--shadow-panel);
+    transition: border-color 150ms ease-out, box-shadow 150ms ease-out, background-color 150ms ease-out;
   }
 
   .document-prose {
