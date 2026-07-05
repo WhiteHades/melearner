@@ -5,11 +5,11 @@ import { ChevronLeft, FileText, FolderOpen } from "lucide-react"
 import { BrandLogo } from "@/components/brand-logo"
 import { CourseViewerSidebar } from "./sidebar"
 import { VideoArea } from "./video-area"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
+import { Badge } from "@/components/ui/badge"
 import { cleanSectionName, formatDuration } from "@/lib/utils"
 import type { Course, Lesson } from "@/types"
 
@@ -95,7 +95,6 @@ export function CourseViewerLayout({
         <div data-tauri-drag-region className="absolute inset-x-0 top-0 h-3" />
         <div className="flex items-center gap-3">
           <BrandLogo className="shrink-0" />
-          <Badge variant="secondary" className="hidden rounded-md sm:inline-flex">local course</Badge>
         </div>
 
         <div className="mx-auto hidden min-w-0 max-w-md flex-1 items-center gap-3 rounded-lg border border-border bg-background px-4 py-2 lg:flex">

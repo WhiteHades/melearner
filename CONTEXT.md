@@ -39,3 +39,15 @@ _Avoid_: Caption file, transcript
 **Local content**:
 Files the user already has permission to view on their own machine.
 _Avoid_: Hosted content, streamed content, downloaded content
+
+**Prepared media**:
+A cached playback-compatible copy generated only after the browser engine rejects the original file. Prefer remuxing over transcoding.
+_Avoid_: Downloaded media, converted library source
+
+**Course identity**:
+The future stable identifier for a course that should survive folder renames and moves.
+_Avoid_: Path-only identity
+
+**Learning activity**:
+Historical watch/read events used for future stats and heatmaps.
+_Avoid_: Telemetry, analytics

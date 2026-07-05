@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   FolderOpen,
   LayoutGrid,
+  List,
   Loader2,
   PlayCircle,
   RefreshCw,
@@ -365,7 +366,7 @@ function LibraryDashboard({
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <ToggleGroupItem value="list" aria-label="List view" className="size-10 px-0">
-                          <BookOpen />
+                          <List />
                         </ToggleGroupItem>
                       </TooltipTrigger>
                       <TooltipContent>List view</TooltipContent>
@@ -548,7 +549,7 @@ function DashboardCourseCard({ course, viewMode, onOpenCourse }: { course: Cours
         }
       }}
       className={cn(
-        "paper-panel group cursor-pointer overflow-hidden rounded-xl transition-[border-color,box-shadow] hover:border-primary/70 hover:shadow-[var(--shadow-panel)]",
+        "paper-panel group cursor-pointer overflow-hidden rounded-xl transition-[border-color,box-shadow] hover:border-primary/70 hover:shadow-[var(--shadow-panel)] [contain-intrinsic-size:280px] [content-visibility:auto]",
         isList ? "grid gap-0 md:grid-cols-[240px_minmax(0,1fr)]" : "flex flex-col"
       )}
     >

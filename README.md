@@ -1,176 +1,75 @@
 <div align="center">
 
-<img src="src-tauri/icons/icon.svg" width="120" height="120" alt="melearner logo" />
+<img src="src-tauri/icons/icon.svg" width="112" height="112" alt="melearner logo" />
 
 # melearner
 
-a native desktop app for learning from your **legally obtained** local course library. point it at a root folder, open a lesson, and keep progress on your machine.
+Local-first desktop app for learning from course files you already have on your machine.
 
-melearner is a local-first course learner. it doesn't download, stream, or share anything. see the [legal disclaimer](#legal-disclaimer).
-
-<br />
-
-[![platform](https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-6366f1?style=flat)](https://tauri.app)
+[![platform](https://img.shields.io/badge/platform-linux-6366f1?style=flat)](https://tauri.app)
 [![stack](https://img.shields.io/badge/tauri%202%20%C2%B7%20next.js%2016%20%C2%B7%20rust-0f172a?style=flat)](https://nextjs.org)
-[![storage](https://img.shields.io/badge/storage-local%20sqlite-22c55e?style=flat)](#privacy)
+[![storage](https://img.shields.io/badge/storage-local%20sqlite-22c55e?style=flat)](docs/privacy-and-legal.md)
 [![license](https://img.shields.io/badge/license-MIT-a855f7?style=flat)](LICENSE)
 
 </div>
 
----
+melearner scans a root folder, groups local videos/audio/documents into courses, and remembers progress locally. It does not download, stream, sync, or share content.
 
-## install
+## Install
 
-**linux, portable:** download `melearner-linux-x86_64.appimage` from the [releases page](https://github.com/WhiteHades/melearner/releases/latest), then:
-```bash
-chmod +x melearner-linux-x86_64.appimage
-./melearner-linux-x86_64.appimage
-```
+### Arch Linux
 
-**arch linux:** download `melearner-arch-x86_64.pkg.tar.zst` from the [releases page](https://github.com/WhiteHades/melearner/releases/latest), then:
-```bash
-sudo pacman -U melearner-arch-x86_64.pkg.tar.zst
-```
-
-**debian / ubuntu:** download `melearner-linux-x86_64.deb` from the [releases page](https://github.com/WhiteHades/melearner/releases/latest), then:
-```bash
-sudo dpkg -i melearner-linux-x86_64.deb
-```
-
-use the appimage if you are on another linux distro and do not want a package-manager install.
-
-**macos:**
-```bash
-brew install WhiteHades/tap/melearner
-```
-
-**windows:** download and run the `.msi` installer from the [releases page](https://github.com/WhiteHades/melearner/releases/latest).
-
-**from source** (any platform, requires [rust](https://rustup.rs/) + [pnpm](https://pnpm.io/)):
-```bash
-cargo install --git https://github.com/WhiteHades/melearner --locked
-```
-
-## first run
-
-1. launch melearner from your app drawer (linux), launchpad (mac), or start menu (windows)
-2. click **Scan root folder** and pick a directory that holds your course files
-3. melearner walks the folder, groups files into courses, sections, and lessons, and drops you in the library
-4. click a course to open it, click a lesson to play or read
-5. press `space` to play, `f` for fullscreen, `n` to jump to the next lesson
-
-progress saves automatically. close the app, come back tomorrow, and you're exactly where you left off.
-
-## what it does
-
-you pick a root folder. melearner walks it, groups files into courses, sections, and lessons, and gives you a clean player. progress is saved locally so you can close the app, come back tomorrow, and pick up where you stopped.
-
-that's the whole product.
-
-## features
-
-- scans a root folder and builds a library on the spot
-- video player with resume position, keyboard shortcuts, and fullscreen
-- progress tracking in sqlite
-- full-text search across courses, sections, and lessons
-- light and dark themes
-- frameless window, native title bar drag regions
-- works offline. no accounts, no telemetry, no network
-
-## keyboard shortcuts
-
-| key       | action           |
-| --------- | ---------------- |
-| space / k | play / pause     |
-| m         | mute / unmute    |
-| f         | fullscreen       |
-| j / ←     | seek back 10s    |
-| l / →     | seek forward 10s |
-| ↑ / ↓     | volume up / down |
-| n         | next lesson      |
-| p         | previous lesson  |
-
-## for developers
-
-### clone and run from source
+Recommended: install the AUR package.
 
 ```bash
-git clone https://github.com/WhiteHades/melearner
-cd melearner
-pnpm install
-pnpm tauri:dev
+yay -S melearner-bin
+# or
+paru -S melearner-bin
 ```
 
-`pnpm tauri:dev` boots the next dev server and opens the native desktop window in one step. you don't need a second terminal.
-
-### verify
+Optional manual package install: download `melearner-bin-<version>-1-x86_64.pkg.tar.zst` from the [latest release](https://github.com/WhiteHades/melearner/releases/latest), then run:
 
 ```bash
-pnpm verify   # type-check + lint + web build + cargo check
+sudo pacman -U melearner-bin-<version>-1-x86_64.pkg.tar.zst
 ```
 
-### build release assets
+### Other Linux Distros
+
+Download the AppImage from the [latest release](https://github.com/WhiteHades/melearner/releases/latest), then run:
 
 ```bash
-pnpm tauri:build                 # current platform
-pnpm tauri:build:linux           # linux bundles for the current machine, with NO_STRIP=true
-pnpm tauri:build:windows         # msi + nsis
-pnpm tauri:build:macos           # intel
-pnpm tauri:build:macos-arm       # apple silicon
+chmod +x melearner_<version>_amd64.AppImage
+./melearner_<version>_amd64.AppImage
 ```
 
-release uploads are curated, not every file Tauri can produce. for linux x86_64, the release page should have:
+More install details: [docs/install.md](docs/install.md).
 
-- `melearner-linux-x86_64.appimage` for portable linux installs
-- `melearner-linux-x86_64.deb` for debian and ubuntu
-- `melearner-arch-x86_64.pkg.tar.zst` for arch and pacman-based installs
+## First Run
 
-the arch package recipe lives in `packaging/arch/` and packages the release binary plus the desktop entry and icon.
+1. Open melearner.
+2. Click **Scan root folder** and choose your course directory.
+3. Open a course, pick a lesson, and keep learning.
 
-the manual CI release workflow (`.github/workflows/release.yml`) builds and uploads the appimage and deb assets for a tag. build the arch asset from `packaging/arch/` and upload it with the same release. appimage builds set `NO_STRIP=true` because linuxdeploy can fail on newer linux shared libraries with `.relr.dyn` sections. do not upload duplicate formats for the same install path unless we intentionally support that channel.
+Progress is saved in local SQLite and restored when you come back.
 
-## how it's built
+## Features
 
-a few things worth knowing if you're going to read the code:
+- Local course library from folders you choose
+- Video/audio playback with resume position and keyboard controls
+- Documents, subtitles, and section-aware course outlines
+- Search across courses, sections, and lessons
+- Local SQLite progress storage
+- Offline by default: no accounts, telemetry, or sync
 
-- the database lives at `$HOME/.local/share/melearner/melearner.db`. there's no remote sync, no fallback, no shadow copy.
-- video and audio files load through Tauri's asset protocol. there is no localhost media server.
-- the frontend calls tauri commands directly. no trpc, no react-query, no extra runtime layer between you and the rust backend.
-- background services init on first use, never in the window setup callback. the app opens fast.
-- the video player updates the time text and progress bar in a `requestAnimationFrame` loop. no React re-renders per frame.
-- `build.rs` rebuilds the rust binary whenever any file in `out/` changes, so a stale frontend never ships.
+## Docs
 
-## privacy
+- [Install](docs/install.md)
+- [Usage and shortcuts](docs/usage.md)
+- [Development and release notes](docs/development.md)
+- [Stats and course identity plan](docs/stats-and-identity-plan.md)
+- [Privacy and legal](docs/privacy-and-legal.md)
+- [Architecture decisions](docs/adr/)
 
-melearner doesn't phone home. no analytics, no telemetry, no update check, no network call. the database and the logs sit in `~/.melearner/` and `~/.local/share/melearner/`, both local to you.
+## License
 
-## legal disclaimer
-
-**melearner is a local media player and a file organiser. it does not distribute, stream, download, host, or facilitate access to any content.**
-
-what melearner does not do:
-
-- it doesn't provide any course, video, audio, or document
-- it doesn't include any built-in course collection or content source
-- it doesn't connect to udemy, coursera, skillshare, pluralsight, or any other platform
-- it doesn't bypass, crack, decrypt, or circumvent any drm or paywall
-- it doesn't download, scrape, mirror, or index any third-party content
-
-melearner plays files that already exist on your device, inside folders you point it at. you're solely responsible for the legality of the files on your machine and the rights you hold to view them.
-
-by using melearner you confirm that one of the following is true for every file you load: you own it, you have a valid licence or subscription, or it's in the public domain.
-
-the developers of melearner don't endorse:
-
-- illegal downloading, copying, or redistribution of copyrighted material
-- using this app to access content you haven't legitimately acquired
-- bypassing the terms of service of any course platform, streaming service, or content provider
-- sharing or distributing pirated media
-
-if you got a course from a piracy site, a torrent, a file locker, a telegram channel, or a discord server, please don't use melearner for it. support the people who made the material. pay for the courses you want to learn from. piracy hurts the educators, the authors, and the small creators who make learning accessible in the first place.
-
-melearner is provided "as is" without warranty of any kind. the developers aren't liable for any user action that violates copyright law, terms of service, or any applicable regulation in your jurisdiction.
-
-## license
-
-MIT. see [license](LICENSE) for details.
+MIT. See [LICENSE](LICENSE).

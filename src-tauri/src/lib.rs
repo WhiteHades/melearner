@@ -243,8 +243,8 @@ fn get_database_path() -> String {
             scanner::get_file_info,
             log_frontend,
             open_native,
-            generate_video_thumbnail,
             media::prepare_playback_media,
+            media::cancel_playback_media,
             get_build_info,
             get_database_path,
         ])
@@ -336,80 +336,6 @@ fn open_native(path: String) -> Result<(), String> {
         .spawn()
         .map(|_| ())
         .map_err(|e| format!("failed to open file: {e}"))
-}
-
-#[tauri::command]
-fn generate_video_thumbnail(path: String, seed: f64) -> Result<Vec<u8>, String> {
-    use std::process::{Command, Stdio};
-
-    let path_buf = std::path::PathBuf::from(&path);
-    if !path_buf.exists() {
-        return Err(format!("file not found: {path}"));
-    }
-
-    let duration = Command::new("ffprobe")
-        .args([
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-        ])
-        .arg(&path_buf)
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()
-        .and_then(|output| String::from_utf8(output.stdout).ok())
-        .and_then(|raw| raw.trim().parse::<f64>().ok())
-        .filter(|value| value.is_finite() && *value > 0.0)
-        .unwrap_or(10.0);
-
-    let seed = seed.clamp(0.0, 1.0);
-    let timestamp = if duration > 12.0 {
-        (duration * (0.08 + seed * 0.45)).clamp(1.0, duration - 1.0)
-    } else {
-        (duration * 0.5).max(0.0)
-    };
-
-    let name = format!(
-        "melearner-thumb-{}-{}.jpg",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|duration| duration.as_nanos())
-            .unwrap_or(0)
-    );
-    let output_path = std::env::temp_dir().join(name);
-    let timestamp_arg = format!("{timestamp:.3}");
-
-    let status = Command::new("ffmpeg")
-        .args([
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-ss",
-            &timestamp_arg,
-            "-i",
-        ])
-        .arg(&path_buf)
-        .args(["-frames:v", "1", "-vf", "scale=640:-1", "-q:v", "5", "-y"])
-        .arg(&output_path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map_err(|e| format!("failed to run ffmpeg: {e}"))?;
-
-    if !status.success() {
-        let _ = std::fs::remove_file(&output_path);
-        return Err("failed to generate thumbnail".to_string());
-    }
-
-    let bytes = std::fs::read(&output_path).map_err(|e| format!("failed to read thumbnail: {e}"))?;
-    let _ = std::fs::remove_file(&output_path);
-    Ok(bytes)
 }
 
 #[derive(serde::Serialize)]

@@ -1,6 +1,6 @@
 {
   "name": "melearner",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000",
@@ -13,10 +13,8 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "tauri:build:linux": "NO_STRIP=true tauri build --target x86_64-unknown-linux-gnu",
-    "tauri:build:windows": "tauri build --target x86_64-pc-windows-msvc",
-    "tauri:build:macos": "tauri build --target x86_64-apple-darwin",
-    "tauri:build:macos-arm": "tauri build --target aarch64-apple-darwin",
+    "tauri:build:linux": "NO_STRIP=true tauri build --bundles appimage",
+    "tauri:build:windows": "tauri build --target x86_64-pc-windows-msvc --bundles msi",
     "web:build": "next build",
     "web:start": "next start"
   },

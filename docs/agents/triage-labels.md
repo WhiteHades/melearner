@@ -10,4 +10,4 @@ The skills speak in terms of five canonical triage roles. This file maps those r
 | `ready-for-human` | `ready-for-human` | Requires human implementation |
 | `wontfix` | `wontfix` | Will not be actioned |
 
-When a skill mentions a role, use the corresponding label string from this table.
+When a skill mentions a role, use the corresponding label string from this table. Do not invent alternate triage labels unless this file is updated first.

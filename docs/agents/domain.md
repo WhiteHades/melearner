@@ -6,6 +6,8 @@ How the engineering skills should consume this repo's domain documentation when 
 
 - `CONTEXT.md` at the repo root.
 - `docs/adr/` for architectural decisions that touch the area you are about to work in.
+- `DESIGN.md` before UI, layout, motion, visual-system, or component changes.
+- `docs/stats-and-identity-plan.md` before implementing stats, heatmaps, storage breakdowns, or durable course identity.
 
 If either path is missing, proceed silently. The `/domain-modeling` skill creates or extends them when terms or decisions get resolved.
 
@@ -16,6 +18,8 @@ This is a single-context repo:
 ```text
 /
 ├── CONTEXT.md
+├── DESIGN.md
+├── docs/stats-and-identity-plan.md
 ├── docs/adr/
 └── src-tauri/
 ```

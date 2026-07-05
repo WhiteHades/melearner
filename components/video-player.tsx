@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { createSubtitleTrackId, toVttContent, type VideoSubtitleTrack } from "@/lib/subtitles"
 import { cn, formatDuration } from "@/lib/utils"
-import { isTauri, preparePlaybackMedia } from "@/lib/tauri"
+import { cancelPlaybackMedia, isTauri, preparePlaybackMedia } from "@/lib/tauri"
 import { frontendLog } from "@/lib/frontend-log"
 import type { Lesson } from "@/types"
 import {
@@ -90,6 +90,7 @@ function VideoPlayerComponent({
   const timeDisplayRef = useRef<HTMLSpanElement>(null)
   const progressBarFillRef = useRef<HTMLDivElement>(null)
   const fallbackAttemptedRef = useRef(false)
+  const fallbackRequestRef = useRef(0)
 
   const isVideoFile = lesson.type === "video"
   const isAudioFile = lesson.type === "audio"
@@ -100,6 +101,9 @@ function VideoPlayerComponent({
   }, [])
 
   useEffect(() => {
+    const currentPath = lesson.path
+    const currentMediaType = isAudioFile ? "audio" : "video"
+
     async function loadVideoSrc() {
       if (!isPlayableFile) return
 
@@ -162,10 +166,14 @@ function VideoPlayerComponent({
     loadVideoSrc()
 
     return () => {
+      fallbackRequestRef.current += 1
+      if (isTauri() && isPlayableFile) {
+        void cancelPlaybackMedia(currentPath, currentMediaType)
+      }
       subtitleUrlRefs.current.forEach((url) => URL.revokeObjectURL(url))
       subtitleUrlRefs.current = []
     }
-  }, [lesson.path, lesson.subtitles, isPlayableFile, isVideoFile])
+  }, [lesson.path, lesson.subtitles, isAudioFile, isPlayableFile, isVideoFile])
 
   useEffect(() => {
     const video = videoRef.current
@@ -246,19 +254,27 @@ function VideoPlayerComponent({
       fallbackAttemptedRef.current = true
       setIsPreparingFallback(true)
       setError("preparing a compatible playback copy...")
+      const requestId = ++fallbackRequestRef.current
+      const mediaType = isAudioFile ? "audio" : "video"
 
-      preparePlaybackMedia(lesson.path, isAudioFile ? "audio" : "video")
+      cancelPlaybackMedia(lesson.path, mediaType)
+        .catch(() => undefined)
+        .then(() => preparePlaybackMedia(lesson.path, mediaType))
         .then((prepared) => {
+          if (fallbackRequestRef.current !== requestId) return
           frontendLog("info", "media.playback.fallback.ready", { originalPath: lesson.path, preparedPath: prepared.path })
           hasInitialSeekRef.current = false
           setError(null)
           setVideoSrc(createMediaUrl(prepared.path))
         })
         .catch((err) => {
+          if (fallbackRequestRef.current !== requestId) return
           frontendLog("error", "media.playback.fallback.failed", { path: lesson.path, error: err })
           setError(`playback failed: ${detail}`)
         })
-        .finally(() => setIsPreparingFallback(false))
+        .finally(() => {
+          if (fallbackRequestRef.current === requestId) setIsPreparingFallback(false)
+        })
     }
     const handleSeeked = () => { isScrubbingRef.current = false }
     const handleSeeking = () => { isScrubbingRef.current = true }
