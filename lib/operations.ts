@@ -77,14 +77,28 @@ export class OperationError extends Error {
   }
 }
 
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message
+  if (typeof err === "string") return err
+  return JSON.stringify(err)
+}
+
 export async function scanLibraryAt(path: string): Promise<{ courses: Course[]; warnings: string[] }> {
   const { frontendLog } = await import("@/lib/frontend-log")
   frontendLog("info", `scanLibraryAt start: path=${path}`)
-  const result = await scanFolder(path)
+
+  const result = await scanFolder(path).catch((err) => {
+    throw new Error(`Scan failed: ${errorMessage(err)}`)
+  })
   frontendLog("info", `scanFolder returned: ${result.courses.length} courses, ${result.warnings.length} warnings: ${result.warnings.join(" | ")}`)
   const scanned = processScanResult(result)
   frontendLog("info", `processScanResult returned: ${scanned.length} courses`)
-  const hydrated = isTauri() ? await syncLibrary(scanned, path) : scanned
+
+  const hydrated = isTauri()
+    ? await syncLibrary(scanned, path).catch((err) => {
+        throw new Error(`Saving scan failed: ${errorMessage(err)}`)
+      })
+    : scanned
   frontendLog("info", `syncLibrary returned: ${hydrated.length} courses`)
   const store = useCourseStore.getState()
   store.setCourses(hydrated)

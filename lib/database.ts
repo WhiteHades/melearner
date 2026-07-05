@@ -5,6 +5,7 @@ import { isTauri, getDatabasePath } from "./tauri"
 let db: Database | null = null
 let dbPathPromise: Promise<string | null> | null = null
 const SQLITE_BATCH_SIZE = 500
+const SQLITE_MAX_PARAMETERS = 900
 const LIBRARY_PATH_SETTING = "libraryPath"
 
 type PersistedCourseRow = {
@@ -95,6 +96,26 @@ async function getDatabase(): Promise<Database | null> {
 
 function createPlaceholders(count: number): string {
   return Array.from({ length: count }, (_, index) => `$${index + 1}`).join(", ")
+}
+
+function createRowPlaceholders(rowCount: number, fieldCount: number): string {
+  let next = 1
+  return Array.from({ length: rowCount }, () => {
+    const row = Array.from({ length: fieldCount }, () => `$${next++}`).join(", ")
+    return `(${row})`
+  }).join(", ")
+}
+
+function batchSize(fieldCount: number): number {
+  return Math.max(1, Math.floor(SQLITE_MAX_PARAMETERS / fieldCount))
+}
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = []
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size))
+  }
+  return chunks
 }
 
 function trimTrailingSeparators(path: string): string {
@@ -447,17 +468,26 @@ export async function syncLibrary(courses: Course[], libraryPath: string): Promi
     }
   })
 
+  const resolvedSections = resolvedCourses.flatMap((course) =>
+    course.sections.map((section) => ({ course, section }))
+  )
+  const resolvedLessons = resolvedSections.flatMap(({ course, section }) =>
+    section.lessons.map((lesson) => ({ course, section, lesson }))
+  )
+  const resolvedSubtitles = resolvedLessons.flatMap(({ lesson }) =>
+    lesson.subtitles.map((subtitle, index) => ({ lesson, subtitle, index }))
+  )
+  const resolvedCourseIds = resolvedCourses.map((course) => course.id)
+  const resolvedLessonIds = resolvedLessons.map(({ lesson }) => lesson.id)
+
   await executeTransaction(database, async () => {
     await writeSetting(database, LIBRARY_PATH_SETTING, libraryPath)
     const scanStamp = new Date().toISOString()
 
-    for (const course of resolvedCourses) {
-      const lessons = course.sections.flatMap((section) => section.lessons)
-      const thumbnailSourcePath = course.thumbnailSourcePath ?? lessons.find((lesson) => lesson.type === "video")?.path ?? null
-
+    for (const batch of chunk(resolvedCourses, batchSize(8))) {
       await database.execute(
         `INSERT INTO courses (id, name, path, total_duration, watched_duration, last_accessed, thumbnail_source_path, last_scanned_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         VALUES ${createRowPlaceholders(batch.length, 8)}
          ON CONFLICT(path) DO UPDATE SET
            id = excluded.id,
            name = excluded.name,
@@ -466,100 +496,118 @@ export async function syncLibrary(courses: Course[], libraryPath: string): Promi
            last_accessed = excluded.last_accessed,
            thumbnail_source_path = excluded.thumbnail_source_path,
            last_scanned_at = excluded.last_scanned_at`,
-        [
+        batch.flatMap((course) => {
+          const lessons = course.sections.flatMap((section) => section.lessons)
+          const thumbnailSourcePath = course.thumbnailSourcePath ?? lessons.find((lesson) => lesson.type === "video")?.path ?? null
+
+          return [
+            course.id,
+            course.name,
+            course.path,
+            course.totalDuration,
+            course.watchedDuration,
+            course.lastAccessed,
+            thumbnailSourcePath,
+            scanStamp,
+          ]
+        })
+      )
+    }
+
+    for (const batch of chunk(resolvedSections, batchSize(5))) {
+      await database.execute(
+        `INSERT INTO sections (id, course_id, name, order_index, updated_at)
+         VALUES ${createRowPlaceholders(batch.length, 5)}
+         ON CONFLICT(course_id, name) DO UPDATE SET
+           id = excluded.id,
+           order_index = excluded.order_index,
+           updated_at = excluded.updated_at`,
+        batch.flatMap(({ course, section }) => [section.id, course.id, section.name, section.order, scanStamp])
+      )
+    }
+
+    for (const batch of chunk(resolvedLessons, batchSize(14))) {
+      await database.execute(
+        `INSERT INTO lessons (
+          id,
+          course_id,
+          section_id,
+          section_name,
+          name,
+          path,
+          type,
+          duration,
+          file_size,
+          watched_time,
+          completed,
+          order_index,
+          last_position,
+          updated_at
+        ) VALUES ${createRowPlaceholders(batch.length, 14)}
+        ON CONFLICT(path) DO UPDATE SET
+          id = excluded.id,
+          course_id = excluded.course_id,
+          section_id = excluded.section_id,
+          section_name = excluded.section_name,
+          name = excluded.name,
+          type = excluded.type,
+          duration = excluded.duration,
+          file_size = excluded.file_size,
+          order_index = excluded.order_index,
+          updated_at = excluded.updated_at`,
+        batch.flatMap(({ course, section, lesson }) => [
+          lesson.id,
           course.id,
-          course.name,
-          course.path,
-          course.totalDuration,
-          course.watchedDuration,
-          course.lastAccessed,
-          thumbnailSourcePath,
+          section.id,
+          lesson.sectionName,
+          lesson.name,
+          lesson.path,
+          lesson.type,
+          lesson.duration,
+          lesson.fileSize,
+          lesson.watchedTime,
+          lesson.completed ? 1 : 0,
+          lesson.order,
+          lesson.lastPosition,
           scanStamp,
-        ]
+        ])
       )
+    }
 
-      for (const section of course.sections) {
-        await database.execute(
-          `INSERT INTO sections (id, course_id, name, order_index, updated_at)
-           VALUES ($1, $2, $3, $4, $5)
-           ON CONFLICT(course_id, name) DO UPDATE SET
-             id = excluded.id,
-             order_index = excluded.order_index,
-             updated_at = excluded.updated_at`,
-          [section.id, course.id, section.name, section.order, scanStamp]
-        )
-
-        for (const lesson of section.lessons) {
-          await database.execute(
-            `INSERT INTO lessons (
-              id,
-              course_id,
-              section_id,
-              section_name,
-              name,
-              path,
-              type,
-              duration,
-              file_size,
-              watched_time,
-              completed,
-              order_index,
-              last_position,
-              updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-            ON CONFLICT(path) DO UPDATE SET
-              id = excluded.id,
-              course_id = excluded.course_id,
-              section_id = excluded.section_id,
-              section_name = excluded.section_name,
-              name = excluded.name,
-              type = excluded.type,
-              duration = excluded.duration,
-              file_size = excluded.file_size,
-              order_index = excluded.order_index,
-              updated_at = excluded.updated_at`,
-            [
-              lesson.id,
-              course.id,
-              section.id,
-              lesson.sectionName,
-              lesson.name,
-              lesson.path,
-              lesson.type,
-              lesson.duration,
-              lesson.fileSize,
-              lesson.watchedTime,
-              lesson.completed ? 1 : 0,
-              lesson.order,
-              lesson.lastPosition,
-              scanStamp,
-            ]
-          )
-
-          await database.execute(`DELETE FROM lesson_subtitles WHERE lesson_id = $1`, [lesson.id])
-
-          for (let index = 0; index < lesson.subtitles.length; index++) {
-            const subtitle = lesson.subtitles[index]
-            await database.execute(
-              `INSERT INTO lesson_subtitles (id, lesson_id, path, language, label, order_index)
-               VALUES ($1, $2, $3, $4, $5, $6)
-               ON CONFLICT(lesson_id, path) DO UPDATE SET
-                 language = excluded.language,
-                 label = excluded.label,
-                 order_index = excluded.order_index`,
-              [makeSubtitleId(lesson.id, index), lesson.id, subtitle.path, subtitle.language, subtitle.label, index]
-            )
-          }
-        }
-      }
-
+    for (const batch of chunk(resolvedLessonIds, SQLITE_BATCH_SIZE)) {
       await database.execute(
-        `DELETE FROM lessons WHERE course_id = $1 AND (updated_at IS NULL OR updated_at <> $2)`,
-        [course.id, scanStamp]
+        `DELETE FROM lesson_subtitles WHERE lesson_id IN (${createPlaceholders(batch.length)})`,
+        batch
+      )
+    }
+
+    for (const batch of chunk(resolvedSubtitles, batchSize(6))) {
+      await database.execute(
+        `INSERT INTO lesson_subtitles (id, lesson_id, path, language, label, order_index)
+         VALUES ${createRowPlaceholders(batch.length, 6)}
+         ON CONFLICT(lesson_id, path) DO UPDATE SET
+           language = excluded.language,
+           label = excluded.label,
+           order_index = excluded.order_index`,
+        batch.flatMap(({ lesson, subtitle, index }) => [
+          makeSubtitleId(lesson.id, index),
+          lesson.id,
+          subtitle.path,
+          subtitle.language,
+          subtitle.label,
+          index,
+        ])
+      )
+    }
+
+    for (const batch of chunk(resolvedCourseIds, SQLITE_BATCH_SIZE)) {
+      await database.execute(
+        `DELETE FROM lessons WHERE course_id IN (${createPlaceholders(batch.length)}) AND (updated_at IS NULL OR updated_at <> $${batch.length + 1})`,
+        [...batch, scanStamp]
       )
       await database.execute(
-        `DELETE FROM sections WHERE course_id = $1 AND (updated_at IS NULL OR updated_at <> $2)`,
-        [course.id, scanStamp]
+        `DELETE FROM sections WHERE course_id IN (${createPlaceholders(batch.length)}) AND (updated_at IS NULL OR updated_at <> $${batch.length + 1})`,
+        [...batch, scanStamp]
       )
     }
 
