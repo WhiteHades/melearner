@@ -136,12 +136,15 @@ export const useCourseStore = (<T>(selector: (state: CourseStore) => T): T => {
   selectedRef.current = selected
 
   useEffect(() => {
-    return useCourseStoreInternal.subscribe((state) => {
+    const update = (state: CourseStore) => {
       const next = selectorRef.current(state)
       if (Object.is(selectedRef.current, next)) return
       selectedRef.current = next
       setSelected(next)
-    })
+    }
+    const unsubscribe = useCourseStoreInternal.subscribe(update)
+    update(useCourseStoreInternal.getState())
+    return unsubscribe
   }, [])
 
   return selected
