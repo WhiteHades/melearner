@@ -2,6 +2,7 @@ use jwalk::WalkDir;
 use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
+use std::collections::HashSet;
 use std::hash::Hasher;
 use std::path::{Path, PathBuf};
 
@@ -201,11 +202,23 @@ fn is_partial_file(path: &Path) -> bool {
         .is_some_and(|ext| PARTIAL_EXTENSIONS.contains(&ext.as_str()))
 }
 
-fn has_download_sidecar(path: &Path) -> bool {
+fn download_sidecar_target(path: &Path) -> Option<PathBuf> {
     let path_text = path.to_string_lossy();
-    DOWNLOAD_SIDECAR_SUFFIXES
+    for suffix in DOWNLOAD_SIDECAR_SUFFIXES {
+        let marker = format!(".{suffix}");
+        if path_text.ends_with(&marker) {
+            let target = &path_text[..path_text.len() - marker.len()];
+            return Some(PathBuf::from(target));
+        }
+    }
+    None
+}
+
+fn download_sidecar_targets(paths: &[PathBuf]) -> HashSet<PathBuf> {
+    paths
         .iter()
-        .any(|suffix| PathBuf::from(format!("{path_text}.{suffix}")).exists())
+        .filter_map(|path| download_sidecar_target(path))
+        .collect()
 }
 
 fn push_warning(warnings: &mut Vec<String>, message: String) {
@@ -222,20 +235,24 @@ fn extend_warnings(warnings: &mut Vec<String>, messages: Vec<String>) {
     }
 }
 
-fn skip_file_reason(path: &Path, file_type: FileType) -> Option<String> {
+fn skip_file_reason(
+    path: &Path,
+    file_type: FileType,
+    size: u64,
+    download_sidecars: &HashSet<PathBuf>,
+) -> Option<String> {
     if is_partial_file(path) {
         return Some(format!("skipped incomplete download: {}", path.display()));
     }
 
-    if (is_media_file(file_type) || file_type == FileType::Subtitle) && has_download_sidecar(path) {
+    if is_learning_file(file_type) && download_sidecars.contains(path) {
         return Some(format!(
             "skipped file with active download sidecar: {}",
             path.display()
         ));
     }
 
-    let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-    if size == 0 && (is_media_file(file_type) || file_type == FileType::Subtitle) {
+    if size == 0 && is_learning_file(file_type) {
         return Some(format!("skipped empty learning item: {}", path.display()));
     }
 
@@ -258,6 +275,10 @@ fn is_media_file(file_type: FileType) -> bool {
         file_type,
         FileType::Video | FileType::Audio | FileType::Document | FileType::Quiz
     )
+}
+
+fn is_learning_file(file_type: FileType) -> bool {
+    is_media_file(file_type) || file_type == FileType::Subtitle
 }
 
 fn natural_cmp(a: &str, b: &str) -> Ordering {
@@ -402,8 +423,16 @@ fn read_course_marker(course_path: &Path) -> Result<Option<Box<str>>, String> {
     Ok(Some(identity_id.to_string().into_boxed_str()))
 }
 
-fn file_entry(path: &Path, file_type: FileType, course_root: &Path) -> Option<FileEntry> {
-    let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+fn file_size(path: &Path) -> u64 {
+    std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
+}
+
+fn file_entry(
+    path: &Path,
+    file_type: FileType,
+    course_root: &Path,
+    size: u64,
+) -> Option<FileEntry> {
     let name = path
         .file_name()
         .and_then(|n| n.to_str())
@@ -421,22 +450,32 @@ fn file_entry(path: &Path, file_type: FileType, course_root: &Path) -> Option<Fi
 
 fn scan_directory(dir: &Path, course_root: &Path) -> (Box<[FileEntry]>, Vec<String>) {
     let mut warnings = Vec::new();
-    let mut files = WalkDir::new(dir)
+    let paths = WalkDir::new(dir)
         .skip_hidden(true)
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
         .map(|e| e.path())
         .filter(|p| !is_ignored_or_partial_path(p, dir))
+        .collect::<Vec<_>>();
+    let download_sidecars = download_sidecar_targets(&paths);
+
+    let mut files = paths
+        .into_iter()
         .filter_map(|p| {
-            let ft = get_file_type(&p);
-            if let Some(reason) = skip_file_reason(&p, ft) {
+            let file_type = get_file_type(&p);
+            if !is_learning_file(file_type) {
+                if let Some(reason) = skip_file_reason(&p, file_type, 0, &download_sidecars) {
+                    push_warning(&mut warnings, reason);
+                }
+                return None;
+            }
+            let size = file_size(&p);
+            if let Some(reason) = skip_file_reason(&p, file_type, size, &download_sidecars) {
                 push_warning(&mut warnings, reason);
                 return None;
             }
-            (is_media_file(ft) || ft == FileType::Subtitle)
-                .then(|| file_entry(&p, ft, course_root))
-                .flatten()
+            file_entry(&p, file_type, course_root, size)
         })
         .collect::<Vec<_>>();
 
@@ -449,6 +488,9 @@ fn scan_course(course_path: &Path) -> (CourseData, Vec<String>) {
     let mut sections: Vec<SectionData> = Vec::new();
     let mut root_files: Vec<FileEntry> = Vec::new();
     let mut warnings = Vec::new();
+    let entries = read_dir_sorted(course_path);
+    let root_paths = entries.iter().map(|entry| entry.path()).collect::<Vec<_>>();
+    let root_download_sidecars = download_sidecar_targets(&root_paths);
     let marker_identity_id = match read_course_marker(course_path) {
         Ok(identity_id) => identity_id,
         Err(message) => {
@@ -457,7 +499,7 @@ fn scan_course(course_path: &Path) -> (CourseData, Vec<String>) {
         }
     };
 
-    for (index, entry) in read_dir_sorted(course_path).iter().enumerate() {
+    for (index, entry) in entries.iter().enumerate() {
         let path = entry.path();
 
         if path.is_dir() && is_partial_folder(&path) {
@@ -489,14 +531,21 @@ fn scan_course(course_path: &Path) -> (CourseData, Vec<String>) {
             }
         } else if path.is_file() {
             let file_type = get_file_type(&path);
-            if let Some(reason) = skip_file_reason(&path, file_type) {
+            if !is_learning_file(file_type) {
+                if let Some(reason) = skip_file_reason(&path, file_type, 0, &root_download_sidecars)
+                {
+                    push_warning(&mut warnings, reason);
+                }
+                continue;
+            }
+            let size = file_size(&path);
+            if let Some(reason) = skip_file_reason(&path, file_type, size, &root_download_sidecars)
+            {
                 push_warning(&mut warnings, reason);
                 continue;
             }
-            if is_media_file(file_type) || file_type == FileType::Subtitle {
-                if let Some(entry) = file_entry(&path, file_type, course_path) {
-                    root_files.push(entry);
-                }
+            if let Some(entry) = file_entry(&path, file_type, course_path, size) {
+                root_files.push(entry);
             }
         }
     }
@@ -583,12 +632,23 @@ pub fn scan_library(root_path: &str) -> ScanResult {
 
     let mut root_files_exist = false;
     let mut subdirs: Vec<PathBuf> = Vec::new();
+    let root_paths = entries.iter().map(|entry| entry.path()).collect::<Vec<_>>();
+    let root_download_sidecars = download_sidecar_targets(&root_paths);
 
     for entry in entries {
         let path = entry.path();
         if path.is_file() {
             let file_type = get_file_type(&path);
-            if let Some(reason) = skip_file_reason(&path, file_type) {
+            if !is_learning_file(file_type) {
+                if let Some(reason) = skip_file_reason(&path, file_type, 0, &root_download_sidecars)
+                {
+                    push_warning(&mut warnings, reason);
+                }
+                continue;
+            }
+            let size = file_size(&path);
+            if let Some(reason) = skip_file_reason(&path, file_type, size, &root_download_sidecars)
+            {
                 push_warning(&mut warnings, reason);
                 continue;
             }
@@ -736,7 +796,8 @@ pub async fn get_file_info(path: String) -> Result<FileEntry, String> {
 
     let file_type = get_file_type(&p);
     let course_root = p.parent().unwrap_or_else(|| Path::new(""));
-    file_entry(&p, file_type, course_root).ok_or_else(|| "failed to read file metadata".to_string())
+    file_entry(&p, file_type, course_root, file_size(&p))
+        .ok_or_else(|| "failed to read file metadata".to_string())
 }
 
 #[cfg(test)]
@@ -809,12 +870,9 @@ mod tests {
                 .any(|file| file.name.as_ref() == "legacy.doc"
                     && file.file_type == FileType::Document)
         );
-        assert!(
-            all_files
-                .iter()
-                .any(|file| file.name.as_ref() == "workbook.pdf"
-                    && file.file_type == FileType::Document)
-        );
+        assert!(all_files.iter().any(
+            |file| file.name.as_ref() == "workbook.pdf" && file.file_type == FileType::Document
+        ));
         assert!(
             !all_files
                 .iter()
@@ -1085,6 +1143,25 @@ mod tests {
     }
 
     #[test]
+    fn skips_root_media_with_active_download_sidecar() {
+        let root = temp_root("root-active-download");
+        touch(&root.join("01 active.mp4"));
+        touch(&root.join("01 active.mp4.aria2"));
+
+        let result = scan_library(&root.to_string_lossy());
+
+        assert!(result.courses.is_empty());
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("active download sidecar"))
+        );
+
+        cleanup(&root);
+    }
+
+    #[test]
     fn course_fingerprint_survives_parent_move_and_folder_rename() {
         let root = temp_root("fingerprint-move");
         let original = root.join("Library A/Arm Assembly");
@@ -1161,8 +1238,7 @@ mod tests {
         let root = temp_root("invalid-marker");
         let course = root.join("Course");
         touch(&course.join("01 Intro/01 welcome.mp4"));
-        fs::write(course.join(COURSE_MARKER_FILE_NAME), r#"{"version":1}"#)
-            .expect("write marker");
+        fs::write(course.join(COURSE_MARKER_FILE_NAME), r#"{"version":1}"#).expect("write marker");
 
         let (scanned, warnings) = scan_course(&course);
 
