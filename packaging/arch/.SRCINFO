@@ -1,7 +1,7 @@
 pkgbase = melearner-bin
 	pkgdesc = local course learner
 	pkgver = 0.1.8
-	pkgrel = 22
+	pkgrel = 23
 	url = https://github.com/WhiteHades/melearner
 	arch = x86_64
 	license = MIT
@@ -10,6 +10,7 @@ pkgbase = melearner-bin
 	depends = libayatana-appindicator
 	depends = ffmpeg
 	depends = mpv
+	depends = libglvnd
 	depends = xdg-utils
 	provides = melearner=0.1.8
 	conflicts = melearner
