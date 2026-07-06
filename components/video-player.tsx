@@ -1,6 +1,7 @@
 "use client"
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { getCurrentWindow } from "@tauri-apps/api/window"
 import {
   Camera,
   Captions,
@@ -95,6 +96,7 @@ function VideoPlayerComponent({
 }: VideoPlayerProps) {
   const surfaceRef = useRef<HTMLDivElement | null>(null)
   const lastSaveRef = useRef(0)
+  const boundsRafRef = useRef<number | null>(null)
   const [nativeState, setNativeState] = useState<NativePlayerState>(initialState)
   const [error, setError] = useState<{ path: string; message: string } | null>(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
@@ -126,6 +128,15 @@ function VideoPlayerComponent({
     if (!bounds) return
     await setNativePlayerBounds(bounds)
   }, [measureBounds])
+
+  const requestNativeSurfaceSync = useCallback(() => {
+    if (!isTauri() || boundsRafRef.current !== null) return
+
+    boundsRafRef.current = window.requestAnimationFrame(() => {
+      boundsRafRef.current = null
+      void updateBounds().catch((reason) => setError({ path: lesson.path, message: String(reason) }))
+    })
+  }, [lesson.path, updateBounds])
 
   useEffect(() => {
     if (!isPlayable || !isTauri()) return
@@ -162,19 +173,50 @@ function VideoPlayerComponent({
   useEffect(() => {
     const surface = surfaceRef.current
     if (!surface) return
+    let disposed = false
+    let unlistenMoved: (() => void) | null = null
+    let unlistenResized: (() => void) | null = null
 
-    const requestBoundsUpdate = () => {
-      void updateBounds().catch((reason) => setError({ path: lesson.path, message: String(reason) }))
-    }
+    const requestBoundsUpdate = () => requestNativeSurfaceSync()
     requestBoundsUpdate()
     const observer = new ResizeObserver(requestBoundsUpdate)
     observer.observe(surface)
     window.addEventListener("resize", requestBoundsUpdate)
+    window.addEventListener("scroll", requestBoundsUpdate, true)
+    document.addEventListener("fullscreenchange", requestBoundsUpdate)
+
+    if (isTauri()) {
+      const appWindow = getCurrentWindow()
+      void appWindow.onMoved(requestBoundsUpdate).then((unlisten) => {
+        if (disposed) {
+          unlisten()
+        } else {
+          unlistenMoved = unlisten
+        }
+      })
+      void appWindow.onResized(requestBoundsUpdate).then((unlisten) => {
+        if (disposed) {
+          unlisten()
+        } else {
+          unlistenResized = unlisten
+        }
+      })
+    }
+
     return () => {
+      disposed = true
+      if (boundsRafRef.current !== null) {
+        window.cancelAnimationFrame(boundsRafRef.current)
+        boundsRafRef.current = null
+      }
       observer.disconnect()
       window.removeEventListener("resize", requestBoundsUpdate)
+      window.removeEventListener("scroll", requestBoundsUpdate, true)
+      document.removeEventListener("fullscreenchange", requestBoundsUpdate)
+      unlistenMoved?.()
+      unlistenResized?.()
     }
-  }, [lesson.path, updateBounds])
+  }, [requestNativeSurfaceSync])
 
   useEffect(() => {
     if (!isPlayable || !isTauri()) return
