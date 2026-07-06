@@ -36,6 +36,25 @@ export async function scanFolder(path: string): Promise<ScanResult> {
   return invoke<ScanResult>("scan_folder", { path })
 }
 
+export interface LibrarySearchHit {
+  path: string
+  relativePath: string
+  name: string
+  score: number
+}
+
+export async function indexLibrarySearch(root: string, paths: string[]): Promise<void> {
+  return invoke<void>("index_library_search", { root, paths })
+}
+
+export async function searchLibrary(query: string, limit?: number): Promise<LibrarySearchHit[]> {
+  return invoke<LibrarySearchHit[]>("search_library", { query, limit })
+}
+
+export async function clearLibrarySearch(): Promise<void> {
+  return invoke<void>("clear_library_search")
+}
+
 export async function selectFolderDialog(): Promise<string | null> {
   const result = await open({
     directory: true,
