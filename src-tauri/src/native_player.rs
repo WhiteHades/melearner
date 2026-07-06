@@ -1584,6 +1584,33 @@ mod tests {
     }
 
     #[test]
+    fn native_surface_backend_preference_is_explicit() {
+        assert_eq!(
+            surface::NativeSurfaceBackendPreference::from_env_value(None)
+                .expect("default backend preference"),
+            surface::NativeSurfaceBackendPreference::WindowHandle
+        );
+        assert_eq!(
+            surface::NativeSurfaceBackendPreference::from_env_value(Some("render-api"))
+                .expect("render api backend preference"),
+            surface::NativeSurfaceBackendPreference::RenderApi
+        );
+        assert!(
+            surface::NativeSurfaceBackendPreference::from_env_value(Some("browser-video"))
+                .expect_err("invalid backend preference should fail")
+                .contains("MELEARNER_SURFACE_BACKEND")
+        );
+    }
+
+    #[test]
+    fn native_surface_render_api_request_fails_clearly_until_backend_exists() {
+        assert_eq!(
+            surface::render_api_surface_unavailable_error(),
+            "native render-api surface backend is not implemented yet; current available backend is window-handle"
+        );
+    }
+
+    #[test]
     fn native_player_visible_load_requires_surface() {
         let file = temp_media_file();
         let mut player = NativePlayer::new().expect("create native player");

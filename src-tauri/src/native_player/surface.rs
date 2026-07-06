@@ -14,6 +14,7 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 static SURFACE_WINDOW_RUN: OnceLock<Mutex<u64>> = OnceLock::new();
 const NATIVE_SURFACE_LABEL: &str = "native-player-surface";
+const SURFACE_BACKEND_ENV: &str = "MELEARNER_SURFACE_BACKEND";
 
 fn surface_window_slot() -> &'static Mutex<u64> {
     SURFACE_WINDOW_RUN.get_or_init(|| Mutex::new(0))
@@ -54,6 +55,38 @@ impl NativeSurfaceBackend {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum NativeSurfaceBackendPreference {
+    WindowHandle,
+    RenderApi,
+}
+
+impl NativeSurfaceBackendPreference {
+    pub(super) fn current() -> Result<Self, String> {
+        match std::env::var(SURFACE_BACKEND_ENV) {
+            Ok(value) => Self::from_env_value(Some(value.as_str())),
+            Err(std::env::VarError::NotPresent) => Ok(Self::WindowHandle),
+            Err(std::env::VarError::NotUnicode(_)) => {
+                Err(format!("{SURFACE_BACKEND_ENV} must be valid unicode"))
+            }
+        }
+    }
+
+    pub(super) fn from_env_value(value: Option<&str>) -> Result<Self, String> {
+        match value.map(str::trim).filter(|value| !value.is_empty()) {
+            None | Some("window-handle") => Ok(Self::WindowHandle),
+            Some("render-api") => Ok(Self::RenderApi),
+            Some(value) => Err(format!(
+                "invalid {SURFACE_BACKEND_ENV} value {value:?}; expected window-handle or render-api"
+            )),
+        }
+    }
+}
+
+pub(super) fn render_api_surface_unavailable_error() -> &'static str {
+    "native render-api surface backend is not implemented yet; current available backend is window-handle"
+}
+
 pub struct NativeVideoSurface {
     window: Window,
     window_id: i64,
@@ -62,6 +95,21 @@ pub struct NativeVideoSurface {
 
 impl NativeVideoSurface {
     pub(super) fn attach(
+        app: &AppHandle,
+        parent: &WebviewWindow,
+        bounds: NativePlayerBounds,
+    ) -> Result<Self, String> {
+        match NativeSurfaceBackendPreference::current()? {
+            NativeSurfaceBackendPreference::WindowHandle => {
+                Self::attach_window_handle(app, parent, bounds)
+            }
+            NativeSurfaceBackendPreference::RenderApi => {
+                Err(render_api_surface_unavailable_error().to_string())
+            }
+        }
+    }
+
+    fn attach_window_handle(
         app: &AppHandle,
         parent: &WebviewWindow,
         bounds: NativePlayerBounds,
