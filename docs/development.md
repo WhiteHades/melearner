@@ -36,6 +36,7 @@ Current implementation state:
 - Native-player tests cover internal audio/subtitle/chapter extraction and external SRT/VTT subtitle registration.
 - Linux uses a glutin OpenGL surface created from the Tauri native window handle by default. The window-handle fallback still needs an X11/XCB handle and is for diagnosis, not the main playback path.
 - The native surface is hidden when its WebView placeholder leaves the viewport, then shown and moved again when the placeholder returns.
+- Packaged native-surface attach and render failures are written to `~/.melearner/native-surface.log` by default. Set `MELEARNER_NATIVE_SURFACE_LOG=/path/to/log` when running focused render diagnostics.
 
 Rules for this pipeline:
 

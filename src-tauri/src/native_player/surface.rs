@@ -12,6 +12,7 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, Raw
 use std::{
     ffi::{CString, c_void},
     num::NonZeroU32,
+    path::{Path, PathBuf},
     sync::{
         Arc, Mutex, OnceLock,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -24,9 +25,54 @@ use tauri::{AppHandle, PhysicalPosition, PhysicalSize, WebviewWindow, Window};
 static SURFACE_WINDOW_RUN: OnceLock<Mutex<u64>> = OnceLock::new();
 const NATIVE_SURFACE_LABEL: &str = "native-player-surface";
 const SURFACE_BACKEND_ENV: &str = "MELEARNER_SURFACE_BACKEND";
+const NATIVE_SURFACE_LOG_ENV: &str = "MELEARNER_NATIVE_SURFACE_LOG";
 
 fn surface_window_slot() -> &'static Mutex<u64> {
     SURFACE_WINDOW_RUN.get_or_init(|| Mutex::new(0))
+}
+
+fn native_surface_runtime_log_path() -> PathBuf {
+    let configured = std::env::var(NATIVE_SURFACE_LOG_ENV).ok();
+    let home = std::env::var("HOME").ok();
+    native_surface_runtime_log_path_from_values(configured.as_deref(), home.as_deref())
+}
+
+fn native_surface_runtime_log_path_from_values(
+    configured: Option<&str>,
+    home: Option<&str>,
+) -> PathBuf {
+    if let Some(configured) = configured.map(str::trim).filter(|value| !value.is_empty()) {
+        return PathBuf::from(configured);
+    }
+
+    home.map(|home| {
+        PathBuf::from(home)
+            .join(".melearner")
+            .join("native-surface.log")
+    })
+    .unwrap_or_else(|| std::env::temp_dir().join("melearner-native-surface.log"))
+}
+
+fn record_native_surface_runtime_log(message: &str) {
+    let _ = record_native_surface_runtime_log_at(&native_surface_runtime_log_path(), message);
+}
+
+fn record_native_surface_runtime_log_at(path: &Path, message: &str) -> std::io::Result<()> {
+    use std::io::Write;
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs_f64())
+        .unwrap_or(0.0);
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    writeln!(file, "[{ts}] {message}")
 }
 
 pub(super) fn next_surface_window_label() -> Result<String, String> {
@@ -141,9 +187,15 @@ impl NativeVideoSurface {
                         log::warn!(
                             "native render-api surface failed; falling back to window-handle surface: {render_err}"
                         );
+                        record_native_surface_runtime_log(&format!(
+                            "native render-api surface failed; falling back to window-handle surface: {render_err}"
+                        ));
                         Self::attach_window_handle(app, parent, bounds)
                         .and_then(|surface| Self::attach_surface_to_mpv(surface, mpv))
                         .map_err(|fallback_err| {
+                            record_native_surface_runtime_log(&format!(
+                                "native window-handle fallback failed after render-api failure: {fallback_err}"
+                            ));
                             format!(
                                 "native render-api surface failed ({render_err}); window-handle fallback failed ({fallback_err})"
                             )
@@ -246,6 +298,7 @@ impl NativeVideoSurface {
                     format!("libmpv could not enable render-api video output: {err}")
                 })?;
                 *renderer = Some(RenderApiSurface::start(&self.window, self.rect, mpv)?);
+                record_native_surface_runtime_log("native render-api surface attached");
                 Ok(())
             }
         }
@@ -449,6 +502,9 @@ fn run_render_api_thread(
         Err(err) => {
             diagnostics.record_error(&err);
             diagnostics.set_alive(false);
+            record_native_surface_runtime_log(&format!(
+                "native render-api render thread initialization failed: {err}"
+            ));
             let _ = init_tx.send(Err(err));
             return;
         }
@@ -469,6 +525,7 @@ fn run_render_api_thread(
             log::error!("native render-api failed: {err}");
             diagnostics.record_error(&err);
             diagnostics.set_alive(false);
+            record_native_surface_runtime_log(&format!("native render-api failed: {err}"));
             break;
         } else if render_api_command_counts_frame(&command) {
             diagnostics.record_frame();
@@ -821,5 +878,41 @@ mod tests {
         assert!(!render_api_command_counts_frame(
             &RenderApiCommand::Shutdown
         ));
+    }
+
+    #[test]
+    fn native_surface_runtime_log_uses_configured_or_home_path() {
+        assert_eq!(
+            native_surface_runtime_log_path_from_values(
+                Some("/tmp/melearner/native-surface.log"),
+                Some("/home/example")
+            ),
+            std::path::PathBuf::from("/tmp/melearner/native-surface.log")
+        );
+        assert_eq!(
+            native_surface_runtime_log_path_from_values(None, Some("/home/example")),
+            std::path::PathBuf::from("/home/example/.melearner/native-surface.log")
+        );
+    }
+
+    #[test]
+    fn native_surface_runtime_log_appends_messages() {
+        let path = std::env::temp_dir().join(format!(
+            "melearner-native-surface-log-{}.log",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time before unix epoch")
+                .as_nanos()
+        ));
+
+        record_native_surface_runtime_log_at(&path, "render-api initialized")
+            .expect("write first log");
+        record_native_surface_runtime_log_at(&path, "render-api failed").expect("write second log");
+
+        let contents = std::fs::read_to_string(&path).expect("read log");
+        assert!(contents.contains("render-api initialized"));
+        assert!(contents.contains("render-api failed"));
+
+        let _ = std::fs::remove_file(path);
     }
 }
