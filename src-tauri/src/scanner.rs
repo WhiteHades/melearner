@@ -552,6 +552,16 @@ pub fn scan_library(root_path: &str) -> ScanResult {
     };
 
     let mut warnings = Vec::new();
+    if root.join(COURSE_MARKER_FILE_NAME).exists() {
+        let (course, course_warnings) = scan_course(&root);
+        extend_warnings(&mut warnings, course_warnings);
+        return ScanResult {
+            scan_type: ScanType::SingleCourse,
+            courses: Box::new([course]),
+            warnings: warnings.into_boxed_slice(),
+        };
+    }
+
     let mut root_files_exist = false;
     let mut subdirs: Vec<PathBuf> = Vec::new();
 
@@ -812,6 +822,48 @@ mod tests {
                 .iter()
                 .any(|file| file.name.as_ref() == "00 overview.srt"
                     && file.file_type == FileType::Subtitle)
+        );
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn treats_marked_course_root_without_root_media_as_single_course() {
+        let root = temp_root("marked-course-root");
+        fs::write(
+            root.join(COURSE_MARKER_FILE_NAME),
+            r#"{"version":1,"identityId":"course-identity-1"}"#,
+        )
+        .expect("write marker");
+        touch(&root.join("01 - Intro/001 - Welcome.mp4"));
+        touch(&root.join("02 - Data Structures/001 - Arrays.mp4"));
+
+        let result = scan_library(&root.to_string_lossy());
+
+        assert_eq!(result.scan_type, ScanType::SingleCourse);
+        assert_eq!(result.courses.len(), 1);
+        assert_eq!(
+            result.courses[0].marker_identity_id.as_deref(),
+            Some("course-identity-1")
+        );
+
+        let files = result.courses[0]
+            .sections
+            .iter()
+            .flat_map(|section| section.files.iter())
+            .collect::<Vec<_>>();
+
+        assert!(
+            files
+                .iter()
+                .any(|file| file.name.as_ref() == "001 - Welcome.mp4"
+                    && file.file_type == FileType::Video)
+        );
+        assert!(
+            files
+                .iter()
+                .any(|file| file.name.as_ref() == "001 - Arrays.mp4"
+                    && file.file_type == FileType::Video)
         );
 
         cleanup(&root);
