@@ -13,11 +13,12 @@ import type { Lesson } from "@/types"
 interface VideoAreaProps {
   className?: string
   lesson?: Lesson | null
+  libraryRoot: string
   onNext?: () => void
   onPrevious?: () => void
 }
 
-export function VideoArea({ className, lesson, onNext, onPrevious }: VideoAreaProps) {
+export function VideoArea({ className, lesson, libraryRoot, onNext, onPrevious }: VideoAreaProps) {
   const lastUpdateRef = useRef(0)
   const lessonId = lesson?.id ?? ""
   const lessonDuration = lesson?.duration ?? 0
@@ -82,6 +83,7 @@ export function VideoArea({ className, lesson, onNext, onPrevious }: VideoAreaPr
         {isPlayable ? (
           <VideoPlayer
             lesson={lesson}
+            libraryRoot={libraryRoot}
             onProgress={handleProgress}
             onComplete={handleComplete}
             onNext={onNext}

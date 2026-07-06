@@ -105,6 +105,7 @@ export function CourseViewerLayout({
             <VideoArea
               key={currentLesson?.id ?? "empty-lesson"}
               lesson={currentLesson}
+              libraryRoot={course.path}
               onNext={nextLesson ? () => onLessonChange?.(nextLesson.id) : undefined}
               onPrevious={previousLesson ? () => onLessonChange?.(previousLesson.id) : undefined}
             />
