@@ -46,7 +46,6 @@ Rules for this pipeline:
 - Remove stale player files, dependencies, docs, aliases, and generated artifacts in the same change that replaces them.
 - After any launchable behavior change on this laptop, install the native Arch package so the desktop launcher runs the updated `/usr/bin/melearner` binary. Do not treat `~/.cargo/bin/melearner` as an installed app instance.
 - The Arch package depends on `mpv` because Arch's `mpv` package provides `libmpv.so`; this is an embedded-library dependency, not permission to launch an external `mpv` process. It also depends on `libglvnd` for the opt-in OpenGL render-api backend.
-
 See `docs/adr/0010-embedded-libmpv-native-playback.md`.
 
 ## Scroll Performance
@@ -110,6 +109,8 @@ pnpm install:arch:fast
 ```
 
 This script builds the production Tauri binary with `pnpm tauri build --no-bundle --ci`, packages `melearner-bin`, and installs the package that owns `/usr/bin/melearner`. Do not replace that Tauri build step with plain `cargo build`; direct Cargo builds can produce a dev-mode binary that tries to load `http://localhost:3000` instead of bundled static assets. The script preserves ignored build caches such as `.next`, `out`, and `src-tauri/target` and chooses the fastest available Rust cache mode.
+
+When package contents change but `pkgver` remains the same, increment Arch `pkgrel`. Keep `pkgver=0.1.8` while the upstream app version is still `0.1.8`; use `pkgrel` for local/AUR rebuilds of that same version. Reset `pkgrel` to `1` only when `pkgver` changes to a new upstream version. Do not churn `pkgrel` for source-only changes that are not packaged or installed.
 
 During iterative local development, do not delete `.next`, `out`, `src-tauri/target`, or `tsconfig.tsbuildinfo` after every package install. Those ignored paths are build caches/outputs, not stale source artifacts. Removing `src-tauri/target` forces the next Tauri package install to compile the GTK/WebKit/Tauri/Rust dependency graph again, which can take minutes. Clean them only when intentionally doing a cold rebuild, validating release reproducibility, recovering from a poisoned cache, or preparing a final source-only handoff where the slower next build is acceptable.
 
