@@ -427,6 +427,10 @@ enum RenderApiCommand {
     Shutdown,
 }
 
+fn render_api_command_counts_frame(command: &RenderApiCommand) -> bool {
+    matches!(command, RenderApiCommand::Render)
+}
+
 fn run_render_api_thread(
     handles: RenderApiRawHandles,
     rect: NativeSurfaceRect,
@@ -466,10 +470,7 @@ fn run_render_api_thread(
             diagnostics.record_error(&err);
             diagnostics.set_alive(false);
             break;
-        } else if matches!(
-            command,
-            RenderApiCommand::Render | RenderApiCommand::Resize(_)
-        ) {
+        } else if render_api_command_counts_frame(&command) {
             diagnostics.record_frame();
         }
     }
@@ -804,5 +805,21 @@ mod tests {
             ))),
             None
         );
+    }
+
+    #[test]
+    fn render_diagnostics_count_only_render_callbacks_as_frames() {
+        assert!(render_api_command_counts_frame(&RenderApiCommand::Render));
+        assert!(!render_api_command_counts_frame(&RenderApiCommand::Resize(
+            NativeSurfaceRect {
+                x: 0,
+                y: 0,
+                width: 640,
+                height: 360,
+            }
+        )));
+        assert!(!render_api_command_counts_frame(
+            &RenderApiCommand::Shutdown
+        ));
     }
 }
