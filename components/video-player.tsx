@@ -47,6 +47,7 @@ import {
   stepNativePlayerFrame,
   subscribeNativePlayerEvents,
   takeNativePlayerScreenshot,
+  type NativePlayerBounds,
   type NativePlayerState,
 } from "@/lib/native-player"
 import { isTauri } from "@/lib/tauri"
@@ -107,39 +108,47 @@ function VideoPlayerComponent({
   }), [autoplay, lesson.duration, lesson.lastPosition, lesson.path])
   const state = nativeState.path === lesson.path ? nativeState : fallbackState
 
-  const updateBounds = useCallback(() => {
+  const measureBounds = useCallback((): NativePlayerBounds | null => {
     const surface = surfaceRef.current
-    if (!surface || !isTauri()) return
+    if (!surface || !isTauri()) return null
     const rect = surface.getBoundingClientRect()
-    void setNativePlayerBounds({
+    return {
       x: Math.round(rect.left),
       y: Math.round(rect.top),
       width: Math.round(rect.width),
       height: Math.round(rect.height),
       scaleFactor: window.devicePixelRatio || 1,
-    }).catch((reason) => setError({ path: lesson.path, message: String(reason) }))
-  }, [lesson.path])
+    }
+  }, [])
+
+  const updateBounds = useCallback(async () => {
+    const bounds = measureBounds()
+    if (!bounds) return
+    await setNativePlayerBounds(bounds)
+  }, [measureBounds])
 
   useEffect(() => {
     if (!isPlayable || !isTauri()) return
     let isActive = true
 
-    void loadNativePlayerFile({
-      path: lesson.path,
-      allowedRoots: [libraryRoot],
-      subtitles: lesson.subtitles.map((subtitle) => ({
-        path: subtitle.path,
-        label: subtitle.label,
-        language: subtitle.language,
-      })),
-      startTime: lesson.lastPosition || undefined,
-      autoplay,
-    })
-      .then((next) => {
-        if (!isActive) return
-        setError(null)
-        setNativeState(next)
+    void (async () => {
+      await updateBounds()
+      const next = await loadNativePlayerFile({
+        path: lesson.path,
+        allowedRoots: [libraryRoot],
+        subtitles: lesson.subtitles.map((subtitle) => ({
+          path: subtitle.path,
+          label: subtitle.label,
+          language: subtitle.language,
+        })),
+        startTime: lesson.lastPosition || undefined,
+        autoplay,
       })
+
+      if (!isActive) return
+      setError(null)
+      setNativeState(next)
+    })()
       .catch((reason) => {
         if (isActive) setError({ path: lesson.path, message: String(reason) })
       })
@@ -148,21 +157,24 @@ function VideoPlayerComponent({
       isActive = false
       if (isTauri()) void destroyNativePlayer().catch(() => undefined)
     }
-  }, [autoplay, isPlayable, lesson.duration, lesson.id, lesson.lastPosition, lesson.path, lesson.subtitles, libraryRoot])
+  }, [autoplay, isPlayable, lesson.duration, lesson.id, lesson.lastPosition, lesson.path, lesson.subtitles, libraryRoot, updateBounds])
 
   useEffect(() => {
     const surface = surfaceRef.current
     if (!surface) return
 
-    updateBounds()
-    const observer = new ResizeObserver(updateBounds)
+    const requestBoundsUpdate = () => {
+      void updateBounds().catch((reason) => setError({ path: lesson.path, message: String(reason) }))
+    }
+    requestBoundsUpdate()
+    const observer = new ResizeObserver(requestBoundsUpdate)
     observer.observe(surface)
-    window.addEventListener("resize", updateBounds)
+    window.addEventListener("resize", requestBoundsUpdate)
     return () => {
       observer.disconnect()
-      window.removeEventListener("resize", updateBounds)
+      window.removeEventListener("resize", requestBoundsUpdate)
     }
-  }, [updateBounds])
+  }, [lesson.path, updateBounds])
 
   useEffect(() => {
     if (!isPlayable || !isTauri()) return
