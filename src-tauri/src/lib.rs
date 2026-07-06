@@ -327,6 +327,7 @@ pub fn run() {
             open_native,
             media::generate_video_thumbnail,
             native_player::native_player_load,
+            native_player::native_player_state,
             native_player::native_player_play,
             native_player::native_player_pause,
             native_player::native_player_seek,

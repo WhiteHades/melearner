@@ -49,6 +49,10 @@ export function loadNativePlayerFile(options: NativePlayerLoadOptions): Promise<
   return invoke<NativePlayerState>("native_player_load", { options })
 }
 
+export function getNativePlayerState(): Promise<NativePlayerState> {
+  return invoke<NativePlayerState>("native_player_state")
+}
+
 export function playNativePlayer(): Promise<NativePlayerState> {
   return invoke<NativePlayerState>("native_player_play")
 }

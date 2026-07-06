@@ -230,6 +230,11 @@ pub fn native_player_load(options: NativePlayerLoadOptions) -> Result<NativePlay
 }
 
 #[tauri::command]
+pub fn native_player_state() -> Result<NativePlayerState, String> {
+    with_player(|player| Ok(player.state()))
+}
+
+#[tauri::command]
 pub fn native_player_play() -> Result<NativePlayerState, String> {
     with_player(|player| {
         player
