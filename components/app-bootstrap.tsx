@@ -7,14 +7,23 @@ import { initDatabase, loadPersistedLibrary, syncLibrary } from "@/lib/database"
 import { markCourseAccessed } from "@/lib/operations"
 import { indexCourses } from "@/lib/search"
 import { useCourseStore } from "@/lib/stores/course-store"
-import { getStartupRoute, isTauri, type StartupRoute } from "@/lib/tauri"
+import { isTauri } from "@/lib/tauri"
 import { frontendLog } from "@/lib/frontend-log"
 import type { Course } from "@/types"
 
 const t0 = typeof performance !== "undefined" ? performance.now() : 0
 const t = () => (typeof performance !== "undefined" ? performance.now() - t0 : 0)
-const STARTUP_ROUTE_TIMEOUT_MS = 500
-const STARTUP_ROUTE_TIMEOUT = Symbol("startup-route-timeout")
+
+type StartupRoute = {
+  courseId: string
+  lessonId: string | null
+}
+
+declare global {
+  interface Window {
+    __MELEARNER_STARTUP_ROUTE__?: StartupRoute | null
+  }
+}
 
 type LegacyCourseStore = {
   state?: {
@@ -75,26 +84,9 @@ function lessonBelongsToCourse(course: Course, lessonId: string | null): lessonI
   return course.sections.some((section) => section.lessons.some((lesson) => lesson.id === lessonId))
 }
 
-function startupRouteTimeout(): Promise<typeof STARTUP_ROUTE_TIMEOUT> {
-  return new Promise((resolve) => {
-    window.setTimeout(() => resolve(STARTUP_ROUTE_TIMEOUT), STARTUP_ROUTE_TIMEOUT_MS)
-  })
-}
-
-async function getStartupRouteWithTimeout(): Promise<StartupRoute | null> {
+function readStartupRoute(): StartupRoute | null {
   if (!isTauri() || typeof window === "undefined") return null
-
-  try {
-    const route = await Promise.race([getStartupRoute(), startupRouteTimeout()])
-    if (route === STARTUP_ROUTE_TIMEOUT) {
-      frontendLog("warn", "startup.route.timeout", { timeoutMs: STARTUP_ROUTE_TIMEOUT_MS })
-      return null
-    }
-    return route
-  } catch (error) {
-    frontendLog("warn", "startup.route.failed", { error: String(error) })
-    return null
-  }
+  return window.__MELEARNER_STARTUP_ROUTE__ ?? null
 }
 
 function applyStartupRoute(courses: Course[], route: StartupRoute | null): string | null {
@@ -211,7 +203,7 @@ export function AppBootstrap() {
       frontendLog("info", "app.bootstrap.dbInit.start", { ms: Math.round(t()) })
       await initDatabase()
       frontendLog("info", "app.bootstrap.dbInit.done", { ms: Math.round(t()) })
-      const startupRoutePromise = getStartupRouteWithTimeout()
+      const startupRoute = readStartupRoute()
 
       let library: Awaited<ReturnType<typeof loadPersistedLibrary>> | null = null
 
@@ -250,7 +242,7 @@ export function AppBootstrap() {
         frontendLog("info", "app.bootstrap.libraryLoad.start", { ms: Math.round(t()) })
         library = await loadPersistedLibrary()
       }
-      const startupCourseId = applyStartupRoute(library.courses, await startupRoutePromise)
+      const startupCourseId = applyStartupRoute(library.courses, startupRoute)
       hydrateLibrary(library.courses, library.libraryPath)
       if (startupCourseId) void markCourseAccessed(startupCourseId)
       frontendLog("info", "app.bootstrap.libraryLoad.done", {
