@@ -1367,7 +1367,7 @@ pub async fn native_player_set_bounds(
 
 #[tauri::command]
 pub fn native_player_set_surface_visible(app: AppHandle, visible: bool) -> Result<(), String> {
-    let result = with_player(|player| player.set_surface_visible(visible));
+    let result = with_existing_player(|player| player.set_surface_visible(visible)).map(|_| ());
     if let Err(err) = &result {
         emit_native_error(&app, err);
     }

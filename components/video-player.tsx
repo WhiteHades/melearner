@@ -44,6 +44,7 @@ import {
   setNativePlayerBounds,
   setNativePlayerMuted,
   setNativePlayerRate,
+  setNativePlayerSurfaceVisible,
   setNativePlayerVolume,
   stepNativePlayerFrame,
   subscribeNativePlayerEvents,
@@ -240,10 +241,11 @@ function VideoPlayerComponent({
 
   useEffect(() => {
     const surface = surfaceRef.current
-    if (!surface) return
+    if (!surface || !isTauri()) return
     let disposed = false
     let unlistenMoved: (() => void) | null = null
     let unlistenResized: (() => void) | null = null
+    let visibilityObserver: IntersectionObserver | null = null
 
     const requestBoundsUpdate = () => requestNativeSurfaceSync()
     const requestBoundsAndFullscreenUpdate = () => {
@@ -256,24 +258,33 @@ function VideoPlayerComponent({
     window.addEventListener("resize", requestBoundsAndFullscreenUpdate)
     window.addEventListener("scroll", requestBoundsUpdate, true)
 
-    if (isTauri()) {
-      const appWindow = getCurrentWindow()
-      syncWindowFullscreenState()
-      void appWindow.onMoved(requestBoundsUpdate).then((unlisten) => {
-        if (disposed) {
-          unlisten()
-        } else {
-          unlistenMoved = unlisten
-        }
-      })
-      void appWindow.onResized(requestBoundsAndFullscreenUpdate).then((unlisten) => {
-        if (disposed) {
-          unlisten()
-        } else {
-          unlistenResized = unlisten
-        }
-      })
+    if ("IntersectionObserver" in window) {
+      visibilityObserver = new IntersectionObserver(([intersection]) => {
+        const visible = intersection ? intersection.isIntersecting : false
+        void setNativePlayerSurfaceVisible(visible).catch((reason) => {
+          if (!disposed) setError({ path: lesson.path, message: String(reason) })
+        })
+        if (visible) requestBoundsUpdate()
+      }, { threshold: 0.01 })
+      visibilityObserver.observe(surface)
     }
+
+    const appWindow = getCurrentWindow()
+    syncWindowFullscreenState()
+    void appWindow.onMoved(requestBoundsUpdate).then((unlisten) => {
+      if (disposed) {
+        unlisten()
+      } else {
+        unlistenMoved = unlisten
+      }
+    })
+    void appWindow.onResized(requestBoundsAndFullscreenUpdate).then((unlisten) => {
+      if (disposed) {
+        unlisten()
+      } else {
+        unlistenResized = unlisten
+      }
+    })
 
     return () => {
       disposed = true
@@ -282,12 +293,13 @@ function VideoPlayerComponent({
         boundsRafRef.current = null
       }
       observer.disconnect()
+      visibilityObserver?.disconnect()
       window.removeEventListener("resize", requestBoundsAndFullscreenUpdate)
       window.removeEventListener("scroll", requestBoundsUpdate, true)
       unlistenMoved?.()
       unlistenResized?.()
     }
-  }, [requestNativeSurfaceSync, syncWindowFullscreenState])
+  }, [lesson.path, requestNativeSurfaceSync, syncWindowFullscreenState])
 
   useEffect(() => {
     if (!isPlayable || !isTauri()) return
