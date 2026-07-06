@@ -19,7 +19,7 @@ Deletion must stay conservative around user data and required tooling. Do not re
 
 - User libraries, app databases, or course marker files outside isolated test fixtures.
 - Required source files, package manager lockfiles, or active dependency installs.
-- Active local build caches used for iterative development installs, especially `.next`, `out`, and `src-tauri/target`. These ignored directories are not stale merely because they are generated; deleting `src-tauri/target` forces slow full Tauri/Rust rebuilds.
+- Active local build caches used for iterative development installs, especially `.next`, `out`, `src-tauri/target`, and `tsconfig.tsbuildinfo`. These ignored paths are not stale merely because they are generated; deleting `src-tauri/target` forces slow full Tauri/Rust rebuilds.
 - Release artifacts before they have been installed, uploaded, checksummed, or otherwise consumed.
 - Compatibility code that still has a tested behavior or migration purpose.
 

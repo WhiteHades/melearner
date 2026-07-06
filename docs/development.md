@@ -111,7 +111,7 @@ pnpm install:arch:fast
 
 This script builds the production Tauri binary with `pnpm tauri build --no-bundle --ci`, packages `melearner-bin`, and installs the package that owns `/usr/bin/melearner`. Do not replace that Tauri build step with plain `cargo build`; direct Cargo builds can produce a dev-mode binary that tries to load `http://localhost:3000` instead of bundled static assets. The script preserves ignored build caches such as `.next`, `out`, and `src-tauri/target` and chooses the fastest available Rust cache mode.
 
-During iterative local development, do not delete `.next`, `out`, or `src-tauri/target` after every package install. Those folders are ignored build caches/outputs, not stale source artifacts. Removing `src-tauri/target` forces the next Tauri package install to compile the GTK/WebKit/Tauri/Rust dependency graph again, which can take minutes. Clean them only when intentionally doing a cold rebuild, validating release reproducibility, recovering from a poisoned cache, or preparing a final source-only handoff where the slower next build is acceptable.
+During iterative local development, do not delete `.next`, `out`, `src-tauri/target`, or `tsconfig.tsbuildinfo` after every package install. Those ignored paths are build caches/outputs, not stale source artifacts. Removing `src-tauri/target` forces the next Tauri package install to compile the GTK/WebKit/Tauri/Rust dependency graph again, which can take minutes. Clean them only when intentionally doing a cold rebuild, validating release reproducibility, recovering from a poisoned cache, or preparing a final source-only handoff where the slower next build is acceptable.
 
 When `sccache` is installed, the script sets `RUSTC_WRAPPER=sccache` and defaults `CARGO_INCREMENTAL=0` so release compilation can be cached across clean local builds. Without `sccache`, it defaults `CARGO_INCREMENTAL=1` to reuse Cargo's local target directory during iterative laptop builds.
 
@@ -126,7 +126,7 @@ Do not upload `.deb` or `.rpm` unless those channels are intentionally restored 
 
 Remove stale generated artifacts, completed temporary plans, redundant docs, obsolete code, and unused settings as part of the same task that makes them unnecessary. Do not keep duplicate structures, old UI branches, or compatibility shims after the repo has a canonical replacement.
 
-Before finishing iterative build or install work, remove package tarballs, package staging directories, temp screenshots, logs, and one-off verification files. Keep ignored build caches such as `.next`, `out`, and `src-tauri/target` unless the task explicitly calls for a clean rebuild or source-only cleanup.
+Before finishing iterative build or install work, remove package tarballs, package staging directories, temp screenshots, logs, and one-off verification files. Keep ignored build caches such as `.next`, `out`, `src-tauri/target`, and `tsconfig.tsbuildinfo` unless the task explicitly calls for a clean rebuild or source-only cleanup.
 
 See `docs/adr/0009-remove-stale-and-redundant-artifacts.md`.
 
