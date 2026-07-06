@@ -50,6 +50,7 @@ pub struct NativePlayerBounds {
 #[serde(rename_all = "camelCase")]
 pub struct NativePlayerLoadOptions {
     path: String,
+    allowed_roots: Vec<String>,
     start_time: Option<f64>,
     autoplay: Option<bool>,
 }
@@ -159,14 +160,43 @@ impl NativePlayer {
     }
 }
 
-fn canonical_local_file(path: &str) -> Result<PathBuf, String> {
+fn reject_url_or_scheme(path: &str) -> Result<(), String> {
+    if path.contains("://") || path.starts_with("file:") {
+        return Err("native player only accepts local filesystem paths".to_string());
+    }
+    Ok(())
+}
+
+fn canonical_allowed_roots(allowed_roots: &[String]) -> Result<Vec<PathBuf>, String> {
+    if allowed_roots.is_empty() {
+        return Err("native player requires an approved library root".to_string());
+    }
+
+    allowed_roots
+        .iter()
+        .map(|root| {
+            let trimmed = root.trim();
+            if trimmed.is_empty() {
+                return Err("approved library root is empty".to_string());
+            }
+            reject_url_or_scheme(trimmed)?;
+            let canonical = Path::new(trimmed)
+                .canonicalize()
+                .map_err(|err| format!("cannot resolve approved library root: {err}"))?;
+            if !canonical.is_dir() {
+                return Err("approved library root is not a directory".to_string());
+            }
+            Ok(canonical)
+        })
+        .collect()
+}
+
+fn canonical_local_file(path: &str, allowed_roots: &[String]) -> Result<PathBuf, String> {
     let trimmed = path.trim();
     if trimmed.is_empty() {
         return Err("media path is empty".to_string());
     }
-    if trimmed.contains("://") || trimmed.starts_with("file:") {
-        return Err("native player only accepts local filesystem paths".to_string());
-    }
+    reject_url_or_scheme(trimmed)?;
 
     let path = Path::new(trimmed);
     let canonical = path
@@ -174,6 +204,10 @@ fn canonical_local_file(path: &str) -> Result<PathBuf, String> {
         .map_err(|err| format!("cannot resolve media path: {err}"))?;
     if !canonical.is_file() {
         return Err("media path is not a file".to_string());
+    }
+    let roots = canonical_allowed_roots(allowed_roots)?;
+    if !roots.iter().any(|root| canonical.starts_with(root)) {
+        return Err("media path is outside the approved library root".to_string());
     }
 
     Ok(canonical)
@@ -191,7 +225,7 @@ fn with_player<T>(f: impl FnOnce(&mut NativePlayer) -> Result<T, String>) -> Res
 
 #[tauri::command]
 pub fn native_player_load(options: NativePlayerLoadOptions) -> Result<NativePlayerState, String> {
-    let path = canonical_local_file(&options.path)?;
+    let path = canonical_local_file(&options.path, &options.allowed_roots)?;
     with_player(|player| player.load(path, options.start_time, options.autoplay.unwrap_or(false)))
 }
 
@@ -338,17 +372,49 @@ mod tests {
 
     #[test]
     fn canonical_local_file_rejects_urls() {
-        assert!(canonical_local_file("https://example.com/video.mp4").is_err());
-        assert!(canonical_local_file("file:///tmp/video.mp4").is_err());
+        let root = std::env::temp_dir().to_string_lossy().to_string();
+
+        assert!(canonical_local_file("https://example.com/video.mp4", &[root.clone()]).is_err());
+        assert!(canonical_local_file("file:///tmp/video.mp4", &[root]).is_err());
     }
 
     #[test]
-    fn canonical_local_file_accepts_existing_file() {
-        let file = temp_media_file();
-        let canonical = canonical_local_file(&file.to_string_lossy()).expect("canonical file");
+    fn canonical_local_file_accepts_file_under_approved_root() {
+        let root = std::env::temp_dir().join(format!(
+            "melearner-native-player-root-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time before unix epoch")
+                .as_nanos()
+        ));
+        fs::create_dir(&root).expect("create temp root");
+        let file = root.join("lesson.mp4");
+        fs::write(&file, b"fixture").expect("write fixture");
+        let roots = vec![root.to_string_lossy().to_string()];
+        let canonical = canonical_local_file(&file.to_string_lossy(), &roots).expect("canonical file");
 
         assert!(canonical.is_file());
 
         let _ = fs::remove_file(file);
+        let _ = fs::remove_dir(root);
+    }
+
+    #[test]
+    fn canonical_local_file_rejects_file_outside_approved_root() {
+        let root = std::env::temp_dir().join(format!(
+            "melearner-native-player-root-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time before unix epoch")
+                .as_nanos()
+        ));
+        fs::create_dir(&root).expect("create temp root");
+        let file = temp_media_file();
+        let roots = vec![root.to_string_lossy().to_string()];
+
+        assert!(canonical_local_file(&file.to_string_lossy(), &roots).is_err());
+
+        let _ = fs::remove_file(file);
+        let _ = fs::remove_dir(root);
     }
 }
