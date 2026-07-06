@@ -23,6 +23,7 @@ static POSITION_EVENT_RUN: OnceLock<Mutex<u64>> = OnceLock::new();
 static SURFACE_WINDOW_RUN: OnceLock<Mutex<u64>> = OnceLock::new();
 const NATIVE_SURFACE_LABEL: &str = "native-player-surface";
 const EVENT_STATE: &str = "native-player://state";
+const EVENT_POSITION: &str = "native-player://position";
 const EVENT_TRACKS: &str = "native-player://tracks";
 const EVENT_CHAPTERS: &str = "native-player://chapters";
 const EVENT_FILE_LOADED: &str = "native-player://file-loaded";
@@ -113,6 +114,22 @@ pub struct NativePlayerState {
     selected_audio_track_id: Option<String>,
     selected_subtitle_track_id: Option<String>,
     chapters: Vec<NativeChapter>,
+    current_chapter_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativePlayerPositionEvent {
+    path: Option<String>,
+    paused: bool,
+    buffering: bool,
+    current_time: f64,
+    duration: f64,
+    volume: f64,
+    muted: bool,
+    rate: f64,
+    width: Option<i64>,
+    height: Option<i64>,
     current_chapter_id: Option<String>,
 }
 
@@ -567,40 +584,24 @@ impl NativePlayer {
     fn state(&self) -> NativePlayerState {
         let tracks = self.track_state();
         let chapters = self.chapters();
-        let paused = self.mpv.get_property("pause").unwrap_or(true);
-        let current_time = self.mpv.get_property("time-pos").unwrap_or(0.0);
-        let duration = self.mpv.get_property("duration").unwrap_or(0.0);
-        let muted = self.mpv.get_property("mute").unwrap_or(false);
-        let volume_percent = self.mpv.get_property("volume").unwrap_or(100.0);
-        let rate = self.mpv.get_property("speed").unwrap_or(1.0);
-        let width = self.mpv.get_property("width").ok();
-        let height = self.mpv.get_property("height").ok();
+        let position = self.position_event();
         let surface_attached = self.surface.is_some();
         let surface_backend = self
             .surface
             .as_ref()
             .map(|surface| surface.backend.to_string());
-        let current_chapter_id = self
-            .mpv
-            .get_property("chapter")
-            .ok()
-            .filter(|chapter: &i64| *chapter >= 0)
-            .map(|chapter| chapter.to_string());
 
         NativePlayerState {
-            path: self
-                .path
-                .as_ref()
-                .map(|path| path.to_string_lossy().to_string()),
-            paused,
-            buffering: false,
-            current_time,
-            duration,
-            volume: (volume_percent / 100.0).clamp(0.0, 1.0),
-            muted,
-            rate,
-            width,
-            height,
+            path: position.path,
+            paused: position.paused,
+            buffering: position.buffering,
+            current_time: position.current_time,
+            duration: position.duration,
+            volume: position.volume,
+            muted: position.muted,
+            rate: position.rate,
+            width: position.width,
+            height: position.height,
             surface_attached,
             surface_backend,
             audio_tracks: tracks.audio_tracks,
@@ -608,6 +609,33 @@ impl NativePlayer {
             selected_audio_track_id: tracks.selected_audio_track_id,
             selected_subtitle_track_id: tracks.selected_subtitle_track_id,
             chapters,
+            current_chapter_id: position.current_chapter_id,
+        }
+    }
+
+    fn position_event(&self) -> NativePlayerPositionEvent {
+        let volume_percent = self.mpv.get_property("volume").unwrap_or(100.0);
+        let current_chapter_id = self
+            .mpv
+            .get_property("chapter")
+            .ok()
+            .filter(|chapter: &i64| *chapter >= 0)
+            .map(|chapter| chapter.to_string());
+
+        NativePlayerPositionEvent {
+            path: self
+                .path
+                .as_ref()
+                .map(|path| path.to_string_lossy().to_string()),
+            paused: self.mpv.get_property("pause").unwrap_or(true),
+            buffering: false,
+            current_time: self.mpv.get_property("time-pos").unwrap_or(0.0),
+            duration: self.mpv.get_property("duration").unwrap_or(0.0),
+            volume: (volume_percent / 100.0).clamp(0.0, 1.0),
+            muted: self.mpv.get_property("mute").unwrap_or(false),
+            rate: self.mpv.get_property("speed").unwrap_or(1.0),
+            width: self.mpv.get_property("width").ok(),
+            height: self.mpv.get_property("height").ok(),
             current_chapter_id,
         }
     }
@@ -1058,6 +1086,14 @@ fn emit_native_state(app: &AppHandle, state: &NativePlayerState) -> Result<(), S
     Ok(())
 }
 
+fn emit_native_position(
+    app: &AppHandle,
+    position: &NativePlayerPositionEvent,
+) -> Result<(), String> {
+    app.emit(EVENT_POSITION, position.clone())
+        .map_err(|err| format!("native player could not emit position event: {err}"))
+}
+
 fn finish_state_command(
     app: &AppHandle,
     result: Result<NativePlayerState, String>,
@@ -1096,14 +1132,16 @@ fn start_position_events(app: AppHandle) {
                 break;
             }
 
-            match with_existing_player(|player| Ok(player.state())) {
-                Ok(Some(state)) => {
-                    let _ = emit_native_state(&app, &state);
-                    let is_ended = state.path.is_some()
-                        && state.duration > 0.0
-                        && state.current_time >= state.duration - 0.5;
+            match with_existing_player(|player| Ok(player.position_event())) {
+                Ok(Some(position)) => {
+                    let _ = emit_native_position(&app, &position);
+                    let is_ended = position.path.is_some()
+                        && position.duration > 0.0
+                        && position.current_time >= position.duration - 0.5;
                     if is_ended && !emitted_end {
-                        let _ = app.emit(EVENT_END_FILE, state.clone());
+                        if let Ok(Some(state)) = with_existing_player(|player| Ok(player.state())) {
+                            let _ = app.emit(EVENT_END_FILE, state);
+                        }
                         emitted_end = true;
                     } else if !is_ended {
                         emitted_end = false;

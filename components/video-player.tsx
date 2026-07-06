@@ -311,6 +311,25 @@ function VideoPlayerComponent({
           }
         })
       },
+      onPosition: (next) => {
+        if (cancelled || next.path !== lesson.path) return
+        setNativeState((current) => {
+          if (current.path !== lesson.path) return current
+          return {
+            ...current,
+            paused: next.paused,
+            buffering: next.buffering,
+            currentTime: next.currentTime,
+            duration: next.duration,
+            volume: next.volume,
+            muted: next.muted,
+            rate: next.rate,
+            width: next.width,
+            height: next.height,
+            currentChapterId: next.currentChapterId,
+          }
+        })
+      },
       onFileLoaded: (next) => {
         if (!cancelled && next.path === lesson.path) setError(null)
       },

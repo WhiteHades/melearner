@@ -52,6 +52,20 @@ export type NativePlayerFileLoadedEvent = {
   path: string
 }
 
+export type NativePlayerPositionEvent = {
+  path: string | null
+  paused: boolean
+  buffering: boolean
+  currentTime: number
+  duration: number
+  volume: number
+  muted: boolean
+  rate: number
+  width: number | null
+  height: number | null
+  currentChapterId: string | null
+}
+
 export type NativePlayerBounds = {
   x: number
   y: number
@@ -143,6 +157,7 @@ export async function subscribeNativePlayerEvents({
   onState,
   onTracks,
   onChapters,
+  onPosition,
   onFileLoaded,
   onEnd,
   onError,
@@ -150,6 +165,7 @@ export async function subscribeNativePlayerEvents({
   onState: (state: NativePlayerState) => void
   onTracks?: (tracks: NativePlayerTracksEvent) => void
   onChapters?: (chapters: NativePlayerChaptersEvent) => void
+  onPosition?: (position: NativePlayerPositionEvent) => void
   onFileLoaded?: (file: NativePlayerFileLoadedEvent) => void
   onEnd: (state: NativePlayerState) => void
   onError: (message: string) => void
@@ -158,6 +174,7 @@ export async function subscribeNativePlayerEvents({
     listen<NativePlayerState>("native-player://state", (event) => onState(event.payload)),
     listen<NativePlayerTracksEvent>("native-player://tracks", (event) => onTracks?.(event.payload)),
     listen<NativePlayerChaptersEvent>("native-player://chapters", (event) => onChapters?.(event.payload)),
+    listen<NativePlayerPositionEvent>("native-player://position", (event) => onPosition?.(event.payload)),
     listen<NativePlayerFileLoadedEvent>("native-player://file-loaded", (event) => onFileLoaded?.(event.payload)),
     listen<NativePlayerState>("native-player://end-file", (event) => onEnd(event.payload)),
     listen<{ message: string }>("native-player://error", (event) => onError(event.payload.message)),
