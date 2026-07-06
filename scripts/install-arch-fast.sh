@@ -11,8 +11,7 @@ else
   export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-1}"
 fi
 
-pnpm build
-cargo build --manifest-path src-tauri/Cargo.toml --release
+NO_STRIP="${NO_STRIP:-true}" pnpm tauri build --no-bundle --ci
 
 (
   cd packaging/arch
