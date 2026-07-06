@@ -55,13 +55,13 @@ Progress is saved in local SQLite and restored when you come back.
 ## Features
 
 - Local course library from folders you choose
-- Video/audio playback with resume position and keyboard controls
+- Native video/audio playback with resume position and keyboard controls
 - Documents, subtitles, and section-aware course outlines
 - Search across courses, sections, and lessons
 - Local SQLite progress storage
 - Durable course identity for folder renames, moves, and missing-folder recovery
 - Local stats, storage breakdowns, and an activity heatmap
-- Optional `.melearner-course.json` marker files for stronger course identity
+- Automatic `.melearner-course.json` marker files for stronger local course identity
 - Offline by default: no accounts, telemetry, or sync
 
 ## Docs

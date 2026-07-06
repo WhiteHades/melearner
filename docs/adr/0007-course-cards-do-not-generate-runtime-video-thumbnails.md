@@ -8,8 +8,10 @@ Course cards should not invoke video decoding or FFmpeg at render/scroll time.
 
 `CourseArtwork` should render the existing course visual surface and any already-persisted thumbnail data, but it should not generate new thumbnails while the user scrolls the library.
 
+Thumbnail generation may run after library scan or persisted-library load as a queued native background job with a persistent cache key derived from source metadata. Card render must only consume already-known thumbnail URLs or the fallback visual.
+
 ## Consequences
 
 - Scrolling the course grid/list stays DOM/CSS-bound instead of media-decoding-bound.
-- Playback fallback no longer competes with thumbnail extraction for CPU.
-- Dynamic thumbnails can return later only if they are generated in a queued background job with strict concurrency, cancellation, and persisted cache metadata.
+- Native playback work no longer competes with thumbnail extraction for CPU.
+- Dynamic thumbnails can return later only if they are generated in a queued background job with strict concurrency and cached output metadata.

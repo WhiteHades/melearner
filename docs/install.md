@@ -43,11 +43,11 @@ Required tools:
 - Microsoft C++ Build Tools
 - WiX Toolset for MSI bundling
 - WebView2 Runtime on the target machine, or a bundled/offline WebView2 installer mode
-- Media Feature Pack on Windows N editions if media playback support is missing
+- Bundled libmpv runtime libraries for native playback
 
 Windows release artifacts must be built and tested on Windows before publishing.
 
-FFmpeg is not bundled by default. Playback fallback features require FFmpeg to be available, or a future Windows package must bundle and invoke FFmpeg intentionally.
+FFmpeg is not part of ordinary playback. If Windows thumbnail generation is supported without user-installed FFmpeg, bundle FFmpeg deliberately and handle licensing.
 
 ## From Source
 
