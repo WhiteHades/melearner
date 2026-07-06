@@ -1,6 +1,12 @@
 import Database from "@tauri-apps/plugin-sql"
 import type { Course, Lesson, Note, Section, SubtitleFile } from "@/types"
 import { isTauri, getDatabasePath } from "./tauri"
+import {
+  persistedLessonIdentitySignature,
+  scannedLessonIdentitySignature,
+  selectCourseIdentityMatch,
+  selectLessonIdentityMatch,
+} from "./course-identity"
 
 let db: Database | null = null
 let dbPathPromise: Promise<string | null> | null = null
@@ -10,12 +16,15 @@ const LIBRARY_PATH_SETTING = "libraryPath"
 
 type PersistedCourseRow = {
   id: string
+  identity_id: string | null
   name: string
   path: string
+  fingerprint: string | null
   total_duration: number
   watched_duration: number
   last_accessed: string | null
   thumbnail_source_path: string | null
+  missing_since: string | null
 }
 
 type PersistedSectionRow = {
@@ -32,6 +41,7 @@ type PersistedLessonRow = {
   section_name: string | null
   name: string
   path: string
+  relative_path: string | null
   type: Lesson["type"]
   duration: number
   file_size: number | null
@@ -60,6 +70,41 @@ type PersistedNoteRow = {
 type PersistedSettingRow = {
   value: string | null
 }
+
+type SyncLibraryResult = {
+  courses: Course[]
+  warnings: string[]
+}
+
+const COURSE_SELECT_COLUMNS = [
+  "id",
+  "identity_id",
+  "name",
+  "path",
+  "fingerprint",
+  "total_duration",
+  "watched_duration",
+  "last_accessed",
+  "thumbnail_source_path",
+  "missing_since",
+].join(", ")
+
+const LESSON_SELECT_COLUMNS = [
+  "id",
+  "course_id",
+  "section_id",
+  "section_name",
+  "name",
+  "path",
+  "relative_path",
+  "type",
+  "duration",
+  "file_size",
+  "watched_time",
+  "last_position",
+  "completed",
+  "order_index",
+].join(", ")
 
 export type PersistedLibrary = {
   courses: Course[]
@@ -159,9 +204,30 @@ async function selectPersistedCourses(paths: string[]): Promise<PersistedCourseR
   for (let index = 0; index < paths.length; index += SQLITE_BATCH_SIZE) {
     const batch = paths.slice(index, index + SQLITE_BATCH_SIZE)
     const result = await database.select<PersistedCourseRow[]>(
-      `SELECT id, name, path, total_duration, watched_duration, last_accessed, thumbnail_source_path
+      `SELECT ${COURSE_SELECT_COLUMNS}
        FROM courses
        WHERE path IN (${createPlaceholders(batch.length)})`,
+      batch
+    )
+
+    rows.push(...result)
+  }
+
+  return rows
+}
+
+async function selectPersistedCoursesByFingerprint(fingerprints: string[]): Promise<PersistedCourseRow[]> {
+  const database = await getDatabase()
+  if (!database || fingerprints.length === 0) return []
+
+  const rows: PersistedCourseRow[] = []
+
+  for (let index = 0; index < fingerprints.length; index += SQLITE_BATCH_SIZE) {
+    const batch = fingerprints.slice(index, index + SQLITE_BATCH_SIZE)
+    const result = await database.select<PersistedCourseRow[]>(
+      `SELECT ${COURSE_SELECT_COLUMNS}
+       FROM courses
+       WHERE fingerprint IN (${createPlaceholders(batch.length)})`,
       batch
     )
 
@@ -180,10 +246,30 @@ async function selectPersistedLessons(paths: string[]): Promise<PersistedLessonR
   for (let index = 0; index < paths.length; index += SQLITE_BATCH_SIZE) {
     const batch = paths.slice(index, index + SQLITE_BATCH_SIZE)
     const result = await database.select<PersistedLessonRow[]>(
-      `SELECT id, course_id, section_id, section_name, name, path, type, duration, file_size,
-              watched_time, last_position, completed, order_index
+      `SELECT ${LESSON_SELECT_COLUMNS}
        FROM lessons
        WHERE path IN (${createPlaceholders(batch.length)})`,
+      batch
+    )
+
+    rows.push(...result)
+  }
+
+  return rows
+}
+
+async function selectPersistedLessonsByCourseIds(courseIds: string[]): Promise<PersistedLessonRow[]> {
+  const database = await getDatabase()
+  if (!database || courseIds.length === 0) return []
+
+  const rows: PersistedLessonRow[] = []
+
+  for (let index = 0; index < courseIds.length; index += SQLITE_BATCH_SIZE) {
+    const batch = courseIds.slice(index, index + SQLITE_BATCH_SIZE)
+    const result = await database.select<PersistedLessonRow[]>(
+      `SELECT ${LESSON_SELECT_COLUMNS}
+       FROM lessons
+       WHERE course_id IN (${createPlaceholders(batch.length)})`,
       batch
     )
 
@@ -298,7 +384,7 @@ function rowsToCourses(
         sectionName: section.name,
         name: lessonRow.name,
         path: lessonRow.path,
-        relativePath: null,
+        relativePath: lessonRow.relative_path,
         type: lessonRow.type,
         duration: lessonRow.duration ?? 0,
         fileSize: lessonRow.file_size ?? 0,
@@ -320,11 +406,11 @@ function rowsToCourses(
 
     return {
       id: courseRow.id,
-      identityId: courseRow.id,
+      identityId: courseRow.identity_id ?? courseRow.id,
       name: courseRow.name,
       path: courseRow.path,
-      fingerprint: null,
-      missingSince: null,
+      fingerprint: courseRow.fingerprint,
+      missingSince: courseRow.missing_since,
       sections,
       progress: lessons.length > 0 ? Math.round((lessons.filter((lesson) => lesson.completed).length / lessons.length) * 100) : 0,
       totalDuration: courseRow.total_duration ?? 0,
@@ -355,6 +441,22 @@ function inferLibraryPath(courseRows: PersistedCourseRow[]): string | null {
   return common.length === 1 && common[0] === "" ? "/" : common.join("/")
 }
 
+function uniqueValues(values: Array<string | null | undefined>): string[] {
+  return [...new Set(values.filter((value): value is string => Boolean(value)))]
+}
+
+function groupBy<T>(items: T[], keyFor: (item: T) => string | null | undefined): Map<string, T[]> {
+  const groups = new Map<string, T[]>()
+  for (const item of items) {
+    const key = keyFor(item)
+    if (!key) continue
+    const list = groups.get(key) ?? []
+    list.push(item)
+    groups.set(key, list)
+  }
+  return groups
+}
+
 export async function initDatabase(): Promise<void> {
   await getDatabase()
 }
@@ -366,14 +468,14 @@ export async function loadPersistedLibrary(): Promise<PersistedLibrary> {
   const libraryPath = await readSetting(LIBRARY_PATH_SETTING)
   const courseRows = libraryPath
     ? await database.select<PersistedCourseRow[]>(
-        `SELECT id, name, path, total_duration, watched_duration, last_accessed, thumbnail_source_path
+        `SELECT ${COURSE_SELECT_COLUMNS}
          FROM courses
          WHERE path = $1 OR path LIKE $2 ESCAPE '~'
          ORDER BY COALESCE(last_accessed, '') DESC, name COLLATE NOCASE ASC`,
         [libraryPath, childPathPattern(libraryPath)]
       )
     : await database.select<PersistedCourseRow[]>(
-        `SELECT id, name, path, total_duration, watched_duration, last_accessed, thumbnail_source_path
+        `SELECT ${COURSE_SELECT_COLUMNS}
          FROM courses
          ORDER BY COALESCE(last_accessed, '') DESC, name COLLATE NOCASE ASC`
       )
@@ -393,8 +495,7 @@ export async function loadPersistedLibrary(): Promise<PersistedLibrary> {
       batch
     ))
     lessonRows.push(...await database.select<PersistedLessonRow[]>(
-      `SELECT id, course_id, section_id, section_name, name, path, type, duration, file_size,
-              watched_time, last_position, completed, order_index
+      `SELECT ${LESSON_SELECT_COLUMNS}
        FROM lessons
        WHERE course_id IN (${createPlaceholders(batch.length)})`,
       batch
@@ -420,59 +521,115 @@ export async function loadPersistedLibrary(): Promise<PersistedLibrary> {
   }
 }
 
-export async function syncLibrary(courses: Course[], libraryPath: string): Promise<Course[]> {
+export async function syncLibrary(courses: Course[], libraryPath: string): Promise<SyncLibraryResult> {
   const database = await getDatabase()
   if (!database) {
-    return courses
+    return { courses, warnings: [] }
   }
 
+  const warnings: string[] = []
   const coursePaths = courses.map((course) => course.path)
+  const courseFingerprints = uniqueValues(courses.map((course) => course.fingerprint))
   const lessonPaths = courses.flatMap((course) =>
     course.sections.flatMap((section) => section.lessons.map((lesson) => lesson.path))
   )
 
-  const [persistedCourses, persistedLessons] = await Promise.all([
+  const [persistedCourses, persistedCoursesByFingerprint, persistedLessonsByPathRows] = await Promise.all([
     selectPersistedCourses(coursePaths),
+    selectPersistedCoursesByFingerprint(courseFingerprints),
     selectPersistedLessons(lessonPaths),
   ])
 
   const persistedCourseByPath = new Map(
     persistedCourses.map((course) => [course.path, course])
   )
-  const persistedLessonByPath = new Map(
-    persistedLessons.map((lesson) => [lesson.path, lesson])
+  const persistedCoursesByFingerprintGroup = groupBy(
+    persistedCoursesByFingerprint,
+    (course) => course.fingerprint
   )
+  const claimedCourseIds = new Set<string>()
 
   const resolvedCourses = courses.map((course) => {
-    const persistedCourse = persistedCourseByPath.get(course.path)
+    const { match: persistedCourse, warning } = selectCourseIdentityMatch(
+      course,
+      persistedCourseByPath.get(course.path),
+      course.fingerprint ? persistedCoursesByFingerprintGroup.get(course.fingerprint) ?? [] : [],
+      claimedCourseIds
+    )
+    if (warning) warnings.push(warning)
+
     const courseId = persistedCourse?.id ?? course.id
+    const identityId = persistedCourse?.identity_id ?? course.identityId ?? courseId
 
     return {
       ...course,
       id: courseId,
+      identityId,
       lastAccessed: persistedCourse?.last_accessed ?? course.lastAccessed,
+      missingSince: null,
       sections: course.sections.map((section) => ({
         ...section,
-        lessons: section.lessons.map((lesson) => {
-          const persistedLesson = persistedLessonByPath.get(lesson.path)
-
-          return {
-            ...lesson,
-            id: persistedLesson?.id ?? lesson.id,
-            courseId,
-            watchedTime: persistedLesson?.watched_time ?? lesson.watchedTime,
-            lastPosition: persistedLesson?.last_position ?? lesson.lastPosition,
-            completed:
-              persistedLesson !== undefined
-                ? Boolean(persistedLesson.completed)
-                : lesson.completed,
-          }
-        }),
+        lessons: section.lessons.map((lesson) => ({ ...lesson, courseId })),
       })),
     }
   })
 
-  const resolvedSections = resolvedCourses.flatMap((course) =>
+  const resolvedCourseIds = resolvedCourses.map((course) => course.id)
+  const persistedLessonsByCourseRows = await selectPersistedLessonsByCourseIds(resolvedCourseIds)
+  const persistedLessonRows = [
+    ...new Map(
+      [...persistedLessonsByPathRows, ...persistedLessonsByCourseRows].map((lesson) => [lesson.id, lesson])
+    ).values(),
+  ]
+  const persistedLessonByPath = new Map(
+    persistedLessonRows.map((lesson) => [lesson.path, lesson])
+  )
+  const persistedLessonsByRelativePath = groupBy(
+    persistedLessonRows,
+    (lesson) => lesson.relative_path ? `${lesson.course_id}\u0000${lesson.relative_path}` : null
+  )
+  const persistedLessonsBySignature = groupBy(
+    persistedLessonRows,
+    (lesson) => `${lesson.course_id}\u0000${persistedLessonIdentitySignature(lesson)}`
+  )
+  const claimedLessonIds = new Set<string>()
+
+  function matchPersistedLesson(course: Course, lesson: Lesson): PersistedLessonRow | null {
+    const { match, warning } = selectLessonIdentityMatch(
+      course.name,
+      course.id,
+      lesson,
+      persistedLessonByPath.get(lesson.path),
+      lesson.relativePath ? persistedLessonsByRelativePath.get(`${course.id}\u0000${lesson.relativePath}`) ?? [] : [],
+      persistedLessonsBySignature.get(`${course.id}\u0000${scannedLessonIdentitySignature(lesson)}`) ?? [],
+      claimedLessonIds
+    )
+    if (warning) warnings.push(warning)
+    return match
+  }
+
+  const hydratedCourses = resolvedCourses.map((course) => ({
+    ...course,
+    sections: course.sections.map((section) => ({
+      ...section,
+      lessons: section.lessons.map((lesson) => {
+        const persistedLesson = matchPersistedLesson(course, lesson)
+
+        return {
+          ...lesson,
+          id: persistedLesson?.id ?? lesson.id,
+          watchedTime: persistedLesson?.watched_time ?? lesson.watchedTime,
+          lastPosition: persistedLesson?.last_position ?? lesson.lastPosition,
+          completed:
+            persistedLesson !== null
+              ? Boolean(persistedLesson.completed)
+              : lesson.completed,
+        }
+      }),
+    })),
+  }))
+
+  const resolvedSections = hydratedCourses.flatMap((course) =>
     course.sections.map((section) => ({ course, section }))
   )
   const resolvedLessons = resolvedSections.flatMap(({ course, section }) =>
@@ -481,38 +638,54 @@ export async function syncLibrary(courses: Course[], libraryPath: string): Promi
   const resolvedSubtitles = resolvedLessons.flatMap(({ lesson }) =>
     lesson.subtitles.map((subtitle, index) => ({ lesson, subtitle, index }))
   )
-  const resolvedCourseIds = resolvedCourses.map((course) => course.id)
   const resolvedLessonIds = resolvedLessons.map(({ lesson }) => lesson.id)
 
   await executeTransaction(database, async () => {
     await writeSetting(database, LIBRARY_PATH_SETTING, libraryPath)
     const scanStamp = new Date().toISOString()
 
-    for (const batch of chunk(resolvedCourses, batchSize(8))) {
+    for (const batch of chunk(hydratedCourses, batchSize(11))) {
       await database.execute(
-        `INSERT INTO courses (id, name, path, total_duration, watched_duration, last_accessed, thumbnail_source_path, last_scanned_at)
-         VALUES ${createRowPlaceholders(batch.length, 8)}
-         ON CONFLICT(path) DO UPDATE SET
-           id = excluded.id,
+        `INSERT INTO courses (
+          id,
+          identity_id,
+          name,
+          path,
+          fingerprint,
+          total_duration,
+          watched_duration,
+          last_accessed,
+          thumbnail_source_path,
+          last_scanned_at,
+          missing_since
+        ) VALUES ${createRowPlaceholders(batch.length, 11)}
+         ON CONFLICT(id) DO UPDATE SET
+           identity_id = excluded.identity_id,
            name = excluded.name,
+           path = excluded.path,
+           fingerprint = excluded.fingerprint,
            total_duration = excluded.total_duration,
            watched_duration = excluded.watched_duration,
            last_accessed = excluded.last_accessed,
            thumbnail_source_path = excluded.thumbnail_source_path,
-           last_scanned_at = excluded.last_scanned_at`,
+           last_scanned_at = excluded.last_scanned_at,
+           missing_since = NULL`,
         batch.flatMap((course) => {
           const lessons = course.sections.flatMap((section) => section.lessons)
           const thumbnailSourcePath = course.thumbnailSourcePath ?? lessons.find((lesson) => lesson.type === "video")?.path ?? null
 
           return [
             course.id,
+            course.identityId,
             course.name,
             course.path,
+            course.fingerprint,
             course.totalDuration,
             course.watchedDuration,
             course.lastAccessed,
             thumbnailSourcePath,
             scanStamp,
+            null,
           ]
         })
       )
@@ -539,6 +712,7 @@ export async function syncLibrary(courses: Course[], libraryPath: string): Promi
           section_name,
           name,
           path,
+          relative_path,
           type,
           duration,
           file_size,
@@ -547,13 +721,14 @@ export async function syncLibrary(courses: Course[], libraryPath: string): Promi
           order_index,
           last_position,
           updated_at
-        ) VALUES ${createRowPlaceholders(batch.length, 14)}
-        ON CONFLICT(path) DO UPDATE SET
-          id = excluded.id,
+        ) VALUES ${createRowPlaceholders(batch.length, 15)}
+        ON CONFLICT(id) DO UPDATE SET
           course_id = excluded.course_id,
           section_id = excluded.section_id,
           section_name = excluded.section_name,
           name = excluded.name,
+          path = excluded.path,
+          relative_path = excluded.relative_path,
           type = excluded.type,
           duration = excluded.duration,
           file_size = excluded.file_size,
@@ -566,6 +741,7 @@ export async function syncLibrary(courses: Course[], libraryPath: string): Promi
           lesson.sectionName,
           lesson.name,
           lesson.path,
+          lesson.relativePath,
           lesson.type,
           lesson.duration,
           lesson.fileSize,
@@ -615,16 +791,24 @@ export async function syncLibrary(courses: Course[], libraryPath: string): Promi
       )
     }
 
+    const missingExclusion = resolvedCourseIds.length > 0
+      ? `AND id NOT IN (${resolvedCourseIds.map((_, index) => `$${index + 4}`).join(", ")})`
+      : ""
     await database.execute(
-      `DELETE FROM courses WHERE (path = $1 OR path LIKE $2 ESCAPE '~') AND (last_scanned_at IS NULL OR last_scanned_at <> $3)`,
-      [libraryPath, childPathPattern(libraryPath), scanStamp]
+      `UPDATE courses
+       SET missing_since = COALESCE(missing_since, $3),
+           last_scanned_at = $3
+       WHERE (path = $1 OR path LIKE $2 ESCAPE '~')
+         ${missingExclusion}
+         AND (last_scanned_at IS NULL OR last_scanned_at <> $3)`,
+      [libraryPath, childPathPattern(libraryPath), scanStamp, ...resolvedCourseIds]
     )
     await database.execute(
       `DELETE FROM lesson_subtitles WHERE lesson_id NOT IN (SELECT id FROM lessons)`
     )
   })
 
-  return resolvedCourses
+  return { courses: hydratedCourses, warnings }
 }
 
 export async function updateLessonProgress(

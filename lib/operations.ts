@@ -94,17 +94,18 @@ export async function scanLibraryAt(path: string): Promise<{ courses: Course[]; 
   const scanned = processScanResult(result)
   frontendLog("info", `processScanResult returned: ${scanned.length} courses`)
 
-  const hydrated = isTauri()
+  const syncResult = isTauri()
     ? await syncLibrary(scanned, path).catch((err) => {
         throw new Error(`Saving scan failed: ${errorMessage(err)}`)
       })
-    : scanned
+    : { courses: scanned, warnings: [] }
+  const hydrated = syncResult.courses
   frontendLog("info", `syncLibrary returned: ${hydrated.length} courses`)
   const store = useCourseStore.getState()
   store.setCourses(hydrated)
   store.setLibraryPath(path)
   indexCourses(hydrated)
-  return { courses: hydrated, warnings: result.warnings }
+  return { courses: hydrated, warnings: [...result.warnings, ...syncResult.warnings] }
 }
 
 export async function markCourseAccessed(courseId: string): Promise<Course> {

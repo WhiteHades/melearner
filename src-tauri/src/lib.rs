@@ -183,6 +183,19 @@ fn get_migrations() -> Vec<Migration> {
                   WHERE section_id IS NULL;",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 15,
+            description: "add_durable_course_identity_fields",
+            sql: "ALTER TABLE courses ADD COLUMN identity_id TEXT;
+                  ALTER TABLE courses ADD COLUMN fingerprint TEXT;
+                  ALTER TABLE courses ADD COLUMN missing_since TEXT;
+                  ALTER TABLE lessons ADD COLUMN relative_path TEXT;
+                  UPDATE courses SET identity_id = id WHERE identity_id IS NULL;
+                  CREATE UNIQUE INDEX IF NOT EXISTS idx_courses_identity_id ON courses(identity_id) WHERE identity_id IS NOT NULL;
+                  CREATE INDEX IF NOT EXISTS idx_courses_fingerprint ON courses(fingerprint);
+                  CREATE INDEX IF NOT EXISTS idx_lessons_course_relative_path ON lessons(course_id, relative_path);",
+            kind: MigrationKind::Up,
+        },
     ]
 }
 
