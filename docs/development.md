@@ -31,6 +31,7 @@ Current implementation state:
 - `native_player_set_bounds` creates and moves the same-process native video surface used by libmpv.
 - `components/video-player.tsx` owns the React/shadcn control band and surface measurement. It must not render `<video>` or `<audio>`.
 - Rust refuses visible media loads until a native surface has been attached.
+- File-loaded, end-file, and libmpv playback errors come from a dedicated libmpv event client, not from optimistic load responses or position-duration guessing.
 - Native-player tests cover internal audio/subtitle/chapter extraction and external SRT/VTT subtitle registration.
 - Linux currently uses X11/XWayland for the native surface because the libmpv `wid` path needs an X11/XCB handle. A future Wayland-native path should use a verified libmpv render-API renderer.
 - The native surface is hidden when its WebView placeholder leaves the viewport, then shown and moved again when the placeholder returns.

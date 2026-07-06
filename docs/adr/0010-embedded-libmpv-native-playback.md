@@ -39,6 +39,7 @@ The current implementation owns the native playback control path in `src-tauri/s
 - play, pause, seek, volume, mute, rate, audio track, subtitle track, chapter, frame-step, screenshot, and destroy commands;
 - structured `track-list` and `chapter-list` reads through mpv node properties;
 - a lightweight `native-player://position` event for high-frequency playback position updates, so the polling loop does not repeatedly re-read or re-emit track and chapter metadata;
+- a dedicated libmpv event client for `native-player://file-loaded`, `native-player://end-file`, and playback error reporting, so lifecycle events come from libmpv instead of optimistic command responses or position-duration guessing;
 - test-covered internal audio/subtitle/chapter extraction and external SRT/VTT subtitle registration;
 - React/shadcn controls in `components/video-player.tsx` with no `<video>`, `<audio>`, Shaka, or Limeplay path.
 - Fullscreen control uses the Tauri app window fullscreen state and then resyncs native-surface bounds; it must not use DOM fullscreen on the WebView placeholder element.
