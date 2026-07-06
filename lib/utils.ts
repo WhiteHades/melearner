@@ -1,10 +1,6 @@
-import clsx from "clsx"
-import { intervalToDuration, format } from "date-fns"
-import { type ClassNameValue, twMerge } from "tailwind-merge"
+import { format, intervalToDuration } from "date-fns"
 
-export function cn(...classes: ClassNameValue[]) {
-  return twMerge(clsx(classes))
-}
+export { cn } from "cnfast"
 
 export function formatDuration(totalSeconds: number) {
   if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) {
