@@ -1,3 +1,4 @@
+mod library_search;
 mod media;
 mod native_player;
 mod scanner;
@@ -320,6 +321,9 @@ pub fn run() {
             log_frontend,
             open_native,
             media::generate_video_thumbnail,
+            library_search::index_library_search,
+            library_search::search_library,
+            library_search::clear_library_search,
             native_player::native_player_load,
             native_player::native_player_state,
             native_player::native_player_play,
