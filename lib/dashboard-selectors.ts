@@ -13,6 +13,8 @@ export type DashboardCourseCard = {
   nextLesson: Lesson | null
 }
 
+export type CommandPaletteGroup = "courses" | "lessons"
+
 export function buildDashboardCourseCards(courses: Course[]): DashboardCourseCard[] {
   return courses.map((course) => {
     let totalLessons = 0
@@ -82,6 +84,14 @@ export function selectVisibleCourseCards(
 }
 
 type LibrarySearchResultLike = Pick<SearchResult, "courseId" | "id">
+
+export function selectCommandPaletteGroupOrder(
+  query: string,
+  lessonCount: number
+): CommandPaletteGroup[] {
+  if (query.trim() && lessonCount > 0) return ["lessons", "courses"]
+  return ["courses", "lessons"]
+}
 
 export function selectCommandLessons(
   courses: Course[],

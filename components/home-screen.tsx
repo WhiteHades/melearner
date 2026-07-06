@@ -50,6 +50,7 @@ import { search as searchLibrary, type SearchResult as LibrarySearchResult } fro
 import { buildLearningStats, type LearningStats } from "@/lib/stats"
 import {
   buildDashboardCourseCards,
+  selectCommandPaletteGroupOrder,
   selectCommandLessons,
   selectResumeCourseCards,
   selectVisibleCourseCards,
@@ -170,6 +171,10 @@ function LibraryDashboard({
   const commandLessons = useMemo(
     () => cmdOpen ? selectCommandLessons(loadedCourses, searchKey, activeSearchResults, 50) : EMPTY_COMMAND_LESSONS,
     [cmdOpen, loadedCourses, searchKey, activeSearchResults]
+  )
+  const commandGroupOrder = useMemo(
+    () => selectCommandPaletteGroupOrder(searchKey, commandLessons.length),
+    [searchKey, commandLessons.length]
   )
   const stats = useMemo(() => buildLearningStats(loadedCourses, activityDays), [loadedCourses, activityDays])
   const hasCourses = loadedCourses.length > 0
@@ -513,40 +518,45 @@ function LibraryDashboard({
         <CommandInput placeholder="Search courses and lessons…" value={searchQuery} onValueChange={setSearchQuery} />
         <CommandList>
           <CommandEmpty>No results found.</CommandEmpty>
-          {loadedCourses.length > 0 && (
-            <CommandGroup heading="Courses">
-              {visibleCourseCards.filter(({ course }) => !course.missingSince).slice(0, 12).map(({ course }) => (
-                <CommandItem
-                  key={course.id}
-                  value={`course ${course.name}`}
-                  onSelect={() => {
-                    setCmdOpen(false)
-                    onOpenCourse(course)
-                  }}
-                >
-                  <BookOpen className="size-4" />
-                  <span>{course.name}</span>
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          )}
-          {loadedCourses.length > 0 && (
-            <CommandGroup heading="Lessons">
-              {commandLessons.map(({ course, lesson }) => (
-                <CommandItem
-                  key={lesson.id}
-                  value={`lesson ${lesson.name} ${course.name} ${lesson.sectionName}`}
-                  onSelect={() => {
-                    setCmdOpen(false)
-                    onOpenCourse(course, lesson.id)
-                  }}
-                >
-                  <PlayCircle className="size-4" />
-                  <span className="truncate">{lesson.name}</span>
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          )}
+          {commandGroupOrder.map((group) => {
+            if (group === "courses") {
+              return loadedCourses.length > 0 ? (
+                <CommandGroup key="courses" heading="Courses">
+                  {visibleCourseCards.filter(({ course }) => !course.missingSince).slice(0, 12).map(({ course }) => (
+                    <CommandItem
+                      key={course.id}
+                      value={`course ${course.name}`}
+                      onSelect={() => {
+                        setCmdOpen(false)
+                        onOpenCourse(course)
+                      }}
+                    >
+                      <BookOpen className="size-4" />
+                      <span>{course.name}</span>
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              ) : null
+            }
+
+            return loadedCourses.length > 0 && commandLessons.length > 0 ? (
+              <CommandGroup key="lessons" heading="Lessons">
+                {commandLessons.map(({ course, lesson }) => (
+                  <CommandItem
+                    key={lesson.id}
+                    value={`lesson ${lesson.name} ${course.name} ${lesson.sectionName}`}
+                    onSelect={() => {
+                      setCmdOpen(false)
+                      onOpenCourse(course, lesson.id)
+                    }}
+                  >
+                    <PlayCircle className="size-4" />
+                    <span className="truncate">{lesson.name}</span>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            ) : null
+          })}
         </CommandList>
       </CommandDialog>
 
