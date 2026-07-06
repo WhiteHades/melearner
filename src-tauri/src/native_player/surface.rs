@@ -82,10 +82,10 @@ impl NativeSurfaceBackendPreference {
 
     pub(super) fn from_env_value(value: Option<&str>) -> Result<Self, String> {
         match value.map(str::trim).filter(|value| !value.is_empty()) {
-            None | Some("window-handle") => Ok(Self::WindowHandle),
-            Some("render-api") => Ok(Self::RenderApi),
+            None | Some("render-api") => Ok(Self::RenderApi),
+            Some("window-handle") => Ok(Self::WindowHandle),
             Some(value) => Err(format!(
-                "invalid {SURFACE_BACKEND_ENV} value {value:?}; expected window-handle or render-api"
+                "invalid {SURFACE_BACKEND_ENV} value {value:?}; expected render-api or window-handle"
             )),
         }
     }
@@ -108,15 +108,38 @@ impl NativeVideoSurface {
         app: &AppHandle,
         parent: &WebviewWindow,
         bounds: NativePlayerBounds,
+        mpv: &Mpv,
     ) -> Result<Self, String> {
         match NativeSurfaceBackendPreference::current()? {
             NativeSurfaceBackendPreference::WindowHandle => {
                 Self::attach_window_handle(app, parent, bounds)
+                    .and_then(|surface| Self::attach_surface_to_mpv(surface, mpv))
             }
             NativeSurfaceBackendPreference::RenderApi => {
-                Self::attach_render_api(app, parent, bounds)
+                match Self::attach_render_api(app, parent, bounds)
+                    .and_then(|surface| Self::attach_surface_to_mpv(surface, mpv))
+                {
+                    Ok(surface) => Ok(surface),
+                    Err(render_err) => {
+                        log::warn!(
+                            "native render-api surface failed; falling back to window-handle surface: {render_err}"
+                        );
+                        Self::attach_window_handle(app, parent, bounds)
+                        .and_then(|surface| Self::attach_surface_to_mpv(surface, mpv))
+                        .map_err(|fallback_err| {
+                            format!(
+                                "native render-api surface failed ({render_err}); window-handle fallback failed ({fallback_err})"
+                            )
+                        })
+                    }
+                }
             }
         }
+    }
+
+    fn attach_surface_to_mpv(mut surface: Self, mpv: &Mpv) -> Result<Self, String> {
+        surface.attach_to_mpv(mpv)?;
+        Ok(surface)
     }
 
     fn attach_window_handle(
@@ -192,7 +215,7 @@ impl NativeVideoSurface {
         Ok(())
     }
 
-    pub(super) fn attach_to_mpv(&mut self, mpv: &Mpv) -> Result<(), String> {
+    fn attach_to_mpv(&mut self, mpv: &Mpv) -> Result<(), String> {
         match &mut self.attachment {
             NativeSurfaceAttachment::WindowHandle { window_id } => {
                 mpv.set_property("wid", *window_id).map_err(|err| {

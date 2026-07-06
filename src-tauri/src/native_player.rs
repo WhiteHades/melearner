@@ -356,8 +356,7 @@ impl NativePlayer {
         match &mut self.surface {
             Some(surface) => surface.move_to(&parent, bounds)?,
             None => {
-                let mut surface = NativeVideoSurface::attach(app, &parent, bounds)?;
-                surface.attach_to_mpv(&self.mpv)?;
+                let surface = NativeVideoSurface::attach(app, &parent, bounds, &self.mpv)?;
                 self.surface = Some(surface);
             }
         }
@@ -1596,7 +1595,7 @@ mod tests {
         assert_eq!(
             surface::NativeSurfaceBackendPreference::from_env_value(None)
                 .expect("default backend preference"),
-            surface::NativeSurfaceBackendPreference::WindowHandle
+            surface::NativeSurfaceBackendPreference::RenderApi
         );
         assert_eq!(
             surface::NativeSurfaceBackendPreference::from_env_value(Some("render-api"))
