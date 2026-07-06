@@ -20,6 +20,7 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 static PLAYER: OnceLock<Mutex<Option<NativePlayer>>> = OnceLock::new();
 static POSITION_EVENT_RUN: OnceLock<Mutex<u64>> = OnceLock::new();
+static SURFACE_WINDOW_RUN: OnceLock<Mutex<u64>> = OnceLock::new();
 const NATIVE_SURFACE_LABEL: &str = "native-player-surface";
 const EVENT_STATE: &str = "native-player://state";
 const EVENT_TRACKS: &str = "native-player://tracks";
@@ -34,6 +35,18 @@ fn player_slot() -> &'static Mutex<Option<NativePlayer>> {
 
 fn position_event_slot() -> &'static Mutex<u64> {
     POSITION_EVENT_RUN.get_or_init(|| Mutex::new(0))
+}
+
+fn surface_window_slot() -> &'static Mutex<u64> {
+    SURFACE_WINDOW_RUN.get_or_init(|| Mutex::new(0))
+}
+
+fn next_surface_window_label() -> Result<String, String> {
+    let mut guard = surface_window_slot()
+        .lock()
+        .map_err(|_| "native player surface label lock is poisoned".to_string())?;
+    *guard = guard.wrapping_add(1);
+    Ok(format!("{NATIVE_SURFACE_LABEL}-{}", *guard))
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -372,7 +385,8 @@ fn build_surface_window(
     parent: &WebviewWindow,
     rect: NativeSurfaceRect,
 ) -> Result<Window, String> {
-    let builder = tauri::WindowBuilder::new(app, NATIVE_SURFACE_LABEL)
+    let label = next_surface_window_label()?;
+    let builder = tauri::WindowBuilder::new(app, label)
         .title("melearner video")
         .decorations(false)
         .resizable(false)
@@ -1626,6 +1640,16 @@ mod tests {
                 height: 540,
             }
         );
+    }
+
+    #[test]
+    fn native_surface_window_labels_are_unique() {
+        let first = next_surface_window_label().expect("first surface label");
+        let second = next_surface_window_label().expect("second surface label");
+
+        assert!(first.starts_with(NATIVE_SURFACE_LABEL));
+        assert!(second.starts_with(NATIVE_SURFACE_LABEL));
+        assert_ne!(first, second);
     }
 
     #[test]
