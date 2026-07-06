@@ -2,6 +2,7 @@
 
 import { BookOpen, FileText, Headphones, Play } from "lucide-react"
 import { useState } from "react"
+import { frontendLog } from "@/lib/frontend-log"
 import { cn } from "@/lib/utils"
 import type { Course } from "@/types"
 
@@ -27,7 +28,13 @@ export function CourseArtwork({ course, className }: { course: Course; className
           className="absolute inset-0 z-10 size-full object-cover opacity-95 transition-opacity duration-300"
           data-course-thumbnail=""
           src={course.thumbnail}
-          onError={() => setFailedThumbnail(course.thumbnail)}
+          onError={() => {
+            frontendLog("warn", "course.thumbnail.load.failed", {
+              courseId: course.id,
+              thumbnail: course.thumbnail,
+            })
+            setFailedThumbnail(course.thumbnail)
+          }}
         />
       )}
       <div className={cn("absolute inset-0 z-20", showThumbnail ? "bg-background/20" : "bg-background/35")} />
