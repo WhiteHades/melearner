@@ -46,6 +46,7 @@ import {
   scanLibraryAt,
   writeCourseMarkers,
 } from "@/lib/operations"
+import { search as searchLibrary, type SearchResult as LibrarySearchResult } from "@/lib/search"
 import { buildLearningStats, type LearningStats } from "@/lib/stats"
 import { useCourseStore } from "@/lib/stores/course-store"
 import { getBuildInfo, isTauri, selectFolderDialog, type BuildInfo } from "@/lib/tauri"
@@ -54,6 +55,7 @@ import type { ActivityDay, Course, Lesson } from "@/types"
 
 type View = "library" | "viewer"
 type ViewMode = "grid" | "list"
+const EMPTY_SEARCH_RESULTS: LibrarySearchResult[] = []
 
 export function HomeScreen() {
   const [viewParam, setViewParam] = useQueryState("view", parseAsString.withDefault("library"))
@@ -125,6 +127,7 @@ function LibraryDashboard({
   const [buildInfo, setBuildInfo] = useState<BuildInfo | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>("grid")
   const [searchQuery, setSearchQuery] = useState("")
+  const [searchState, setSearchState] = useState<{ query: string; results: LibrarySearchResult[] }>({ query: "", results: [] })
   const [activityDays, setActivityDays] = useState<ActivityDay[]>([])
   const loadedCourses = useMemo(() => (hasHydrated ? courses : []), [courses, hasHydrated])
   const markerSyncCourses = useMemo(() => loadedCourses.filter((course) => !course.missingSince), [loadedCourses])
@@ -139,7 +142,9 @@ function LibraryDashboard({
   const resumeCourses = useMemo(() => selectResumeCourses(loadedCourses), [loadedCourses])
   const continueCourse = resumeCourses[0] ?? null
   const continueLesson = continueCourse ? selectContinueLesson(continueCourse) : null
-  const visibleCourses = useMemo(() => filterCourses(loadedCourses, searchQuery), [loadedCourses, searchQuery])
+  const activeSearchResults = searchState.query === searchQuery.trim() ? searchState.results : EMPTY_SEARCH_RESULTS
+  const visibleCourses = useMemo(() => selectSearchCourses(loadedCourses, searchQuery, activeSearchResults), [loadedCourses, searchQuery, activeSearchResults])
+  const commandLessons = useMemo(() => selectCommandLessons(loadedCourses, searchQuery, activeSearchResults), [loadedCourses, searchQuery, activeSearchResults])
   const stats = useMemo(() => buildLearningStats(loadedCourses, activityDays), [loadedCourses, activityDays])
   const hasCourses = loadedCourses.length > 0
   const displayLibraryPath = libraryPath ? formatDisplayPath(libraryPath) : null
@@ -177,6 +182,26 @@ function LibraryDashboard({
       cancelled = true
     }
   }, [hasHydrated])
+
+  useEffect(() => {
+    const query = searchQuery.trim()
+    if (!query) return
+
+    let cancelled = false
+    searchLibrary(query, 200)
+      .then((results) => {
+        if (!cancelled) setSearchState({ query, results })
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setSearchState({ query, results: [] })
+          frontendLog("warn", "library.search.failed", { error: err instanceof Error ? err.message : String(err) })
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [searchQuery, loadedCourses])
 
   useEffect(() => {
     markerSyncCoursesRef.current = markerSyncCourses
@@ -458,13 +483,13 @@ function LibraryDashboard({
         </div>
       </main>
 
-      <CommandDialog open={cmdOpen} onOpenChange={setCmdOpen}>
-        <CommandInput placeholder="Search courses and lessons…" />
+      <CommandDialog open={cmdOpen} onOpenChange={setCmdOpen} commandProps={{ shouldFilter: false }}>
+        <CommandInput placeholder="Search courses and lessons…" value={searchQuery} onValueChange={setSearchQuery} />
         <CommandList>
           <CommandEmpty>No results found.</CommandEmpty>
           {loadedCourses.length > 0 && (
             <CommandGroup heading="Courses">
-              {loadedCourses.filter((course) => !course.missingSince).slice(0, 12).map((course) => (
+              {visibleCourses.filter((course) => !course.missingSince).slice(0, 12).map((course) => (
                 <CommandItem
                   key={course.id}
                   value={`course ${course.name}`}
@@ -481,7 +506,7 @@ function LibraryDashboard({
           )}
           {loadedCourses.length > 0 && (
             <CommandGroup heading="Lessons">
-              {allLessons(loadedCourses).slice(0, 50).map(({ course, lesson }) => (
+              {commandLessons.slice(0, 50).map(({ course, lesson }) => (
                   <CommandItem
                     key={lesson.id}
                     value={`lesson ${lesson.name} ${course.name} ${lesson.sectionName}`}
@@ -715,22 +740,48 @@ function selectContinueLesson(course: Course) {
   return lessons.find((lesson) => !lesson.completed) ?? lessons[0] ?? null
 }
 
-function filterCourses(courses: Course[], query: string) {
-  const normalized = query.trim().toLowerCase()
-  if (!normalized) return courses
-  return courses.filter((course) => {
-    if (course.name.toLowerCase().includes(normalized)) return true
-    return course.sections.some((section) => {
-      if (section.name.toLowerCase().includes(normalized)) return true
-      return section.lessons.some((lesson) => lesson.name.toLowerCase().includes(normalized))
-    })
-  })
+function selectSearchCourses(courses: Course[], query: string, results: LibrarySearchResult[]) {
+  if (!query.trim()) return courses
+
+  const byId = new Map(courses.map((course) => [course.id, course]))
+  const seen = new Set<string>()
+  const matched: Course[] = []
+
+  for (const result of results) {
+    if (seen.has(result.courseId)) continue
+    const course = byId.get(result.courseId)
+    if (!course) continue
+    seen.add(result.courseId)
+    matched.push(course)
+  }
+
+  return matched
 }
 
 function allLessons(courses: Course[]): Array<{ course: Course; lesson: Lesson }> {
   return courses
     .filter((course) => !course.missingSince)
     .flatMap((course) => course.sections.flatMap((section) => section.lessons.map((lesson) => ({ course, lesson }))))
+}
+
+function selectCommandLessons(courses: Course[], query: string, results: LibrarySearchResult[]): Array<{ course: Course; lesson: Lesson }> {
+  if (!query.trim()) return allLessons(courses)
+
+  const coursesById = new Map(courses.map((course) => [course.id, course]))
+  const lessonsById = new Map<string, { course: Course; lesson: Lesson }>()
+  for (const course of courses) {
+    if (course.missingSince) continue
+    for (const section of course.sections) {
+      for (const lesson of section.lessons) {
+        lessonsById.set(lesson.id, { course, lesson })
+      }
+    }
+  }
+
+  return results.flatMap((result) => {
+    if (!coursesById.has(result.courseId)) return []
+    return lessonsById.get(result.id) ?? []
+  })
 }
 
 function formatDisplayPath(path: string): string {
