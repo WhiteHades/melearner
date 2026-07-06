@@ -46,6 +46,12 @@ impl NativeSurfaceBackend {
             Self::WindowHandle(name) => format!("window-handle:{name}"),
         }
     }
+
+    pub(super) fn uses_render_api(self) -> bool {
+        match self {
+            Self::WindowHandle(_) => false,
+        }
+    }
 }
 
 pub struct NativeVideoSurface {
@@ -111,6 +117,10 @@ impl NativeVideoSurface {
 
     pub(super) fn backend_label(&self) -> String {
         self.backend.label()
+    }
+
+    pub(super) fn uses_render_api(&self) -> bool {
+        self.backend.uses_render_api()
     }
 }
 

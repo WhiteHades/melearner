@@ -98,6 +98,7 @@ pub struct NativePlayerState {
     height: Option<i64>,
     surface_attached: bool,
     surface_backend: Option<String>,
+    surface_render_api: bool,
     audio_tracks: Vec<NativeTrack>,
     subtitle_tracks: Vec<NativeTrack>,
     selected_audio_track_id: Option<String>,
@@ -393,6 +394,11 @@ impl NativePlayer {
         let position = self.position_event();
         let surface_attached = self.surface.is_some();
         let surface_backend = self.surface.as_ref().map(|surface| surface.backend_label());
+        let surface_render_api = self
+            .surface
+            .as_ref()
+            .map(|surface| surface.uses_render_api())
+            .unwrap_or(false);
 
         NativePlayerState {
             path: position.path,
@@ -407,6 +413,7 @@ impl NativePlayer {
             height: position.height,
             surface_attached,
             surface_backend,
+            surface_render_api,
             audio_tracks: tracks.audio_tracks,
             subtitle_tracks: tracks.subtitle_tracks,
             selected_audio_track_id: tracks.selected_audio_track_id,
@@ -569,6 +576,7 @@ fn empty_state() -> NativePlayerState {
         height: None,
         surface_attached: false,
         surface_backend: None,
+        surface_render_api: false,
         audio_tracks: Vec::new(),
         subtitle_tracks: Vec::new(),
         selected_audio_track_id: None,
@@ -1569,10 +1577,10 @@ mod tests {
 
     #[test]
     fn native_surface_backend_labels_window_handle_path() {
-        assert_eq!(
-            surface::NativeSurfaceBackend::WindowHandle("xcb").label(),
-            "window-handle:xcb"
-        );
+        let backend = surface::NativeSurfaceBackend::WindowHandle("xcb");
+
+        assert_eq!(backend.label(), "window-handle:xcb");
+        assert!(!backend.uses_render_api());
     }
 
     #[test]
