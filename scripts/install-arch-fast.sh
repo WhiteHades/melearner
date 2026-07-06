@@ -6,9 +6,10 @@ cd "$repo_root"
 
 if command -v sccache >/dev/null 2>&1; then
   export RUSTC_WRAPPER="${RUSTC_WRAPPER:-sccache}"
+  export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
+else
+  export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-1}"
 fi
-
-export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-1}"
 
 pnpm build
 cargo build --manifest-path src-tauri/Cargo.toml --release

@@ -106,7 +106,9 @@ For routine local install checks, use:
 pnpm install:arch:fast
 ```
 
-This script builds the static frontend, builds the release Tauri binary, packages `melearner-bin`, and installs the package that owns `/usr/bin/melearner`. It preserves ignored build caches such as `.next`, `out`, and `src-tauri/target` while the local build is still in progress, enables incremental Rust for local release builds, and uses `sccache` automatically when it is installed. Final release or handoff cleanup still removes generated artifacts after verification.
+This script builds the static frontend, builds the release Tauri binary, packages `melearner-bin`, and installs the package that owns `/usr/bin/melearner`. It preserves ignored build caches such as `.next`, `out`, and `src-tauri/target` while the local build is still in progress and chooses the fastest available Rust cache mode. Final release or handoff cleanup still removes generated artifacts after verification.
+
+When `sccache` is installed, the script sets `RUSTC_WRAPPER=sccache` and defaults `CARGO_INCREMENTAL=0` so release compilation can be cached across clean local builds. Without `sccache`, it defaults `CARGO_INCREMENTAL=1` to reuse Cargo's local target directory during iterative laptop builds.
 
 Public Linux releases should publish only:
 

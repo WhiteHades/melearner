@@ -7,6 +7,9 @@ const root = dirname(fileURLToPath(import.meta.url))
 const nextConfig: NextConfig = {
   output: "export",
   reactStrictMode: false,
+  experimental: {
+    turbopackFileSystemCacheForBuild: true,
+  },
   turbopack: {
     root,
   },
