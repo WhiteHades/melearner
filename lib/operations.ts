@@ -110,7 +110,6 @@ export async function scanLibraryAt(path: string): Promise<{ courses: Course[]; 
   indexCourses(hydrated)
   void hydrateCourseThumbnails(hydrated, (courses) => {
     useCourseStore.getState().setCourses(courses)
-    indexCourses(courses)
   })
   return { courses: hydrated, warnings: [...result.warnings, ...syncResult.warnings, ...markerWarnings] }
 }

@@ -57,8 +57,6 @@ function removeLegacyLibrary(): void {
 }
 
 export function AppBootstrap() {
-  const courses = useCourseStore((state) => state.courses)
-  const hasHydrated = useCourseStore((state) => state.hasHydrated)
   const setHasHydrated = useCourseStore((state) => state.setHasHydrated)
   const setCourses = useCourseStore((state) => state.setCourses)
   const setLibraryPath = useCourseStore((state) => state.setLibraryPath)
@@ -185,7 +183,6 @@ export function AppBootstrap() {
         indexCourses(library.courses)
         void hydrateCourseThumbnails(library.courses, (courses) => {
           setCourses(courses)
-          indexCourses(courses)
         })
         setHasHydrated(true)
         frontendLog("info", "app.bootstrap.libraryLoaded", {
@@ -206,13 +203,6 @@ export function AppBootstrap() {
       isActive = false
     }
   }, [setCourses, setHasHydrated, setLibraryPath])
-
-  useEffect(() => {
-    if (!hasHydrated) return
-    const start = t()
-    indexCourses(courses)
-    frontendLog("info", "app.bootstrap.indexDone", { ms: Math.round(t()), coursesCount: courses.length, durMs: Math.round(t() - start) })
-  }, [courses, hasHydrated])
 
   return null
 }
