@@ -223,6 +223,10 @@ fn get_migrations() -> Vec<Migration> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let _ = write_startup_log("start");
+    let startup_route = startup_route_from_runtime();
+    if startup_route.is_some() {
+        let _ = write_startup_log("startup.route.ready");
+    }
 
     fn get_db_path() -> std::path::PathBuf {
         std::env::var("HOME")
@@ -296,6 +300,7 @@ pub fn run() {
     }
 
     tauri::Builder::default()
+        .manage(StartupRouteState(startup_route))
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(
@@ -344,6 +349,7 @@ pub fn run() {
             native_player::native_player_destroy,
             get_build_info,
             get_database_path,
+            get_startup_route,
             write_course_marker,
         ])
         .run(tauri::generate_context!())
@@ -456,11 +462,14 @@ struct BuildInfo {
     rust_version: &'static str,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 struct StartupRoute {
     course_id: String,
     lesson_id: Option<String>,
 }
+
+struct StartupRouteState(Option<StartupRoute>);
 
 #[tauri::command]
 fn get_build_info() -> BuildInfo {
@@ -481,17 +490,13 @@ fn startup_route_from_runtime() -> Option<StartupRoute> {
     )
 }
 
-fn build_main_window<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
-    let route = startup_route_from_runtime();
-    let url_path = route
-        .as_ref()
-        .map(startup_route_webview_path)
-        .unwrap_or_else(|| "index.html".to_string());
-    if route.is_some() {
-        let _ = write_startup_log("startup.route.initial_url");
-    }
+#[tauri::command]
+fn get_startup_route(state: tauri::State<'_, StartupRouteState>) -> Option<StartupRoute> {
+    state.0.clone()
+}
 
-    WebviewWindowBuilder::new(app, "main", WebviewUrl::App(url_path.into()))
+fn build_main_window<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
+    WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
         .title("melearner")
         .inner_size(1280.0, 800.0)
         .min_inner_size(900.0, 600.0)
@@ -502,20 +507,6 @@ fn build_main_window<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()
         .build()?;
 
     Ok(())
-}
-
-fn startup_route_webview_path(route: &StartupRoute) -> String {
-    let mut url =
-        tauri::Url::parse("tauri://localhost/index.html").expect("static app url should parse");
-    {
-        let mut query = url.query_pairs_mut();
-        query.append_pair("view", "viewer");
-        query.append_pair("course", &route.course_id);
-        if let Some(lesson_id) = &route.lesson_id {
-            query.append_pair("lesson", lesson_id);
-        }
-    }
-    format!("index.html?{}", url.query().unwrap_or_default())
 }
 
 fn startup_route_from_sources(
@@ -600,19 +591,6 @@ mod tests {
         assert_eq!(
             startup_route_from_sources(["--open-lesson", "lesson-1"], None, None),
             None
-        );
-    }
-
-    #[test]
-    fn startup_route_webview_path_targets_viewer() {
-        let path = startup_route_webview_path(&StartupRoute {
-            course_id: "course-1".to_string(),
-            lesson_id: Some("lesson 1".to_string()),
-        });
-
-        assert_eq!(
-            path,
-            "index.html?view=viewer&course=course-1&lesson=lesson+1"
         );
     }
 }

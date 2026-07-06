@@ -4,14 +4,17 @@ import { useEffect } from "react"
 import { log } from "evlog/next/client"
 import { hydrateCourseThumbnails } from "@/lib/course-thumbnails"
 import { initDatabase, loadPersistedLibrary, syncLibrary } from "@/lib/database"
+import { markCourseAccessed } from "@/lib/operations"
 import { indexCourses } from "@/lib/search"
 import { useCourseStore } from "@/lib/stores/course-store"
-import { isTauri } from "@/lib/tauri"
+import { getStartupRoute, isTauri, type StartupRoute } from "@/lib/tauri"
 import { frontendLog } from "@/lib/frontend-log"
 import type { Course } from "@/types"
 
 const t0 = typeof performance !== "undefined" ? performance.now() : 0
 const t = () => (typeof performance !== "undefined" ? performance.now() - t0 : 0)
+const STARTUP_ROUTE_TIMEOUT_MS = 500
+const STARTUP_ROUTE_TIMEOUT = Symbol("startup-route-timeout")
 
 type LegacyCourseStore = {
   state?: {
@@ -65,6 +68,63 @@ function schedulePostHydrationWork(work: () => void): void {
   window.requestAnimationFrame(() => {
     window.setTimeout(work, 0)
   })
+}
+
+function lessonBelongsToCourse(course: Course, lessonId: string | null): lessonId is string {
+  if (!lessonId) return false
+  return course.sections.some((section) => section.lessons.some((lesson) => lesson.id === lessonId))
+}
+
+function startupRouteTimeout(): Promise<typeof STARTUP_ROUTE_TIMEOUT> {
+  return new Promise((resolve) => {
+    window.setTimeout(() => resolve(STARTUP_ROUTE_TIMEOUT), STARTUP_ROUTE_TIMEOUT_MS)
+  })
+}
+
+async function getStartupRouteWithTimeout(): Promise<StartupRoute | null> {
+  if (!isTauri() || typeof window === "undefined") return null
+
+  try {
+    const route = await Promise.race([getStartupRoute(), startupRouteTimeout()])
+    if (route === STARTUP_ROUTE_TIMEOUT) {
+      frontendLog("warn", "startup.route.timeout", { timeoutMs: STARTUP_ROUTE_TIMEOUT_MS })
+      return null
+    }
+    return route
+  } catch (error) {
+    frontendLog("warn", "startup.route.failed", { error: String(error) })
+    return null
+  }
+}
+
+function applyStartupRoute(courses: Course[], route: StartupRoute | null): string | null {
+  if (!route || typeof window === "undefined" || courses.length === 0) return null
+
+  const course = courses.find((course) => course.id === route.courseId && !course.missingSince)
+  if (!course) {
+    frontendLog("warn", "startup.route.courseMissing", { courseId: route.courseId })
+    return null
+  }
+
+  const selectedLessonId = lessonBelongsToCourse(course, route.lessonId) ? route.lessonId : null
+  if (route.lessonId && !selectedLessonId) {
+    frontendLog("warn", "startup.route.lessonMissing", {
+      courseId: route.courseId,
+      lessonId: route.lessonId,
+    })
+  }
+
+  const url = new URL(window.location.href)
+  url.searchParams.set("view", "viewer")
+  url.searchParams.set("course", course.id)
+  if (selectedLessonId) {
+    url.searchParams.set("lesson", selectedLessonId)
+  } else {
+    url.searchParams.delete("lesson")
+  }
+  window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`)
+  frontendLog("info", "startup.route.applied", { courseId: course.id, lessonId: selectedLessonId })
+  return course.id
 }
 
 export function AppBootstrap() {
@@ -151,6 +211,7 @@ export function AppBootstrap() {
       frontendLog("info", "app.bootstrap.dbInit.start", { ms: Math.round(t()) })
       await initDatabase()
       frontendLog("info", "app.bootstrap.dbInit.done", { ms: Math.round(t()) })
+      const startupRoutePromise = getStartupRouteWithTimeout()
 
       let library: Awaited<ReturnType<typeof loadPersistedLibrary>> | null = null
 
@@ -189,7 +250,9 @@ export function AppBootstrap() {
         frontendLog("info", "app.bootstrap.libraryLoad.start", { ms: Math.round(t()) })
         library = await loadPersistedLibrary()
       }
+      const startupCourseId = applyStartupRoute(library.courses, await startupRoutePromise)
       hydrateLibrary(library.courses, library.libraryPath)
+      if (startupCourseId) void markCourseAccessed(startupCourseId)
       frontendLog("info", "app.bootstrap.libraryLoad.done", {
         ms: Math.round(t()),
         coursesCount: library.courses.length,
