@@ -158,6 +158,14 @@ function VideoPlayerComponent({
     })
   }, [lesson.path, updateBounds])
 
+  const syncWindowFullscreenState = useCallback(() => {
+    if (!isTauri()) return
+    void getCurrentWindow()
+      .isFullscreen()
+      .then(setIsFullscreen)
+      .catch(() => undefined)
+  }, [])
+
   useEffect(() => {
     if (!isPlayable || !isTauri()) return
     let isActive = true
@@ -238,15 +246,19 @@ function VideoPlayerComponent({
     let unlistenResized: (() => void) | null = null
 
     const requestBoundsUpdate = () => requestNativeSurfaceSync()
+    const requestBoundsAndFullscreenUpdate = () => {
+      requestBoundsUpdate()
+      syncWindowFullscreenState()
+    }
     requestBoundsUpdate()
     const observer = new ResizeObserver(requestBoundsUpdate)
     observer.observe(surface)
-    window.addEventListener("resize", requestBoundsUpdate)
+    window.addEventListener("resize", requestBoundsAndFullscreenUpdate)
     window.addEventListener("scroll", requestBoundsUpdate, true)
-    document.addEventListener("fullscreenchange", requestBoundsUpdate)
 
     if (isTauri()) {
       const appWindow = getCurrentWindow()
+      syncWindowFullscreenState()
       void appWindow.onMoved(requestBoundsUpdate).then((unlisten) => {
         if (disposed) {
           unlisten()
@@ -254,7 +266,7 @@ function VideoPlayerComponent({
           unlistenMoved = unlisten
         }
       })
-      void appWindow.onResized(requestBoundsUpdate).then((unlisten) => {
+      void appWindow.onResized(requestBoundsAndFullscreenUpdate).then((unlisten) => {
         if (disposed) {
           unlisten()
         } else {
@@ -270,13 +282,12 @@ function VideoPlayerComponent({
         boundsRafRef.current = null
       }
       observer.disconnect()
-      window.removeEventListener("resize", requestBoundsUpdate)
+      window.removeEventListener("resize", requestBoundsAndFullscreenUpdate)
       window.removeEventListener("scroll", requestBoundsUpdate, true)
-      document.removeEventListener("fullscreenchange", requestBoundsUpdate)
       unlistenMoved?.()
       unlistenResized?.()
     }
-  }, [requestNativeSurfaceSync])
+  }, [requestNativeSurfaceSync, syncWindowFullscreenState])
 
   useEffect(() => {
     if (!isPlayable || !isTauri()) return
@@ -446,16 +457,18 @@ function VideoPlayerComponent({
   }, [applyNativeState])
 
   const toggleFullscreen = useCallback(() => {
-    const surface = surfaceRef.current
-    if (!surface) return
-    if (document.fullscreenElement) {
-      void document.exitFullscreen()
-      setIsFullscreen(false)
-    } else {
-      void surface.requestFullscreen()
-      setIsFullscreen(true)
-    }
-  }, [])
+    if (!surfaceRef.current || !isTauri()) return
+    const appWindow = getCurrentWindow()
+    void appWindow
+      .isFullscreen()
+      .then(async (fullscreen) => {
+        const nextFullscreen = !fullscreen
+        await appWindow.setFullscreen(nextFullscreen)
+        setIsFullscreen(nextFullscreen)
+        requestNativeSurfaceSync()
+      })
+      .catch((reason) => setError({ path: lesson.path, message: String(reason) }))
+  }, [lesson.path, requestNativeSurfaceSync])
 
   useEffect(() => {
     if (!isPlayable) return
