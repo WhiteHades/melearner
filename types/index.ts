@@ -68,4 +68,3 @@ export const DOCUMENT_EXTENSIONS = [".pdf", ".txt", ".md", ".markdown", ".html",
 export const SUBTITLE_EXTENSIONS = [".srt", ".vtt"]
 export const PARTIAL_EXTENSIONS = [".part", ".crdownload", ".download"]
 export const IGNORED_FOLDERS = [".git", "node_modules", "__MACOSX", ".DS_Store", "Thumbs.db"]
-export const RESOURCE_FOLDERS = ["resources", "assets", "downloads", "extras", "materials"]

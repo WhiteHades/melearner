@@ -11,7 +11,6 @@ const DOCUMENT_EXTENSIONS: &[&str] =
     &["pdf", "txt", "md", "markdown", "html", "htm", "docx", "doc"];
 const SUBTITLE_EXTENSIONS: &[&str] = &["srt", "vtt"];
 const IGNORED_FOLDERS: &[&str] = &[".git", "node_modules", "__MACOSX", ".DS_Store", "Thumbs.db"];
-const RESOURCE_FOLDERS: &[&str] = &["resources", "assets", "downloads", "extras", "materials"];
 const PARTIAL_EXTENSIONS: &[&str] = &[
     "part",
     "partial",
@@ -243,21 +242,13 @@ fn skip_file_reason(path: &Path, file_type: FileType) -> Option<String> {
     None
 }
 
-fn is_resource_folder(path: &Path) -> bool {
-    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-        return false;
-    };
-    RESOURCE_FOLDERS.contains(&name.to_ascii_lowercase().as_str())
-}
-
-fn is_ignored_or_resource_path(path: &Path, base: &Path) -> bool {
+fn is_ignored_or_partial_path(path: &Path, base: &Path) -> bool {
     let relative = path.strip_prefix(base).unwrap_or(path);
     relative.components().any(|component| {
         let part = component.as_os_str().to_string_lossy();
         let lower = part.to_ascii_lowercase();
         part.starts_with('.')
             || IGNORED_FOLDERS.contains(&part.as_ref())
-            || RESOURCE_FOLDERS.contains(&lower.as_str())
             || PARTIAL_FOLDER_NAMES.contains(&lower.as_str())
     })
 }
@@ -407,7 +398,7 @@ fn scan_directory(dir: &Path, course_root: &Path) -> (Box<[FileEntry]>, Vec<Stri
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
         .map(|e| e.path())
-        .filter(|p| !is_ignored_or_resource_path(p, dir))
+        .filter(|p| !is_ignored_or_partial_path(p, dir))
         .filter_map(|p| {
             let ft = get_file_type(&p);
             if let Some(reason) = skip_file_reason(&p, ft) {
@@ -448,7 +439,7 @@ fn scan_course(course_path: &Path) -> (CourseData, Vec<String>) {
             continue;
         }
 
-        if is_ignored(&path) || is_resource_folder(&path) {
+        if is_ignored(&path) {
             continue;
         }
 
@@ -583,7 +574,7 @@ pub fn scan_library(root_path: &str) -> ScanResult {
                 );
                 continue;
             }
-            if is_ignored(&path) || is_resource_folder(&path) {
+            if is_ignored(&path) {
                 continue;
             }
             subdirs.push(path);
@@ -734,11 +725,11 @@ mod tests {
     }
 
     #[test]
-    fn scans_course_subdirectories_and_filters_non_learning_folders() {
+    fn scans_course_subdirectories_and_nested_learning_files() {
         let root = temp_root("library");
         touch(&root.join("Rust Basics/01 Intro/01 welcome.mp4"));
         touch(&root.join("Rust Basics/01 Intro/01 welcome.en.srt"));
-        touch(&root.join("Rust Basics/resources/ignored.pdf"));
+        touch(&root.join("Rust Basics/resources/workbook.pdf"));
         touch(&root.join("Rust Basics/.hidden/ignored.mp4"));
         touch(&root.join("Docs Course/Reading/guide.markdown"));
         touch(&root.join("Docs Course/Reading/legacy.doc"));
@@ -777,9 +768,10 @@ mod tests {
                     && file.file_type == FileType::Document)
         );
         assert!(
-            !all_files
+            all_files
                 .iter()
-                .any(|file| file.name.as_ref() == "ignored.pdf")
+                .any(|file| file.name.as_ref() == "workbook.pdf"
+                    && file.file_type == FileType::Document)
         );
         assert!(
             !all_files
