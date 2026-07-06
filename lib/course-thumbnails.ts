@@ -15,6 +15,7 @@ export async function hydrateCourseThumbnails(
 
   const runId = ++thumbnailRunId
   let nextCourses = courses
+  let didHydrate = false
 
   for (const course of courses) {
     if (runId !== thumbnailRunId) return
@@ -33,7 +34,7 @@ export async function hydrateCourseThumbnails(
         return { ...existing, thumbnail: thumbnailUrl }
       })
 
-      if (changed) onUpdate(nextCourses)
+      didHydrate = didHydrate || changed
     } catch (error) {
       frontendLog("warn", "course.thumbnail.failed", {
         courseId: course.id,
@@ -42,4 +43,6 @@ export async function hydrateCourseThumbnails(
       })
     }
   }
+
+  if (runId === thumbnailRunId && didHydrate) onUpdate(nextCourses)
 }
