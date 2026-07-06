@@ -424,7 +424,11 @@ function PlayerMenu({
           {state.rate}x
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-48">
+      <DropdownMenuContent
+        align="end"
+        collisionPadding={8}
+        className="max-h-[calc(var(--radix-dropdown-menu-content-available-height)-8px)] w-48"
+      >
         <DropdownMenuLabel>Speed</DropdownMenuLabel>
         <DropdownMenuRadioGroup value={String(state.rate)} onValueChange={(value) => onRateChange(Number(value))}>
           {PLAYBACK_RATES.map((rate) => (
