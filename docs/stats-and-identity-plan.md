@@ -8,8 +8,8 @@ This document records the current stats and course-identity behavior plus remain
 - Lesson progress updates append rows to `lesson_activity` for daily watched seconds, touched lessons, and completions.
 - Course rows are retained when folders are temporarily missing. Missing courses keep progress, notes, sections, lessons, subtitles, stats inputs, and activity history in SQLite.
 - Renamed or moved courses can reconnect to existing progress by exact path, marker identity, or one unambiguous fingerprint match.
-- Optional marker files can be enabled from the dashboard. When enabled, melearner writes `.melearner-course.json` into available course folders and uses its marker ID before fingerprint matching on later scans.
-- Marker files are never written unless the setting is enabled. Disabling the setting stops future writes but does not delete marker files already written.
+- Marker files are automatic local metadata. melearner writes `.melearner-course.json` into available course folders and uses its marker ID before fingerprint matching on later scans.
+- Marker writing has no dashboard toggle. The app skips missing courses, refuses to overwrite marker files with a different existing identity, and reports warnings instead of guessing.
 
 ## Stats Model
 
@@ -70,7 +70,7 @@ The primary fingerprint is derived from section names, lesson relative paths, le
 
 ## Marker Files
 
-Marker files are opt-in because they modify user-owned course folders.
+Marker files are automatic because durable identity should not require a user-visible implementation setting.
 
 Format:
 
@@ -84,6 +84,7 @@ Format:
 Rules:
 
 - Scanner reads `.melearner-course.json` if present.
+- Available scanned courses get marker files after sync.
 - Sync matches marker identity before fingerprint matching.
 - Duplicate marker IDs in the same scan are ignored with warnings.
 - Existing marker files with a different identity are not overwritten.

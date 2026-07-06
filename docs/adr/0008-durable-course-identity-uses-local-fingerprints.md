@@ -1,4 +1,4 @@
-# Durable course identity uses local fingerprints and opt-in marker files
+# Durable course identity uses local fingerprints and automatic marker files
 
 melearner needs course progress to survive common local-folder changes: renames, moves, and temporarily unavailable folders. Absolute paths alone are not stable enough for that workflow.
 
@@ -10,7 +10,7 @@ melearner stores durable identity groundwork in local SQLite:
 - `courses.fingerprint` stores a non-absolute content fingerprint.
 - `courses.missing_since` marks courses absent during a scan instead of deleting them.
 - `lessons.relative_path` lets moved lessons reconnect to existing lesson progress.
-- Optional `.melearner-course.json` marker files store the same course identity in the course folder after the user enables marker writing.
+- Automatic `.melearner-course.json` marker files store the same course identity in available course folders.
 
 The course fingerprint is derived from section names, lesson relative paths, lesson file sizes, and lesson file types. It excludes the absolute root path and course folder name, so a course can be renamed or moved without changing the fingerprint when its relative learning items are unchanged.
 
@@ -25,9 +25,9 @@ Lessons use exact path first, then relative path within the resolved course, the
 
 ## Marker Files
 
-The app writes `.melearner-course.json` only when marker files are enabled from the dashboard. Marker writing is opt-in because it modifies user-owned course folders.
+The app writes `.melearner-course.json` automatically for available course folders after scans and after loading an existing local library. There is no user-facing marker toggle. Course identity should be durable without asking the user to understand implementation details.
 
-Existing marker files are read during scans. Duplicate marker IDs in one scan are ignored with warnings, and marker files with a different existing identity are not overwritten.
+Existing marker files are read during scans. Duplicate marker IDs in one scan are ignored with warnings, and marker files with a different existing identity are not overwritten. Missing courses are skipped when writing markers.
 
 ## Consequences
 

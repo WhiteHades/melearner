@@ -19,7 +19,7 @@ Local data paths:
 
 Course identity data, fingerprints, missing-folder state, notes, progress, and lesson activity stay in the local SQLite database. Fingerprints are derived from local course structure and learning-item metadata so renamed or moved folders can reconnect to existing progress.
 
-Marker files are optional. If enabled, melearner writes `.melearner-course.json` into available course folders so later scans can match by marker ID. If disabled, melearner only reads the folders you choose to scan and writes app metadata under its local app data paths.
+melearner also writes `.melearner-course.json` into available course folders so later scans can match by marker ID before weaker fingerprint matching. These marker files stay on disk with the course folders, contain only the local course identity value, and are never sent anywhere by the app.
 
 ## Legal Disclaimer
 
