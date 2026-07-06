@@ -87,6 +87,7 @@ const initialState: NativePlayerState = {
   height: null,
   surfaceAttached: false,
   surfaceBackend: null,
+  surfaceRenderApi: false,
   audioTracks: [],
   subtitleTracks: [],
   selectedAudioTrackId: null,
