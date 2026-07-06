@@ -114,7 +114,8 @@ function courseDataToCourse(data: CourseData): Course {
 
   return {
     id: courseId,
-    identityId: courseId,
+    identityId: data.marker_identity_id ?? courseId,
+    markerIdentityId: data.marker_identity_id,
     name: data.name,
     path: data.path,
     fingerprint: data.fingerprint,

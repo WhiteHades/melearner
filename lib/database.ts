@@ -16,6 +16,7 @@ let dbPathPromise: Promise<string | null> | null = null
 const SQLITE_BATCH_SIZE = 500
 const SQLITE_MAX_PARAMETERS = 900
 const LIBRARY_PATH_SETTING = "libraryPath"
+const COURSE_MARKER_FILES_SETTING = "courseMarkerFilesEnabled"
 
 type PersistedCourseRow = {
   id: string
@@ -273,6 +274,27 @@ async function selectPersistedCoursesByFingerprint(fingerprints: string[]): Prom
   return rows
 }
 
+async function selectPersistedCoursesByIdentityIds(identityIds: string[]): Promise<PersistedCourseRow[]> {
+  const database = await getDatabase()
+  if (!database || identityIds.length === 0) return []
+
+  const rows: PersistedCourseRow[] = []
+
+  for (let index = 0; index < identityIds.length; index += SQLITE_BATCH_SIZE) {
+    const batch = identityIds.slice(index, index + SQLITE_BATCH_SIZE)
+    const result = await database.select<PersistedCourseRow[]>(
+      `SELECT ${COURSE_SELECT_COLUMNS}
+       FROM courses
+       WHERE identity_id IN (${createPlaceholders(batch.length)})`,
+      batch
+    )
+
+    rows.push(...result)
+  }
+
+  return rows
+}
+
 async function selectPersistedLessons(paths: string[]): Promise<PersistedLessonRow[]> {
   const database = await getDatabase()
   if (!database || paths.length === 0) return []
@@ -443,6 +465,7 @@ function rowsToCourses(
     return {
       id: courseRow.id,
       identityId: courseRow.identity_id ?? courseRow.id,
+      markerIdentityId: null,
       name: courseRow.name,
       path: courseRow.path,
       fingerprint: courseRow.fingerprint,
@@ -479,6 +502,14 @@ function inferLibraryPath(courseRows: PersistedCourseRow[]): string | null {
 
 function uniqueValues(values: Array<string | null | undefined>): string[] {
   return [...new Set(values.filter((value): value is string => Boolean(value)))]
+}
+
+function duplicateValues(values: string[]): Set<string> {
+  const counts = new Map<string, number>()
+  for (const value of values) {
+    counts.set(value, (counts.get(value) ?? 0) + 1)
+  }
+  return new Set([...counts].filter(([, count]) => count > 1).map(([value]) => value))
 }
 
 function groupBy<T>(items: T[], keyFor: (item: T) => string | null | undefined): Map<string, T[]> {
@@ -557,6 +588,16 @@ export async function loadPersistedLibrary(): Promise<PersistedLibrary> {
   }
 }
 
+export async function getCourseMarkerFilesEnabled(): Promise<boolean> {
+  return (await readSetting(COURSE_MARKER_FILES_SETTING)) === "true"
+}
+
+export async function setCourseMarkerFilesEnabled(enabled: boolean): Promise<void> {
+  const database = await getDatabase()
+  if (!database) return
+  await writeSetting(database, COURSE_MARKER_FILES_SETTING, enabled ? "true" : "false")
+}
+
 export async function syncLibrary(courses: Course[], libraryPath: string): Promise<SyncLibraryResult> {
   const database = await getDatabase()
   if (!database) {
@@ -566,13 +607,19 @@ export async function syncLibrary(courses: Course[], libraryPath: string): Promi
   const warnings: string[] = []
   const coursePaths = courses.map((course) => course.path)
   const courseFingerprints = uniqueValues(courses.map((course) => course.fingerprint))
+  const scannedMarkerIdentityIds = courses
+    .map((course) => course.markerIdentityId)
+    .filter((value): value is string => Boolean(value))
+  const courseMarkerIdentityIds = uniqueValues(scannedMarkerIdentityIds)
+  const duplicateScannedMarkerIdentityIds = duplicateValues(scannedMarkerIdentityIds)
   const lessonPaths = courses.flatMap((course) =>
     course.sections.flatMap((section) => section.lessons.map((lesson) => lesson.path))
   )
 
-  const [persistedCourses, persistedCoursesByFingerprint, persistedLessonsByPathRows] = await Promise.all([
+  const [persistedCourses, persistedCoursesByFingerprint, persistedCoursesByIdentityId, persistedLessonsByPathRows] = await Promise.all([
     selectPersistedCourses(coursePaths),
     selectPersistedCoursesByFingerprint(courseFingerprints),
+    selectPersistedCoursesByIdentityIds(courseMarkerIdentityIds),
     selectPersistedLessons(lessonPaths),
   ])
 
@@ -583,19 +630,31 @@ export async function syncLibrary(courses: Course[], libraryPath: string): Promi
     persistedCoursesByFingerprint,
     (course) => course.fingerprint
   )
+  const persistedCoursesByIdentityIdGroup = groupBy(
+    persistedCoursesByIdentityId,
+    (course) => course.identity_id
+  )
   const claimedCourseIds = new Set<string>()
 
   const resolvedCourses = courses.map((course) => {
+    const markerIdentityId = course.markerIdentityId && !duplicateScannedMarkerIdentityIds.has(course.markerIdentityId)
+      ? course.markerIdentityId
+      : null
+    if (course.markerIdentityId && duplicateScannedMarkerIdentityIds.has(course.markerIdentityId)) {
+      warnings.push(`Skipped marker identity for "${course.name}": the same marker identity appears in multiple scanned courses.`)
+    }
+
     const { match: persistedCourse, warning } = selectCourseIdentityMatch(
-      course,
+      { ...course, markerIdentityId },
       persistedCourseByPath.get(course.path),
+      markerIdentityId ? persistedCoursesByIdentityIdGroup.get(markerIdentityId) ?? [] : [],
       course.fingerprint ? persistedCoursesByFingerprintGroup.get(course.fingerprint) ?? [] : [],
       claimedCourseIds
     )
     if (warning) warnings.push(warning)
 
     const courseId = persistedCourse?.id ?? course.id
-    const identityId = persistedCourse?.identity_id ?? course.identityId ?? courseId
+    const identityId = persistedCourse?.identity_id ?? markerIdentityId ?? course.identityId ?? courseId
 
     return {
       ...course,

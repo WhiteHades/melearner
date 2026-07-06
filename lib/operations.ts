@@ -3,9 +3,11 @@ import type { ActivityDay, Course, Note } from "@/types"
 import { useCourseStore } from "@/lib/stores/course-store"
 import { processScanResult } from "@/lib/course-utils"
 import { indexCourses } from "@/lib/search"
-import { scanFolder, isTauri } from "@/lib/tauri"
+import { scanFolder, isTauri, writeCourseMarker } from "@/lib/tauri"
 import {
+  getCourseMarkerFilesEnabled,
   listLessonActivityDays,
+  setCourseMarkerFilesEnabled,
   syncLibrary,
   updateCourseLastAccessed,
   updateLessonProgress as persistLessonProgress,
@@ -101,12 +103,15 @@ export async function scanLibraryAt(path: string): Promise<{ courses: Course[]; 
       })
     : { courses: scanned, warnings: [] }
   const hydrated = syncResult.courses
+  const markerWarnings = isTauri() && await getCourseMarkerFilesEnabled()
+    ? await writeCourseMarkers(hydrated)
+    : []
   frontendLog("info", `syncLibrary returned: ${hydrated.length} courses`)
   const store = useCourseStore.getState()
   store.setCourses(hydrated)
   store.setLibraryPath(path)
   indexCourses(hydrated)
-  return { courses: hydrated, warnings: [...result.warnings, ...syncResult.warnings] }
+  return { courses: hydrated, warnings: [...result.warnings, ...syncResult.warnings, ...markerWarnings] }
 }
 
 export async function markCourseAccessed(courseId: string): Promise<Course> {
@@ -143,6 +148,31 @@ export async function recordLessonProgress(lessonId: string, progress: LessonPro
 export async function loadActivityDays(limitDays = 84): Promise<ActivityDay[]> {
   if (!isTauri()) return []
   return listLessonActivityDays(limitDays)
+}
+
+export async function loadCourseMarkerFilesEnabled(): Promise<boolean> {
+  if (!isTauri()) return false
+  return getCourseMarkerFilesEnabled()
+}
+
+export async function updateCourseMarkerFilesEnabled(enabled: boolean): Promise<void> {
+  if (!isTauri()) return
+  await setCourseMarkerFilesEnabled(enabled)
+}
+
+export async function writeCourseMarkers(courses: Course[]): Promise<string[]> {
+  if (!isTauri()) return []
+
+  const warnings: string[] = []
+  for (const course of courses) {
+    if (course.missingSince) continue
+    try {
+      await writeCourseMarker(course.path, course.identityId)
+    } catch (error) {
+      warnings.push(`Could not write marker for "${course.name}": ${errorMessage(error)}`)
+    }
+  }
+  return warnings
 }
 
 export async function listNotes(lessonId: string): Promise<Note[]> {

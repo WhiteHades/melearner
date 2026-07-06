@@ -11,6 +11,7 @@ import {
   Clock,
   FolderOpen,
   HardDrive,
+  KeyRound,
   LayoutGrid,
   List,
   Loader2,
@@ -34,13 +35,28 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
 import { Progress } from "@/components/ui/progress"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { frontendLog } from "@/lib/frontend-log"
-import { loadActivityDays, markCourseAccessed, scanLibraryAt } from "@/lib/operations"
+import {
+  loadActivityDays,
+  loadCourseMarkerFilesEnabled,
+  markCourseAccessed,
+  scanLibraryAt,
+  updateCourseMarkerFilesEnabled,
+  writeCourseMarkers,
+} from "@/lib/operations"
 import { buildLearningStats, type LearningStats } from "@/lib/stats"
 import { useCourseStore } from "@/lib/stores/course-store"
 import { getBuildInfo, isTauri, selectFolderDialog, type BuildInfo } from "@/lib/tauri"
@@ -121,6 +137,9 @@ function LibraryDashboard({
   const [viewMode, setViewMode] = useState<ViewMode>("grid")
   const [searchQuery, setSearchQuery] = useState("")
   const [activityDays, setActivityDays] = useState<ActivityDay[]>([])
+  const [markerDialogOpen, setMarkerDialogOpen] = useState(false)
+  const [markerFilesEnabled, setMarkerFilesEnabled] = useState(false)
+  const [isWritingMarkers, setIsWritingMarkers] = useState(false)
   const loadedCourses = useMemo(() => (hasHydrated ? courses : []), [courses, hasHydrated])
 
   const resumeCourses = useMemo(() => selectResumeCourses(loadedCourses), [loadedCourses])
@@ -148,6 +167,9 @@ function LibraryDashboard({
     getBuildInfo()
       .then(setBuildInfo)
       .catch(() => setBuildInfo(null))
+    loadCourseMarkerFilesEnabled()
+      .then(setMarkerFilesEnabled)
+      .catch(() => setMarkerFilesEnabled(false))
   }, [])
 
   useEffect(() => {
@@ -228,6 +250,34 @@ function LibraryDashboard({
       setError(err instanceof Error ? err.message : "Failed to refresh the current library.")
     } finally {
       setScanMode("idle")
+    }
+  }
+
+  async function handleEnableMarkerFiles() {
+    try {
+      setIsWritingMarkers(true)
+      setError(null)
+      await updateCourseMarkerFilesEnabled(true)
+      const markerWarnings = await writeCourseMarkers(loadedCourses)
+      setMarkerFilesEnabled(true)
+      setWarnings((current) => [...current, ...markerWarnings])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update marker file setting.")
+    } finally {
+      setIsWritingMarkers(false)
+    }
+  }
+
+  async function handleDisableMarkerFiles() {
+    try {
+      setIsWritingMarkers(true)
+      setError(null)
+      await updateCourseMarkerFilesEnabled(false)
+      setMarkerFilesEnabled(false)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update marker file setting.")
+    } finally {
+      setIsWritingMarkers(false)
     }
   }
 
@@ -350,7 +400,13 @@ function LibraryDashboard({
 
           {!hasHydrated && <CourseSkeletonRail />}
 
-          {hasCourses && <LibraryStatsPanel stats={stats} />}
+          {hasCourses && (
+            <LibraryStatsPanel
+              stats={stats}
+              markerFilesEnabled={markerFilesEnabled}
+              onOpenMarkerSettings={() => setMarkerDialogOpen(true)}
+            />
+          )}
 
           {hasCourses && (
             <section className="flex flex-col gap-4">
@@ -459,11 +515,44 @@ function LibraryDashboard({
           )}
         </CommandList>
       </CommandDialog>
+
+      <Dialog open={markerDialogOpen} onOpenChange={setMarkerDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Identity marker files</DialogTitle>
+            <DialogDescription>
+              Write .melearner-course.json files into course folders so future scans can match by marker ID before fingerprints.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-lg border border-border bg-muted/50 p-4 text-sm text-muted-foreground">
+            Marker writing is {markerFilesEnabled ? "enabled" : "off"}. Disabling stops future writes but does not delete files already written.
+          </div>
+          <DialogFooter className="gap-2 sm:space-x-0">
+            {markerFilesEnabled && (
+              <Button type="button" variant="outline" onClick={handleDisableMarkerFiles} disabled={isWritingMarkers}>
+                Disable
+              </Button>
+            )}
+            <Button type="button" onClick={handleEnableMarkerFiles} disabled={isWritingMarkers || !isTauri()}>
+              {isWritingMarkers ? <Loader2 data-icon="inline-start" className="animate-spin" /> : <KeyRound data-icon="inline-start" />}
+              {markerFilesEnabled ? "Rewrite markers" : "Enable markers"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
 
-function LibraryStatsPanel({ stats }: { stats: LearningStats }) {
+function LibraryStatsPanel({
+  stats,
+  markerFilesEnabled,
+  onOpenMarkerSettings,
+}: {
+  stats: LearningStats
+  markerFilesEnabled: boolean
+  onOpenMarkerSettings: () => void
+}) {
   const topCourses = stats.courses.slice(0, 4)
 
   return (
@@ -531,7 +620,13 @@ function LibraryStatsPanel({ stats }: { stats: LearningStats }) {
             <h3 className="text-sm font-semibold">Activity</h3>
             <p className="text-xs text-muted-foreground">{stats.activeDays} active days in 12 weeks</p>
           </div>
-          <CalendarDays className="size-4 shrink-0 text-muted-foreground" />
+          <div className="flex shrink-0 items-center gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={onOpenMarkerSettings} className="gap-2 rounded-md">
+              <KeyRound className="size-4" />
+              {markerFilesEnabled ? "Markers on" : "Markers off"}
+            </Button>
+            <CalendarDays className="hidden size-4 text-muted-foreground sm:block" />
+          </div>
         </div>
         <ActivityHeatmap days={stats.activityDays} />
       </div>

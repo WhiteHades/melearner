@@ -1,6 +1,7 @@
 export interface Course {
   id: string
   identityId: string
+  markerIdentityId: string | null
   name: string
   path: string
   fingerprint: string | null

@@ -247,6 +247,47 @@ pub fn run() {
     fn get_database_path() -> String {
         get_db_url()
     }
+
+    #[tauri::command]
+    fn write_course_marker(path: String, identity_id: String) -> Result<(), String> {
+        let identity_id = identity_id.trim();
+        if identity_id.is_empty() {
+            return Err("course marker identity is empty".to_string());
+        }
+
+        let course_path = std::path::PathBuf::from(path);
+        if !course_path.is_dir() {
+            return Err(format!("course folder is not available: {}", course_path.display()));
+        }
+
+        let marker_path = course_path.join(".melearner-course.json");
+        if marker_path.exists() {
+            let raw = std::fs::read_to_string(&marker_path)
+                .map_err(|e| format!("cannot read course marker {}: {e}", marker_path.display()))?;
+            let value: serde_json::Value = serde_json::from_str(&raw)
+                .map_err(|e| format!("invalid course marker {}: {e}", marker_path.display()))?;
+            let existing = value
+                .get("identityId")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default()
+                .trim();
+            if !existing.is_empty() && existing != identity_id {
+                return Err(format!(
+                    "course marker already has a different identity: {}",
+                    marker_path.display()
+                ));
+            }
+        }
+
+        let marker = serde_json::json!({
+            "version": 1,
+            "identityId": identity_id,
+        });
+        let json = serde_json::to_string_pretty(&marker)
+            .map_err(|e| format!("cannot serialize course marker: {e}"))?;
+        std::fs::write(&marker_path, format!("{json}\n"))
+            .map_err(|e| format!("cannot write course marker {}: {e}", marker_path.display()))
+    }
     let _ = write_startup_log("paths.ready");
 
     let db_path = get_db_path();
@@ -284,6 +325,7 @@ pub fn run() {
             media::cancel_playback_media,
             get_build_info,
             get_database_path,
+            write_course_marker,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

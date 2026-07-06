@@ -42,6 +42,7 @@ const PARTIAL_FOLDER_NAMES: &[&str] = &[
 const DOWNLOAD_SIDECAR_SUFFIXES: &[&str] =
     &["aria2", "part", "partial", "crdownload", "download", "!qB"];
 const WARNING_LIMIT: usize = 24;
+const COURSE_MARKER_FILE_NAME: &str = ".melearner-course.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileEntry {
@@ -75,10 +76,18 @@ pub struct SectionData {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CourseData {
     pub id: Box<str>,
+    pub marker_identity_id: Option<Box<str>>,
     pub name: Box<str>,
     pub path: Box<str>,
     pub fingerprint: Box<str>,
     pub sections: Box<[SectionData]>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CourseMarker {
+    version: u8,
+    identity_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -353,6 +362,27 @@ fn course_fingerprint(sections: &[SectionData]) -> Box<str> {
     format!("{:016x}", h.finish()).into()
 }
 
+fn read_course_marker(course_path: &Path) -> Result<Option<Box<str>>, String> {
+    let marker_path = course_path.join(COURSE_MARKER_FILE_NAME);
+    if !marker_path.exists() {
+        return Ok(None);
+    }
+
+    let raw = std::fs::read_to_string(&marker_path)
+        .map_err(|e| format!("cannot read course marker {}: {e}", marker_path.display()))?;
+    let marker: CourseMarker = serde_json::from_str(&raw)
+        .map_err(|e| format!("invalid course marker {}: {e}", marker_path.display()))?;
+    let identity_id = marker.identity_id.as_deref().unwrap_or_default().trim();
+    if identity_id.is_empty() {
+        return Err(format!(
+            "invalid course marker {}: identityId is empty",
+            marker_path.display()
+        ));
+    }
+
+    Ok(Some(identity_id.to_string().into_boxed_str()))
+}
+
 fn file_entry(path: &Path, file_type: FileType, course_root: &Path) -> Option<FileEntry> {
     let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
     let name = path
@@ -400,6 +430,13 @@ fn scan_course(course_path: &Path) -> (CourseData, Vec<String>) {
     let mut sections: Vec<SectionData> = Vec::new();
     let mut root_files: Vec<FileEntry> = Vec::new();
     let mut warnings = Vec::new();
+    let marker_identity_id = match read_course_marker(course_path) {
+        Ok(identity_id) => identity_id,
+        Err(message) => {
+            push_warning(&mut warnings, message);
+            None
+        }
+    };
 
     for (index, entry) in read_dir_sorted(course_path).iter().enumerate() {
         let path = entry.path();
@@ -470,6 +507,7 @@ fn scan_course(course_path: &Path) -> (CourseData, Vec<String>) {
     (
         CourseData {
             id: hash_path_to_id(course_path),
+            marker_identity_id,
             name: course_path
                 .file_name()
                 .and_then(|n| n.to_str())
@@ -871,6 +909,58 @@ mod tests {
         let (second_course, _) = scan_course(&second);
 
         assert_ne!(first_course.fingerprint, second_course.fingerprint);
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn reads_course_marker_identity_without_treating_marker_as_content() {
+        let root = temp_root("marker");
+        let course = root.join("Course");
+        touch(&course.join("01 Intro/01 welcome.mp4"));
+        fs::write(
+            course.join(COURSE_MARKER_FILE_NAME),
+            r#"{"version":1,"identityId":"course-identity-1"}"#,
+        )
+        .expect("write marker");
+
+        let (scanned, warnings) = scan_course(&course);
+        let files = scanned
+            .sections
+            .iter()
+            .flat_map(|section| section.files.iter())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            scanned.marker_identity_id.as_deref(),
+            Some("course-identity-1")
+        );
+        assert!(warnings.is_empty());
+        assert!(
+            !files
+                .iter()
+                .any(|file| file.name.as_ref() == COURSE_MARKER_FILE_NAME)
+        );
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn invalid_course_marker_produces_warning() {
+        let root = temp_root("invalid-marker");
+        let course = root.join("Course");
+        touch(&course.join("01 Intro/01 welcome.mp4"));
+        fs::write(course.join(COURSE_MARKER_FILE_NAME), r#"{"version":1}"#)
+            .expect("write marker");
+
+        let (scanned, warnings) = scan_course(&course);
+
+        assert_eq!(scanned.marker_identity_id, None);
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("identityId is empty"))
+        );
 
         cleanup(&root);
     }

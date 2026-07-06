@@ -1,6 +1,7 @@
 export type CourseIdentityInput = {
   id: string
   identityId: string
+  markerIdentityId: string | null
   name: string
   path: string
   fingerprint: string | null
@@ -74,12 +75,36 @@ export function scannedLessonIdentitySignature(lesson: LessonIdentityInput): str
 export function selectCourseIdentityMatch(
   course: CourseIdentityInput,
   exactPathMatch: PersistedCourseIdentity | undefined,
+  identityMatches: PersistedCourseIdentity[],
   fingerprintMatches: PersistedCourseIdentity[],
   claimedCourseIds: Set<string>
 ): { match: PersistedCourseIdentity | null; warning: string | null } {
   if (exactPathMatch) {
     claimedCourseIds.add(exactPathMatch.id)
     return { match: exactPathMatch, warning: null }
+  }
+
+  if (course.markerIdentityId) {
+    const available = identityMatches.filter((candidate) => !claimedCourseIds.has(candidate.id))
+
+    if (available.length === 1) {
+      claimedCourseIds.add(available[0].id)
+      return { match: available[0], warning: null }
+    }
+
+    if (available.length > 1) {
+      return {
+        match: null,
+        warning: `Skipped marker identity for "${course.name}": multiple existing courses have the same marker identity.`,
+      }
+    }
+
+    if (identityMatches.length > 0) {
+      return {
+        match: null,
+        warning: `Skipped marker identity for "${course.name}": that marker identity was already used by another scanned course.`,
+      }
+    }
   }
 
   if (!course.fingerprint) return { match: null, warning: null }

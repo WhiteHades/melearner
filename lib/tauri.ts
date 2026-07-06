@@ -19,6 +19,7 @@ export interface SectionData {
 
 export interface CourseData {
   id: string
+  marker_identity_id: string | null
   name: string
   path: string
   fingerprint: string
@@ -74,4 +75,8 @@ export async function preparePlaybackMedia(path: string, mediaType: "video" | "a
 
 export async function cancelPlaybackMedia(path: string, mediaType: "video" | "audio"): Promise<void> {
   return invoke<void>("cancel_playback_media", { path, mediaType })
+}
+
+export async function writeCourseMarker(path: string, identityId: string): Promise<void> {
+  return invoke<void>("write_course_marker", { path, identityId })
 }

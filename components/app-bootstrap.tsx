@@ -152,6 +152,12 @@ export function AppBootstrap() {
               coursesCount: legacy.courses.length,
               libraryPath: legacy.libraryPath,
             })
+            if (!isTauri()) {
+              return Promise.resolve({
+                courses: legacy.courses,
+                libraryPath: legacy.libraryPath,
+              })
+            }
             return syncLibrary(legacy.courses, legacy.libraryPath).then(() => {
               removeLegacyLibrary()
               frontendLog("info", "app.bootstrap.legacyStorageMigrated", {
