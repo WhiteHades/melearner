@@ -104,6 +104,17 @@ export function HomeScreen() {
   }, [setViewParam, setCourseId, setLessonId])
 
   if (view === "viewer") {
+    if (!hasHydrated) {
+      return (
+        <main className="flex h-full items-center justify-center bg-background text-foreground">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="size-4 animate-spin" />
+            Loading course
+          </div>
+        </main>
+      )
+    }
+
     return (
       <CourseViewerLayout
         course={selectedCourse}
