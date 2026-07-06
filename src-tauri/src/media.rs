@@ -149,6 +149,8 @@ fn thumbnail_args(input: &Path, output: &Path, timestamp: &str) -> Vec<String> {
         "scale='min(640,iw)':-2".to_string(),
         "-q:v".to_string(),
         "4".to_string(),
+        "-pix_fmt".to_string(),
+        "yuvj420p".to_string(),
         "-f".to_string(),
         "image2".to_string(),
         output.to_string_lossy().to_string(),
@@ -156,7 +158,7 @@ fn thumbnail_args(input: &Path, output: &Path, timestamp: &str) -> Vec<String> {
 }
 
 fn run_thumbnail_ffmpeg(input: &Path, output: &Path) -> Result<(), String> {
-    let attempts = ["00:00:03", "00:00:00.5"];
+    let attempts = ["00:00:03", "00:00:00.5", "00:00:00"];
     let mut last_error = "ffmpeg did not produce a thumbnail".to_string();
 
     for timestamp in attempts {

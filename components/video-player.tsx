@@ -85,10 +85,18 @@ function VideoPlayerComponent({
 }: VideoPlayerProps) {
   const surfaceRef = useRef<HTMLDivElement | null>(null)
   const lastSaveRef = useRef(0)
-  const [state, setState] = useState<NativePlayerState>(initialState)
-  const [error, setError] = useState<string | null>(null)
+  const [nativeState, setNativeState] = useState<NativePlayerState>(initialState)
+  const [error, setError] = useState<{ path: string; message: string } | null>(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const isPlayable = lesson.type === "video" || lesson.type === "audio"
+  const fallbackState = useMemo<NativePlayerState>(() => ({
+    ...initialState,
+    path: lesson.path,
+    paused: !autoplay,
+    currentTime: lesson.lastPosition,
+    duration: lesson.duration,
+  }), [autoplay, lesson.duration, lesson.lastPosition, lesson.path])
+  const state = nativeState.path === lesson.path ? nativeState : fallbackState
 
   const updateBounds = useCallback(() => {
     const surface = surfaceRef.current
@@ -100,31 +108,22 @@ function VideoPlayerComponent({
       width: Math.round(rect.width),
       height: Math.round(rect.height),
       scaleFactor: window.devicePixelRatio || 1,
-    }).catch((reason) => setError(String(reason)))
-  }, [])
+    }).catch((reason) => setError({ path: lesson.path, message: String(reason) }))
+  }, [lesson.path])
 
   useEffect(() => {
-    if (!isPlayable) return
+    if (!isPlayable || !isTauri()) return
     let isActive = true
 
-    setError(null)
-    setState((current) => ({
-      ...current,
-      path: lesson.path,
-      paused: !autoplay,
-      currentTime: lesson.lastPosition,
-      duration: lesson.duration,
-    }))
-
-    if (isTauri()) {
-      void loadNativePlayerFile({ path: lesson.path, startTime: lesson.lastPosition || undefined, autoplay })
-        .then((next) => {
-          if (isActive) setState(next)
-        })
-        .catch((reason) => {
-          if (isActive) setError(String(reason))
-        })
-    }
+    void loadNativePlayerFile({ path: lesson.path, startTime: lesson.lastPosition || undefined, autoplay })
+      .then((next) => {
+        if (!isActive) return
+        setError(null)
+        setNativeState(next)
+      })
+      .catch((reason) => {
+        if (isActive) setError({ path: lesson.path, message: String(reason) })
+      })
 
     return () => {
       isActive = false
@@ -161,39 +160,39 @@ function VideoPlayerComponent({
 
   const togglePlayback = useCallback(() => {
     const nextPaused = !state.paused
-    setState((current) => ({ ...current, paused: nextPaused }))
+    setNativeState((current) => ({ ...(current.path === lesson.path ? current : fallbackState), paused: nextPaused }))
     const action = nextPaused ? pauseNativePlayer : playNativePlayer
-    void action().catch((reason) => setError(String(reason)))
-  }, [state.paused])
+    void action().catch((reason) => setError({ path: lesson.path, message: String(reason) }))
+  }, [fallbackState, lesson.path, state.paused])
 
   const changeSeek = useCallback((value: number[]) => {
     const currentTime = value[0] ?? 0
-    setState((current) => ({ ...current, currentTime }))
-  }, [])
+    setNativeState((current) => ({ ...(current.path === lesson.path ? current : fallbackState), currentTime }))
+  }, [fallbackState, lesson.path])
 
   const commitSeek = useCallback((value: number[]) => {
     const currentTime = value[0] ?? 0
-    setState((current) => ({ ...current, currentTime }))
-    void seekNativePlayer({ seconds: currentTime, mode: "absolute" }).catch((reason) => setError(String(reason)))
+    setNativeState((current) => ({ ...(current.path === lesson.path ? current : fallbackState), currentTime }))
+    void seekNativePlayer({ seconds: currentTime, mode: "absolute" }).catch((reason) => setError({ path: lesson.path, message: String(reason) }))
     onProgress(currentTime, state.duration)
-  }, [onProgress, state.duration])
+  }, [fallbackState, lesson.path, onProgress, state.duration])
 
   const changeVolume = useCallback((value: number[]) => {
     const volume = value[0] ?? 0
-    setState((current) => ({ ...current, volume, muted: volume === 0 }))
-    void setNativePlayerVolume(volume).catch((reason) => setError(String(reason)))
-  }, [])
+    setNativeState((current) => ({ ...(current.path === lesson.path ? current : fallbackState), volume, muted: volume === 0 }))
+    void setNativePlayerVolume(volume).catch((reason) => setError({ path: lesson.path, message: String(reason) }))
+  }, [fallbackState, lesson.path])
 
   const toggleMute = useCallback(() => {
     const muted = !state.muted
-    setState((current) => ({ ...current, muted }))
-    void setNativePlayerMuted(muted).catch((reason) => setError(String(reason)))
-  }, [state.muted])
+    setNativeState((current) => ({ ...(current.path === lesson.path ? current : fallbackState), muted }))
+    void setNativePlayerMuted(muted).catch((reason) => setError({ path: lesson.path, message: String(reason) }))
+  }, [fallbackState, lesson.path, state.muted])
 
   const changeRate = useCallback((rate: number) => {
-    setState((current) => ({ ...current, rate }))
-    void setNativePlayerRate(rate).catch((reason) => setError(String(reason)))
-  }, [])
+    setNativeState((current) => ({ ...(current.path === lesson.path ? current : fallbackState), rate }))
+    void setNativePlayerRate(rate).catch((reason) => setError({ path: lesson.path, message: String(reason) }))
+  }, [fallbackState, lesson.path])
 
   const toggleFullscreen = useCallback(() => {
     const surface = surfaceRef.current
@@ -233,9 +232,9 @@ function VideoPlayerComponent({
             </div>
           </div>
         </div>
-        {error && (
+        {error?.path === lesson.path && (
           <div className="absolute inset-x-6 bottom-6 rounded-lg border border-destructive/40 bg-destructive/15 px-3 py-2 text-xs text-destructive-foreground">
-            {error}
+            {error.message}
           </div>
         )}
       </div>
@@ -272,10 +271,10 @@ function VideoPlayerComponent({
             state={state}
             onRateChange={changeRate}
           />
-          <PlayerIconButton label="Step frame" onClick={() => void stepNativePlayerFrame().catch((reason) => setError(String(reason)))}>
+          <PlayerIconButton label="Step frame" onClick={() => void stepNativePlayerFrame().catch((reason) => setError({ path: lesson.path, message: String(reason) }))}>
             <SlidersHorizontal />
           </PlayerIconButton>
-          <PlayerIconButton label="Screenshot" onClick={() => void takeNativePlayerScreenshot().catch((reason) => setError(String(reason)))}>
+          <PlayerIconButton label="Screenshot" onClick={() => void takeNativePlayerScreenshot().catch((reason) => setError({ path: lesson.path, message: String(reason) }))}>
             <Camera />
           </PlayerIconButton>
           <PlayerIconButton label={isFullscreen ? "Exit fullscreen" : "Fullscreen"} onClick={toggleFullscreen}>

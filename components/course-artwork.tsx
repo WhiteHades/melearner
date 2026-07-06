@@ -17,12 +17,11 @@ export function CourseArtwork({ course, className }: { course: Course; className
   return (
     <div className={cn("course-art relative min-h-36 overflow-hidden", className)}>
       {course.thumbnail && (
-        <img
-          alt=""
-          className="absolute inset-0 size-full object-cover opacity-95 transition-opacity duration-300"
+        <div
+          aria-hidden="true"
+          className="absolute inset-0 bg-cover bg-center opacity-95 transition-opacity duration-300"
           data-course-thumbnail=""
-          draggable={false}
-          src={course.thumbnail}
+          style={{ backgroundImage: `url(${course.thumbnail})` }}
         />
       )}
       <div className={cn("absolute inset-0", course.thumbnail ? "bg-background/20" : "bg-background/35")} />
