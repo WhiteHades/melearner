@@ -1,5 +1,9 @@
-use libmpv::{FileState, Mpv};
+use libmpv2::Mpv;
+use libmpv2_sys as mpv_sys;
 use serde::{Deserialize, Serialize};
+use std::ffi::{CStr, CString};
+use std::marker::PhantomData;
+use std::mem::MaybeUninit;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
@@ -19,6 +23,14 @@ pub struct NativeTrack {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct NativeChapter {
+    id: String,
+    title: Option<String>,
+    start_time: f64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NativePlayerState {
     path: Option<String>,
     paused: bool,
@@ -34,6 +46,8 @@ pub struct NativePlayerState {
     subtitle_tracks: Vec<NativeTrack>,
     selected_audio_track_id: Option<String>,
     selected_subtitle_track_id: Option<String>,
+    chapters: Vec<NativeChapter>,
+    current_chapter_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -69,6 +83,158 @@ pub enum NativePlayerSeekMode {
     Relative,
 }
 
+#[derive(Default)]
+struct NativeTrackState {
+    audio_tracks: Vec<NativeTrack>,
+    subtitle_tracks: Vec<NativeTrack>,
+    selected_audio_track_id: Option<String>,
+    selected_subtitle_track_id: Option<String>,
+}
+
+struct MpvNode {
+    raw: mpv_sys::mpv_node,
+}
+
+#[derive(Clone, Copy)]
+struct MpvNodeRef<'a> {
+    raw: *const mpv_sys::mpv_node,
+    _owner: PhantomData<&'a MpvNode>,
+}
+
+impl Drop for MpvNode {
+    fn drop(&mut self) {
+        unsafe {
+            mpv_sys::mpv_free_node_contents(&mut self.raw);
+        }
+    }
+}
+
+impl MpvNode {
+    fn get(mpv: &Mpv, property: &str) -> Result<Self, String> {
+        let property =
+            CString::new(property).map_err(|err| format!("invalid mpv property: {err}"))?;
+        let mut raw = MaybeUninit::<mpv_sys::mpv_node>::zeroed();
+        let result = unsafe {
+            mpv_sys::mpv_get_property(
+                mpv.ctx.as_ptr(),
+                property.as_ptr(),
+                mpv_sys::mpv_format_MPV_FORMAT_NODE,
+                raw.as_mut_ptr().cast(),
+            )
+        };
+        if result < 0 {
+            return Err(format!("libmpv could not read node property: {result}"));
+        }
+
+        Ok(Self {
+            raw: unsafe { raw.assume_init() },
+        })
+    }
+
+    fn as_ref(&self) -> MpvNodeRef<'_> {
+        MpvNodeRef {
+            raw: &self.raw,
+            _owner: PhantomData,
+        }
+    }
+}
+
+impl<'a> MpvNodeRef<'a> {
+    fn format(&self) -> mpv_sys::mpv_format {
+        unsafe { (*self.raw).format }
+    }
+
+    fn to_bool(&self) -> Option<bool> {
+        if self.format() == mpv_sys::mpv_format_MPV_FORMAT_FLAG {
+            Some(unsafe { (*self.raw).u.flag } != 0)
+        } else {
+            None
+        }
+    }
+
+    fn to_i64(&self) -> Option<i64> {
+        if self.format() == mpv_sys::mpv_format_MPV_FORMAT_INT64 {
+            Some(unsafe { (*self.raw).u.int64 })
+        } else {
+            None
+        }
+    }
+
+    fn to_f64(&self) -> Option<f64> {
+        if self.format() == mpv_sys::mpv_format_MPV_FORMAT_DOUBLE {
+            Some(unsafe { (*self.raw).u.double_ })
+        } else {
+            None
+        }
+    }
+
+    fn to_str(&self) -> Option<String> {
+        if self.format() != mpv_sys::mpv_format_MPV_FORMAT_STRING {
+            return None;
+        }
+        let raw = unsafe { (*self.raw).u.string };
+        if raw.is_null() {
+            return None;
+        }
+        unsafe { CStr::from_ptr(raw) }
+            .to_str()
+            .ok()
+            .map(str::to_string)
+    }
+
+    fn array_items(&self) -> Vec<MpvNodeRef<'a>> {
+        if self.format() != mpv_sys::mpv_format_MPV_FORMAT_NODE_ARRAY {
+            return Vec::new();
+        }
+        let list = unsafe { (*self.raw).u.list };
+        if list.is_null() {
+            return Vec::new();
+        }
+        let list = unsafe { &*list };
+        if list.num <= 0 || list.values.is_null() {
+            return Vec::new();
+        }
+
+        (0..list.num)
+            .map(|index| MpvNodeRef {
+                raw: unsafe { list.values.offset(index as isize) },
+                _owner: PhantomData,
+            })
+            .collect()
+    }
+
+    fn map_entries(&self) -> Vec<(String, MpvNodeRef<'a>)> {
+        if self.format() != mpv_sys::mpv_format_MPV_FORMAT_NODE_MAP {
+            return Vec::new();
+        }
+        let list = unsafe { (*self.raw).u.list };
+        if list.is_null() {
+            return Vec::new();
+        }
+        let list = unsafe { &*list };
+        if list.num <= 0 || list.values.is_null() || list.keys.is_null() {
+            return Vec::new();
+        }
+
+        (0..list.num)
+            .filter_map(|index| {
+                let key = unsafe { *list.keys.offset(index as isize) };
+                if key.is_null() {
+                    return None;
+                }
+                let key = unsafe { CStr::from_ptr(key) }.to_str().ok()?.to_string();
+                Some((
+                    key,
+                    MpvNodeRef {
+                        raw: unsafe { list.values.offset(index as isize) },
+                        _owner: PhantomData,
+                    },
+                ))
+            })
+            .collect()
+    }
+}
+
 struct NativePlayer {
     mpv: Mpv,
     path: Option<PathBuf>,
@@ -78,14 +244,14 @@ struct NativePlayer {
 impl NativePlayer {
     fn new() -> Result<Self, String> {
         let mpv = Mpv::with_initializer(|init| {
-            init.set_property("config", false)?;
-            init.set_property("load-scripts", false)?;
-            init.set_property("ytdl", false)?;
-            init.set_property("terminal", false)?;
-            init.set_property("idle", true)?;
-            init.set_property("keep-open", true)?;
-            init.set_property("hwdec", "auto-safe")?;
-            init.set_property("vo", "libmpv")?;
+            init.set_option("config", false)?;
+            init.set_option("load-scripts", false)?;
+            init.set_option("ytdl", false)?;
+            init.set_option("terminal", false)?;
+            init.set_option("idle", true)?;
+            init.set_option("keep-open", true)?;
+            init.set_option("hwdec", "auto-safe")?;
+            init.set_option("vo", "libmpv")?;
             Ok(())
         })
         .map_err(|err| format!("failed to initialize libmpv: {err}"))?;
@@ -98,6 +264,8 @@ impl NativePlayer {
     }
 
     fn state(&self) -> NativePlayerState {
+        let tracks = self.track_state();
+        let chapters = self.chapters();
         let paused = self.mpv.get_property("pause").unwrap_or(true);
         let current_time = self.mpv.get_property("time-pos").unwrap_or(0.0);
         let duration = self.mpv.get_property("duration").unwrap_or(0.0);
@@ -106,6 +274,12 @@ impl NativePlayer {
         let rate = self.mpv.get_property("speed").unwrap_or(1.0);
         let width = self.mpv.get_property("width").ok();
         let height = self.mpv.get_property("height").ok();
+        let current_chapter_id = self
+            .mpv
+            .get_property("chapter")
+            .ok()
+            .filter(|chapter: &i64| *chapter >= 0)
+            .map(|chapter| chapter.to_string());
 
         NativePlayerState {
             path: self
@@ -121,11 +295,25 @@ impl NativePlayer {
             rate,
             width,
             height,
-            audio_tracks: Vec::new(),
-            subtitle_tracks: Vec::new(),
-            selected_audio_track_id: None,
-            selected_subtitle_track_id: None,
+            audio_tracks: tracks.audio_tracks,
+            subtitle_tracks: tracks.subtitle_tracks,
+            selected_audio_track_id: tracks.selected_audio_track_id,
+            selected_subtitle_track_id: tracks.selected_subtitle_track_id,
+            chapters,
+            current_chapter_id,
         }
+    }
+
+    fn track_state(&self) -> NativeTrackState {
+        MpvNode::get(&self.mpv, "track-list")
+            .map(|tracks| parse_track_list(tracks.as_ref()))
+            .unwrap_or_default()
+    }
+
+    fn chapters(&self) -> Vec<NativeChapter> {
+        MpvNode::get(&self.mpv, "chapter-list")
+            .map(|chapters| parse_chapter_list(chapters.as_ref()))
+            .unwrap_or_default()
     }
 
     fn load(
@@ -136,28 +324,143 @@ impl NativePlayer {
     ) -> Result<NativePlayerState, String> {
         let path_string = path.to_string_lossy().to_string();
         self.mpv
-            .playlist_load_files(&[(&path_string, FileState::Replace, None)])
+            .command("loadfile", &[&path_string, "replace"])
             .map_err(|err| format!("libmpv could not load file: {err}"))?;
 
         if let Some(start_time) = start_time.filter(|value| value.is_finite() && *value > 0.0) {
             self.mpv
-                .seek_absolute(start_time)
+                .command("seek", &[&start_time.to_string(), "absolute"])
                 .map_err(|err| format!("libmpv could not seek to resume position: {err}"))?;
         }
 
         if autoplay {
             self.mpv
-                .unpause()
+                .set_property("pause", false)
                 .map_err(|err| format!("libmpv could not start playback: {err}"))?;
         } else {
             self.mpv
-                .pause()
+                .set_property("pause", true)
                 .map_err(|err| format!("libmpv could not pause playback: {err}"))?;
         }
 
         self.path = Some(path);
         Ok(self.state())
     }
+
+    fn select_track(
+        &mut self,
+        property: &str,
+        id: Option<String>,
+    ) -> Result<NativePlayerState, String> {
+        match id {
+            Some(id) => {
+                let track_id = id
+                    .trim()
+                    .parse::<i64>()
+                    .map_err(|_| "track id must be numeric".to_string())?;
+                self.mpv
+                    .set_property(property, track_id)
+                    .map_err(|err| format!("libmpv could not select track: {err}"))?;
+            }
+            None => {
+                self.mpv
+                    .set_property(property, "no")
+                    .map_err(|err| format!("libmpv could not disable track: {err}"))?;
+            }
+        }
+        Ok(self.state())
+    }
+}
+
+fn node_string_field(node: MpvNodeRef<'_>, field: &str) -> Option<String> {
+    node.map_entries().into_iter().find_map(|(key, value)| {
+        if key == field {
+            value
+                .to_str()
+                .or_else(|| value.to_i64().map(|number| number.to_string()))
+        } else {
+            None
+        }
+    })
+}
+
+fn node_f64_field(node: MpvNodeRef<'_>, field: &str) -> Option<f64> {
+    node.map_entries().into_iter().find_map(|(key, value)| {
+        if key == field {
+            value
+                .to_f64()
+                .or_else(|| value.to_i64().map(|number| number as f64))
+        } else {
+            None
+        }
+    })
+}
+
+fn node_bool_field(node: MpvNodeRef<'_>, field: &str) -> Option<bool> {
+    node.map_entries().into_iter().find_map(
+        |(key, value)| {
+            if key == field { value.to_bool() } else { None }
+        },
+    )
+}
+
+fn blank_to_none(value: Option<String>) -> Option<String> {
+    value.and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
+fn parse_track_list(node: MpvNodeRef<'_>) -> NativeTrackState {
+    let mut state = NativeTrackState::default();
+
+    for track in node.array_items() {
+        let Some(kind) = node_string_field(track, "type") else {
+            continue;
+        };
+        if kind != "audio" && kind != "sub" {
+            continue;
+        }
+        let Some(id) = node_string_field(track, "id") else {
+            continue;
+        };
+        let selected = node_bool_field(track, "selected").unwrap_or(false);
+        let native_track = NativeTrack {
+            id: id.clone(),
+            title: blank_to_none(node_string_field(track, "title")),
+            language: blank_to_none(node_string_field(track, "lang")),
+        };
+
+        if kind == "audio" {
+            if selected {
+                state.selected_audio_track_id = Some(id);
+            }
+            state.audio_tracks.push(native_track);
+        } else {
+            if selected {
+                state.selected_subtitle_track_id = Some(id);
+            }
+            state.subtitle_tracks.push(native_track);
+        }
+    }
+
+    state
+}
+
+fn parse_chapter_list(node: MpvNodeRef<'_>) -> Vec<NativeChapter> {
+    node.array_items()
+        .into_iter()
+        .enumerate()
+        .map(|(index, chapter)| NativeChapter {
+            id: index.to_string(),
+            title: blank_to_none(node_string_field(chapter, "title")),
+            start_time: node_f64_field(chapter, "time").unwrap_or(0.0),
+        })
+        .collect()
 }
 
 fn reject_url_or_scheme(path: &str) -> Result<(), String> {
@@ -239,7 +542,7 @@ pub fn native_player_play() -> Result<NativePlayerState, String> {
     with_player(|player| {
         player
             .mpv
-            .unpause()
+            .set_property("pause", false)
             .map_err(|err| format!("libmpv could not play: {err}"))?;
         Ok(player.state())
     })
@@ -250,7 +553,7 @@ pub fn native_player_pause() -> Result<NativePlayerState, String> {
     with_player(|player| {
         player
             .mpv
-            .pause()
+            .set_property("pause", true)
             .map_err(|err| format!("libmpv could not pause: {err}"))?;
         Ok(player.state())
     })
@@ -263,14 +566,15 @@ pub fn native_player_seek(options: NativePlayerSeekOptions) -> Result<NativePlay
     }
 
     with_player(|player| {
-        match options.mode {
-            NativePlayerSeekMode::Absolute => player.mpv.seek_absolute(options.seconds),
-            NativePlayerSeekMode::Relative if options.seconds >= 0.0 => {
-                player.mpv.seek_forward(options.seconds)
-            }
-            NativePlayerSeekMode::Relative => player.mpv.seek_backward(options.seconds.abs()),
-        }
-        .map_err(|err| format!("libmpv could not seek: {err}"))?;
+        let seconds = options.seconds.to_string();
+        let mode = match options.mode {
+            NativePlayerSeekMode::Absolute => "absolute",
+            NativePlayerSeekMode::Relative => "relative",
+        };
+        player
+            .mpv
+            .command("seek", &[&seconds, mode])
+            .map_err(|err| format!("libmpv could not seek: {err}"))?;
         Ok(player.state())
     })
 }
@@ -317,6 +621,67 @@ pub fn native_player_set_rate(rate: f64) -> Result<NativePlayerState, String> {
 }
 
 #[tauri::command]
+pub fn native_player_select_audio_track(id: Option<String>) -> Result<NativePlayerState, String> {
+    with_player(|player| player.select_track("aid", id))
+}
+
+#[tauri::command]
+pub fn native_player_select_subtitle_track(
+    id: Option<String>,
+) -> Result<NativePlayerState, String> {
+    with_player(|player| player.select_track("sid", id))
+}
+
+#[tauri::command]
+pub fn native_player_select_chapter(id: String) -> Result<NativePlayerState, String> {
+    let chapter_id = id
+        .trim()
+        .parse::<i64>()
+        .map_err(|_| "chapter id must be numeric".to_string())?;
+    if chapter_id < 0 {
+        return Err("chapter id must not be negative".to_string());
+    }
+
+    with_player(|player| {
+        player
+            .mpv
+            .set_property("chapter", chapter_id)
+            .map_err(|err| format!("libmpv could not select chapter: {err}"))?;
+        Ok(player.state())
+    })
+}
+
+#[tauri::command]
+pub fn native_player_set_audio_delay(seconds: f64) -> Result<NativePlayerState, String> {
+    if !seconds.is_finite() {
+        return Err("audio delay is not finite".to_string());
+    }
+
+    with_player(|player| {
+        player
+            .mpv
+            .set_property("audio-delay", seconds)
+            .map_err(|err| format!("libmpv could not set audio delay: {err}"))?;
+        Ok(player.state())
+    })
+}
+
+#[tauri::command]
+pub fn native_player_set_subtitle_delay(seconds: f64) -> Result<NativePlayerState, String> {
+    if !seconds.is_finite() {
+        return Err("subtitle delay is not finite".to_string());
+    }
+
+    with_player(|player| {
+        player
+            .mpv
+            .set_property("sub-delay", seconds)
+            .map_err(|err| format!("libmpv could not set subtitle delay: {err}"))?;
+        Ok(player.state())
+    })
+}
+
+#[tauri::command]
 pub fn native_player_set_bounds(bounds: NativePlayerBounds) -> Result<(), String> {
     if bounds.width <= 0 || bounds.height <= 0 || bounds.scale_factor <= 0.0 {
         return Err("native player bounds are invalid".to_string());
@@ -333,7 +698,7 @@ pub fn native_player_step_frame() -> Result<NativePlayerState, String> {
     with_player(|player| {
         player
             .mpv
-            .seek_frame()
+            .command("frame-step", &[])
             .map_err(|err| format!("libmpv could not step frame: {err}"))?;
         Ok(player.state())
     })
@@ -344,7 +709,7 @@ pub fn native_player_screenshot() -> Result<String, String> {
     with_player(|player| {
         player
             .mpv
-            .screenshot_video(None)
+            .command("screenshot", &["video"])
             .map_err(|err| format!("libmpv could not take screenshot: {err}"))?;
         Ok(String::new())
     })
@@ -363,7 +728,20 @@ pub fn native_player_destroy() -> Result<(), String> {
 mod tests {
     use super::*;
     use std::fs;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::process::Command;
+    use std::thread;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    struct MediaFixture {
+        root: PathBuf,
+        file: PathBuf,
+    }
+
+    impl Drop for MediaFixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
 
     fn temp_media_file() -> PathBuf {
         let suffix = SystemTime::now()
@@ -373,6 +751,126 @@ mod tests {
         let path = std::env::temp_dir().join(format!("melearner-native-player-{suffix}.mp4"));
         fs::write(&path, b"fixture").expect("write fixture");
         path
+    }
+
+    fn multitrack_media_fixture() -> Option<MediaFixture> {
+        if !Command::new("ffmpeg")
+            .arg("-version")
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+        {
+            eprintln!("ffmpeg is unavailable; skipping native player media fixture test");
+            return None;
+        }
+
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("melearner-native-player-media-{suffix}"));
+        fs::create_dir(&root).expect("create media fixture root");
+        fs::write(
+            root.join("en.srt"),
+            "1\n00:00:00,000 --> 00:00:01,000\nEnglish caption\n",
+        )
+        .expect("write english subtitle");
+        fs::write(
+            root.join("es.srt"),
+            "1\n00:00:00,000 --> 00:00:01,000\nSpanish caption\n",
+        )
+        .expect("write spanish subtitle");
+        fs::write(
+            root.join("chapters.ffmetadata"),
+            ";FFMETADATA1\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=1000\ntitle=Intro\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=1000\nEND=2000\ntitle=Review\n",
+        )
+        .expect("write chapters");
+
+        let file = root.join("fixture.mkv");
+        let status = Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-nostdin",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=size=160x90:rate=1:duration=2",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=2",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=880:duration=2",
+                "-i",
+                &root.join("en.srt").to_string_lossy(),
+                "-i",
+                &root.join("es.srt").to_string_lossy(),
+                "-i",
+                &root.join("chapters.ffmetadata").to_string_lossy(),
+                "-map",
+                "0:v:0",
+                "-map",
+                "1:a:0",
+                "-map",
+                "2:a:0",
+                "-map",
+                "3:s:0",
+                "-map",
+                "4:s:0",
+                "-map_chapters",
+                "5",
+                "-metadata:s:a:0",
+                "language=eng",
+                "-metadata:s:a:0",
+                "title=English audio",
+                "-metadata:s:a:1",
+                "language=jpn",
+                "-metadata:s:a:1",
+                "title=Japanese audio",
+                "-metadata:s:s:0",
+                "language=eng",
+                "-metadata:s:s:0",
+                "title=English captions",
+                "-metadata:s:s:1",
+                "language=spa",
+                "-metadata:s:s:1",
+                "title=Spanish captions",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-c:s",
+                "srt",
+                "-t",
+                "2",
+                &file.to_string_lossy(),
+            ])
+            .status()
+            .expect("run ffmpeg fixture command");
+        assert!(status.success(), "ffmpeg fixture command failed");
+
+        Some(MediaFixture { root, file })
+    }
+
+    fn wait_for_state(
+        player: &NativePlayer,
+        predicate: impl Fn(&NativePlayerState) -> bool,
+    ) -> NativePlayerState {
+        for _ in 0..50 {
+            let state = player.state();
+            if predicate(&state) {
+                return state;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        player.state()
     }
 
     #[test]
@@ -396,7 +894,8 @@ mod tests {
         let file = root.join("lesson.mp4");
         fs::write(&file, b"fixture").expect("write fixture");
         let roots = vec![root.to_string_lossy().to_string()];
-        let canonical = canonical_local_file(&file.to_string_lossy(), &roots).expect("canonical file");
+        let canonical =
+            canonical_local_file(&file.to_string_lossy(), &roots).expect("canonical file");
 
         assert!(canonical.is_file());
 
@@ -421,5 +920,37 @@ mod tests {
 
         let _ = fs::remove_file(file);
         let _ = fs::remove_dir(root);
+    }
+
+    #[test]
+    fn native_player_reports_tracks_and_chapters() {
+        let Some(fixture) = multitrack_media_fixture() else {
+            return;
+        };
+        let mut player = NativePlayer::new().expect("create native player");
+
+        player
+            .load(fixture.file.clone(), None, false)
+            .expect("load media fixture");
+        let state = wait_for_state(&player, |state| {
+            state.audio_tracks.len() == 2
+                && state.subtitle_tracks.len() == 2
+                && state.chapters.len() == 2
+        });
+
+        assert_eq!(state.audio_tracks.len(), 2);
+        assert_eq!(
+            state.audio_tracks[0].title.as_deref(),
+            Some("English audio")
+        );
+        assert_eq!(state.audio_tracks[0].language.as_deref(), Some("eng"));
+        assert_eq!(state.subtitle_tracks.len(), 2);
+        assert_eq!(
+            state.subtitle_tracks[1].title.as_deref(),
+            Some("Spanish captions")
+        );
+        assert_eq!(state.chapters.len(), 2);
+        assert_eq!(state.chapters[0].title.as_deref(), Some("Intro"));
+        assert_eq!(state.chapters[1].start_time, 1.0);
     }
 }
