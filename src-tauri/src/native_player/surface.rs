@@ -71,9 +71,15 @@ pub(super) enum NativeSurfaceBackendPreference {
 
 impl NativeSurfaceBackendPreference {
     pub(super) fn current() -> Result<Self, String> {
-        match std::env::var(SURFACE_BACKEND_ENV) {
+        Self::from_env_result(std::env::var(SURFACE_BACKEND_ENV))
+    }
+
+    pub(super) fn from_env_result(
+        value: Result<String, std::env::VarError>,
+    ) -> Result<Self, String> {
+        match value {
             Ok(value) => Self::from_env_value(Some(value.as_str())),
-            Err(std::env::VarError::NotPresent) => Ok(Self::WindowHandle),
+            Err(std::env::VarError::NotPresent) => Self::from_env_value(None),
             Err(std::env::VarError::NotUnicode(_)) => {
                 Err(format!("{SURFACE_BACKEND_ENV} must be valid unicode"))
             }

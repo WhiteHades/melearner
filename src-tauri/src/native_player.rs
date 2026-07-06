@@ -1593,6 +1593,13 @@ mod tests {
     #[test]
     fn native_surface_backend_preference_is_explicit() {
         assert_eq!(
+            surface::NativeSurfaceBackendPreference::from_env_result(Err(
+                std::env::VarError::NotPresent
+            ))
+            .expect("unset backend preference"),
+            surface::NativeSurfaceBackendPreference::RenderApi
+        );
+        assert_eq!(
             surface::NativeSurfaceBackendPreference::from_env_value(None)
                 .expect("default backend preference"),
             surface::NativeSurfaceBackendPreference::RenderApi
