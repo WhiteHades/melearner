@@ -21,25 +21,23 @@ rtk cargo test --manifest-path src-tauri/Cargo.toml
 rtk cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
-## Playback Fallback
+## Native Playback
 
-The player is WebKitGTK HTML media playback inside Tauri, not a native Rust video player. Rust helps prepare files only when WebKit rejects a source.
-
-Known failure mode: some files are named `.mp4` but are actually MPEG-TS containers. They may contain browser-safe H.264/AAC streams, but WebKit rejects the container. The fallback first remuxes those files into a real MP4 with `-c copy`, then only transcodes if remux fails.
+The player is an in-app native playback surface controlled by typed Tauri commands from the React UI. The canonical engine is embedded libmpv. The app must not keep a parallel browser-media playback path, player-side compatibility conversion path, or external sidecar player path.
 
 Rules for this pipeline:
 
-- Remux before transcode.
-- Never run multiple playback-prep FFmpeg jobs at once.
-- Cancel stale jobs when changing lessons or unmounting the player.
-- Bound transcode CPU with low thread counts.
-- Drop data/subtitle streams during media preparation.
+- Keep React focused on layout, controls, and state display.
+- Keep local-file validation and playback commands behind the native player module.
+- Keep FFmpeg out of ordinary playback.
+- Use FFmpeg only for queued thumbnails, metadata, or explicit future processing work.
+- Remove stale player files, dependencies, docs, aliases, and generated artifacts in the same change that replaces them.
 
-See `docs/adr/0006-playback-fallback-remuxes-before-transcoding.md`.
+See `docs/adr/0010-embedded-libmpv-native-playback.md`.
 
 ## Scroll Performance
 
-Course cards must not start FFmpeg or decode video while the user scrolls the library. Runtime video thumbnail extraction caused janky scrolling and competed with playback fallback.
+Course cards must not start FFmpeg or decode video while the user scrolls the library. Runtime video thumbnail extraction caused janky scrolling and competed with native playback work.
 
 See `docs/adr/0007-course-cards-do-not-generate-runtime-video-thumbnails.md`.
 
@@ -62,7 +60,7 @@ Matching rules:
 5. Never reuse progress for ambiguous course or lesson matches; return a scan warning instead.
 6. Match lessons by exact path first, then by relative path within the resolved course, then by section/name/type/file-size metadata only when unambiguous.
 
-Fingerprints exclude the absolute root path and the course folder name, so moving or renaming a course can preserve identity when its relative learning items are unchanged. Marker files are opt-in and are written only after the dashboard setting is enabled.
+Fingerprints exclude the absolute root path and the course folder name, so moving or renaming a course can preserve identity when its relative learning items are unchanged. Marker files are automatic local metadata for available course folders. Do not add a user-facing marker toggle unless a new ADR explicitly reverses this product decision.
 
 Additional verification for identity, SQLite sync, and stats:
 
@@ -89,6 +87,8 @@ makepkg -f -C
 
 Run `makepkg` from `packaging/arch/`.
 
+On the maintainer laptop, app-behavior changes must update every launcher-visible installed instance by installing the built Arch package. The launcher desktop entry resolves `Exec=melearner` to `/usr/bin/melearner`; do not use `cargo install` or `~/.cargo/bin/melearner` for this app's installed instance.
+
 Public Linux releases should publish only:
 
 - AppImage for portable Linux use
@@ -98,7 +98,7 @@ Do not upload `.deb` or `.rpm` unless those channels are intentionally restored 
 
 ## Repo Hygiene
 
-Remove stale generated artifacts, completed temporary plans, redundant docs, and obsolete code as part of the same task that makes them unnecessary. Do not keep duplicate structures or old branches for future agents to trip over.
+Remove stale generated artifacts, completed temporary plans, redundant docs, obsolete code, and unused settings as part of the same task that makes them unnecessary. Do not keep duplicate structures, old UI branches, or compatibility shims after the repo has a canonical replacement.
 
 Before finishing build or release work, run a targeted artifact scan for `.next`, `out`, `dist`, `target`, package files, temp screenshots, logs, and staging directories. Keep required dependencies and release files only while they are still needed for verification, install, upload, or checksums.
 
@@ -118,22 +118,23 @@ The release workflow includes a Windows MSI job on `windows-latest`. It must sti
 Before publishing a Windows MSI, test on a clean Windows VM:
 
 - Install and launch
-- WebView2 availability
+- WebView2 availability for the app shell
 - Library scan
-- Video/audio playback
-- Playback fallback behavior when FFmpeg is missing or bundled
+- Native video/audio playback
+- Thumbnail behavior when FFmpeg is missing or bundled
 - Upgrade and uninstall
 
 Windows media notes:
 
 - WebView2 Runtime must be present or installed by the bundle mode.
-- Windows N editions may require Microsoft's Media Feature Pack.
-- FFmpeg is not provided by WebView2 or Tauri. If Windows fallback support is required without user-installed FFmpeg, bundle FFmpeg deliberately and handle licensing.
+- libmpv and its required runtime libraries must be bundled deliberately.
+- FFmpeg is not part of ordinary playback. If thumbnail generation is supported without user-installed FFmpeg, bundle FFmpeg deliberately and handle licensing.
 
 ## Architecture Notes
 
 - The database lives at `$HOME/.local/share/melearner/melearner.db`.
-- Files load through Tauri asset URLs, not a localhost media server.
+- Documents and thumbnails load through Tauri asset URLs, not a localhost media server.
+- Playable lessons use the native player module.
 - The frontend calls Tauri commands directly.
 - Logs live under `~/.melearner/`.
 - ADRs live in `docs/adr/`.

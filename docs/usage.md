@@ -28,11 +28,9 @@ melearner groups files into courses, sections, and lessons based on the folder s
 
 ## Playback Compatibility
 
-The app first tries to play the original local file through WebKitGTK. If the browser engine rejects a playable-looking file, melearner can prepare a cached compatible copy.
+Playable lessons use the in-app native player for local files. The app should play the original file directly instead of preparing a converted playback copy first.
 
-The common case is a file named `.mp4` that is actually an MPEG-TS container. In that case the app remuxes the file into a real MP4 without re-encoding, which is much faster than transcoding.
-
-Only genuinely incompatible streams should need transcode fallback.
+If a file cannot be opened, melearner should report the local-file problem clearly and keep the rest of the library usable.
 
 ## Progress
 
@@ -50,9 +48,9 @@ The library dashboard shows local stats for courses, completion, watched progres
 
 ## Identity Markers
 
-Identity marker files are optional. When enabled from the dashboard, melearner writes `.melearner-course.json` into available course folders. Future scans use that marker ID before fingerprint matching.
+melearner writes `.melearner-course.json` into available course folders automatically after scans and after loading existing libraries. Future scans use that marker ID before fingerprint matching.
 
-Marker writing is off by default. Disabling it stops future writes but does not delete marker files already written.
+Marker files are local metadata only. They are not telemetry, sync, or remote identifiers. Existing marker files with a different identity are not overwritten, duplicate marker IDs are ignored with warnings, and missing courses are skipped.
 
 ## Search
 

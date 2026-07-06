@@ -40,12 +40,12 @@ _Avoid_: Caption file, transcript
 Files the user already has permission to view on their own machine.
 _Avoid_: Hosted content, streamed content, downloaded content
 
-**Prepared media**:
-A cached playback-compatible copy generated only after the browser engine rejects the original file. Prefer remuxing over transcoding.
-_Avoid_: Downloaded media, converted library source
+**Player**:
+The in-app surface for video and audio lessons.
+_Avoid_: External player, playback service
 
 **Course identity**:
-The local identity model that keeps a course connected to its progress when its folder is renamed, moved, temporarily missing, or scanned again. It uses paths, local marker IDs when opted in, and conservative fingerprints.
+The local identity model that keeps a course connected to its progress when its folder is renamed, moved, temporarily missing, or scanned again. It uses paths, automatic local marker IDs, and conservative fingerprints.
 _Avoid_: Path-only identity
 
 **Learning activity**:
