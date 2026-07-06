@@ -13,6 +13,15 @@
 - **Depends on**: none
 - **Category**: direction
 - **Planned at**: commit `98a1633`, 2026-07-06
+- **Result**: DONE. Implemented with local fingerprints, lesson relative paths, missing-course state, ambiguity warnings, minimal missing-course UI, and docs/ADR updates.
+
+## Implementation Notes
+
+- Added `courses.identity_id`, `courses.fingerprint`, `courses.missing_since`, and `lessons.relative_path`.
+- Added scanner fingerprints that exclude absolute roots and course folder names.
+- Added conservative course and lesson matching with warnings for ambiguous reuse.
+- Added missing-folder cards that preserve progress but cannot be opened until the folder is scanned again.
+- Did not write marker files into user course folders.
 
 ## Why This Matters
 
@@ -28,7 +37,7 @@ Relevant files:
 - `lib/course-utils.ts`, `lib/tauri.ts`, and `types/index.ts` define scan and domain shapes crossing Rust and TypeScript.
 - `docs/stats-and-identity-plan.md` records the durable identity and stats direction.
 
-Current path-derived identity:
+Original path-derived identity at planning time:
 
 ```rust
 // src-tauri/src/scanner.rs:111
@@ -54,7 +63,7 @@ CourseData {
 }
 ```
 
-Current persistence lookup is path-based:
+Original persistence lookup used exact paths:
 
 ```ts
 // lib/database.ts:153
@@ -82,7 +91,7 @@ const resolvedCourses = courses.map((course) => {
   const persistedLesson = persistedLessonByPath.get(lesson.path)
 ```
 
-Current sync deletes absent courses inside the scanned root:
+Original sync deleted absent courses inside the scanned root:
 
 ```ts
 // lib/database.ts:614
@@ -96,7 +105,7 @@ Product intent and constraints:
 
 ```md
 // docs/stats-and-identity-plan.md:55
-Current course identity is path-based enough that renames and moves can break continuity.
+Course identity previously depended enough on paths that renames and moves could break continuity.
 
 // docs/stats-and-identity-plan.md:70
 Writing marker files modifies user course folders. The app should ask first or provide a clear setting before writing hidden metadata into course roots.
@@ -113,7 +122,7 @@ Domain vocabulary:
 ```md
 // CONTEXT.md:47
 Course identity:
-The future stable identifier for a course that should survive folder renames and moves.
+The local identity model that keeps a course connected to its progress when its folder is renamed, moved, temporarily missing, or scanned again.
 
 // CONTEXT.md:51
 Learning activity:
@@ -331,15 +340,17 @@ Expected result: all commands exit 0.
 
 All must hold:
 
-- [ ] Course rows have stable `identity_id`, `fingerprint`, and nullable `missing_since` fields.
-- [ ] Scanning the same course contents from a different parent can preserve the existing course row.
-- [ ] Lessons moved with a course preserve progress fields.
-- [ ] Missing courses are retained in SQLite and marked missing instead of being deleted.
-- [ ] No code writes marker files into user course folders.
-- [ ] Verification commands in the Test Plan exit 0.
-- [ ] `plans/README.md` status row for this plan is updated.
+- [x] Course rows have stable `identity_id`, `fingerprint`, and nullable `missing_since` fields.
+- [x] Scanning the same course contents from a different parent can preserve the existing course row.
+- [x] Lessons moved with a course preserve progress fields.
+- [x] Missing courses are retained in SQLite and marked missing instead of being deleted.
+- [x] No code writes marker files into user course folders.
+- [x] Verification commands in the Test Plan exit 0.
+- [x] `plans/README.md` status row for this plan is updated.
 
-## STOP Conditions
+## Historical STOP Conditions
+
+These applied while executing the plan:
 
 Stop and report if:
 

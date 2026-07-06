@@ -16,4 +16,4 @@ This is a single-context repo with one root `CONTEXT.md` and ADRs under `docs/ad
 
 ### Product plans
 
-Future stats, heatmaps, and durable course identity are tracked in `docs/stats-and-identity-plan.md` until implemented.
+Stats, heatmaps, and learning activity plans are tracked in `docs/stats-and-identity-plan.md`. Durable course identity decisions are recorded in `docs/adr/0008-durable-course-identity-uses-local-fingerprints.md`.

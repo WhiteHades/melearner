@@ -17,6 +17,10 @@ Local data paths:
 - Logs: `~/.melearner/`
 - User course files: wherever you keep them
 
+Course identity data, fingerprints, missing-folder state, notes, and progress stay in the local SQLite database. Fingerprints are derived from local course structure and learning-item metadata so renamed or moved folders can reconnect to existing progress.
+
+melearner does not write marker files or hidden metadata files into course folders. It only reads the folders you choose to scan and writes app metadata under its local app data paths.
+
 ## Legal Disclaimer
 
 melearner is a local media player and file organizer. It does not distribute, stream, download, host, or facilitate access to any content.

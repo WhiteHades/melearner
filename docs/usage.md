@@ -38,7 +38,11 @@ Only genuinely incompatible streams should need transcode fallback.
 
 Progress saves automatically to local SQLite. The app keeps the last position and completion state for each lesson.
 
-Current progress is tied to the scanned library records. Durable progress across folder rename/move is planned in `docs/stats-and-identity-plan.md`.
+Course identity uses local database IDs and content fingerprints, not just absolute paths. If you rename or move a course folder and scan it again, melearner tries to reconnect the course and its lessons to the existing progress.
+
+If a course folder is missing during a refresh, melearner keeps its progress, notes, subtitles, and lesson records in SQLite. The course stays visible with a missing-folder label and cannot be opened until the folder is scanned again.
+
+If two existing courses look identical, melearner does not guess. It leaves progress on the existing records and shows a scan warning instead of assigning progress to the wrong course.
 
 ## Search
 

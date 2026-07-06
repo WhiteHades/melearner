@@ -1,12 +1,12 @@
 # Stats and Course Identity Plan
 
-This is a design plan, not implemented behavior yet.
+Durable course identity groundwork is implemented. Stats dashboards, heatmaps, optional marker files, and historical learning activity are still planned work.
 
 ## Goals
 
 - Show useful learning stats without sending data anywhere.
-- Preserve progress and stats when a course folder is renamed or moved.
-- Gracefully handle deleted or unavailable course folders.
+- Preserve progress when a course folder is renamed or moved. Implemented for courses and lessons through local fingerprints and relative lesson paths.
+- Gracefully handle deleted or unavailable course folders. Implemented by marking missing courses instead of deleting their progress.
 - Use shadcn-compatible chart blocks where they fit the design system.
 
 ## User Stories
@@ -54,35 +54,48 @@ Activity stats:
 
 ## Identity Model
 
-Current course identity is path-based enough that renames and moves can break continuity. A more durable model needs a stable course identifier.
+Current behavior:
 
-Preferred approach:
+- `courses.identity_id` stores the stable local identity associated with a course row.
+- `courses.fingerprint` stores a non-absolute fingerprint derived from section names, lesson relative paths, lesson file sizes, and lesson file types.
+- `lessons.relative_path` stores the lesson path relative to the course root so lesson progress can survive a course-folder move.
+- `courses.missing_since` marks courses that were absent during a scan. Missing courses keep progress, notes, sections, lessons, and subtitles in SQLite.
+- The primary fingerprint excludes the absolute root path and course folder name. Renaming or moving a course can preserve progress when its relative learning items are unchanged.
+- Matching is conservative: exact path first, then one unambiguous fingerprint match, then a new course. Ambiguous matches produce scan warnings and do not reuse progress.
+- The app does not write marker files or hidden metadata into user course folders.
 
-1. Add a small metadata file in each course root, for example `.melearner-course.json`.
-2. Store a generated course UUID in that file.
-3. Keep path as mutable metadata, not identity.
-4. On scan, if the marker file exists, match by marker ID first.
-5. If the marker is missing, fall back to a fingerprint of stable signals: folder name, relative file names, file sizes, and maybe duration metadata.
-6. If a likely renamed/moved course is found, preserve the old course record and update its path.
+Future optional marker-file approach:
+
+1. Ask for consent or provide a clear setting before writing to course folders.
+2. Add a small metadata file in each course root, for example `.melearner-course.json`.
+3. Store a generated course UUID in that file.
+4. Keep path as mutable metadata, not identity.
+5. On scan, if the marker file exists, match by marker ID first.
+6. If the marker is missing, fall back to the existing local fingerprint model.
 
 Important constraint:
 
-- Writing marker files modifies user course folders. The app should ask first or provide a clear setting before writing hidden metadata into course roots.
+- Writing marker files modifies user course folders. The app must ask first or provide a clear setting before writing hidden metadata into course roots.
 
 Deleted or unavailable courses:
 
-- Do not delete progress immediately.
-- Mark the course as missing/unavailable.
-- Keep progress and stats in SQLite.
-- Let the user reconnect the course to a new folder.
+- Do not delete progress immediately. Implemented.
+- Mark the course as missing/unavailable. Implemented with `missing_since`.
+- Keep progress and stats in SQLite. Progress is retained; aggregate stats are still planned.
+- Let the user reconnect the course to a new folder. Implemented through safe fingerprint matching.
 
-## Storage Model Changes Needed
+## Storage Model
 
-Likely new fields/tables:
+Implemented fields:
 
-- `courses.identity_id`: stable UUID independent of path
+- `courses.identity_id`: stable local identity value independent of path
+- `courses.fingerprint`: non-absolute course content fingerprint
 - `courses.path`: latest known path
 - `courses.missing_since`: nullable timestamp
+- `lessons.relative_path`: lesson path relative to its course root
+
+Likely future fields/tables:
+
 - `course_stats`: aggregated storage and duration values
 - `lesson_activity`: append-only progress events for heatmaps and history
 
@@ -119,7 +132,7 @@ Implementation note:
 
 ## Open Decisions
 
-- Should melearner write `.melearner-course.json` files into course folders by default, ask per library, or never write to user folders?
-- Should missing courses stay visible in the library or move to a separate recovery/settings view?
+- Should melearner offer opt-in `.melearner-course.json` files, and if so should consent be per library or global?
+- Should missing courses stay visible in the library long-term or move to a separate recovery/settings view?
 - How much historical activity should be retained?
 - Should stats include only completed watch time, all played time, or both?

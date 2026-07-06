@@ -43,6 +43,33 @@ Course cards must not start FFmpeg or decode video while the user scrolls the li
 
 See `docs/adr/0007-course-cards-do-not-generate-runtime-video-thumbnails.md`.
 
+## Durable Course Identity
+
+Course identity is stored locally in SQLite. The current implementation adds:
+
+- `courses.identity_id` as the stable identity value associated with a course row
+- `courses.fingerprint` as a non-absolute content fingerprint for reconnecting moved or renamed courses
+- `courses.missing_since` for courses that were absent during the latest scan
+- `lessons.relative_path` for preserving lesson progress when a course folder moves
+
+Matching rules:
+
+1. Match courses by exact path first.
+2. If there is no exact path match, match by fingerprint only when exactly one existing course has that fingerprint.
+3. Create a new course when there is no safe match.
+4. Never reuse progress for ambiguous course or lesson matches; return a scan warning instead.
+5. Match lessons by exact path first, then by relative path within the resolved course, then by section/name/type/file-size metadata only when unambiguous.
+
+Fingerprints exclude the absolute root path and the course folder name, so moving or renaming a course can preserve identity when its relative learning items are unchanged. The app does not write marker files into user course folders.
+
+Additional verification for identity matching:
+
+```bash
+node --test --experimental-transform-types lib/course-identity.test.mjs
+```
+
+The command currently emits Node experimental-loader warnings; the tests should still pass.
+
 ## Linux Release Builds
 
 Build the AppImage:
@@ -100,4 +127,4 @@ Windows media notes:
 - The frontend calls Tauri commands directly.
 - Logs live under `~/.melearner/`.
 - ADRs live in `docs/adr/`.
-- Future stats and durable course identity are documented in `docs/stats-and-identity-plan.md`.
+- Stats and learning activity planning live in `docs/stats-and-identity-plan.md`.

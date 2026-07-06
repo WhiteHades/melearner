@@ -45,9 +45,9 @@ A cached playback-compatible copy generated only after the browser engine reject
 _Avoid_: Downloaded media, converted library source
 
 **Course identity**:
-The future stable identifier for a course that should survive folder renames and moves.
+The local identity model that keeps a course connected to its progress when its folder is renamed, moved, temporarily missing, or scanned again.
 _Avoid_: Path-only identity
 
 **Learning activity**:
-Historical watch/read events used for future stats and heatmaps.
+Historical watch/read events intended for stats and heatmaps.
 _Avoid_: Telemetry, analytics

@@ -7,7 +7,8 @@ How the engineering skills should consume this repo's domain documentation when 
 - `CONTEXT.md` at the repo root.
 - `docs/adr/` for architectural decisions that touch the area you are about to work in.
 - `DESIGN.md` before UI, layout, motion, visual-system, or component changes.
-- `docs/stats-and-identity-plan.md` before implementing stats, heatmaps, storage breakdowns, or durable course identity.
+- `docs/stats-and-identity-plan.md` before implementing stats, heatmaps, storage breakdowns, or learning activity.
+- `docs/adr/0008-durable-course-identity-uses-local-fingerprints.md` before changing durable course identity behavior.
 
 If either path is missing, proceed silently. The `/domain-modeling` skill creates or extends them when terms or decisions get resolved.
 

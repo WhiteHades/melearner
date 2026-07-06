@@ -13,7 +13,7 @@ Local-first desktop app for learning from course files you already have on your 
 
 </div>
 
-melearner scans a root folder, groups local videos/audio/documents into courses, and remembers progress locally. It does not download, stream, sync, or share content.
+melearner scans a root folder, groups local videos/audio/documents into courses, and remembers progress locally. It preserves progress when a course folder is renamed or moved, and it keeps missing courses in the local database until they are scanned again. It does not download, stream, sync, or share content.
 
 ## Install
 
@@ -59,6 +59,7 @@ Progress is saved in local SQLite and restored when you come back.
 - Documents, subtitles, and section-aware course outlines
 - Search across courses, sections, and lessons
 - Local SQLite progress storage
+- Durable course identity for folder renames, moves, and missing-folder recovery
 - Offline by default: no accounts, telemetry, or sync
 
 ## Docs
