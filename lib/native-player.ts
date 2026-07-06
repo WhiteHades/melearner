@@ -141,6 +141,10 @@ export function setNativePlayerBounds(bounds: NativePlayerBounds): Promise<void>
   return invoke<void>("native_player_set_bounds", { bounds })
 }
 
+export function setNativePlayerSurfaceVisible(visible: boolean): Promise<void> {
+  return invoke<void>("native_player_set_surface_visible", { visible })
+}
+
 export function stepNativePlayerFrame(): Promise<NativePlayerState> {
   return invoke<NativePlayerState>("native_player_step_frame")
 }
