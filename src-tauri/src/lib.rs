@@ -3,7 +3,6 @@ mod media;
 mod native_player;
 mod scanner;
 
-use tauri::{WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_sql::{Builder as SqlBuilder, Migration, MigrationKind};
 
 fn get_migrations() -> Vec<Migration> {
@@ -300,6 +299,7 @@ pub fn run() {
     }
 
     tauri::Builder::default()
+        .manage(StartupRouteState(startup_route))
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(
@@ -307,7 +307,7 @@ pub fn run() {
                 .add_migrations(&get_db_url(), get_migrations())
                 .build(),
         )
-        .setup(move |app| {
+        .setup(|app| {
             let _ = write_startup_log("builder.setup.entry");
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -316,7 +316,6 @@ pub fn run() {
                         .build(),
                 )?;
             }
-            build_main_window(app, startup_route.as_ref())?;
 
             let _ = write_startup_log("builder.setup.exit");
             Ok(())
@@ -348,6 +347,7 @@ pub fn run() {
             native_player::native_player_destroy,
             get_build_info,
             get_database_path,
+            get_startup_route,
             write_course_marker,
         ])
         .run(tauri::generate_context!())
@@ -467,6 +467,8 @@ struct StartupRoute {
     lesson_id: Option<String>,
 }
 
+struct StartupRouteState(Option<StartupRoute>);
+
 #[tauri::command]
 fn get_build_info() -> BuildInfo {
     BuildInfo {
@@ -486,34 +488,9 @@ fn startup_route_from_runtime() -> Option<StartupRoute> {
     )
 }
 
-fn build_main_window<R: tauri::Runtime>(
-    app: &tauri::App<R>,
-    startup_route: Option<&StartupRoute>,
-) -> tauri::Result<()> {
-    let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()));
-    if let Some(script) = startup_route_initialization_script(startup_route) {
-        builder = builder.initialization_script(script);
-    }
-
-    builder
-        .title("melearner")
-        .inner_size(1280.0, 800.0)
-        .min_inner_size(900.0, 600.0)
-        .resizable(true)
-        .fullscreen(false)
-        .center()
-        .decorations(false)
-        .build()?;
-
-    Ok(())
-}
-
-fn startup_route_initialization_script(route: Option<&StartupRoute>) -> Option<String> {
-    let route = route?;
-    let route_json = serde_json::to_string(route).ok()?;
-    Some(format!(
-        "window.__MELEARNER_STARTUP_ROUTE__ = {route_json};"
-    ))
+#[tauri::command]
+fn get_startup_route(state: tauri::State<'_, StartupRouteState>) -> Option<StartupRoute> {
+    state.0.clone()
 }
 
 fn startup_route_from_sources(
@@ -598,20 +575,6 @@ mod tests {
         assert_eq!(
             startup_route_from_sources(["--open-lesson", "lesson-1"], None, None),
             None
-        );
-    }
-
-    #[test]
-    fn startup_route_initialization_script_sets_window_route() {
-        assert_eq!(
-            startup_route_initialization_script(Some(&StartupRoute {
-                course_id: "course-1".to_string(),
-                lesson_id: Some("lesson-1".to_string()),
-            })),
-            Some(
-                "window.__MELEARNER_STARTUP_ROUTE__ = {\"courseId\":\"course-1\",\"lessonId\":\"lesson-1\"};"
-                    .to_string()
-            )
         );
     }
 }
