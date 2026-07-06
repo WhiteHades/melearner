@@ -4,9 +4,13 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { useShallow } from "zustand/react/shallow"
 import { parseAsString, useQueryState } from "nuqs"
 import {
+  BarChart3,
   BookOpen,
+  CalendarDays,
   CheckCircle2,
+  Clock,
   FolderOpen,
+  HardDrive,
   LayoutGrid,
   List,
   Loader2,
@@ -36,11 +40,12 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { frontendLog } from "@/lib/frontend-log"
-import { markCourseAccessed, scanLibraryAt } from "@/lib/operations"
+import { loadActivityDays, markCourseAccessed, scanLibraryAt } from "@/lib/operations"
+import { buildLearningStats, type LearningStats } from "@/lib/stats"
 import { useCourseStore } from "@/lib/stores/course-store"
 import { getBuildInfo, isTauri, selectFolderDialog, type BuildInfo } from "@/lib/tauri"
 import { cleanSectionName, cn } from "@/lib/utils"
-import type { Course, Lesson } from "@/types"
+import type { ActivityDay, Course, Lesson } from "@/types"
 
 type View = "library" | "viewer"
 type ViewMode = "grid" | "list"
@@ -115,12 +120,14 @@ function LibraryDashboard({
   const [buildInfo, setBuildInfo] = useState<BuildInfo | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>("grid")
   const [searchQuery, setSearchQuery] = useState("")
+  const [activityDays, setActivityDays] = useState<ActivityDay[]>([])
   const loadedCourses = useMemo(() => (hasHydrated ? courses : []), [courses, hasHydrated])
 
   const resumeCourses = useMemo(() => selectResumeCourses(loadedCourses), [loadedCourses])
   const continueCourse = resumeCourses[0] ?? null
   const continueLesson = continueCourse ? selectContinueLesson(continueCourse) : null
   const visibleCourses = useMemo(() => filterCourses(loadedCourses, searchQuery), [loadedCourses, searchQuery])
+  const stats = useMemo(() => buildLearningStats(loadedCourses, activityDays), [loadedCourses, activityDays])
   const hasCourses = loadedCourses.length > 0
   const displayLibraryPath = libraryPath ? formatDisplayPath(libraryPath) : null
   const isBootstrapping = !hasHydrated
@@ -142,6 +149,21 @@ function LibraryDashboard({
       .then(setBuildInfo)
       .catch(() => setBuildInfo(null))
   }, [])
+
+  useEffect(() => {
+    if (!hasHydrated) return
+    let cancelled = false
+    loadActivityDays(84)
+      .then((days) => {
+        if (!cancelled) setActivityDays(days)
+      })
+      .catch(() => {
+        if (!cancelled) setActivityDays([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [hasHydrated, loadedCourses])
 
   useEffect(() => {
     if (!isTauri()) return
@@ -328,6 +350,8 @@ function LibraryDashboard({
 
           {!hasHydrated && <CourseSkeletonRail />}
 
+          {hasCourses && <LibraryStatsPanel stats={stats} />}
+
           {hasCourses && (
             <section className="flex flex-col gap-4">
               <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
@@ -437,6 +461,185 @@ function LibraryDashboard({
       </CommandDialog>
     </div>
   )
+}
+
+function LibraryStatsPanel({ stats }: { stats: LearningStats }) {
+  const topCourses = stats.courses.slice(0, 4)
+
+  return (
+    <section className="grid gap-5 xl:grid-cols-[minmax(0,1.4fr)_minmax(22rem,0.9fr)]">
+      <div className="paper-panel rounded-2xl p-5">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <StatTile
+            icon={BookOpen}
+            label="Courses"
+            value={`${stats.availableCourses}/${stats.totalCourses}`}
+            detail={stats.missingCourses > 0 ? `${stats.missingCourses} missing` : "All available"}
+          />
+          <StatTile
+            icon={BarChart3}
+            label="Completed"
+            value={`${stats.completionPercent}%`}
+            detail={`${stats.completedLessons}/${stats.lessons} lessons`}
+          />
+          <StatTile
+            icon={Clock}
+            label="Watched"
+            value={formatStatDuration(stats.watchedSeconds)}
+            detail={stats.totalSeconds > 0 ? `${formatStatDuration(Math.max(0, stats.totalSeconds - stats.watchedSeconds))} left` : `${stats.activeDays} active days`}
+          />
+          <StatTile
+            icon={HardDrive}
+            label="Storage"
+            value={formatBytes(stats.bytes)}
+            detail={`${stats.sections} sections`}
+          />
+        </div>
+
+        <div className="mt-5 grid gap-5 lg:grid-cols-2">
+          <div className="flex min-w-0 flex-col gap-3">
+            <h3 className="text-sm font-semibold">Media mix</h3>
+            <div className="flex flex-col gap-2">
+              {stats.mediaTypes.map((item) => (
+                <MediaTypeRow key={item.type} item={item} totalBytes={stats.bytes} />
+              ))}
+            </div>
+          </div>
+          <div className="flex min-w-0 flex-col gap-3">
+            <h3 className="text-sm font-semibold">Top courses</h3>
+            <div className="flex flex-col gap-2">
+              {topCourses.map((course) => (
+                <div key={course.id} className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">{course.name}</p>
+                    <p className="text-xs text-muted-foreground">{course.completedLessons}/{course.lessons} complete</p>
+                  </div>
+                  <div className="shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+                    <div>{formatStatDuration(course.watchedSeconds)}</div>
+                    <div>{formatBytes(course.bytes)}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="paper-panel rounded-2xl p-5">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold">Activity</h3>
+            <p className="text-xs text-muted-foreground">{stats.activeDays} active days in 12 weeks</p>
+          </div>
+          <CalendarDays className="size-4 shrink-0 text-muted-foreground" />
+        </div>
+        <ActivityHeatmap days={stats.activityDays} />
+      </div>
+    </section>
+  )
+}
+
+function StatTile({
+  icon: Icon,
+  label,
+  value,
+  detail,
+}: {
+  icon: typeof BookOpen
+  label: string
+  value: string
+  detail: string
+}) {
+  return (
+    <div className="min-w-0 rounded-xl border border-border bg-background p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <span className="text-xs font-medium uppercase text-muted-foreground">{label}</span>
+        <Icon className="size-4 shrink-0 text-primary" />
+      </div>
+      <div className="truncate text-2xl font-semibold tabular-nums">{value}</div>
+      <div className="mt-1 truncate text-xs text-muted-foreground">{detail}</div>
+    </div>
+  )
+}
+
+function MediaTypeRow({ item, totalBytes }: { item: LearningStats["mediaTypes"][number]; totalBytes: number }) {
+  const percent = totalBytes > 0 ? Math.round((item.bytes / totalBytes) * 100) : 0
+  return (
+    <div className="grid gap-1.5">
+      <div className="flex items-center justify-between gap-3 text-xs">
+        <span className="capitalize text-muted-foreground">{item.type}</span>
+        <span className="shrink-0 tabular-nums">{formatBytes(item.bytes)}</span>
+      </div>
+      <div className="h-2 overflow-hidden rounded-full bg-muted">
+        <div className="h-full rounded-full bg-primary" style={{ width: `${percent}%` }} />
+      </div>
+    </div>
+  )
+}
+
+function ActivityHeatmap({ days }: { days: ActivityDay[] }) {
+  const cells = buildHeatmapCells(days, 84)
+  const maxWatched = Math.max(1, ...cells.map((day) => day.watchedSeconds))
+
+  return (
+    <div className="grid grid-flow-col grid-rows-7 gap-1 overflow-x-auto pb-1">
+      {cells.map((day) => {
+        const level = day.watchedSeconds === 0
+          ? 0
+          : Math.max(1, Math.ceil((day.watchedSeconds / maxWatched) * 4))
+        return (
+          <div
+            key={day.date}
+            title={`${day.date}: ${formatStatDuration(day.watchedSeconds)}`}
+            aria-label={`${day.date}: ${formatStatDuration(day.watchedSeconds)}`}
+            className={cn(
+              "size-3 rounded-[3px] border border-border",
+              level === 0 && "bg-muted",
+              level === 1 && "bg-accent",
+              level === 2 && "bg-primary/35",
+              level === 3 && "bg-primary/65",
+              level === 4 && "bg-primary"
+            )}
+          />
+        )
+      })}
+    </div>
+  )
+}
+
+function buildHeatmapCells(days: ActivityDay[], count: number): ActivityDay[] {
+  const byDate = new Map(days.map((day) => [day.date, day]))
+  const end = new Date()
+  end.setUTCHours(0, 0, 0, 0)
+
+  return Array.from({ length: count }, (_, index) => {
+    const date = new Date(end)
+    date.setUTCDate(end.getUTCDate() - (count - index - 1))
+    const key = date.toISOString().slice(0, 10)
+    return byDate.get(key) ?? { date: key, watchedSeconds: 0, lessonsTouched: 0, completions: 0 }
+  })
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  const units = ["KB", "MB", "GB", "TB"]
+  let value = bytes / 1024
+  let unit = units[0]
+  for (let index = 1; index < units.length && value >= 1024; index++) {
+    value /= 1024
+    unit = units[index]
+  }
+  return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${unit}`
+}
+
+function formatStatDuration(seconds: number): string {
+  const rounded = Math.max(0, Math.round(seconds))
+  if (rounded < 60) return `${rounded}s`
+  const minutes = Math.floor(rounded / 60)
+  if (minutes < 60) return `${minutes}m`
+  const hours = Math.floor(minutes / 60)
+  const remainingMinutes = minutes % 60
+  return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`
 }
 
 function summarizeCourse(course: Course) {

@@ -1,10 +1,11 @@
 import { nanoid } from "nanoid"
-import type { Course, Note } from "@/types"
+import type { ActivityDay, Course, Note } from "@/types"
 import { useCourseStore } from "@/lib/stores/course-store"
 import { processScanResult } from "@/lib/course-utils"
 import { indexCourses } from "@/lib/search"
 import { scanFolder, isTauri } from "@/lib/tauri"
 import {
+  listLessonActivityDays,
   syncLibrary,
   updateCourseLastAccessed,
   updateLessonProgress as persistLessonProgress,
@@ -137,6 +138,11 @@ export async function recordLessonProgress(lessonId: string, progress: LessonPro
   const { updateLessonProgress, markLessonComplete } = useCourseStore.getState()
   updateLessonProgress(lessonId, progress.watchedTime, progress.lastPosition)
   markLessonComplete(lessonId, progress.completed)
+}
+
+export async function loadActivityDays(limitDays = 84): Promise<ActivityDay[]> {
+  if (!isTauri()) return []
+  return listLessonActivityDays(limitDays)
 }
 
 export async function listNotes(lessonId: string): Promise<Note[]> {

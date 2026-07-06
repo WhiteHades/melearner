@@ -52,6 +52,13 @@ export interface Note {
   createdAt: string
 }
 
+export interface ActivityDay {
+  date: string
+  watchedSeconds: number
+  lessonsTouched: number
+  completions: number
+}
+
 export type FileType = "video" | "audio" | "document" | "subtitle" | "quiz" | "unknown"
 
 export const VIDEO_EXTENSIONS = [".mp4", ".mkv", ".webm", ".mov", ".avi", ".m4v"]

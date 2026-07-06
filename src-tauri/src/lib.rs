@@ -196,6 +196,24 @@ fn get_migrations() -> Vec<Migration> {
                   CREATE INDEX IF NOT EXISTS idx_lessons_course_relative_path ON lessons(course_id, relative_path);",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 16,
+            description: "create_lesson_activity",
+            sql: "CREATE TABLE IF NOT EXISTS lesson_activity (
+                id TEXT PRIMARY KEY,
+                course_id TEXT NOT NULL,
+                lesson_id TEXT NOT NULL,
+                activity_date TEXT NOT NULL,
+                watched_seconds INTEGER DEFAULT 0,
+                completed INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE,
+                FOREIGN KEY (lesson_id) REFERENCES lessons(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_lesson_activity_date ON lesson_activity(activity_date);
+            CREATE INDEX IF NOT EXISTS idx_lesson_activity_lesson ON lesson_activity(lesson_id);",
+            kind: MigrationKind::Up,
+        },
     ]
 }
 

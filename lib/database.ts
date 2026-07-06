@@ -1,5 +1,5 @@
 import Database from "@tauri-apps/plugin-sql"
-import type { Course, Lesson, Note, Section, SubtitleFile } from "@/types"
+import type { ActivityDay, Course, Lesson, Note, Section, SubtitleFile } from "@/types"
 import { isTauri, getDatabasePath } from "./tauri.ts"
 import {
   persistedLessonIdentitySignature,
@@ -72,6 +72,20 @@ type PersistedNoteRow = {
 
 type PersistedSettingRow = {
   value: string | null
+}
+
+type PersistedLessonProgressRow = {
+  course_id: string
+  watched_time: number | null
+  last_position: number | null
+  completed: number | null
+}
+
+type PersistedActivityDayRow = {
+  activity_date: string
+  watched_seconds: number | null
+  lessons_touched: number | null
+  completions: number | null
 }
 
 type SyncLibraryResult = {
@@ -203,6 +217,18 @@ async function executeTransaction<T>(database: DatabaseConnection, work: () => P
 
 function makeSubtitleId(lessonId: string, index: number): string {
   return `${lessonId}:subtitle:${index}`
+}
+
+function makeActivityId(lessonId: string): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID()
+  }
+
+  return `${lessonId}:activity:${Date.now()}:${Math.random().toString(36).slice(2)}`
+}
+
+function todayKey(): string {
+  return new Date().toISOString().slice(0, 10)
 }
 
 async function selectPersistedCourses(paths: string[]): Promise<PersistedCourseRow[]> {
@@ -830,10 +856,71 @@ export async function updateLessonProgress(
   const database = await getDatabase()
   if (!database) return
 
-  await database.execute(
-    `UPDATE lessons SET watched_time = $1, last_position = $2, completed = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4`,
-    [watchedTime, lastPosition, completed ? 1 : 0, lessonId]
+  const rows = await database.select<PersistedLessonProgressRow[]>(
+    `SELECT course_id, watched_time, last_position, completed FROM lessons WHERE id = $1`,
+    [lessonId]
   )
+  const previous = rows[0]
+  if (!previous) return
+
+  const previousWatchedTime = previous.watched_time ?? 0
+  const watchedDelta = Math.max(0, Math.round(watchedTime - previousWatchedTime))
+  const completedValue = completed ? 1 : 0
+  const completionChanged = Boolean(previous.completed) !== completed
+
+  await executeTransaction(database, async () => {
+    await database.execute(
+      `UPDATE lessons SET watched_time = $1, last_position = $2, completed = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4`,
+      [watchedTime, lastPosition, completedValue, lessonId]
+    )
+
+    if (watchedDelta > 0 || completionChanged) {
+      await database.execute(
+        `INSERT INTO lesson_activity (
+          id,
+          course_id,
+          lesson_id,
+          activity_date,
+          watched_seconds,
+          completed,
+          created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)`,
+        [
+          makeActivityId(lessonId),
+          previous.course_id,
+          lessonId,
+          todayKey(),
+          watchedDelta,
+          completionChanged && completed ? 1 : 0,
+        ]
+      )
+    }
+  })
+}
+
+export async function listLessonActivityDays(limitDays = 84): Promise<ActivityDay[]> {
+  const database = await getDatabase()
+  if (!database) return []
+
+  const rows = await database.select<PersistedActivityDayRow[]>(
+    `SELECT
+       activity_date,
+       SUM(watched_seconds) AS watched_seconds,
+       COUNT(DISTINCT lesson_id) AS lessons_touched,
+       SUM(completed) AS completions
+     FROM lesson_activity
+     WHERE activity_date >= date('now', $1)
+     GROUP BY activity_date
+     ORDER BY activity_date ASC`,
+    [`-${limitDays} days`]
+  )
+
+  return rows.map((row) => ({
+    date: row.activity_date,
+    watchedSeconds: row.watched_seconds ?? 0,
+    lessonsTouched: row.lessons_touched ?? 0,
+    completions: row.completions ?? 0,
+  }))
 }
 
 export async function updateCourseLastAccessed(
