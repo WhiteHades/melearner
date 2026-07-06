@@ -2,6 +2,7 @@
 
 import { useEffect } from "react"
 import { log } from "evlog/next/client"
+import { hydrateCourseThumbnails } from "@/lib/course-thumbnails"
 import { initDatabase, loadPersistedLibrary, syncLibrary } from "@/lib/database"
 import { indexCourses } from "@/lib/search"
 import { useCourseStore } from "@/lib/stores/course-store"
@@ -182,6 +183,10 @@ export function AppBootstrap() {
         setCourses(library.courses)
         setLibraryPath(library.libraryPath)
         indexCourses(library.courses)
+        void hydrateCourseThumbnails(library.courses, (courses) => {
+          setCourses(courses)
+          indexCourses(courses)
+        })
         setHasHydrated(true)
         frontendLog("info", "app.bootstrap.libraryLoaded", {
           ms: Math.round(t()),
