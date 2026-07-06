@@ -1,11 +1,11 @@
 pkgname=melearner-bin
 pkgver=0.1.8
-pkgrel=2
+pkgrel=3
 pkgdesc="local-first course learner"
 arch=("x86_64")
 url="https://github.com/WhiteHades/melearner"
 license=("MIT")
-depends=("webkit2gtk-4.1" "gtk3" "libayatana-appindicator" "ffmpeg" "gst-libav" "gst-plugins-good" "xdg-utils")
+depends=("webkit2gtk-4.1" "gtk3" "libayatana-appindicator" "ffmpeg" "mpv" "gst-libav" "gst-plugins-good" "xdg-utils")
 provides=("melearner=${pkgver}")
 conflicts=("melearner")
 options=("!strip")

@@ -1,0 +1,20 @@
+pkgbase = melearner-bin
+	pkgdesc = local-first course learner
+	pkgver = 0.1.8
+	pkgrel = 3
+	url = https://github.com/WhiteHades/melearner
+	arch = x86_64
+	license = MIT
+	depends = webkit2gtk-4.1
+	depends = gtk3
+	depends = libayatana-appindicator
+	depends = ffmpeg
+	depends = mpv
+	depends = gst-libav
+	depends = gst-plugins-good
+	depends = xdg-utils
+	provides = melearner=0.1.8
+	conflicts = melearner
+	options = !strip
+
+pkgname = melearner-bin
