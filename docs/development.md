@@ -28,7 +28,7 @@ The canonical player is an in-app native playback surface controlled by typed Ta
 Current implementation state:
 
 - `src-tauri/src/native_player.rs` owns libmpv lifecycle, local-file validation, playback commands, track selection, chapter data, and structured native state.
-- `src-tauri/src/native_player/surface.rs` owns the native video surface backends. The default backend is the OpenGL/libmpv render thread, which reports `render-api:opengl` with `surfaceRenderApi=true` after attachment. `MELEARNER_SURFACE_BACKEND=window-handle` selects the older native-window-handle fallback for diagnosis.
+- `src-tauri/src/native_player/surface.rs` owns the native video surface backends. The default backend is the OpenGL/libmpv render thread, which reports `render-api:opengl` with `surfaceRenderApi=true` after attachment. Native state also reports `surfaceRenderThreadAlive`, `surfaceRenderedFrames`, and `surfaceRenderError` so runtime verification can distinguish an attached surface from a surface that is actively rendering frames. `MELEARNER_SURFACE_BACKEND=window-handle` selects the older native-window-handle fallback for diagnosis.
 - `native_player_set_bounds` creates and moves the same-process native video surface used by libmpv through the surface backend.
 - `components/video-player.tsx` owns the React/shadcn control band and surface measurement. It must not render `<video>` or `<audio>`.
 - Rust refuses visible media loads until a native surface has been attached.
