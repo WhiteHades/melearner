@@ -56,10 +56,21 @@ function removeLegacyLibrary(): void {
   window.localStorage.removeItem("melearner-storage")
 }
 
+function schedulePostHydrationWork(work: () => void): void {
+  if (typeof window === "undefined") {
+    work()
+    return
+  }
+
+  window.requestAnimationFrame(() => {
+    window.setTimeout(work, 0)
+  })
+}
+
 export function AppBootstrap() {
   const setHasHydrated = useCourseStore((state) => state.setHasHydrated)
   const setCourses = useCourseStore((state) => state.setCourses)
-  const setLibraryPath = useCourseStore((state) => state.setLibraryPath)
+  const hydrateLibrary = useCourseStore((state) => state.hydrateLibrary)
 
   useEffect(() => {
     frontendLog("info", "app.bootstrap", {
@@ -136,75 +147,76 @@ export function AppBootstrap() {
   }, [])
 
   useEffect(() => {
-    let isActive = true
+    void (async () => {
+      frontendLog("info", "app.bootstrap.dbInit.start", { ms: Math.round(t()) })
+      await initDatabase()
+      frontendLog("info", "app.bootstrap.dbInit.done", { ms: Math.round(t()) })
 
-    frontendLog("info", "app.bootstrap.dbInit.start", { ms: Math.round(t()) })
+      let library: Awaited<ReturnType<typeof loadPersistedLibrary>> | null = null
 
-    initDatabase()
-      .then(() => {
-        if (!isActive) return
-        frontendLog("info", "app.bootstrap.dbInit.done", { ms: Math.round(t()) })
-        try {
-          const legacy = readLegacyLibrary()
-          if (legacy) {
-            frontendLog("info", "app.bootstrap.legacyStorageFound", {
-              coursesCount: legacy.courses.length,
+      try {
+        const legacy = readLegacyLibrary()
+        if (legacy) {
+          frontendLog("info", "app.bootstrap.legacyStorageFound", {
+            coursesCount: legacy.courses.length,
+            libraryPath: legacy.libraryPath,
+          })
+          if (!isTauri()) {
+            library = {
+              courses: legacy.courses,
               libraryPath: legacy.libraryPath,
-            })
-            if (!isTauri()) {
-              return Promise.resolve({
-                courses: legacy.courses,
-                libraryPath: legacy.libraryPath,
-              })
             }
-            return syncLibrary(legacy.courses, legacy.libraryPath).then(() => {
-              removeLegacyLibrary()
-              frontendLog("info", "app.bootstrap.legacyStorageMigrated", {
-                coursesCount: legacy.courses.length,
-              })
-              return loadPersistedLibrary()
-            })
-          }
-          removeLegacyLibrary()
-        } catch (error) {
-          frontendLog("error", "app.bootstrap.legacyStorageCleanup.failed", { error: String(error) })
-          try {
+          } else {
+            await syncLibrary(legacy.courses, legacy.libraryPath)
             removeLegacyLibrary()
-          } catch {
-            // Old builds stored full libraries in localStorage. Cleanup is best-effort only.
+            frontendLog("info", "app.bootstrap.legacyStorageMigrated", {
+              coursesCount: legacy.courses.length,
+            })
+            library = await loadPersistedLibrary()
           }
         }
-        return loadPersistedLibrary()
+        if (!library) removeLegacyLibrary()
+      } catch (error) {
+        frontendLog("error", "app.bootstrap.legacyStorageCleanup.failed", { error: String(error) })
+        try {
+          removeLegacyLibrary()
+        } catch {
+          // Old builds stored full libraries in localStorage. Cleanup is best-effort only.
+        }
+      }
+
+      if (!library) {
+        frontendLog("info", "app.bootstrap.libraryLoad.start", { ms: Math.round(t()) })
+        library = await loadPersistedLibrary()
+      }
+      hydrateLibrary(library.courses, library.libraryPath)
+      frontendLog("info", "app.bootstrap.libraryLoad.done", {
+        ms: Math.round(t()),
+        coursesCount: library.courses.length,
+        libraryPath: library.libraryPath,
       })
-      .then((library) => {
-        if (!isActive || !library) return
-        setCourses(library.courses)
-        setLibraryPath(library.libraryPath)
+      frontendLog("info", "app.bootstrap.libraryLoaded", {
+        ms: Math.round(t()),
+        coursesCount: library.courses.length,
+        libraryPath: library.libraryPath,
+      })
+      schedulePostHydrationWork(() => {
         void indexCourses(library.courses, library.libraryPath).catch((error) => {
           frontendLog("warn", "app.bootstrap.searchIndex.failed", { error: String(error) })
         })
         void hydrateCourseThumbnails(library.courses, (courses) => {
           setCourses(courses)
         })
-        setHasHydrated(true)
-        frontendLog("info", "app.bootstrap.libraryLoaded", {
-          ms: Math.round(t()),
-          coursesCount: library.courses.length,
-          libraryPath: library.libraryPath,
-        })
       })
+    })()
       .catch((error) => {
         frontendLog("error", "app.bootstrap.dbInit.failed", {
           ms: Math.round(t()),
           error: String(error),
         })
-        if (isActive) setHasHydrated(true)
+        setHasHydrated(true)
       })
-
-    return () => {
-      isActive = false
-    }
-  }, [setCourses, setHasHydrated, setLibraryPath])
+  }, [hydrateLibrary, setCourses, setHasHydrated])
 
   return null
 }

@@ -10,6 +10,7 @@ interface CourseState {
 
 interface CourseActions {
   setCourses: (courses: Course[]) => void
+  hydrateLibrary: (courses: Course[], libraryPath: string | null) => void
   updateLessonProgress: (lessonId: string, watchedTime: number, lastPosition: number) => void
   markLessonComplete: (lessonId: string, completed: boolean) => void
   setLibraryPath: (path: string | null) => void
@@ -76,6 +77,11 @@ const createCourseStore = (set: CourseStoreSet): CourseStore => ({
   setCourses: (courses: Course[]) => {
     rebuildLessonIndex(courses)
     set({ courses })
+  },
+
+  hydrateLibrary: (courses: Course[], libraryPath: string | null) => {
+    rebuildLessonIndex(courses)
+    set({ courses, libraryPath, hasHydrated: true })
   },
 
   updateLessonProgress: (lessonId: string, watchedTime: number, lastPosition: number) => {
