@@ -1,0 +1,29 @@
+# Remove stale and redundant artifacts
+
+Stale files, generated leftovers, and obsolete code make this local-first desktop app harder to verify and release. This repo treats that clutter as a correctness risk, not harmless noise.
+
+## Decision
+
+Every implementation, documentation, release, or verification pass must remove artifacts it creates once they are no longer needed. Agents must also remove already-present stale files when the stale status is proven by live docs, tests, release notes, or current code.
+
+This applies to:
+
+- Generated build output that is not part of source control.
+- Temporary screenshots, fixture folders, package staging folders, logs, and one-off verification files.
+- Completed execution plans that duplicate current ADRs or product docs.
+- Obsolete code, comments, branches, fields, or structures made unnecessary by the same change.
+- Duplicate docs that repeat older behavior after the canonical docs have moved on.
+
+Deletion must stay conservative around user data and required tooling. Do not remove:
+
+- User libraries, app databases, or course marker files outside isolated test fixtures.
+- Required source files, package manager lockfiles, or active dependency installs.
+- Release artifacts before they have been installed, uploaded, checksummed, or otherwise consumed.
+- Compatibility code that still has a tested behavior or migration purpose.
+
+## Consequences
+
+- Future agents should not keep stale files "just in case" once the repo has a canonical replacement.
+- Cleanup is part of the task, not an optional follow-up.
+- If a file looks redundant but still has unclear ownership or migration value, leave it in place and name the uncertainty in the final summary.
+- Verification should include a targeted artifact scan after release or build work, especially for `.next`, `out`, `dist`, `target`, package files, temp screenshots, logs, and staging directories.

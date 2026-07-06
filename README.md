@@ -27,10 +27,10 @@ yay -S melearner-bin
 paru -S melearner-bin
 ```
 
-Optional manual package install: download `melearner-bin-<version>-1-x86_64.pkg.tar.zst` from the [latest release](https://github.com/WhiteHades/melearner/releases/latest), then run:
+Optional manual package install: download `melearner-bin-<version>-<pkgrel>-x86_64.pkg.tar.zst` from the [latest release](https://github.com/WhiteHades/melearner/releases/latest), then run:
 
 ```bash
-sudo pacman -U melearner-bin-<version>-1-x86_64.pkg.tar.zst
+sudo pacman -U melearner-bin-<version>-<pkgrel>-x86_64.pkg.tar.zst
 ```
 
 ### Other Linux Distros

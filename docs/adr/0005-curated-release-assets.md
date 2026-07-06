@@ -5,7 +5,7 @@ melearner releases should publish a small set of tested installer assets. the go
 for linux x86_64 releases, publish these assets:
 
 - `melearner_<version>_amd64.AppImage` for portable linux use
-- `melearner-bin-<version>-1-x86_64.pkg.tar.zst` as the native arch package asset
+- `melearner-bin-<version>-<pkgrel>-x86_64.pkg.tar.zst` as the native arch package asset
 
 for windows x86_64 releases, publish an MSI only after it is built on Windows and tested on a clean Windows VM.
 

@@ -1,6 +1,6 @@
 pkgname=melearner-bin
 pkgver=0.1.8
-pkgrel=1
+pkgrel=2
 pkgdesc="local-first course learner"
 arch=("x86_64")
 url="https://github.com/WhiteHades/melearner"

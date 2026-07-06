@@ -96,6 +96,14 @@ Public Linux releases should publish only:
 
 Do not upload `.deb` or `.rpm` unless those channels are intentionally restored and tested.
 
+## Repo Hygiene
+
+Remove stale generated artifacts, completed temporary plans, redundant docs, and obsolete code as part of the same task that makes them unnecessary. Do not keep duplicate structures or old branches for future agents to trip over.
+
+Before finishing build or release work, run a targeted artifact scan for `.next`, `out`, `dist`, `target`, package files, temp screenshots, logs, and staging directories. Keep required dependencies and release files only while they are still needed for verification, install, upload, or checksums.
+
+See `docs/adr/0009-remove-stale-and-redundant-artifacts.md`.
+
 ## Windows MSI Builds
 
 MSI builds require Windows and WiX:
