@@ -94,7 +94,7 @@ export function HomeScreen() {
   }, [view, hasHydrated, selectedCourse, setViewParam, setCourseId, setLessonId])
 
   useEffect(() => {
-    if (!hasHydrated || !isTauri() || startupRouteAppliedRef.current) return
+    if (!hasHydrated || !isTauri() || startupRouteAppliedRef.current || courses.length === 0) return
     startupRouteAppliedRef.current = true
     let cancelled = false
 
