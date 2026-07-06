@@ -353,10 +353,10 @@ impl NativePlayer {
             .get_webview_window("main")
             .ok_or_else(|| "native player host window is not available".to_string())?;
 
-        match &self.surface {
+        match &mut self.surface {
             Some(surface) => surface.move_to(&parent, bounds)?,
             None => {
-                let surface = NativeVideoSurface::attach(app, &parent, bounds)?;
+                let mut surface = NativeVideoSurface::attach(app, &parent, bounds)?;
                 surface.attach_to_mpv(&self.mpv)?;
                 self.surface = Some(surface);
             }
@@ -1584,6 +1584,14 @@ mod tests {
     }
 
     #[test]
+    fn native_surface_backend_labels_render_api_path() {
+        let backend = surface::NativeSurfaceBackend::RenderApi("opengl");
+
+        assert_eq!(backend.label(), "render-api:opengl");
+        assert!(backend.uses_render_api());
+    }
+
+    #[test]
     fn native_surface_backend_preference_is_explicit() {
         assert_eq!(
             surface::NativeSurfaceBackendPreference::from_env_value(None)
@@ -1599,14 +1607,6 @@ mod tests {
             surface::NativeSurfaceBackendPreference::from_env_value(Some("browser-video"))
                 .expect_err("invalid backend preference should fail")
                 .contains("MELEARNER_SURFACE_BACKEND")
-        );
-    }
-
-    #[test]
-    fn native_surface_render_api_request_fails_clearly_until_backend_exists() {
-        assert_eq!(
-            surface::render_api_surface_unavailable_error(),
-            "native render-api surface backend is not implemented yet; current available backend is window-handle"
         );
     }
 
