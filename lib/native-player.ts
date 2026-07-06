@@ -34,6 +34,22 @@ export type NativePlayerState = {
   currentChapterId: string | null
 }
 
+export type NativePlayerTracksEvent = {
+  audioTracks: NativeTrack[]
+  subtitleTracks: NativeTrack[]
+  selectedAudioTrackId: string | null
+  selectedSubtitleTrackId: string | null
+}
+
+export type NativePlayerChaptersEvent = {
+  chapters: NativeChapter[]
+  currentChapterId: string | null
+}
+
+export type NativePlayerFileLoadedEvent = {
+  path: string
+}
+
 export type NativePlayerBounds = {
   x: number
   y: number
@@ -123,18 +139,28 @@ export function destroyNativePlayer(): Promise<void> {
 
 export async function subscribeNativePlayerEvents({
   onState,
+  onTracks,
+  onChapters,
+  onFileLoaded,
   onEnd,
   onError,
 }: {
   onState: (state: NativePlayerState) => void
+  onTracks?: (tracks: NativePlayerTracksEvent) => void
+  onChapters?: (chapters: NativePlayerChaptersEvent) => void
+  onFileLoaded?: (file: NativePlayerFileLoadedEvent) => void
   onEnd: (state: NativePlayerState) => void
   onError: (message: string) => void
 }): Promise<() => void> {
-  const unlisteners = await Promise.all([
+  const listeners = [
     listen<NativePlayerState>("native-player://state", (event) => onState(event.payload)),
+    listen<NativePlayerTracksEvent>("native-player://tracks", (event) => onTracks?.(event.payload)),
+    listen<NativePlayerChaptersEvent>("native-player://chapters", (event) => onChapters?.(event.payload)),
+    listen<NativePlayerFileLoadedEvent>("native-player://file-loaded", (event) => onFileLoaded?.(event.payload)),
     listen<NativePlayerState>("native-player://end-file", (event) => onEnd(event.payload)),
     listen<{ message: string }>("native-player://error", (event) => onError(event.payload.message)),
-  ])
+  ]
+  const unlisteners = await Promise.all(listeners)
   return () => {
     for (const unlisten of unlisteners) unlisten()
   }

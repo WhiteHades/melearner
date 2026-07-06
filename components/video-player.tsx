@@ -273,6 +273,33 @@ function VideoPlayerComponent({
       onState: (next) => {
         if (!cancelled && (next.path === lesson.path || next.path === null)) setNativeState(next)
       },
+      onTracks: (next) => {
+        if (cancelled) return
+        setNativeState((current) => {
+          if (current.path !== lesson.path) return current
+          return {
+            ...current,
+            audioTracks: next.audioTracks,
+            subtitleTracks: next.subtitleTracks,
+            selectedAudioTrackId: next.selectedAudioTrackId,
+            selectedSubtitleTrackId: next.selectedSubtitleTrackId,
+          }
+        })
+      },
+      onChapters: (next) => {
+        if (cancelled) return
+        setNativeState((current) => {
+          if (current.path !== lesson.path) return current
+          return {
+            ...current,
+            chapters: next.chapters,
+            currentChapterId: next.currentChapterId,
+          }
+        })
+      },
+      onFileLoaded: (next) => {
+        if (!cancelled && next.path === lesson.path) setError(null)
+      },
       onEnd: (next) => {
         if (!cancelled && next.path === lesson.path) onComplete()
       },
