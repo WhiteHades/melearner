@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/tooltip"
 import {
   destroyNativePlayer,
+  getNativePlayerState,
   loadNativePlayerFile,
   pauseNativePlayer,
   playNativePlayer,
@@ -59,6 +60,7 @@ interface VideoPlayerProps {
 
 const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
 const POSITION_SAVE_MS = 5000
+const STATE_POLL_MS = 250
 
 const initialState: NativePlayerState = {
   path: null,
@@ -146,6 +148,34 @@ function VideoPlayerComponent({
       window.removeEventListener("resize", updateBounds)
     }
   }, [updateBounds])
+
+  useEffect(() => {
+    if (!isPlayable || !isTauri()) return
+    let cancelled = false
+    let inFlight = false
+
+    const poll = () => {
+      if (inFlight) return
+      inFlight = true
+      void getNativePlayerState()
+        .then((next) => {
+          if (!cancelled && next.path === lesson.path) setNativeState(next)
+        })
+        .catch((reason) => {
+          if (!cancelled) setError({ path: lesson.path, message: String(reason) })
+        })
+        .finally(() => {
+          inFlight = false
+        })
+    }
+
+    poll()
+    const interval = window.setInterval(poll, STATE_POLL_MS)
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
+  }, [isPlayable, lesson.path])
 
   useEffect(() => {
     const now = Date.now()
