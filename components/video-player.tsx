@@ -97,7 +97,10 @@ function VideoPlayerComponent({
   const surfaceRef = useRef<HTMLDivElement | null>(null)
   const lastSaveRef = useRef(0)
   const boundsRafRef = useRef<number | null>(null)
+  const positionRafRef = useRef<number | null>(null)
+  const isSeekingRef = useRef(false)
   const [nativeState, setNativeState] = useState<NativePlayerState>(initialState)
+  const [visibleCurrentTime, setVisibleCurrentTime] = useState(lesson.lastPosition)
   const [error, setError] = useState<{ path: string; message: string } | null>(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const isPlayable = lesson.type === "video" || lesson.type === "audio"
@@ -109,6 +112,9 @@ function VideoPlayerComponent({
     duration: lesson.duration,
   }), [autoplay, lesson.duration, lesson.lastPosition, lesson.path])
   const state = nativeState.path === lesson.path ? nativeState : fallbackState
+  const displayCurrentTime = state.duration > 0
+    ? Math.min(Math.max(visibleCurrentTime, 0), state.duration)
+    : Math.max(visibleCurrentTime, 0)
 
   const measureBounds = useCallback((): NativePlayerBounds | null => {
     const surface = surfaceRef.current
@@ -169,6 +175,46 @@ function VideoPlayerComponent({
       if (isTauri()) void destroyNativePlayer().catch(() => undefined)
     }
   }, [autoplay, isPlayable, lesson.duration, lesson.id, lesson.lastPosition, lesson.path, lesson.subtitles, libraryRoot, updateBounds])
+
+  useEffect(() => {
+    isSeekingRef.current = false
+  }, [lesson.id])
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      if (!isSeekingRef.current) setVisibleCurrentTime(state.currentTime)
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [state.currentTime, state.path])
+
+  useEffect(() => {
+    if (positionRafRef.current !== null) {
+      window.cancelAnimationFrame(positionRafRef.current)
+      positionRafRef.current = null
+    }
+
+    if (!isPlayable || state.path !== lesson.path || state.paused || state.duration <= 0 || isSeekingRef.current) return
+
+    const startedAt = performance.now()
+    const startedPosition = state.currentTime
+    const tick = (now: number) => {
+      if (isSeekingRef.current) {
+        positionRafRef.current = null
+        return
+      }
+      const elapsedSeconds = ((now - startedAt) / 1000) * state.rate
+      setVisibleCurrentTime(Math.min(state.duration, startedPosition + elapsedSeconds))
+      positionRafRef.current = window.requestAnimationFrame(tick)
+    }
+
+    positionRafRef.current = window.requestAnimationFrame(tick)
+    return () => {
+      if (positionRafRef.current !== null) {
+        window.cancelAnimationFrame(positionRafRef.current)
+        positionRafRef.current = null
+      }
+    }
+  }, [isPlayable, lesson.path, state.currentTime, state.duration, state.path, state.paused, state.rate])
 
   useEffect(() => {
     const surface = surfaceRef.current
@@ -269,8 +315,8 @@ function VideoPlayerComponent({
   }, [isPlayable, onComplete, onProgress, state.currentTime, state.duration])
 
   const formattedPosition = useMemo(() => {
-    return `${formatDuration(state.currentTime)} / ${formatDuration(state.duration)}`
-  }, [state.currentTime, state.duration])
+    return `${formatDuration(displayCurrentTime)} / ${formatDuration(state.duration)}`
+  }, [displayCurrentTime, state.duration])
 
   const togglePlayback = useCallback(() => {
     const nextPaused = !state.paused
@@ -281,13 +327,26 @@ function VideoPlayerComponent({
 
   const changeSeek = useCallback((value: number[]) => {
     const currentTime = value[0] ?? 0
+    isSeekingRef.current = true
+    setVisibleCurrentTime(currentTime)
     setNativeState((current) => ({ ...(current.path === lesson.path ? current : fallbackState), currentTime }))
   }, [fallbackState, lesson.path])
 
   const commitSeek = useCallback((value: number[]) => {
     const currentTime = value[0] ?? 0
+    isSeekingRef.current = true
+    setVisibleCurrentTime(currentTime)
     setNativeState((current) => ({ ...(current.path === lesson.path ? current : fallbackState), currentTime }))
-    void seekNativePlayer({ seconds: currentTime, mode: "absolute" }).catch((reason) => setError({ path: lesson.path, message: String(reason) }))
+    void seekNativePlayer({ seconds: currentTime, mode: "absolute" })
+      .then((next) => {
+        isSeekingRef.current = false
+        setNativeState(next)
+        setVisibleCurrentTime(next.currentTime)
+      })
+      .catch((reason) => {
+        isSeekingRef.current = false
+        setError({ path: lesson.path, message: String(reason) })
+      })
     onProgress(currentTime, state.duration)
   }, [fallbackState, lesson.path, onProgress, state.duration])
 
@@ -387,7 +446,7 @@ function VideoPlayerComponent({
             onValueChange={changeSeek}
             onValueCommit={commitSeek}
             step={0.1}
-            value={[Math.min(state.currentTime, Math.max(state.duration, 1))]}
+            value={[Math.min(displayCurrentTime, Math.max(state.duration, 1))]}
           />
           <div className="flex flex-wrap items-center gap-3">
             <PlayerIconButton label={state.muted ? "Unmute" : "Mute"} onClick={toggleMute}>
