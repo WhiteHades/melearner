@@ -1,7 +1,10 @@
 export interface Course {
   id: string
+  identityId: string
   name: string
   path: string
+  fingerprint: string | null
+  missingSince: string | null
   sections: Section[]
   progress: number
   totalDuration: number
@@ -24,6 +27,7 @@ export interface Lesson {
   sectionName: string
   name: string
   path: string
+  relativePath: string | null
   type: "video" | "audio" | "document" | "quiz"
   duration: number
   fileSize: number

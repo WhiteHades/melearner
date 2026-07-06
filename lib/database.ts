@@ -298,6 +298,7 @@ function rowsToCourses(
         sectionName: section.name,
         name: lessonRow.name,
         path: lessonRow.path,
+        relativePath: null,
         type: lessonRow.type,
         duration: lessonRow.duration ?? 0,
         fileSize: lessonRow.file_size ?? 0,
@@ -319,8 +320,11 @@ function rowsToCourses(
 
     return {
       id: courseRow.id,
+      identityId: courseRow.id,
       name: courseRow.name,
       path: courseRow.path,
+      fingerprint: null,
+      missingSince: null,
       sections,
       progress: lessons.length > 0 ? Math.round((lessons.filter((lesson) => lesson.completed).length / lessons.length) * 100) : 0,
       totalDuration: courseRow.total_duration ?? 0,

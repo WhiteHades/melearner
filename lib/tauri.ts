@@ -4,6 +4,7 @@ import { open } from "@tauri-apps/plugin-dialog"
 export interface FileEntry {
   id: string
   path: string
+  relative_path: string
   name: string
   file_type: "video" | "audio" | "document" | "subtitle" | "quiz" | "unknown"
   size: number
@@ -20,6 +21,7 @@ export interface CourseData {
   id: string
   name: string
   path: string
+  fingerprint: string
   sections: SectionData[]
 }
 

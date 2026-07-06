@@ -86,6 +86,7 @@ function sectionDataToSection(
       sectionName: data.name,
       name: file.name.replace(/\.[^.]+$/, ""),
       path: file.path,
+      relativePath: file.relative_path,
       type: mapFileType(file.file_type),
       duration: 0,
       fileSize: file.size,
@@ -113,8 +114,11 @@ function courseDataToCourse(data: CourseData): Course {
 
   return {
     id: courseId,
+    identityId: courseId,
     name: data.name,
     path: data.path,
+    fingerprint: data.fingerprint,
+    missingSince: null,
     sections,
     progress: 0,
     totalDuration: 0,

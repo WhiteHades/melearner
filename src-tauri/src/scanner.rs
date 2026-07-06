@@ -47,6 +47,7 @@ const WARNING_LIMIT: usize = 24;
 pub struct FileEntry {
     pub id: Box<str>,
     pub path: Box<str>,
+    pub relative_path: Box<str>,
     pub name: Box<str>,
     pub file_type: FileType,
     pub size: u64,
@@ -76,6 +77,7 @@ pub struct CourseData {
     pub id: Box<str>,
     pub name: Box<str>,
     pub path: Box<str>,
+    pub fingerprint: Box<str>,
     pub sections: Box<[SectionData]>,
 }
 
@@ -112,6 +114,16 @@ fn hash_path_to_id(path: &Path) -> Box<str> {
     let mut h = new_hasher();
     h.write(path.to_string_lossy().as_bytes());
     format!("{:016x}", h.finish()).into()
+}
+
+fn normalized_relative_path(path: &Path, base: &Path) -> Box<str> {
+    let relative = path.strip_prefix(base).unwrap_or(path);
+    relative
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+        .into_boxed_str()
 }
 
 fn get_file_type(path: &Path) -> FileType {
@@ -305,7 +317,43 @@ fn read_dir_sorted(path: &Path) -> Vec<std::fs::DirEntry> {
     entries
 }
 
-fn file_entry(path: &Path, file_type: FileType) -> Option<FileEntry> {
+fn file_type_key(file_type: FileType) -> &'static [u8] {
+    match file_type {
+        FileType::Video => b"video",
+        FileType::Audio => b"audio",
+        FileType::Document => b"document",
+        FileType::Subtitle => b"subtitle",
+        FileType::Quiz => b"quiz",
+        FileType::Unknown => b"unknown",
+    }
+}
+
+fn course_fingerprint(sections: &[SectionData]) -> Box<str> {
+    let mut h = new_hasher();
+    h.write(b"course-fingerprint-v1");
+
+    for section in sections {
+        h.write(b"\x1fsection\x1e");
+        h.write(section.name.as_bytes());
+
+        for file in section
+            .files
+            .iter()
+            .filter(|file| file.file_type != FileType::Subtitle)
+        {
+            h.write(b"\x1ffile\x1e");
+            h.write(file.relative_path.as_bytes());
+            h.write(b"\x1e");
+            h.write(file_type_key(file.file_type));
+            h.write(b"\x1e");
+            h.write(&file.size.to_le_bytes());
+        }
+    }
+
+    format!("{:016x}", h.finish()).into()
+}
+
+fn file_entry(path: &Path, file_type: FileType, course_root: &Path) -> Option<FileEntry> {
     let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
     let name = path
         .file_name()
@@ -315,15 +363,16 @@ fn file_entry(path: &Path, file_type: FileType) -> Option<FileEntry> {
     Some(FileEntry {
         id: hash_path_to_id(path),
         path: path.to_string_lossy().into_owned().into_boxed_str(),
+        relative_path: normalized_relative_path(path, course_root),
         name,
         file_type,
         size,
     })
 }
 
-fn scan_directory(dir: &Path) -> (Box<[FileEntry]>, Vec<String>) {
+fn scan_directory(dir: &Path, course_root: &Path) -> (Box<[FileEntry]>, Vec<String>) {
     let mut warnings = Vec::new();
-    let files = WalkDir::new(dir)
+    let mut files = WalkDir::new(dir)
         .skip_hidden(true)
         .into_iter()
         .filter_map(|e| e.ok())
@@ -337,10 +386,12 @@ fn scan_directory(dir: &Path) -> (Box<[FileEntry]>, Vec<String>) {
                 return None;
             }
             (is_media_file(ft) || ft == FileType::Subtitle)
-                .then(|| file_entry(&p, ft))
+                .then(|| file_entry(&p, ft, course_root))
                 .flatten()
         })
         .collect::<Vec<_>>();
+
+    files.sort_by(|a, b| natural_cmp(&a.relative_path, &b.relative_path));
 
     (files.into_boxed_slice(), warnings)
 }
@@ -366,7 +417,7 @@ fn scan_course(course_path: &Path) -> (CourseData, Vec<String>) {
         }
 
         if path.is_dir() {
-            let (files, section_warnings) = scan_directory(&path);
+            let (files, section_warnings) = scan_directory(&path, course_path);
             extend_warnings(&mut warnings, section_warnings);
             if !files.is_empty() {
                 sections.push(SectionData {
@@ -387,7 +438,7 @@ fn scan_course(course_path: &Path) -> (CourseData, Vec<String>) {
                 continue;
             }
             if is_media_file(file_type) || file_type == FileType::Subtitle {
-                if let Some(entry) = file_entry(&path, file_type) {
+                if let Some(entry) = file_entry(&path, file_type, course_path) {
                     root_files.push(entry);
                 }
             }
@@ -414,6 +465,7 @@ fn scan_course(course_path: &Path) -> (CourseData, Vec<String>) {
             .cmp(&b.order)
             .then_with(|| natural_cmp(&a.name, &b.name))
     });
+    let fingerprint = course_fingerprint(&sections);
 
     (
         CourseData {
@@ -424,6 +476,7 @@ fn scan_course(course_path: &Path) -> (CourseData, Vec<String>) {
                 .map(Box::from)
                 .unwrap_or_default(),
             path: course_path.to_string_lossy().into_owned().into_boxed_str(),
+            fingerprint,
             sections: sections.into_boxed_slice(),
         },
         warnings,
@@ -602,7 +655,8 @@ pub async fn get_file_info(path: String) -> Result<FileEntry, String> {
     }
 
     let file_type = get_file_type(&p);
-    file_entry(&p, file_type).ok_or_else(|| "failed to read file metadata".to_string())
+    let course_root = p.parent().unwrap_or_else(|| Path::new(""));
+    file_entry(&p, file_type, course_root).ok_or_else(|| "failed to read file metadata".to_string())
 }
 
 #[cfg(test)]
@@ -777,6 +831,46 @@ mod tests {
                 .iter()
                 .any(|warning| warning.contains("incomplete folder"))
         );
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn course_fingerprint_survives_parent_move_and_folder_rename() {
+        let root = temp_root("fingerprint-move");
+        let original = root.join("Library A/Arm Assembly");
+        let moved = root.join("Library B/Renamed Arm Assembly");
+        touch(&original.join("01 Intro/01 welcome.mp4"));
+        touch(&original.join("01 Intro/02 registers.pdf"));
+        touch(&moved.join("01 Intro/01 welcome.mp4"));
+        touch(&moved.join("01 Intro/02 registers.pdf"));
+
+        let (original_course, _) = scan_course(&original);
+        let (moved_course, _) = scan_course(&moved);
+
+        assert_ne!(original_course.id, moved_course.id);
+        assert_eq!(original_course.fingerprint, moved_course.fingerprint);
+        assert_eq!(
+            original_course.sections[0].files[0].relative_path.as_ref(),
+            "01 Intro/01 welcome.mp4"
+        );
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn course_fingerprint_changes_when_learning_items_change() {
+        let root = temp_root("fingerprint-content");
+        let first = root.join("Library A/Course");
+        let second = root.join("Library B/Course");
+        touch(&first.join("01 Intro/01 welcome.mp4"));
+        touch(&second.join("01 Intro/01 welcome.mp4"));
+        touch(&second.join("01 Intro/02 extra.mp4"));
+
+        let (first_course, _) = scan_course(&first);
+        let (second_course, _) = scan_course(&second);
+
+        assert_ne!(first_course.fingerprint, second_course.fingerprint);
 
         cleanup(&root);
     }
