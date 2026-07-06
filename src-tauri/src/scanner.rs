@@ -1,5 +1,4 @@
 use jwalk::WalkDir;
-use rayon::prelude::*;
 use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -613,7 +612,7 @@ pub fn scan_library(root_path: &str) -> ScanResult {
     }
 
     let scanned = subdirs
-        .par_iter()
+        .iter()
         .map(|dir| {
             std::panic::catch_unwind(|| scan_course(dir))
                 .map_err(|_| format!("skipped course after scanner panic: {}", dir.display()))
@@ -864,6 +863,49 @@ mod tests {
                 .iter()
                 .any(|file| file.name.as_ref() == "001 - Arrays.mp4"
                     && file.file_type == FileType::Video)
+        );
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn scans_marked_course_inside_library_with_nested_sections() {
+        let root = temp_root("marked-course-library");
+        let course = root.join("Rust Basics");
+        fs::create_dir_all(&course).expect("create course");
+        fs::write(
+            course.join(COURSE_MARKER_FILE_NAME),
+            r#"{"version":1,"identityId":"course-identity-1"}"#,
+        )
+        .expect("write marker");
+        touch(&course.join("01 - Intro/001 - Welcome.mp4"));
+        touch(&course.join("02 - Ownership/001 - Borrowing.mp4"));
+
+        let result = scan_library(&root.to_string_lossy());
+
+        assert_eq!(result.scan_type, ScanType::Library);
+        assert_eq!(result.courses.len(), 1);
+        assert_eq!(
+            result.courses[0].marker_identity_id.as_deref(),
+            Some("course-identity-1")
+        );
+
+        let files = result.courses[0]
+            .sections
+            .iter()
+            .flat_map(|section| section.files.iter())
+            .collect::<Vec<_>>();
+
+        assert_eq!(files.len(), 2);
+        assert!(
+            files
+                .iter()
+                .any(|file| file.name.as_ref() == "001 - Welcome.mp4")
+        );
+        assert!(
+            files
+                .iter()
+                .any(|file| file.name.as_ref() == "001 - Borrowing.mp4")
         );
 
         cleanup(&root);

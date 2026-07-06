@@ -27,7 +27,6 @@ tauri-plugin-fs = { version = "=2.5.1", features = ["watch"] }
 tauri-plugin-dialog = "=2.7.1"
 tauri-plugin-sql = { version = "=2.4.0", features = ["sqlite"] }
 jwalk = "0.8"
-rayon = "1.10"
 dashmap = "6.1"
 notify = "6.1"
 tokio = { version = "1", features = ["rt", "macros"] }

@@ -2545,7 +2545,6 @@ dependencies = [
  "log",
  "notify 6.1.1",
  "raw-window-handle",
- "rayon",
  "seahash",
  "serde",
  "serde_json",
