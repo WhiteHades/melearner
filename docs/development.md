@@ -28,8 +28,9 @@ The canonical player is an in-app native playback surface controlled by typed Ta
 Current implementation state:
 
 - `src-tauri/src/native_player.rs` owns libmpv lifecycle, local-file validation, playback commands, track selection, chapter data, and structured native state.
-- `components/video-player.tsx` owns the React/shadcn control band and native surface placeholder. It must not render `<video>` or `<audio>`.
-- Native video presentation is not complete until a platform renderer consumes `native_player_set_bounds` and renders libmpv frames into a real native/GPU surface in the packaged app.
+- `native_player_set_bounds` creates and moves the same-process native video surface used by libmpv.
+- `components/video-player.tsx` owns the React/shadcn control band and surface measurement. It must not render `<video>` or `<audio>`.
+- Linux currently uses X11/XWayland for the native surface because the libmpv `wid` path needs an X11/XCB handle. A future Wayland-native path should use a verified libmpv render-API renderer.
 
 Rules for this pipeline:
 
@@ -38,6 +39,7 @@ Rules for this pipeline:
 - Keep FFmpeg out of ordinary playback.
 - Use FFmpeg only for queued thumbnails, metadata, or explicit future processing work.
 - Remove stale player files, dependencies, docs, aliases, and generated artifacts in the same change that replaces them.
+- After any launchable behavior change on this laptop, install the native Arch package so the desktop launcher runs the updated `/usr/bin/melearner` binary. Do not treat `~/.cargo/bin/melearner` as an installed app instance.
 
 See `docs/adr/0010-embedded-libmpv-native-playback.md`.
 

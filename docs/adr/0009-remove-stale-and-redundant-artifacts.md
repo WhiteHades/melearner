@@ -4,7 +4,7 @@ Stale files, generated leftovers, and obsolete code make this local-first deskto
 
 ## Decision
 
-Every implementation, documentation, release, or verification pass must remove artifacts it creates once they are no longer needed. Agents must also remove already-present stale files when the stale status is proven by live docs, tests, release notes, or current code. Keeping stale material "just in case" is not an acceptable default in this repository.
+Every implementation, documentation, release, or verification pass must remove artifacts it creates once they are no longer needed. Agents must also remove already-present stale files when the stale status is proven by live docs, tests, release notes, or current code. Keeping stale material "just in case" is not an acceptable default in this repository. The default action for proven stale material is deletion in the same change, not preserving it for a later cleanup pass.
 
 This applies to:
 
@@ -27,5 +27,6 @@ Deletion must stay conservative around user data and required tooling. Do not re
 - Future agents should not keep stale files "just in case" once the repo has a canonical replacement.
 - Cleanup is part of the task, not an optional follow-up.
 - Agents should proactively scan for stale references after changing behavior, especially in docs, ADRs, package metadata, desktop entries, and install/release packaging.
+- Agents should remove proven stale files, code paths, docs, generated outputs, and temporary artifacts without waiting for an extra prompt.
 - If a file looks redundant but still has unclear ownership or migration value, leave it in place and name the uncertainty in the final summary.
 - Verification should include a targeted artifact scan after release or build work, especially for `.next`, `out`, `dist`, `target`, package files, temp screenshots, logs, and staging directories.

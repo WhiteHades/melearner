@@ -35,11 +35,14 @@ The current implementation owns the native playback control path in `src-tauri/s
 
 - local-file and approved-root validation;
 - embedded `libmpv2` lifecycle;
+- a same-process native video surface created from `native_player_set_bounds`;
 - play, pause, seek, volume, mute, rate, audio track, subtitle track, chapter, frame-step, screenshot, and destroy commands;
 - structured `track-list` and `chapter-list` reads through mpv node properties;
 - React/shadcn controls in `components/video-player.tsx` with no `<video>`, `<audio>`, Shaka, or Limeplay path.
 
-The current implementation does not yet complete native video presentation. `native_player_set_bounds` records the WebView placeholder rectangle, but no platform renderer consumes those bounds to create a visible GPU/native surface. A change is not accepted as completed native playback until libmpv frames render into a real platform surface on the packaged app.
+`native_player_set_bounds` is part of the playback interface. It creates or moves a native Tauri window surface, gives its platform window handle to libmpv with `wid`, and switches libmpv from the idle `vo=null` state to GPU video output before media loading. On Linux, the current packaged-app path intentionally forces X11/XWayland because the `wid` surface needs an X11/XCB handle. Wayland-native rendering remains future work unless the app moves to a libmpv render-API renderer that is verified on Wayland.
+
+The current surface is native and in-process, but it is still a window-handle integration rather than a full libmpv render-API compositor owned by the app. A change is not accepted as completed cross-platform native playback until packaged builds visibly render libmpv frames on Windows, macOS, and Linux and pass the verification matrix below.
 
 ## Requirements
 
@@ -55,7 +58,7 @@ The current implementation does not yet complete native video presentation. `nat
 ## Migration
 
 1. Add a Rust `video_engine` module or plugin with local-file validation, libmpv lifecycle, command queue, event loop, and typed event emission.
-2. Add platform renderer implementations for Windows, macOS, and Linux.
+2. Add and verify platform video-surface implementations for Windows, macOS, and Linux.
 3. Add a typed frontend native-player bridge and store.
 4. Replace the current lesson player internals with native-player commands and events.
 5. Remove stale player files, dependencies, docs, aliases, and generated artifacts as part of the migration.
