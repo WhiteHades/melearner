@@ -12,9 +12,9 @@ Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) | REJE
 
 ## Dependency Notes
 
-- Plan 001 landed before stats dashboards or activity heatmaps. Stats and historical activity should build on `identity_id`, `fingerprint`, `missing_since`, and future `lesson_activity`.
+- Plan 001 landed before stats dashboards, activity heatmaps, and opt-in marker files. Current stats and identity behavior build on `identity_id`, `fingerprint`, `missing_since`, `lesson_activity`, and optional marker files.
 
 ## Findings Considered And Rejected
 
 - Runtime `unwrap()` in scanner log setup: not planned. The configured log paths always have a parent in the current branches, so changing it now is low leverage churn.
-- Direct implementation of marker files: not planned. `docs/stats-and-identity-plan.md` explicitly says writing hidden metadata into user course folders needs user consent or a setting first.
+- Unprompted marker-file writes: rejected. Marker files are allowed only through the explicit dashboard setting.

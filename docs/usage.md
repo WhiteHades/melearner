@@ -44,6 +44,16 @@ If a course folder is missing during a refresh, melearner keeps its progress, no
 
 If two existing courses look identical, melearner does not guess. It leaves progress on the existing records and shows a scan warning instead of assigning progress to the wrong course.
 
+## Stats and Activity
+
+The library dashboard shows local stats for courses, completion, watched progress, storage, media type mix, top courses, and recent activity. The activity heatmap is built from local `lesson_activity` rows written when lesson progress changes.
+
+## Identity Markers
+
+Identity marker files are optional. When enabled from the dashboard, melearner writes `.melearner-course.json` into available course folders. Future scans use that marker ID before fingerprint matching.
+
+Marker writing is off by default. Disabling it stops future writes but does not delete marker files already written.
+
 ## Search
 
 Use the search control or `Ctrl K` to search across courses and lessons.

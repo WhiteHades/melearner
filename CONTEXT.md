@@ -45,9 +45,9 @@ A cached playback-compatible copy generated only after the browser engine reject
 _Avoid_: Downloaded media, converted library source
 
 **Course identity**:
-The local identity model that keeps a course connected to its progress when its folder is renamed, moved, temporarily missing, or scanned again.
+The local identity model that keeps a course connected to its progress when its folder is renamed, moved, temporarily missing, or scanned again. It uses paths, local marker IDs when opted in, and conservative fingerprints.
 _Avoid_: Path-only identity
 
 **Learning activity**:
-Historical watch/read events intended for stats and heatmaps.
+Historical local lesson-progress events used for stats and heatmaps.
 _Avoid_: Telemetry, analytics

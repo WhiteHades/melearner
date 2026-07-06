@@ -21,19 +21,19 @@
 - Added scanner fingerprints that exclude absolute roots and course folder names.
 - Added conservative course and lesson matching with warnings for ambiguous reuse.
 - Added missing-folder cards that preserve progress but cannot be opened until the folder is scanned again.
-- Did not write marker files into user course folders.
+- This original phase did not write marker files into user course folders. A later phase added opt-in marker files behind a dashboard setting.
 
 ## Why This Matters
 
-melearner currently preserves progress only when scanned course and lesson paths stay stable. The product docs already name this as the next important gap: renamed, moved, or temporarily unavailable course folders should not silently break progress continuity. This plan adds the non-writing groundwork first: stable database identity, fingerprint-based rename/move matching, missing-course state, and tests. It explicitly does not write marker files into user course folders, because the repo docs say that needs user consent or a setting.
+At planning time, melearner preserved progress only when scanned course and lesson paths stayed stable. The product docs named this as the next important gap: renamed, moved, or temporarily unavailable course folders should not silently break progress continuity. This plan added the non-writing groundwork first: stable database identity, fingerprint-based rename/move matching, missing-course state, and tests. It explicitly did not write marker files into user course folders, because the repo docs required user consent or a setting.
 
 ## Current State
 
 Relevant files:
 
-- `src-tauri/src/scanner.rs` scans folders and currently derives course, section, and lesson IDs from paths.
+- At planning time, `src-tauri/src/scanner.rs` scanned folders and derived course, section, and lesson IDs from paths.
 - `src-tauri/src/lib.rs` owns SQLite migrations.
-- `lib/database.ts` hydrates and syncs scanned courses into SQLite, currently by exact `path`.
+- At planning time, `lib/database.ts` hydrated and synced scanned courses into SQLite by exact `path`.
 - `lib/course-utils.ts`, `lib/tauri.ts`, and `types/index.ts` define scan and domain shapes crossing Rust and TypeScript.
 - `docs/stats-and-identity-plan.md` records the durable identity and stats direction.
 
@@ -126,7 +126,7 @@ The local identity model that keeps a course connected to its progress when its 
 
 // CONTEXT.md:51
 Learning activity:
-Historical watch/read events used for future stats and heatmaps.
+Historical watch/read events planned at the time for stats and heatmaps.
 ```
 
 ## Commands You Will Need
@@ -344,7 +344,7 @@ All must hold:
 - [x] Scanning the same course contents from a different parent can preserve the existing course row.
 - [x] Lessons moved with a course preserve progress fields.
 - [x] Missing courses are retained in SQLite and marked missing instead of being deleted.
-- [x] No code writes marker files into user course folders.
+- [x] This phase did not write marker files into user course folders.
 - [x] Verification commands in the Test Plan exit 0.
 - [x] `plans/README.md` status row for this plan is updated.
 
@@ -363,6 +363,6 @@ Stop and report if:
 
 ## Maintenance Notes
 
-- This plan deliberately chooses a non-writing identity baseline. A later plan can add opt-in `.melearner-course.json` marker files after a consent setting or prompt exists.
-- Stats dashboards and heatmaps should build on `identity_id` and future `lesson_activity`, not on absolute paths.
+- This plan deliberately chose a non-writing identity baseline. Later work added opt-in `.melearner-course.json` marker files after the dashboard setting existed.
+- Stats dashboards and heatmaps build on `identity_id`, `fingerprint`, `missing_since`, and `lesson_activity`, not on absolute paths.
 - Reviewers should scrutinize collision and ambiguity handling. Reusing progress for the wrong course is worse than failing to match.

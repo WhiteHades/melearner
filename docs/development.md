@@ -51,21 +51,23 @@ Course identity is stored locally in SQLite. The current implementation adds:
 - `courses.fingerprint` as a non-absolute content fingerprint for reconnecting moved or renamed courses
 - `courses.missing_since` for courses that were absent during the latest scan
 - `lessons.relative_path` for preserving lesson progress when a course folder moves
+- `lesson_activity` as append-only local activity events for stats and heatmaps
 
 Matching rules:
 
 1. Match courses by exact path first.
-2. If there is no exact path match, match by fingerprint only when exactly one existing course has that fingerprint.
-3. Create a new course when there is no safe match.
-4. Never reuse progress for ambiguous course or lesson matches; return a scan warning instead.
-5. Match lessons by exact path first, then by relative path within the resolved course, then by section/name/type/file-size metadata only when unambiguous.
+2. If there is no exact path match, match by marker identity only when exactly one existing course has that identity.
+3. If there is no marker match, match by fingerprint only when exactly one existing course has that fingerprint.
+4. Create a new course when there is no safe match.
+5. Never reuse progress for ambiguous course or lesson matches; return a scan warning instead.
+6. Match lessons by exact path first, then by relative path within the resolved course, then by section/name/type/file-size metadata only when unambiguous.
 
-Fingerprints exclude the absolute root path and the course folder name, so moving or renaming a course can preserve identity when its relative learning items are unchanged. The app does not write marker files into user course folders.
+Fingerprints exclude the absolute root path and the course folder name, so moving or renaming a course can preserve identity when its relative learning items are unchanged. Marker files are opt-in and are written only after the dashboard setting is enabled.
 
-Additional verification for identity matching:
+Additional verification for identity, SQLite sync, and stats:
 
 ```bash
-node --test --experimental-transform-types lib/course-identity.test.mjs
+node --test --experimental-transform-types lib/course-identity.test.mjs lib/database-sqlite-fixture.test.mjs lib/stats.test.mjs
 ```
 
 The command currently emits Node experimental-loader warnings; the tests should still pass.
@@ -127,4 +129,4 @@ Windows media notes:
 - The frontend calls Tauri commands directly.
 - Logs live under `~/.melearner/`.
 - ADRs live in `docs/adr/`.
-- Stats and learning activity planning live in `docs/stats-and-identity-plan.md`.
+- Stats, learning activity, and course identity behavior live in `docs/stats-and-identity-plan.md`.
