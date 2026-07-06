@@ -4,7 +4,7 @@ Stale files, generated leftovers, and obsolete code make this local-first deskto
 
 ## Decision
 
-Every implementation, documentation, release, or verification pass must remove artifacts it creates once they are no longer needed. Agents must also remove already-present stale files when the stale status is proven by live docs, tests, release notes, or current code.
+Every implementation, documentation, release, or verification pass must remove artifacts it creates once they are no longer needed. Agents must also remove already-present stale files when the stale status is proven by live docs, tests, release notes, or current code. Keeping stale material "just in case" is not an acceptable default in this repository.
 
 This applies to:
 
@@ -13,6 +13,7 @@ This applies to:
 - Completed execution plans that duplicate current ADRs or product docs.
 - Obsolete code, comments, branches, fields, or structures made unnecessary by the same change.
 - Duplicate docs that repeat older behavior after the canonical docs have moved on.
+- Superseded UI paths, settings, feature flags, generated components, or package files after a replacement is fully wired and verified.
 
 Deletion must stay conservative around user data and required tooling. Do not remove:
 
@@ -25,5 +26,6 @@ Deletion must stay conservative around user data and required tooling. Do not re
 
 - Future agents should not keep stale files "just in case" once the repo has a canonical replacement.
 - Cleanup is part of the task, not an optional follow-up.
+- Agents should proactively scan for stale references after changing behavior, especially in docs, ADRs, package metadata, desktop entries, and install/release packaging.
 - If a file looks redundant but still has unclear ownership or migration value, leave it in place and name the uncertainty in the final summary.
 - Verification should include a targeted artifact scan after release or build work, especially for `.next`, `out`, `dist`, `target`, package files, temp screenshots, logs, and staging directories.
