@@ -2,12 +2,11 @@ import { nanoid } from "nanoid"
 import type { ActivityDay, Course, Note } from "@/types"
 import { useCourseStore } from "@/lib/stores/course-store"
 import { processScanResult } from "@/lib/course-utils"
+import { hydrateCourseThumbnails } from "@/lib/course-thumbnails"
 import { indexCourses } from "@/lib/search"
 import { scanFolder, isTauri, writeCourseMarker } from "@/lib/tauri"
 import {
-  getCourseMarkerFilesEnabled,
   listLessonActivityDays,
-  setCourseMarkerFilesEnabled,
   syncLibrary,
   updateCourseLastAccessed,
   updateLessonProgress as persistLessonProgress,
@@ -103,14 +102,16 @@ export async function scanLibraryAt(path: string): Promise<{ courses: Course[]; 
       })
     : { courses: scanned, warnings: [] }
   const hydrated = syncResult.courses
-  const markerWarnings = isTauri() && await getCourseMarkerFilesEnabled()
-    ? await writeCourseMarkers(hydrated)
-    : []
+  const markerWarnings = isTauri() ? await writeCourseMarkers(hydrated) : []
   frontendLog("info", `syncLibrary returned: ${hydrated.length} courses`)
   const store = useCourseStore.getState()
   store.setCourses(hydrated)
   store.setLibraryPath(path)
   indexCourses(hydrated)
+  void hydrateCourseThumbnails(hydrated, (courses) => {
+    useCourseStore.getState().setCourses(courses)
+    indexCourses(courses)
+  })
   return { courses: hydrated, warnings: [...result.warnings, ...syncResult.warnings, ...markerWarnings] }
 }
 
@@ -148,16 +149,6 @@ export async function recordLessonProgress(lessonId: string, progress: LessonPro
 export async function loadActivityDays(limitDays = 84): Promise<ActivityDay[]> {
   if (!isTauri()) return []
   return listLessonActivityDays(limitDays)
-}
-
-export async function loadCourseMarkerFilesEnabled(): Promise<boolean> {
-  if (!isTauri()) return false
-  return getCourseMarkerFilesEnabled()
-}
-
-export async function updateCourseMarkerFilesEnabled(enabled: boolean): Promise<void> {
-  if (!isTauri()) return
-  await setCourseMarkerFilesEnabled(enabled)
 }
 
 export async function writeCourseMarkers(courses: Course[]): Promise<string[]> {

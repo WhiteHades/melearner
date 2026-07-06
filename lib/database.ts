@@ -16,7 +16,6 @@ let dbPathPromise: Promise<string | null> | null = null
 const SQLITE_BATCH_SIZE = 500
 const SQLITE_MAX_PARAMETERS = 900
 const LIBRARY_PATH_SETTING = "libraryPath"
-const COURSE_MARKER_FILES_SETTING = "courseMarkerFilesEnabled"
 
 type PersistedCourseRow = {
   id: string
@@ -586,16 +585,6 @@ export async function loadPersistedLibrary(): Promise<PersistedLibrary> {
     courses: rowsToCourses(courseRows, sectionRows, lessonRows, subtitleRows),
     libraryPath: libraryPath ?? inferLibraryPath(courseRows),
   }
-}
-
-export async function getCourseMarkerFilesEnabled(): Promise<boolean> {
-  return (await readSetting(COURSE_MARKER_FILES_SETTING)) === "true"
-}
-
-export async function setCourseMarkerFilesEnabled(enabled: boolean): Promise<void> {
-  const database = await getDatabase()
-  if (!database) return
-  await writeSetting(database, COURSE_MARKER_FILES_SETTING, enabled ? "true" : "false")
 }
 
 export async function syncLibrary(courses: Course[], libraryPath: string): Promise<SyncLibraryResult> {
