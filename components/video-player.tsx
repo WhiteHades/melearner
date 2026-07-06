@@ -216,10 +216,10 @@ function VideoPlayerComponent({
 
   return (
     <TooltipProvider delayDuration={150}>
-      <div className="overflow-hidden rounded-lg border border-border bg-black text-white shadow-[var(--shadow-soft)]">
+      <div className="w-full min-w-0 overflow-hidden rounded-lg border border-border bg-black text-white shadow-[var(--shadow-soft)]">
       <div
         ref={surfaceRef}
-        className="relative flex aspect-video min-h-[18rem] items-center justify-center bg-black"
+        className="relative flex aspect-video min-h-[12rem] w-full items-center justify-center bg-black sm:min-h-[18rem]"
         data-native-video-surface=""
       >
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
@@ -240,14 +240,16 @@ function VideoPlayerComponent({
       </div>
 
       <div className="border-t border-white/10 bg-black/95 px-4 py-3">
-        <div className="flex items-center gap-3">
-          <PlayerIconButton label={state.paused ? "Play" : "Pause"} onClick={togglePlayback}>
-            {state.paused ? <Play /> : <Pause />}
-          </PlayerIconButton>
-          <div className="min-w-[7.5rem] text-xs tabular-nums text-white/70">{formattedPosition}</div>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="flex items-center gap-3">
+            <PlayerIconButton label={state.paused ? "Play" : "Pause"} onClick={togglePlayback}>
+              {state.paused ? <Play /> : <Pause />}
+            </PlayerIconButton>
+            <div className="min-w-[6.5rem] text-xs tabular-nums text-white/70">{formattedPosition}</div>
+          </div>
           <Slider
             aria-label="Seek"
-            className="flex-1"
+            className="w-full min-w-0 sm:min-w-[9rem] sm:flex-1"
             max={Math.max(state.duration, 1)}
             min={0}
             onValueChange={changeSeek}
@@ -255,36 +257,38 @@ function VideoPlayerComponent({
             step={0.1}
             value={[Math.min(state.currentTime, Math.max(state.duration, 1))]}
           />
-          <PlayerIconButton label={state.muted ? "Unmute" : "Mute"} onClick={toggleMute}>
-            {state.muted ? <VolumeX /> : <Volume2 />}
-          </PlayerIconButton>
-          <Slider
-            aria-label="Volume"
-            className="hidden w-24 md:flex"
-            max={1}
-            min={0}
-            onValueChange={changeVolume}
-            step={0.01}
-            value={[state.muted ? 0 : state.volume]}
-          />
-          <PlayerMenu
-            state={state}
-            onRateChange={changeRate}
-          />
-          <PlayerIconButton label="Step frame" onClick={() => void stepNativePlayerFrame().catch((reason) => setError({ path: lesson.path, message: String(reason) }))}>
-            <SlidersHorizontal />
-          </PlayerIconButton>
-          <PlayerIconButton label="Screenshot" onClick={() => void takeNativePlayerScreenshot().catch((reason) => setError({ path: lesson.path, message: String(reason) }))}>
-            <Camera />
-          </PlayerIconButton>
-          <PlayerIconButton label={isFullscreen ? "Exit fullscreen" : "Fullscreen"} onClick={toggleFullscreen}>
-            <Maximize />
-          </PlayerIconButton>
-          {onNext && (
-            <PlayerIconButton label="Next item" onClick={onNext}>
-              <SkipForward />
+          <div className="flex flex-wrap items-center gap-3">
+            <PlayerIconButton label={state.muted ? "Unmute" : "Mute"} onClick={toggleMute}>
+              {state.muted ? <VolumeX /> : <Volume2 />}
             </PlayerIconButton>
-          )}
+            <Slider
+              aria-label="Volume"
+              className="hidden w-24 md:flex"
+              max={1}
+              min={0}
+              onValueChange={changeVolume}
+              step={0.01}
+              value={[state.muted ? 0 : state.volume]}
+            />
+            <PlayerMenu
+              state={state}
+              onRateChange={changeRate}
+            />
+            <PlayerIconButton label="Step frame" onClick={() => void stepNativePlayerFrame().catch((reason) => setError({ path: lesson.path, message: String(reason) }))}>
+              <SlidersHorizontal />
+            </PlayerIconButton>
+            <PlayerIconButton label="Screenshot" onClick={() => void takeNativePlayerScreenshot().catch((reason) => setError({ path: lesson.path, message: String(reason) }))}>
+              <Camera />
+            </PlayerIconButton>
+            <PlayerIconButton label={isFullscreen ? "Exit fullscreen" : "Fullscreen"} onClick={toggleFullscreen}>
+              <Maximize />
+            </PlayerIconButton>
+            {onNext && (
+              <PlayerIconButton label="Next item" onClick={onNext}>
+                <SkipForward />
+              </PlayerIconButton>
+            )}
+          </div>
         </div>
       </div>
     </div>

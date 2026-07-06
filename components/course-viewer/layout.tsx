@@ -100,8 +100,8 @@ export function CourseViewerLayout({
           onBack={onBack}
         />
 
-        <ScrollArea className="min-h-0 border-x border-border bg-background">
-          <div className="mx-auto flex min-h-full w-full max-w-6xl flex-col gap-5 px-4 py-5 lg:px-6">
+        <ScrollArea className="min-h-0 min-w-0 border-x border-border bg-background">
+          <div className="mx-auto flex min-h-full w-full min-w-0 max-w-6xl flex-col gap-5 px-4 py-5 lg:px-6">
             <VideoArea
               key={currentLesson?.id ?? "empty-lesson"}
               lesson={currentLesson}

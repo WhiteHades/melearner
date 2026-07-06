@@ -77,8 +77,8 @@ export function VideoArea({ className, lesson, onNext, onPrevious }: VideoAreaPr
   const isPlayable = lesson.type === "video" || lesson.type === "audio"
 
   return (
-    <div className={cn("flex min-h-[calc(100vh-7rem)] flex-col gap-5", className)}>
-      <div className="paper-panel-strong overflow-hidden rounded-2xl">
+    <div className={cn("flex min-h-[calc(100vh-7rem)] min-w-0 flex-col gap-5", className)}>
+      <div className="paper-panel-strong min-w-0 overflow-hidden rounded-2xl">
         {isPlayable ? (
           <VideoPlayer
             lesson={lesson}
