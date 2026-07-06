@@ -5,7 +5,7 @@ pkgdesc="local-first course learner"
 arch=("x86_64")
 url="https://github.com/WhiteHades/melearner"
 license=("MIT")
-depends=("webkit2gtk-4.1" "gtk3" "libayatana-appindicator" "ffmpeg" "mpv" "gst-libav" "gst-plugins-good" "xdg-utils")
+depends=("webkit2gtk-4.1" "gtk3" "libayatana-appindicator" "ffmpeg" "mpv" "xdg-utils")
 provides=("melearner=${pkgver}")
 conflicts=("melearner")
 options=("!strip")

@@ -10,8 +10,6 @@ pkgbase = melearner-bin
 	depends = libayatana-appindicator
 	depends = ffmpeg
 	depends = mpv
-	depends = gst-libav
-	depends = gst-plugins-good
 	depends = xdg-utils
 	provides = melearner=0.1.8
 	conflicts = melearner
