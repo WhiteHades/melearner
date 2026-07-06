@@ -12,7 +12,11 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, Raw
 use std::{
     ffi::{CString, c_void},
     num::NonZeroU32,
-    sync::{Mutex, OnceLock, mpsc},
+    sync::{
+        Arc, Mutex, OnceLock,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        mpsc,
+    },
     thread::{self, JoinHandle},
 };
 use tauri::{AppHandle, PhysicalPosition, PhysicalSize, WebviewWindow, Window};
@@ -67,6 +71,13 @@ impl NativeSurfaceBackend {
 pub(super) enum NativeSurfaceBackendPreference {
     WindowHandle,
     RenderApi,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(super) struct NativeSurfaceDiagnostics {
+    pub(super) render_thread_alive: bool,
+    pub(super) rendered_frames: u64,
+    pub(super) last_error: Option<String>,
 }
 
 impl NativeSurfaceBackendPreference {
@@ -259,6 +270,15 @@ impl NativeVideoSurface {
     pub(super) fn uses_render_api(&self) -> bool {
         self.backend.uses_render_api()
     }
+
+    pub(super) fn diagnostics(&self) -> NativeSurfaceDiagnostics {
+        match &self.attachment {
+            NativeSurfaceAttachment::RenderApi {
+                renderer: Some(renderer),
+            } => renderer.diagnostics(),
+            _ => NativeSurfaceDiagnostics::default(),
+        }
+    }
 }
 
 impl Drop for NativeVideoSurface {
@@ -273,6 +293,7 @@ impl Drop for NativeVideoSurface {
 struct RenderApiSurface {
     commands: mpsc::Sender<RenderApiCommand>,
     thread: Option<JoinHandle<()>>,
+    diagnostics: RenderApiDiagnostics,
 }
 
 impl RenderApiSurface {
@@ -293,10 +314,20 @@ impl RenderApiSurface {
         let (commands, command_rx) = mpsc::channel();
         let (init_tx, init_rx) = mpsc::channel();
         let callback_tx = commands.clone();
+        let diagnostics = RenderApiDiagnostics::new();
+        let thread_diagnostics = diagnostics.clone();
         let thread = thread::Builder::new()
             .name("melearner-render-api".to_string())
             .spawn(move || {
-                run_render_api_thread(handles, rect, mpv_client, command_rx, callback_tx, init_tx);
+                run_render_api_thread(
+                    handles,
+                    rect,
+                    mpv_client,
+                    command_rx,
+                    callback_tx,
+                    init_tx,
+                    thread_diagnostics,
+                );
             })
             .map_err(|err| format!("native render-api could not start render thread: {err}"))?;
 
@@ -304,6 +335,7 @@ impl RenderApiSurface {
             Ok(Ok(())) => Ok(Self {
                 commands,
                 thread: Some(thread),
+                diagnostics,
             }),
             Ok(Err(err)) => {
                 let _ = thread.join();
@@ -321,6 +353,10 @@ impl RenderApiSurface {
             .send(RenderApiCommand::Resize(rect))
             .map_err(|err| format!("native render-api could not send resize command: {err}"))
     }
+
+    fn diagnostics(&self) -> NativeSurfaceDiagnostics {
+        self.diagnostics.snapshot()
+    }
 }
 
 impl Drop for RenderApiSurface {
@@ -328,6 +364,45 @@ impl Drop for RenderApiSurface {
         let _ = self.commands.send(RenderApiCommand::Shutdown);
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
+        }
+    }
+}
+
+#[derive(Clone)]
+struct RenderApiDiagnostics {
+    render_thread_alive: Arc<AtomicBool>,
+    rendered_frames: Arc<AtomicU64>,
+    last_error: Arc<Mutex<Option<String>>>,
+}
+
+impl RenderApiDiagnostics {
+    fn new() -> Self {
+        Self {
+            render_thread_alive: Arc::new(AtomicBool::new(false)),
+            rendered_frames: Arc::new(AtomicU64::new(0)),
+            last_error: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    fn set_alive(&self, alive: bool) {
+        self.render_thread_alive.store(alive, Ordering::SeqCst);
+    }
+
+    fn record_frame(&self) {
+        self.rendered_frames.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn record_error(&self, err: &str) {
+        if let Ok(mut last_error) = self.last_error.lock() {
+            *last_error = Some(err.to_string());
+        }
+    }
+
+    fn snapshot(&self) -> NativeSurfaceDiagnostics {
+        NativeSurfaceDiagnostics {
+            render_thread_alive: self.render_thread_alive.load(Ordering::SeqCst),
+            rendered_frames: self.rendered_frames.load(Ordering::SeqCst),
+            last_error: self.last_error.lock().ok().and_then(|error| error.clone()),
         }
     }
 }
@@ -353,13 +428,17 @@ fn run_render_api_thread(
     command_rx: mpsc::Receiver<RenderApiCommand>,
     callback_tx: mpsc::Sender<RenderApiCommand>,
     init_tx: mpsc::Sender<Result<(), String>>,
+    diagnostics: RenderApiDiagnostics,
 ) {
     let mut renderer = match RenderApiRenderer::new(handles, rect, &mpv_client) {
         Ok(renderer) => {
+            diagnostics.set_alive(true);
             let _ = init_tx.send(Ok(()));
             renderer
         }
         Err(err) => {
+            diagnostics.record_error(&err);
+            diagnostics.set_alive(false);
             let _ = init_tx.send(Err(err));
             return;
         }
@@ -378,9 +457,18 @@ fn run_render_api_thread(
 
         if let Err(err) = result {
             log::error!("native render-api failed: {err}");
+            diagnostics.record_error(&err);
+            diagnostics.set_alive(false);
             break;
+        } else if matches!(
+            command,
+            RenderApiCommand::Render | RenderApiCommand::Resize(_)
+        ) {
+            diagnostics.record_frame();
         }
     }
+
+    diagnostics.set_alive(false);
 }
 
 struct RenderApiRenderer<'a> {

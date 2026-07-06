@@ -99,6 +99,9 @@ pub struct NativePlayerState {
     surface_attached: bool,
     surface_backend: Option<String>,
     surface_render_api: bool,
+    surface_render_thread_alive: bool,
+    surface_rendered_frames: u64,
+    surface_render_error: Option<String>,
     audio_tracks: Vec<NativeTrack>,
     subtitle_tracks: Vec<NativeTrack>,
     selected_audio_track_id: Option<String>,
@@ -398,6 +401,11 @@ impl NativePlayer {
             .as_ref()
             .map(|surface| surface.uses_render_api())
             .unwrap_or(false);
+        let surface_diagnostics = self
+            .surface
+            .as_ref()
+            .map(|surface| surface.diagnostics())
+            .unwrap_or_default();
 
         NativePlayerState {
             path: position.path,
@@ -413,6 +421,9 @@ impl NativePlayer {
             surface_attached,
             surface_backend,
             surface_render_api,
+            surface_render_thread_alive: surface_diagnostics.render_thread_alive,
+            surface_rendered_frames: surface_diagnostics.rendered_frames,
+            surface_render_error: surface_diagnostics.last_error,
             audio_tracks: tracks.audio_tracks,
             subtitle_tracks: tracks.subtitle_tracks,
             selected_audio_track_id: tracks.selected_audio_track_id,
@@ -603,6 +614,9 @@ fn empty_state() -> NativePlayerState {
         surface_attached: false,
         surface_backend: None,
         surface_render_api: false,
+        surface_render_thread_alive: false,
+        surface_rendered_frames: 0,
+        surface_render_error: None,
         audio_tracks: Vec::new(),
         subtitle_tracks: Vec::new(),
         selected_audio_track_id: None,
@@ -1643,6 +1657,9 @@ mod tests {
 
         assert!(!state.surface_attached);
         assert_eq!(state.surface_backend, None);
+        assert!(!state.surface_render_thread_alive);
+        assert_eq!(state.surface_rendered_frames, 0);
+        assert_eq!(state.surface_render_error, None);
     }
 
     #[test]
