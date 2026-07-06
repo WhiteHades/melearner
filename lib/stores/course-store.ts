@@ -1,4 +1,5 @@
-import { create, type StoreApi } from "zustand"
+import { useEffect, useRef, useState } from "react"
+import { createStore, type StoreApi } from "zustand/vanilla"
 import type { Course, Lesson } from "@/types"
 
 interface CourseState {
@@ -21,6 +22,12 @@ interface CourseActions {
 }
 
 type CourseStore = CourseState & CourseActions
+type UseCourseStore = {
+  <T>(selector: (state: CourseStore) => T): T
+  getState: StoreApi<CourseStore>["getState"]
+  setState: StoreApi<CourseStore>["setState"]
+  subscribe: StoreApi<CourseStore>["subscribe"]
+}
 
 const initialState: CourseState = {
   courses: [],
@@ -118,6 +125,28 @@ const createCourseStore = (set: CourseStoreSet): CourseStore => ({
   setStartupRoute: (startupRoute) => set({ startupRoute }),
 })
 
-const useCourseStoreInternal = create<CourseStore>()(createCourseStore)
+const useCourseStoreInternal = createStore<CourseStore>()(createCourseStore)
 
-export const useCourseStore = useCourseStoreInternal
+export const useCourseStore = (<T>(selector: (state: CourseStore) => T): T => {
+  const selectorRef = useRef(selector)
+  selectorRef.current = selector
+
+  const [selected, setSelected] = useState(() => selector(useCourseStoreInternal.getState()))
+  const selectedRef = useRef(selected)
+  selectedRef.current = selected
+
+  useEffect(() => {
+    return useCourseStoreInternal.subscribe((state) => {
+      const next = selectorRef.current(state)
+      if (Object.is(selectedRef.current, next)) return
+      selectedRef.current = next
+      setSelected(next)
+    })
+  }, [])
+
+  return selected
+}) as UseCourseStore
+
+useCourseStore.getState = useCourseStoreInternal.getState
+useCourseStore.setState = useCourseStoreInternal.setState
+useCourseStore.subscribe = useCourseStoreInternal.subscribe
