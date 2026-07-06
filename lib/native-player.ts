@@ -67,6 +67,9 @@ export type NativePlayerPositionEvent = {
   rate: number
   width: number | null
   height: number | null
+  surfaceRenderThreadAlive: boolean
+  surfaceRenderedFrames: number
+  surfaceRenderError: string | null
   currentChapterId: string | null
 }
 

@@ -353,6 +353,9 @@ function VideoPlayerComponent({
             rate: next.rate,
             width: next.width,
             height: next.height,
+            surfaceRenderThreadAlive: next.surfaceRenderThreadAlive,
+            surfaceRenderedFrames: next.surfaceRenderedFrames,
+            surfaceRenderError: next.surfaceRenderError,
             currentChapterId: next.currentChapterId,
           }
         })

@@ -123,6 +123,9 @@ pub struct NativePlayerPositionEvent {
     rate: f64,
     width: Option<i64>,
     height: Option<i64>,
+    surface_render_thread_alive: bool,
+    surface_rendered_frames: u64,
+    surface_render_error: Option<String>,
     current_chapter_id: Option<String>,
 }
 
@@ -435,6 +438,11 @@ impl NativePlayer {
 
     fn position_event(&self) -> NativePlayerPositionEvent {
         let volume_percent = self.mpv.get_property("volume").unwrap_or(100.0);
+        let surface_diagnostics = self
+            .surface
+            .as_ref()
+            .map(|surface| surface.diagnostics())
+            .unwrap_or_default();
         let current_chapter_id = self
             .mpv
             .get_property("chapter")
@@ -456,6 +464,9 @@ impl NativePlayer {
             rate: self.mpv.get_property("speed").unwrap_or(1.0),
             width: self.mpv.get_property("width").ok(),
             height: self.mpv.get_property("height").ok(),
+            surface_render_thread_alive: surface_diagnostics.render_thread_alive,
+            surface_rendered_frames: surface_diagnostics.rendered_frames,
+            surface_render_error: surface_diagnostics.last_error,
             current_chapter_id,
         }
     }
