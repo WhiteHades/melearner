@@ -4,10 +4,9 @@ import { useEffect } from "react"
 import { log } from "evlog/next/client"
 import { hydrateCourseThumbnails } from "@/lib/course-thumbnails"
 import { initDatabase, loadPersistedLibrary, syncLibrary } from "@/lib/database"
-import { markCourseAccessed } from "@/lib/operations"
 import { indexCourses } from "@/lib/search"
 import { useCourseStore } from "@/lib/stores/course-store"
-import { getStartupRoute, isTauri } from "@/lib/tauri"
+import { isTauri } from "@/lib/tauri"
 import { frontendLog } from "@/lib/frontend-log"
 import type { Course } from "@/types"
 
@@ -66,50 +65,6 @@ function schedulePostHydrationWork(work: () => void): void {
   window.requestAnimationFrame(() => {
     window.setTimeout(work, 0)
   })
-}
-
-function lessonBelongsToCourse(course: Course, lessonId: string | null): lessonId is string {
-  if (!lessonId) return false
-  return course.sections.some((section) => section.lessons.some((lesson) => lesson.id === lessonId))
-}
-
-async function applyStartupRoute(courses: Course[]): Promise<string | null> {
-  if (!isTauri() || typeof window === "undefined" || courses.length === 0) return null
-
-  let route: Awaited<ReturnType<typeof getStartupRoute>>
-  try {
-    route = await getStartupRoute()
-  } catch (error) {
-    frontendLog("warn", "startup.route.failed", { error: String(error) })
-    return null
-  }
-  if (!route) return null
-
-  const course = courses.find((course) => course.id === route.courseId && !course.missingSince)
-  if (!course) {
-    frontendLog("warn", "startup.route.courseMissing", { courseId: route.courseId })
-    return null
-  }
-
-  const selectedLessonId = lessonBelongsToCourse(course, route.lessonId) ? route.lessonId : null
-  if (route.lessonId && !selectedLessonId) {
-    frontendLog("warn", "startup.route.lessonMissing", {
-      courseId: route.courseId,
-      lessonId: route.lessonId,
-    })
-  }
-
-  const url = new URL(window.location.href)
-  url.searchParams.set("view", "viewer")
-  url.searchParams.set("course", course.id)
-  if (selectedLessonId) {
-    url.searchParams.set("lesson", selectedLessonId)
-  } else {
-    url.searchParams.delete("lesson")
-  }
-  window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`)
-  frontendLog("info", "startup.route.applied", { courseId: course.id, lessonId: selectedLessonId })
-  return course.id
 }
 
 export function AppBootstrap() {
@@ -234,9 +189,7 @@ export function AppBootstrap() {
         frontendLog("info", "app.bootstrap.libraryLoad.start", { ms: Math.round(t()) })
         library = await loadPersistedLibrary()
       }
-      const startupCourseId = await applyStartupRoute(library.courses)
       hydrateLibrary(library.courses, library.libraryPath)
-      if (startupCourseId) void markCourseAccessed(startupCourseId)
       frontendLog("info", "app.bootstrap.libraryLoad.done", {
         ms: Math.round(t()),
         coursesCount: library.courses.length,
