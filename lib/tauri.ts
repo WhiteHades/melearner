@@ -69,12 +69,8 @@ export async function openNativeFile(path: string): Promise<void> {
   return invoke<void>("open_native", { path })
 }
 
-export async function preparePlaybackMedia(path: string, mediaType: "video" | "audio"): Promise<{ path: string }> {
-  return invoke<{ path: string }>("prepare_playback_media", { path, mediaType })
-}
-
-export async function cancelPlaybackMedia(path: string, mediaType: "video" | "audio"): Promise<void> {
-  return invoke<void>("cancel_playback_media", { path, mediaType })
+export async function generateVideoThumbnail(path: string): Promise<{ path: string }> {
+  return invoke<{ path: string }>("generate_video_thumbnail", { path })
 }
 
 export async function writeCourseMarker(path: string, identityId: string): Promise<void> {

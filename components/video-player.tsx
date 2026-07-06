@@ -1,32 +1,52 @@
 "use client"
 
-import { useRef, useState, useEffect, useCallback, memo } from "react"
-import { convertFileSrc } from "@tauri-apps/api/core"
-import { readFile, readTextFile } from "@tauri-apps/plugin-fs"
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import {
+  Camera,
+  Captions,
+  Maximize,
+  Pause,
+  Play,
+  SkipForward,
+  SlidersHorizontal,
+  Volume2,
+  VolumeX,
+} from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Slider } from "@/components/ui/slider"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { createSubtitleTrackId, toVttContent, type VideoSubtitleTrack } from "@/lib/subtitles"
-import { cn, formatDuration } from "@/lib/utils"
-import { cancelPlaybackMedia, isTauri, preparePlaybackMedia } from "@/lib/tauri"
-import { frontendLog } from "@/lib/frontend-log"
-import type { Lesson } from "@/types"
+import { Slider } from "@/components/ui/slider"
 import {
-  Play,
-  Pause,
-  SkipForward,
-  Volume2,
-  VolumeX,
-  RotateCcw,
-  Check,
-  Maximize,
-  Minimize,
-} from "lucide-react"
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
+import {
+  destroyNativePlayer,
+  loadNativePlayerFile,
+  pauseNativePlayer,
+  playNativePlayer,
+  seekNativePlayer,
+  setNativePlayerBounds,
+  setNativePlayerMuted,
+  setNativePlayerRate,
+  setNativePlayerVolume,
+  stepNativePlayerFrame,
+  takeNativePlayerScreenshot,
+  type NativePlayerState,
+} from "@/lib/native-player"
+import { isTauri } from "@/lib/tauri"
+import { formatDuration } from "@/lib/utils"
+import type { Lesson } from "@/types"
 
 interface VideoPlayerProps {
   lesson: Lesson
@@ -36,29 +56,24 @@ interface VideoPlayerProps {
   autoplay?: boolean
 }
 
-const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
-const PROGRESS_SAVE_THROTTLE = 1000
-const SLIDER_SYNC_THROTTLE = 250
+const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
+const POSITION_SAVE_MS = 5000
 
-function createMediaUrl(filePath: string): string {
-  return isTauri() ? convertFileSrc(filePath) : filePath
-}
-
-async function createPreparedMediaBlobUrl(filePath: string, mediaType: "video" | "audio"): Promise<string> {
-  const bytes = await readFile(filePath)
-  const arrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
-  return URL.createObjectURL(new Blob([arrayBuffer], { type: mediaType === "audio" ? "audio/mp4" : "video/mp4" }))
-}
-
-function describeMediaError(media: HTMLMediaElement): string {
-  const error = media.error
-  if (!error) return "unknown media error"
-
-  if (error.code === error.MEDIA_ERR_ABORTED) return "playback was aborted"
-  if (error.code === error.MEDIA_ERR_NETWORK) return "media could not be loaded from disk"
-  if (error.code === error.MEDIA_ERR_DECODE) return "media codec or container could not be decoded"
-  if (error.code === error.MEDIA_ERR_SRC_NOT_SUPPORTED) return "media source or codec is not supported"
-  return `media error code ${error.code}`
+const initialState: NativePlayerState = {
+  path: null,
+  paused: true,
+  buffering: false,
+  currentTime: 0,
+  duration: 0,
+  volume: 1,
+  muted: false,
+  rate: 1,
+  width: null,
+  height: null,
+  audioTracks: [],
+  subtitleTracks: [],
+  selectedAudioTrackId: null,
+  selectedSubtitleTrackId: null,
 }
 
 function VideoPlayerComponent({
@@ -68,589 +83,281 @@ function VideoPlayerComponent({
   onNext,
   autoplay = false,
 }: VideoPlayerProps) {
-  const videoRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
-  const [videoSrc, setVideoSrc] = useState<string | null>(null)
-  const [subtitleTracks, setSubtitleTracks] = useState<VideoSubtitleTrack[]>([])
-  const [activeSubtitleId, setActiveSubtitleId] = useState("off")
-  const [isPlaying, setIsPlaying] = useState(false)
-  const [duration, setDuration] = useState(0)
-  const [volume, setVolume] = useState(1)
-  const [isMuted, setIsMuted] = useState(false)
-  const [speed, setSpeed] = useState(1)
-  const [isEnded, setIsEnded] = useState(false)
-  const [isFullscreen, setIsFullscreen] = useState(false)
-  const [showControls, setShowControls] = useState(true)
+  const surfaceRef = useRef<HTMLDivElement | null>(null)
+  const lastSaveRef = useRef(0)
+  const [state, setState] = useState<NativePlayerState>(initialState)
   const [error, setError] = useState<string | null>(null)
-  const [isPreparingFallback, setIsPreparingFallback] = useState(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const isPlayable = lesson.type === "video" || lesson.type === "audio"
 
-  const progressRef = useRef(0)
-  const lastProgressSaveRef = useRef(0)
-  const lastSliderSyncRef = useRef(0)
-  const hasInitialSeekRef = useRef(false)
-  const isScrubbingRef = useRef(false)
-  const [sliderValue, setSliderValue] = useState(0)
-  const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const subtitleUrlRefs = useRef<string[]>([])
-  const preparedMediaUrlRef = useRef<string | null>(null)
-  const rafRef = useRef<number | null>(null)
-  const timeDisplayRef = useRef<HTMLSpanElement>(null)
-  const progressBarFillRef = useRef<HTMLDivElement>(null)
-  const fallbackAttemptedRef = useRef(false)
-  const fallbackRequestRef = useRef(0)
-
-  const isVideoFile = lesson.type === "video"
-  const isAudioFile = lesson.type === "audio"
-  const isPlayableFile = isVideoFile || isAudioFile
-
-  const setMediaRef = useCallback((node: HTMLVideoElement | HTMLAudioElement | null) => {
-    videoRef.current = node
+  const updateBounds = useCallback(() => {
+    const surface = surfaceRef.current
+    if (!surface || !isTauri()) return
+    const rect = surface.getBoundingClientRect()
+    void setNativePlayerBounds({
+      x: Math.round(rect.left),
+      y: Math.round(rect.top),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+      scaleFactor: window.devicePixelRatio || 1,
+    }).catch((reason) => setError(String(reason)))
   }, [])
 
   useEffect(() => {
-    const currentPath = lesson.path
-    const currentMediaType = isAudioFile ? "audio" : "video"
+    if (!isPlayable) return
+    let isActive = true
 
-    async function loadVideoSrc() {
-      if (!isPlayableFile) return
+    setError(null)
+    setState((current) => ({
+      ...current,
+      path: lesson.path,
+      paused: !autoplay,
+      currentTime: lesson.lastPosition,
+      duration: lesson.duration,
+    }))
 
-      try {
-        setError(null)
-        setIsPreparingFallback(false)
-        setVideoSrc(null)
-        setSubtitleTracks([])
-        setActiveSubtitleId("off")
-        fallbackAttemptedRef.current = false
-        hasInitialSeekRef.current = false
-        progressRef.current = 0
-        setSliderValue(0)
-        if (preparedMediaUrlRef.current) {
-          URL.revokeObjectURL(preparedMediaUrlRef.current)
-          preparedMediaUrlRef.current = null
-        }
-        subtitleUrlRefs.current.forEach((url) => URL.revokeObjectURL(url))
-        subtitleUrlRefs.current = []
-
-        if (isTauri()) {
-          setVideoSrc(createMediaUrl(lesson.path))
-
-          const builtTracks = isVideoFile
-            ? await Promise.allSettled(
-                lesson.subtitles.map(async (subtitle, index) => {
-                  const content = await readTextFile(subtitle.path)
-                  const blob = new Blob([toVttContent(content, subtitle.path)], { type: "text/vtt" })
-                  const url = URL.createObjectURL(blob)
-                  subtitleUrlRefs.current.push(url)
-
-                  return {
-                    id: createSubtitleTrackId(subtitle, index),
-                    label: subtitle.label || subtitle.language || `Track ${index + 1}`,
-                    language: subtitle.language || "und",
-                    src: url,
-                  }
-                })
-              )
-            : []
-
-          const resolvedTracks = builtTracks
-            .filter((result): result is PromiseFulfilledResult<VideoSubtitleTrack> => result.status === "fulfilled")
-            .map((result) => result.value)
-
-          setSubtitleTracks(resolvedTracks)
-          setActiveSubtitleId(resolvedTracks[0]?.id ?? "off")
-        } else {
-          setVideoSrc(lesson.path)
-          const builtTracks = isVideoFile ? lesson.subtitles.map((subtitle, index) => ({
-            id: createSubtitleTrackId(subtitle, index),
-            label: subtitle.label || subtitle.language || `Track ${index + 1}`,
-            language: subtitle.language || "und",
-            src: subtitle.path,
-          })) : []
-          setSubtitleTracks(builtTracks)
-          setActiveSubtitleId(builtTracks[0]?.id ?? "off")
-        }
-      } catch (err) {
-        frontendLog("error", "media.source.failed", { path: lesson.path, error: err })
-        setError("failed to load media source")
-      }
-    }
-    loadVideoSrc()
-
-    return () => {
-      fallbackRequestRef.current += 1
-      if (isTauri() && isPlayableFile) {
-        void cancelPlaybackMedia(currentPath, currentMediaType)
-      }
-      if (preparedMediaUrlRef.current) {
-        URL.revokeObjectURL(preparedMediaUrlRef.current)
-        preparedMediaUrlRef.current = null
-      }
-      subtitleUrlRefs.current.forEach((url) => URL.revokeObjectURL(url))
-      subtitleUrlRefs.current = []
-    }
-  }, [lesson.path, lesson.subtitles, isAudioFile, isPlayableFile, isVideoFile])
-
-  useEffect(() => {
-    const video = videoRef.current
-    if (!video) return
-
-    const tick = () => {
-      const t = video.currentTime
-      progressRef.current = t
-      const dur = Number.isFinite(video.duration) ? video.duration : 0
-      if (timeDisplayRef.current) {
-        timeDisplayRef.current.textContent = `${formatDuration(t)} / ${formatDuration(dur)}`
-      }
-      if (progressBarFillRef.current) {
-        const pct = dur > 0 ? (t / dur) * 100 : 0
-        progressBarFillRef.current.style.transform = `scaleX(${pct / 100})`
-      }
-      const now = Date.now()
-      if (!isScrubbingRef.current) {
-        if (now - lastProgressSaveRef.current > PROGRESS_SAVE_THROTTLE) {
-          lastProgressSaveRef.current = now
-          if (!video.paused) onProgress(t, dur)
-        }
-        if (now - lastSliderSyncRef.current > SLIDER_SYNC_THROTTLE) {
-          lastSliderSyncRef.current = now
-          setSliderValue(t)
-        }
-      }
-      rafRef.current = requestAnimationFrame(tick)
-    }
-
-    if (videoSrc) {
-      rafRef.current = requestAnimationFrame(tick)
+    if (isTauri()) {
+      void loadNativePlayerFile({ path: lesson.path, startTime: lesson.lastPosition || undefined, autoplay })
+        .then((next) => {
+          if (isActive) setState(next)
+        })
+        .catch((reason) => {
+          if (isActive) setError(String(reason))
+        })
     }
 
     return () => {
-      if (rafRef.current !== null) {
-        cancelAnimationFrame(rafRef.current)
-        rafRef.current = null
-      }
+      isActive = false
+      if (isTauri()) void destroyNativePlayer().catch(() => undefined)
     }
-  }, [videoSrc, onProgress])
+  }, [autoplay, isPlayable, lesson.duration, lesson.id, lesson.lastPosition, lesson.path])
 
   useEffect(() => {
-    const video = videoRef.current
-    if (!video) return
+    const surface = surfaceRef.current
+    if (!surface) return
 
-    subtitleTracks.forEach((track, index) => {
-      const textTrack = video.textTracks[index]
-      if (!textTrack) return
-      textTrack.mode = activeSubtitleId !== "off" && track.id === activeSubtitleId ? "showing" : "disabled"
-    })
-  }, [activeSubtitleId, subtitleTracks])
-
-  useEffect(() => {
-    const video = videoRef.current
-    if (!video || !videoSrc) return
-
-    const handleDurationChange = () => setDuration(Number.isFinite(video.duration) ? video.duration : 0)
-    const handleEnded = () => {
-      setIsEnded(true)
-      setIsPlaying(false)
-      onComplete()
-    }
-    const handlePlay = () => setIsPlaying(true)
-    const handlePause = () => {
-      setIsPlaying(false)
-      if (Number.isFinite(video.duration)) onProgress(video.currentTime, video.duration)
-    }
-    const handleError = () => {
-      const detail = describeMediaError(video)
-      frontendLog("error", "media.playback.failed", { path: lesson.path, type: lesson.type, detail })
-
-      if (!isTauri() || fallbackAttemptedRef.current) {
-        setError(`playback failed: ${detail}`)
-        return
-      }
-
-      fallbackAttemptedRef.current = true
-      setIsPreparingFallback(true)
-      setError("preparing a compatible playback copy...")
-      const requestId = ++fallbackRequestRef.current
-      const mediaType = isAudioFile ? "audio" : "video"
-
-      cancelPlaybackMedia(lesson.path, mediaType)
-        .catch(() => undefined)
-        .then(() => preparePlaybackMedia(lesson.path, mediaType))
-        .then(async (prepared) => {
-          const preparedUrl = await createPreparedMediaBlobUrl(prepared.path, mediaType)
-          if (fallbackRequestRef.current !== requestId) {
-            URL.revokeObjectURL(preparedUrl)
-            return
-          }
-          if (preparedMediaUrlRef.current) URL.revokeObjectURL(preparedMediaUrlRef.current)
-          preparedMediaUrlRef.current = preparedUrl
-          frontendLog("info", "media.playback.fallback.ready", { originalPath: lesson.path, preparedPath: prepared.path })
-          hasInitialSeekRef.current = false
-          setError(null)
-          setVideoSrc(preparedUrl)
-        })
-        .catch((err) => {
-          if (fallbackRequestRef.current !== requestId) return
-          frontendLog("error", "media.playback.fallback.failed", { path: lesson.path, error: err })
-          setError(`playback failed: ${detail}`)
-        })
-        .finally(() => {
-          if (fallbackRequestRef.current === requestId) setIsPreparingFallback(false)
-        })
-    }
-    const handleSeeked = () => { isScrubbingRef.current = false }
-    const handleSeeking = () => { isScrubbingRef.current = true }
-
-    video.addEventListener("durationchange", handleDurationChange)
-    video.addEventListener("ended", handleEnded)
-    video.addEventListener("play", handlePlay)
-    video.addEventListener("pause", handlePause)
-    video.addEventListener("error", handleError)
-    video.addEventListener("seeking", handleSeeking)
-    video.addEventListener("seeked", handleSeeked)
-
-    if (lesson.lastPosition > 0 && !hasInitialSeekRef.current) {
-      video.currentTime = lesson.lastPosition
-      hasInitialSeekRef.current = true
-    }
-
-    if (autoplay) {
-      video.play().catch(() => setIsPlaying(false))
-    }
-
+    updateBounds()
+    const observer = new ResizeObserver(updateBounds)
+    observer.observe(surface)
+    window.addEventListener("resize", updateBounds)
     return () => {
-      video.removeEventListener("durationchange", handleDurationChange)
-      video.removeEventListener("ended", handleEnded)
-      video.removeEventListener("play", handlePlay)
-      video.removeEventListener("pause", handlePause)
-      video.removeEventListener("error", handleError)
-      video.removeEventListener("seeking", handleSeeking)
-      video.removeEventListener("seeked", handleSeeked)
+      observer.disconnect()
+      window.removeEventListener("resize", updateBounds)
     }
-  }, [videoSrc, autoplay, isAudioFile, lesson.lastPosition, lesson.path, lesson.type, onComplete, onProgress])
+  }, [updateBounds])
 
   useEffect(() => {
-    const handleFullscreenChange = () => setIsFullscreen(document.fullscreenElement === containerRef.current)
-    document.addEventListener("fullscreenchange", handleFullscreenChange)
-    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange)
+    const now = Date.now()
+    const shouldSave = now - lastSaveRef.current >= POSITION_SAVE_MS || state.currentTime >= state.duration - 1
+    if (!isPlayable || !shouldSave) return
+    lastSaveRef.current = now
+    onProgress(state.currentTime, state.duration)
+    if (state.duration > 0 && state.currentTime >= state.duration - 1) onComplete()
+  }, [isPlayable, onComplete, onProgress, state.currentTime, state.duration])
+
+  const formattedPosition = useMemo(() => {
+    return `${formatDuration(state.currentTime)} / ${formatDuration(state.duration)}`
+  }, [state.currentTime, state.duration])
+
+  const togglePlayback = useCallback(() => {
+    const nextPaused = !state.paused
+    setState((current) => ({ ...current, paused: nextPaused }))
+    const action = nextPaused ? pauseNativePlayer : playNativePlayer
+    void action().catch((reason) => setError(String(reason)))
+  }, [state.paused])
+
+  const changeSeek = useCallback((value: number[]) => {
+    const currentTime = value[0] ?? 0
+    setState((current) => ({ ...current, currentTime }))
   }, [])
 
-  const togglePlay = useCallback(() => {
-    const video = videoRef.current
-    if (!video) return
-    if (isPlaying) {
-      video.pause()
-    } else {
-      video.play().catch(() => setIsPlaying(false))
-    }
-  }, [isPlaying])
+  const commitSeek = useCallback((value: number[]) => {
+    const currentTime = value[0] ?? 0
+    setState((current) => ({ ...current, currentTime }))
+    void seekNativePlayer({ seconds: currentTime, mode: "absolute" }).catch((reason) => setError(String(reason)))
+    onProgress(currentTime, state.duration)
+  }, [onProgress, state.duration])
 
-  const handleScrubChange = useCallback((value: number[]) => {
-    const t = value[0]
-    setSliderValue(t)
-    isScrubbingRef.current = true
-    if (progressBarFillRef.current) {
-      const dur = duration
-      const pct = dur > 0 ? (t / dur) * 100 : 0
-      progressBarFillRef.current.style.transform = `scaleX(${pct / 100})`
-    }
-    if (timeDisplayRef.current) {
-      timeDisplayRef.current.textContent = `${formatDuration(t)} / ${formatDuration(duration)}`
-    }
-  }, [duration])
-
-  const handleScrubCommit = useCallback(
-    (value: number[]) => {
-      const video = videoRef.current
-      if (!video) return
-    const t = value[0]
-    video.currentTime = t
-    progressRef.current = t
-    onProgress(t, Number.isFinite(video.duration) ? video.duration : 0)
-    lastProgressSaveRef.current = Date.now()
-    },
-    [onProgress]
-  )
-
-  const handleVolumeChange = useCallback((value: number[]) => {
-    const newVolume = value[0]
-    const video = videoRef.current
-    if (!video) return
-    video.volume = newVolume
-    video.muted = newVolume === 0
-    setVolume(newVolume)
-    setIsMuted(newVolume === 0)
+  const changeVolume = useCallback((value: number[]) => {
+    const volume = value[0] ?? 0
+    setState((current) => ({ ...current, volume, muted: volume === 0 }))
+    void setNativePlayerVolume(volume).catch((reason) => setError(String(reason)))
   }, [])
 
   const toggleMute = useCallback(() => {
-    const video = videoRef.current
-    if (!video) return
-    const newMuted = !isMuted
-    video.muted = newMuted
-    if (!newMuted && video.volume === 0) {
-      video.volume = 0.75
-      setVolume(0.75)
-    }
-    setIsMuted(newMuted)
-  }, [isMuted])
+    const muted = !state.muted
+    setState((current) => ({ ...current, muted }))
+    void setNativePlayerMuted(muted).catch((reason) => setError(String(reason)))
+  }, [state.muted])
 
-  const changeSpeed = useCallback((newSpeed: number) => {
-    const video = videoRef.current
-    if (!video) return
-    video.playbackRate = newSpeed
-    setSpeed(newSpeed)
-  }, [])
-
-  const handleReplay = useCallback(() => {
-    const video = videoRef.current
-    if (!video) return
-    video.currentTime = 0
-    video.play()
-    setIsEnded(false)
+  const changeRate = useCallback((rate: number) => {
+    setState((current) => ({ ...current, rate }))
+    void setNativePlayerRate(rate).catch((reason) => setError(String(reason)))
   }, [])
 
   const toggleFullscreen = useCallback(() => {
-    if (!containerRef.current) return
-    if (!document.fullscreenElement) {
-      containerRef.current.requestFullscreen().catch(() => setIsFullscreen(false))
+    const surface = surfaceRef.current
+    if (!surface) return
+    if (document.fullscreenElement) {
+      void document.exitFullscreen()
+      setIsFullscreen(false)
     } else {
-      document.exitFullscreen().catch(() => setIsFullscreen(false))
+      void surface.requestFullscreen()
+      setIsFullscreen(true)
     }
   }, [])
 
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      const target = event.target as HTMLElement | null
-      if (target?.closest("input, textarea, select, [contenteditable='true']")) return
-
-      const video = videoRef.current
-      if (!video) return
-
-      if (event.key === " " || event.key.toLowerCase() === "k") {
-        event.preventDefault()
-        if (video.paused) video.play().catch(() => setIsPlaying(false))
-        else video.pause()
-      }
-      if (event.key.toLowerCase() === "m") {
-        event.preventDefault()
-        toggleMute()
-      }
-      if (event.key.toLowerCase() === "f") {
-        event.preventDefault()
-        toggleFullscreen()
-      }
-      if (event.key.toLowerCase() === "j" || event.key === "ArrowLeft") {
-        event.preventDefault()
-        video.currentTime = Math.max(0, video.currentTime - 10)
-      }
-      if (event.key.toLowerCase() === "l" || event.key === "ArrowRight") {
-        event.preventDefault()
-        video.currentTime = Math.min(Number.isFinite(video.duration) ? video.duration : video.currentTime + 10, video.currentTime + 10)
-      }
-    }
-
-    document.addEventListener("keydown", handleKeyDown)
-    return () => document.removeEventListener("keydown", handleKeyDown)
-  }, [toggleFullscreen, toggleMute])
-
-  const handleMouseMove = useCallback(() => {
-    setShowControls(true)
-    if (controlsTimeoutRef.current) {
-      clearTimeout(controlsTimeoutRef.current)
-    }
-    controlsTimeoutRef.current = setTimeout(() => {
-      if (isPlaying) setShowControls(false)
-    }, 2500)
-  }, [isPlaying])
-
-  const subtitleButtonLabel =
-    activeSubtitleId === "off"
-      ? "CC Off"
-      : subtitleTracks.find((track) => track.id === activeSubtitleId)?.label ?? "CC"
-
-  if (!isPlayableFile) {
+  if (!isPlayable) {
     return (
-      <div className="flex aspect-video w-full items-center justify-center bg-muted">
-        <div className="text-center">
-          <p className="text-lg font-medium">{lesson.name}</p>
-        </div>
-      </div>
-    )
-  }
-
-  if (!videoSrc) {
-    return (
-      <div className="flex aspect-video w-full items-center justify-center bg-black">
-        <p className="text-white">loading...</p>
+      <div className="flex min-h-[22rem] items-center justify-center bg-black text-sm text-white/70">
+        This learning item is not playable media.
       </div>
     )
   }
 
   return (
-    <div
-      ref={containerRef}
-      className={cn(
-        "group relative flex w-full flex-col overflow-hidden rounded-xl bg-black shadow-lg ring-1 ring-white/10",
-        isVideoFile ? "aspect-video" : "min-h-[360px]"
-      )}
-      onMouseMove={handleMouseMove}
-      onMouseLeave={() => isPlaying && setShowControls(false)}
-    >
-      {isVideoFile ? (
-        <video
-          key={videoSrc}
-          ref={setMediaRef}
-          src={videoSrc}
-          className="size-full object-contain"
-          onClick={togglePlay}
-          playsInline
-          preload="auto"
-        >
-          {subtitleTracks.map((track) => (
-            <track
-              key={track.id}
-              id={track.id}
-              kind="subtitles"
-              src={track.src}
-              srcLang={track.language}
-              label={track.label}
-              default={track.id === activeSubtitleId}
-            />
-          ))}
-        </video>
-      ) : (
-        <div className="flex min-h-[360px] flex-1 items-center justify-center p-8">
-          <audio key={videoSrc} ref={setMediaRef} src={videoSrc} preload="auto" />
-          <div className="flex max-w-lg flex-col items-center gap-5 text-center text-white">
-            <div className="flex size-20 items-center justify-center rounded-2xl bg-white/10 ring-1 ring-white/10">
-              <Play className="size-9" />
-            </div>
-            <div className="flex flex-col gap-2">
-              <h2 className="text-2xl font-semibold tracking-tight">{lesson.name}</h2>
-              <p className="text-sm text-white/60">Audio lesson</p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {error && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/80">
-          <div className="max-w-md px-6 text-center text-white">
-            <p className="font-medium">{error}</p>
-            {isPreparingFallback && <p className="mt-2 text-sm text-white/70">This can take a moment for uncommon codecs.</p>}
-          </div>
-        </div>
-      )}
-
-      {isEnded && (
-        <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/70">
-          <div className="flex gap-4">
-            <Button variant="outline" onClick={handleReplay}>
-              <RotateCcw className="mr-2 size-4" /> replay
-            </Button>
-            {onNext && (
-              <Button onClick={onNext}>
-                next lesson <SkipForward className="ml-2 size-4" />
-              </Button>
-            )}
-          </div>
-        </div>
-      )}
-
+    <TooltipProvider delayDuration={150}>
+      <div className="overflow-hidden rounded-lg border border-border bg-black text-white shadow-[var(--shadow-soft)]">
       <div
-        className={cn(
-          "absolute inset-x-0 bottom-0 z-10 bg-linear-to-t from-black/90 to-transparent p-4 transition-opacity duration-300",
-          showControls || !isPlaying ? "opacity-100" : "pointer-events-none opacity-0"
-        )}
+        ref={surfaceRef}
+        className="relative flex aspect-video min-h-[18rem] items-center justify-center bg-black"
+        data-native-video-surface=""
       >
-        <div className="relative mb-4 h-1.5 cursor-pointer" aria-label="video progress">
-          <div className="absolute inset-0 rounded-full bg-white/20" />
-          <div
-            ref={progressBarFillRef}
-            className="absolute inset-y-0 left-0 origin-left rounded-full bg-white"
-            style={{ width: "100%", transform: "scaleX(0)" }}
-          />
-          <Slider
-            value={[sliderValue]}
-            max={duration || 100}
-            step={0.1}
-            onValueChange={handleScrubChange}
-            onValueCommit={handleScrubCommit}
-            className="absolute inset-0 cursor-pointer opacity-0"
-            aria-label="video progress"
-          />
-        </div>
-
-        <div className="flex items-center justify-between text-white">
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="icon" onClick={togglePlay} className="text-white hover:bg-white/20" aria-label={isPlaying ? "pause" : "play"}>
-              {isPlaying ? <Pause className="size-6" aria-hidden="true" /> : <Play className="size-6" aria-hidden="true" />}
-            </Button>
-
-            <div className="group/vol ml-2 flex items-center gap-2">
-              <Button variant="ghost" size="icon" onClick={toggleMute} className="text-white hover:bg-white/20" aria-label={isMuted ? "unmute" : "mute"}>
-                {isMuted ? <VolumeX className="size-5" aria-hidden="true" /> : <Volume2 className="size-5" aria-hidden="true" />}
-              </Button>
-              <Slider
-                value={[isMuted ? 0 : volume]}
-                max={1}
-                step={0.01}
-                onValueChange={handleVolumeChange}
-                className="pointer-events-none w-20 origin-left scale-x-95 opacity-0 transition-[opacity,transform] duration-200 group-hover/vol:pointer-events-auto group-hover/vol:scale-x-100 group-hover/vol:opacity-100"
-                aria-label="volume"
-              />
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <div className="flex flex-col items-center gap-3 text-center text-white/80">
+            <div className="flex size-14 items-center justify-center rounded-full border border-white/15 bg-white/5">
+              {state.paused ? <Play className="size-6" /> : <Pause className="size-6" />}
             </div>
-
-            <span ref={timeDisplayRef} className="ml-2 text-xs font-medium tabular-nums opacity-90">
-              0:00 / 0:00
-            </span>
+            <div className="max-w-xl px-6">
+              <p className="line-clamp-1 text-sm font-medium text-white">{lesson.name}</p>
+            </div>
           </div>
-
-          <div className="flex items-center gap-2">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="h-8 gap-1 px-2 text-white hover:bg-white/20">
-                  <span className="text-xs font-bold">{speed}x</span>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-20 min-w-20 bg-black text-white border-white/10 [&_[data-highlighted]]:bg-white/10 [&_[data-highlighted]]:text-white">
-                {SPEEDS.map((s) => (
-                  <DropdownMenuItem key={s} onClick={() => changeSpeed(s)}>
-                    {speed === s && <Check className="mr-2 size-3" />}
-                    {s}x
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-
-            {subtitleTracks.length > 0 && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="sm" className="h-8 gap-1 px-2 text-white hover:bg-white/20">
-                    <span className="text-xs font-bold">{subtitleButtonLabel}</span>
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="min-w-32 border-white/10 bg-black text-white [&_[data-highlighted]]:bg-white/10 [&_[data-highlighted]]:text-white">
-                  <DropdownMenuItem onClick={() => setActiveSubtitleId("off")}>
-                    {activeSubtitleId === "off" && <Check className="mr-2 size-3" />}
-                    Off
-                  </DropdownMenuItem>
-                  {subtitleTracks.map((track) => (
-                    <DropdownMenuItem key={track.id} onClick={() => setActiveSubtitleId(track.id)}>
-                      {activeSubtitleId === track.id && <Check className="mr-2 size-3" />}
-                      {track.label}
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
-
-            <Button variant="ghost" size="icon" onClick={toggleFullscreen} className="text-white hover:bg-white/20" aria-label={isFullscreen ? "exit fullscreen" : "fullscreen"}>
-              {isFullscreen ? <Minimize className="size-5" aria-hidden="true" /> : <Maximize className="size-5" aria-hidden="true" />}
-            </Button>
+        </div>
+        {error && (
+          <div className="absolute inset-x-6 bottom-6 rounded-lg border border-destructive/40 bg-destructive/15 px-3 py-2 text-xs text-destructive-foreground">
+            {error}
           </div>
+        )}
+      </div>
+
+      <div className="border-t border-white/10 bg-black/95 px-4 py-3">
+        <div className="flex items-center gap-3">
+          <PlayerIconButton label={state.paused ? "Play" : "Pause"} onClick={togglePlayback}>
+            {state.paused ? <Play /> : <Pause />}
+          </PlayerIconButton>
+          <div className="min-w-[7.5rem] text-xs tabular-nums text-white/70">{formattedPosition}</div>
+          <Slider
+            aria-label="Seek"
+            className="flex-1"
+            max={Math.max(state.duration, 1)}
+            min={0}
+            onValueChange={changeSeek}
+            onValueCommit={commitSeek}
+            step={0.1}
+            value={[Math.min(state.currentTime, Math.max(state.duration, 1))]}
+          />
+          <PlayerIconButton label={state.muted ? "Unmute" : "Mute"} onClick={toggleMute}>
+            {state.muted ? <VolumeX /> : <Volume2 />}
+          </PlayerIconButton>
+          <Slider
+            aria-label="Volume"
+            className="hidden w-24 md:flex"
+            max={1}
+            min={0}
+            onValueChange={changeVolume}
+            step={0.01}
+            value={[state.muted ? 0 : state.volume]}
+          />
+          <PlayerMenu
+            state={state}
+            onRateChange={changeRate}
+          />
+          <PlayerIconButton label="Step frame" onClick={() => void stepNativePlayerFrame().catch((reason) => setError(String(reason)))}>
+            <SlidersHorizontal />
+          </PlayerIconButton>
+          <PlayerIconButton label="Screenshot" onClick={() => void takeNativePlayerScreenshot().catch((reason) => setError(String(reason)))}>
+            <Camera />
+          </PlayerIconButton>
+          <PlayerIconButton label={isFullscreen ? "Exit fullscreen" : "Fullscreen"} onClick={toggleFullscreen}>
+            <Maximize />
+          </PlayerIconButton>
+          {onNext && (
+            <PlayerIconButton label="Next item" onClick={onNext}>
+              <SkipForward />
+            </PlayerIconButton>
+          )}
         </div>
       </div>
     </div>
+    </TooltipProvider>
+  )
+}
+
+function PlayerIconButton({
+  label,
+  onClick,
+  children,
+}: {
+  label: string
+  onClick: () => void
+  children: ReactNode
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className="text-white hover:bg-white/10 hover:text-white"
+          onClick={onClick}
+          aria-label={label}
+        >
+          {children}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  )
+}
+
+function PlayerMenu({
+  state,
+  onRateChange,
+}: {
+  state: NativePlayerState
+  onRateChange: (rate: number) => void
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="sm" className="min-w-16 text-white hover:bg-white/10 hover:text-white">
+          {state.rate}x
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-48">
+        <DropdownMenuLabel>Speed</DropdownMenuLabel>
+        <DropdownMenuRadioGroup value={String(state.rate)} onValueChange={(value) => onRateChange(Number(value))}>
+          {PLAYBACK_RATES.map((rate) => (
+            <DropdownMenuRadioItem key={rate} value={String(rate)}>
+              {rate}x
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel className="flex items-center gap-2">
+          <Captions className="size-4" />
+          Captions
+        </DropdownMenuLabel>
+        <DropdownMenuItem disabled>
+          {state.subtitleTracks.length === 0 ? "No subtitle tracks" : "Subtitle track selection"}
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel>Audio</DropdownMenuLabel>
+        <DropdownMenuItem disabled>
+          {state.audioTracks.length === 0 ? "Default audio" : "Audio track selection"}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
