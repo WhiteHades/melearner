@@ -6,6 +6,7 @@ import { frontendLog } from "@/lib/frontend-log"
 import { generateVideoThumbnail, isTauri } from "@/lib/tauri"
 
 let thumbnailRunId = 0
+const THUMBNAIL_UPDATE_BATCH_SIZE = 4
 
 export async function hydrateCourseThumbnails(
   courses: Course[],
@@ -15,7 +16,13 @@ export async function hydrateCourseThumbnails(
 
   const runId = ++thumbnailRunId
   let nextCourses = courses
-  let didHydrate = false
+  let pendingHydrated = 0
+
+  function flushHydratedThumbnails() {
+    if (runId !== thumbnailRunId || pendingHydrated === 0) return
+    onUpdate(nextCourses)
+    pendingHydrated = 0
+  }
 
   for (const course of courses) {
     if (runId !== thumbnailRunId) return
@@ -23,6 +30,7 @@ export async function hydrateCourseThumbnails(
 
     try {
       const thumbnail = await generateVideoThumbnail(course.thumbnailSourcePath)
+      if (runId !== thumbnailRunId) return
       const thumbnailUrl = convertFileSrc(thumbnail.path)
       let changed = false
 
@@ -34,7 +42,10 @@ export async function hydrateCourseThumbnails(
         return { ...existing, thumbnail: thumbnailUrl }
       })
 
-      didHydrate = didHydrate || changed
+      if (changed) {
+        pendingHydrated += 1
+        if (pendingHydrated >= THUMBNAIL_UPDATE_BATCH_SIZE) flushHydratedThumbnails()
+      }
     } catch (error) {
       frontendLog("warn", "course.thumbnail.failed", {
         courseId: course.id,
@@ -44,5 +55,5 @@ export async function hydrateCourseThumbnails(
     }
   }
 
-  if (runId === thumbnailRunId && didHydrate) onUpdate(nextCourses)
+  flushHydratedThumbnails()
 }
