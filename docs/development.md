@@ -37,7 +37,7 @@ Current implementation state:
 - Linux uses a glutin OpenGL surface created from the Tauri native window handle by default. The window-handle fallback still needs an X11/XCB handle and is for diagnosis, not the main playback path.
 - The native surface is hidden when its WebView placeholder leaves the viewport, then shown and moved again when the placeholder returns.
 - Packaged native-surface attach and render failures are written to `~/.melearner/native-surface.log` by default. Set `MELEARNER_NATIVE_SURFACE_LOG=/path/to/log` when running focused render diagnostics.
-- Packaged render verification can open a known lesson at launch with `--open-course <course-id> --open-lesson <lesson-id>`, or with `MELEARNER_OPEN_COURSE_ID` and `MELEARNER_OPEN_LESSON_ID`. The frontend validates that the course is hydrated, available, and owns the lesson before opening the viewer.
+- Packaged render verification can open a known lesson at launch with `--open-course <course-id> --open-lesson <lesson-id>`, or with `MELEARNER_OPEN_COURSE_ID` and `MELEARNER_OPEN_LESSON_ID`. Rust applies this route to the initial WebView URL before frontend bootstrap so library hydration cannot block on a startup-route invoke.
 
 Rules for this pipeline:
 
@@ -111,6 +111,8 @@ pnpm install:arch:fast
 ```
 
 This script builds the production Tauri binary with `pnpm tauri build --no-bundle --ci`, packages `melearner-bin`, and installs the package that owns `/usr/bin/melearner`. Do not replace that Tauri build step with plain `cargo build`; direct Cargo builds can produce a dev-mode binary that tries to load `http://localhost:3000` instead of bundled static assets. The script preserves ignored build caches such as `.next`, `out`, and `src-tauri/target` and chooses the fastest available Rust cache mode.
+
+Do not run `pnpm install:arch:fast` after every edit. Use focused tests, `npm run type-check`, and targeted Rust tests first. Run the Arch install only after the source change is already checked and the launcher-visible `/usr/bin/melearner` app must be verified. Repeating full Tauri package builds for unverified intermediate edits wastes time and can make the app feel stalled even when the actual code change is small.
 
 When package contents change but `pkgver` remains the same, increment Arch `pkgrel`. Keep `pkgver=0.1.8` while the upstream app version is still `0.1.8`; use `pkgrel` for local/AUR rebuilds of that same version. Reset `pkgrel` to `1` only when `pkgver` changes to a new upstream version. Do not churn `pkgrel` for source-only changes that are not packaged or installed.
 
