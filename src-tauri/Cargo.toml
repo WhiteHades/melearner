@@ -32,3 +32,4 @@ dashmap = "6.1"
 notify = "6.1"
 tokio = { version = "1", features = ["rt", "macros"] }
 seahash = "4.1"
+libmpv = "2.0.1"
