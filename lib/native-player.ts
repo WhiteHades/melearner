@@ -29,6 +29,9 @@ export type NativePlayerState = {
   surfaceAttached: boolean
   surfaceBackend: string | null
   surfaceRenderApi: boolean
+  surfaceRenderThreadAlive: boolean
+  surfaceRenderedFrames: number
+  surfaceRenderError: string | null
   audioTracks: NativeTrack[]
   subtitleTracks: NativeTrack[]
   selectedAudioTrackId: string | null
