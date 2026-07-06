@@ -37,6 +37,7 @@ Current implementation state:
 - Linux uses a glutin OpenGL surface created from the Tauri native window handle by default. The window-handle fallback still needs an X11/XCB handle and is for diagnosis, not the main playback path.
 - The native surface is hidden when its WebView placeholder leaves the viewport, then shown and moved again when the placeholder returns.
 - Packaged native-surface attach and render failures are written to `~/.melearner/native-surface.log` by default. Set `MELEARNER_NATIVE_SURFACE_LOG=/path/to/log` when running focused render diagnostics.
+- Packaged render verification can open a known lesson at launch with `--open-course <course-id> --open-lesson <lesson-id>`, or with `MELEARNER_OPEN_COURSE_ID` and `MELEARNER_OPEN_LESSON_ID`. The frontend validates that the course is hydrated, available, and owns the lesson before opening the viewer.
 
 Rules for this pipeline:
 
