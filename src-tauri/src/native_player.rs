@@ -1,4 +1,8 @@
-use libmpv2::Mpv;
+use libmpv2::{
+    Mpv,
+    events::{Event, mpv_event_id},
+    mpv_end_file_reason,
+};
 use libmpv2_sys as mpv_sys;
 use serde::{Deserialize, Serialize};
 use std::ffi::{CStr, CString};
@@ -19,6 +23,7 @@ use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Webview
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 static PLAYER: OnceLock<Mutex<Option<NativePlayer>>> = OnceLock::new();
+static PLAYBACK_EVENT_RUN: OnceLock<Mutex<u64>> = OnceLock::new();
 static POSITION_EVENT_RUN: OnceLock<Mutex<u64>> = OnceLock::new();
 static SURFACE_WINDOW_RUN: OnceLock<Mutex<u64>> = OnceLock::new();
 const NATIVE_SURFACE_LABEL: &str = "native-player-surface";
@@ -36,6 +41,10 @@ fn player_slot() -> &'static Mutex<Option<NativePlayer>> {
 
 fn position_event_slot() -> &'static Mutex<u64> {
     POSITION_EVENT_RUN.get_or_init(|| Mutex::new(0))
+}
+
+fn playback_event_slot() -> &'static Mutex<u64> {
+    PLAYBACK_EVENT_RUN.get_or_init(|| Mutex::new(0))
 }
 
 fn surface_window_slot() -> &'static Mutex<u64> {
@@ -593,6 +602,29 @@ impl NativePlayer {
         Ok(())
     }
 
+    fn playback_event_client(&self) -> Result<Mpv, String> {
+        let client = self
+            .mpv
+            .create_client(None)
+            .map_err(|err| format!("libmpv could not create playback event client: {err}"))?;
+        client
+            .disable_deprecated_events()
+            .map_err(|err| format!("libmpv could not disable deprecated playback events: {err}"))?;
+        client
+            .enable_event(mpv_event_id::FileLoaded)
+            .map_err(|err| format!("libmpv could not enable file-loaded events: {err}"))?;
+        client
+            .enable_event(mpv_event_id::EndFile)
+            .map_err(|err| format!("libmpv could not enable end-file events: {err}"))?;
+        client
+            .enable_event(mpv_event_id::QueueOverflow)
+            .map_err(|err| format!("libmpv could not enable queue-overflow events: {err}"))?;
+        client
+            .enable_event(mpv_event_id::Shutdown)
+            .map_err(|err| format!("libmpv could not enable shutdown events: {err}"))?;
+        Ok(client)
+    }
+
     fn state(&self) -> NativePlayerState {
         let tracks = self.track_state();
         let chapters = self.chapters();
@@ -1072,6 +1104,25 @@ fn stop_position_events() {
     let _ = next_position_event_run();
 }
 
+fn next_playback_event_run() -> u64 {
+    let mut guard = playback_event_slot()
+        .lock()
+        .expect("playback event run lock poisoned");
+    *guard = guard.wrapping_add(1);
+    *guard
+}
+
+fn is_playback_event_run_current(run_id: u64) -> bool {
+    playback_event_slot()
+        .lock()
+        .map(|guard| *guard == run_id)
+        .unwrap_or(false)
+}
+
+fn stop_playback_events() {
+    let _ = next_playback_event_run();
+}
+
 fn emit_native_error(app: &AppHandle, message: &str) {
     let _ = app.emit(
         EVENT_ERROR,
@@ -1113,25 +1164,24 @@ fn emit_native_position(
         .map_err(|err| format!("native player could not emit position event: {err}"))
 }
 
+fn emit_file_loaded(app: &AppHandle, state: &NativePlayerState) -> Result<(), String> {
+    if let Some(path) = &state.path {
+        app.emit(
+            EVENT_FILE_LOADED,
+            NativePlayerFileLoadedEvent { path: path.clone() },
+        )
+        .map_err(|err| format!("native player could not emit file-loaded event: {err}"))?;
+    }
+    Ok(())
+}
+
 fn finish_state_command(
     app: &AppHandle,
     result: Result<NativePlayerState, String>,
-    emit_file_loaded: bool,
 ) -> Result<NativePlayerState, String> {
     match result {
         Ok(state) => {
             emit_native_state(app, &state)?;
-            if emit_file_loaded {
-                if let Some(path) = &state.path {
-                    app.emit(
-                        EVENT_FILE_LOADED,
-                        NativePlayerFileLoadedEvent { path: path.clone() },
-                    )
-                    .map_err(|err| {
-                        format!("native player could not emit file-loaded event: {err}")
-                    })?;
-                }
-            }
             Ok(state)
         }
         Err(err) => {
@@ -1144,7 +1194,6 @@ fn finish_state_command(
 fn start_position_events(app: AppHandle) {
     let run_id = next_position_event_run();
     std::thread::spawn(move || {
-        let mut emitted_end = false;
         loop {
             std::thread::sleep(std::time::Duration::from_millis(500));
             if !is_position_event_run_current(run_id) {
@@ -1154,17 +1203,6 @@ fn start_position_events(app: AppHandle) {
             match with_existing_player(|player| Ok(player.position_event())) {
                 Ok(Some(position)) => {
                     let _ = emit_native_position(&app, &position);
-                    let is_ended = position.path.is_some()
-                        && position.duration > 0.0
-                        && position.current_time >= position.duration - 0.5;
-                    if is_ended && !emitted_end {
-                        if let Ok(Some(state)) = with_existing_player(|player| Ok(player.state())) {
-                            let _ = app.emit(EVENT_END_FILE, state);
-                        }
-                        emitted_end = true;
-                    } else if !is_ended {
-                        emitted_end = false;
-                    }
                 }
                 Ok(None) => break,
                 Err(err) => {
@@ -1176,31 +1214,90 @@ fn start_position_events(app: AppHandle) {
     });
 }
 
+fn start_playback_events(app: AppHandle, event_client: Mpv) {
+    let run_id = next_playback_event_run();
+    std::thread::spawn(move || {
+        loop {
+            if !is_playback_event_run_current(run_id) {
+                break;
+            }
+
+            let Some(event) = event_client.wait_event(0.25) else {
+                continue;
+            };
+
+            if !is_playback_event_run_current(run_id) {
+                break;
+            }
+
+            match event {
+                Ok(Event::FileLoaded) => {
+                    if let Ok(Some(state)) = with_existing_player(|player| Ok(player.state())) {
+                        let _ = emit_native_state(&app, &state);
+                        let _ = emit_file_loaded(&app, &state);
+                    }
+                }
+                Ok(Event::EndFile(reason)) => {
+                    if reason == mpv_end_file_reason::Eof {
+                        if let Ok(Some(state)) = with_existing_player(|player| Ok(player.state())) {
+                            let _ = app.emit(EVENT_END_FILE, state);
+                        }
+                    } else if reason == mpv_end_file_reason::Quit {
+                        break;
+                    }
+                }
+                Ok(Event::QueueOverflow) => {
+                    emit_native_error(&app, "libmpv playback event queue overflowed");
+                }
+                Ok(Event::Shutdown) => break,
+                Err(err) => {
+                    emit_native_error(&app, &format!("libmpv playback event failed: {err}"));
+                    break;
+                }
+                _ => {}
+            }
+        }
+    });
+}
+
 #[tauri::command]
 pub fn native_player_load(
     app: AppHandle,
     options: NativePlayerLoadOptions,
 ) -> Result<NativePlayerState, String> {
     stop_position_events();
+    stop_playback_events();
     let result = canonical_local_file(&options.path, &options.allowed_roots).and_then(|path| {
         let subtitles = canonical_subtitle_files(&options.subtitles, &options.allowed_roots)?;
         with_player(|player| {
-            player.load_visible(
+            let event_client = player.playback_event_client()?;
+            let state = player.load_visible(
                 path,
                 subtitles,
                 options.start_time,
                 options.autoplay.unwrap_or(false),
-            )
+            )?;
+            Ok((state, event_client))
         })
     });
-    let state = finish_state_command(&app, result, true)?;
-    start_position_events(app);
+    let (state, event_client) = match result {
+        Ok((state, event_client)) => {
+            emit_native_state(&app, &state)?;
+            (state, event_client)
+        }
+        Err(err) => {
+            emit_native_error(&app, &err);
+            return Err(err);
+        }
+    };
+    start_position_events(app.clone());
+    start_playback_events(app, event_client);
     Ok(state)
 }
 
 #[tauri::command]
 pub fn native_player_state(app: AppHandle) -> Result<NativePlayerState, String> {
-    finish_state_command(&app, with_player(|player| Ok(player.state())), false)
+    finish_state_command(&app, with_player(|player| Ok(player.state())))
 }
 
 #[tauri::command]
@@ -1212,7 +1309,7 @@ pub fn native_player_play(app: AppHandle) -> Result<NativePlayerState, String> {
             .map_err(|err| format!("libmpv could not play: {err}"))?;
         Ok(player.state())
     });
-    finish_state_command(&app, result, false)
+    finish_state_command(&app, result)
 }
 
 #[tauri::command]
@@ -1224,7 +1321,7 @@ pub fn native_player_pause(app: AppHandle) -> Result<NativePlayerState, String> 
             .map_err(|err| format!("libmpv could not pause: {err}"))?;
         Ok(player.state())
     });
-    finish_state_command(&app, result, false)
+    finish_state_command(&app, result)
 }
 
 #[tauri::command]
@@ -1250,7 +1347,7 @@ pub fn native_player_seek(
             .map_err(|err| format!("libmpv could not seek: {err}"))?;
         Ok(player.state())
     });
-    finish_state_command(&app, result, false)
+    finish_state_command(&app, result)
 }
 
 #[tauri::command]
@@ -1268,7 +1365,7 @@ pub fn native_player_set_volume(app: AppHandle, volume: f64) -> Result<NativePla
             .map_err(|err| format!("libmpv could not set volume: {err}"))?;
         Ok(player.state())
     });
-    finish_state_command(&app, result, false)
+    finish_state_command(&app, result)
 }
 
 #[tauri::command]
@@ -1280,7 +1377,7 @@ pub fn native_player_set_muted(app: AppHandle, muted: bool) -> Result<NativePlay
             .map_err(|err| format!("libmpv could not set mute: {err}"))?;
         Ok(player.state())
     });
-    finish_state_command(&app, result, false)
+    finish_state_command(&app, result)
 }
 
 #[tauri::command]
@@ -1298,7 +1395,7 @@ pub fn native_player_set_rate(app: AppHandle, rate: f64) -> Result<NativePlayerS
             .map_err(|err| format!("libmpv could not set playback rate: {err}"))?;
         Ok(player.state())
     });
-    finish_state_command(&app, result, false)
+    finish_state_command(&app, result)
 }
 
 #[tauri::command]
@@ -1306,11 +1403,7 @@ pub fn native_player_select_audio_track(
     app: AppHandle,
     id: Option<String>,
 ) -> Result<NativePlayerState, String> {
-    finish_state_command(
-        &app,
-        with_player(|player| player.select_track("aid", id)),
-        false,
-    )
+    finish_state_command(&app, with_player(|player| player.select_track("aid", id)))
 }
 
 #[tauri::command]
@@ -1318,11 +1411,7 @@ pub fn native_player_select_subtitle_track(
     app: AppHandle,
     id: Option<String>,
 ) -> Result<NativePlayerState, String> {
-    finish_state_command(
-        &app,
-        with_player(|player| player.select_track("sid", id)),
-        false,
-    )
+    finish_state_command(&app, with_player(|player| player.select_track("sid", id)))
 }
 
 #[tauri::command]
@@ -1351,7 +1440,7 @@ pub fn native_player_select_chapter(
             .map_err(|err| format!("libmpv could not select chapter: {err}"))?;
         Ok(player.state())
     });
-    finish_state_command(&app, result, false)
+    finish_state_command(&app, result)
 }
 
 #[tauri::command]
@@ -1383,7 +1472,7 @@ pub fn native_player_step_frame(app: AppHandle) -> Result<NativePlayerState, Str
             .map_err(|err| format!("libmpv could not step frame: {err}"))?;
         Ok(player.state())
     });
-    finish_state_command(&app, result, false)
+    finish_state_command(&app, result)
 }
 
 #[tauri::command]
@@ -1406,6 +1495,7 @@ pub fn native_player_screenshot(app: AppHandle) -> Result<String, String> {
 #[tauri::command]
 pub fn native_player_destroy(app: AppHandle) -> Result<(), String> {
     stop_position_events();
+    stop_playback_events();
     let mut guard = player_slot()
         .lock()
         .map_err(|_| "native player lock is poisoned".to_string())?;
