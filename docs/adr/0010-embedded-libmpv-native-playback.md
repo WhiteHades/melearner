@@ -29,6 +29,18 @@ The app must not keep a browser-media playback engine. The app must not use an m
 
 The first production native-player UI should keep complex controls in stable WebView bands around the native video surface rather than relying on fragile transparent DOM overlays directly on top of native video.
 
+## Implementation state
+
+The current implementation owns the native playback control path in `src-tauri/src/native_player.rs`:
+
+- local-file and approved-root validation;
+- embedded `libmpv2` lifecycle;
+- play, pause, seek, volume, mute, rate, audio track, subtitle track, chapter, delay, frame-step, screenshot, and destroy commands;
+- structured `track-list` and `chapter-list` reads through mpv node properties;
+- React/shadcn controls in `components/video-player.tsx` with no `<video>`, `<audio>`, Shaka, or Limeplay path.
+
+The current implementation does not yet complete native video presentation. `native_player_set_bounds` records the WebView placeholder rectangle, but no platform renderer consumes those bounds to create a visible GPU/native surface. A change is not accepted as completed native playback until libmpv frames render into a real platform surface on the packaged app.
+
 ## Requirements
 
 - Local filesystem paths only. Reject URLs, schemes, missing files, and files outside approved library roots.

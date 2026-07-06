@@ -23,7 +23,13 @@ rtk cargo check --manifest-path src-tauri/Cargo.toml
 
 ## Native Playback
 
-The player is an in-app native playback surface controlled by typed Tauri commands from the React UI. The canonical engine is embedded libmpv. The app must not keep a parallel browser-media playback path, player-side compatibility conversion path, or external sidecar player path.
+The canonical player is an in-app native playback surface controlled by typed Tauri commands from the React UI. The engine is embedded libmpv. The app must not keep a parallel browser-media playback path, player-side compatibility conversion path, or external sidecar player path.
+
+Current implementation state:
+
+- `src-tauri/src/native_player.rs` owns libmpv lifecycle, local-file validation, playback commands, track selection, chapter data, and structured native state.
+- `components/video-player.tsx` owns the React/shadcn control band and native surface placeholder. It must not render `<video>` or `<audio>`.
+- Native video presentation is not complete until a platform renderer consumes `native_player_set_bounds` and renders libmpv frames into a real native/GPU surface in the packaged app.
 
 Rules for this pipeline:
 
