@@ -180,7 +180,9 @@ export function AppBootstrap() {
         if (!isActive || !library) return
         setCourses(library.courses)
         setLibraryPath(library.libraryPath)
-        indexCourses(library.courses)
+        void indexCourses(library.courses, library.libraryPath).catch((error) => {
+          frontendLog("warn", "app.bootstrap.searchIndex.failed", { error: String(error) })
+        })
         void hydrateCourseThumbnails(library.courses, (courses) => {
           setCourses(courses)
         })

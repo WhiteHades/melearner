@@ -107,7 +107,9 @@ export async function scanLibraryAt(path: string): Promise<{ courses: Course[]; 
   const store = useCourseStore.getState()
   store.setCourses(hydrated)
   store.setLibraryPath(path)
-  indexCourses(hydrated)
+  void indexCourses(hydrated, path).catch((err) => {
+    frontendLog("warn", `search index failed: ${errorMessage(err)}`)
+  })
   void hydrateCourseThumbnails(hydrated, (courses) => {
     useCourseStore.getState().setCourses(courses)
   })
