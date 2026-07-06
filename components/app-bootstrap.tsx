@@ -123,6 +123,7 @@ function applyStartupRoute(courses: Course[], route: StartupRoute | null): strin
     url.searchParams.delete("lesson")
   }
   window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`)
+  window.dispatchEvent(new PopStateEvent("popstate", { state: null }))
   frontendLog("info", "startup.route.applied", { courseId: course.id, lessonId: selectedLessonId })
   return course.id
 }
