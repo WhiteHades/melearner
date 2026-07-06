@@ -415,6 +415,12 @@ struct RenderApiRawHandles {
 
 unsafe impl Send for RenderApiRawHandles {}
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RenderApiDisplayHandle {
+    X11(*const c_void),
+    Wayland(*const c_void),
+}
+
 enum RenderApiCommand {
     Render,
     Resize(NativeSurfaceRect),
@@ -523,14 +529,25 @@ impl<'a> RenderApiRenderer<'a> {
         .make_current(&gl_surface)
         .map_err(|err| format!("native render-api could not make GL context current: {err}"))?;
         let display_ptr = display.as_ref() as *const Display as usize;
+        let mut render_params: Vec<RenderParam<usize>> = vec![
+            RenderParam::ApiType(RenderParamApiType::OpenGl),
+            RenderParam::InitParams(OpenGLInitParams {
+                get_proc_address: render_api_get_proc_address,
+                ctx: display_ptr,
+            }),
+        ];
+        if let Some(display_handle) = render_api_display_handle(handles.display) {
+            match display_handle {
+                RenderApiDisplayHandle::X11(display) => {
+                    render_params.push(RenderParam::X11Display(display));
+                }
+                RenderApiDisplayHandle::Wayland(display) => {
+                    render_params.push(RenderParam::WaylandDisplay(display));
+                }
+            }
+        }
         let render_context = mpv_client
-            .create_render_context(vec![
-                RenderParam::ApiType(RenderParamApiType::OpenGl),
-                RenderParam::InitParams(OpenGLInitParams {
-                    get_proc_address: render_api_get_proc_address,
-                    ctx: display_ptr,
-                }),
-            ])
+            .create_render_context(render_params)
             .map_err(|err| format!("libmpv could not create render-api context: {err}"))?;
 
         Ok(Self {
@@ -575,6 +592,18 @@ fn render_api_get_proc_address(display_ptr: &usize, name: &str) -> *mut c_void {
     };
     let display = unsafe { &*(*display_ptr as *const Display) };
     display.get_proc_address(&name).cast_mut()
+}
+
+fn render_api_display_handle(display: RawDisplayHandle) -> Option<RenderApiDisplayHandle> {
+    match display {
+        RawDisplayHandle::Xlib(handle) => handle
+            .display
+            .map(|display| RenderApiDisplayHandle::X11(display.as_ptr().cast_const())),
+        RawDisplayHandle::Wayland(handle) => Some(RenderApiDisplayHandle::Wayland(
+            handle.display.as_ptr().cast_const(),
+        )),
+        _ => None,
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -736,4 +765,44 @@ fn mpv_window_handle(window: &Window) -> Result<NativeMpvWindowHandle, String> {
 struct NativeMpvWindowHandle {
     id: i64,
     backend: &'static str,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use raw_window_handle::{WaylandDisplayHandle, XcbDisplayHandle, XlibDisplayHandle};
+    use std::ptr::NonNull;
+
+    fn display_ptr() -> NonNull<c_void> {
+        NonNull::new(1 as *mut c_void).expect("non-null display pointer")
+    }
+
+    #[test]
+    fn render_api_uses_platform_display_params_when_available() {
+        let xlib = display_ptr();
+        let wayland = display_ptr();
+
+        assert_eq!(
+            render_api_display_handle(RawDisplayHandle::Xlib(XlibDisplayHandle::new(
+                Some(xlib),
+                0,
+            ))),
+            Some(RenderApiDisplayHandle::X11(xlib.as_ptr().cast_const()))
+        );
+        assert_eq!(
+            render_api_display_handle(RawDisplayHandle::Wayland(WaylandDisplayHandle::new(
+                wayland,
+            ))),
+            Some(RenderApiDisplayHandle::Wayland(
+                wayland.as_ptr().cast_const()
+            ))
+        );
+        assert_eq!(
+            render_api_display_handle(RawDisplayHandle::Xcb(XcbDisplayHandle::new(
+                Some(display_ptr()),
+                0,
+            ))),
+            None
+        );
+    }
 }
