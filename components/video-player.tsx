@@ -67,6 +67,12 @@ interface VideoPlayerProps {
 const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
 const POSITION_SAVE_MS = 5000
 
+function isEditableShortcutTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false
+  const tagName = target.tagName.toLowerCase()
+  return target.isContentEditable || tagName === "input" || tagName === "textarea" || tagName === "select"
+}
+
 const initialState: NativePlayerState = {
   path: null,
   paused: true,
@@ -425,6 +431,44 @@ function VideoPlayerComponent({
       setIsFullscreen(true)
     }
   }, [])
+
+  useEffect(() => {
+    if (!isPlayable) return
+
+    function handlePlayerKeyDown(event: KeyboardEvent) {
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return
+      if (isEditableShortcutTarget(event.target)) return
+
+      switch (event.code) {
+        case "Space":
+        case "KeyK":
+          event.preventDefault()
+          togglePlayback()
+          break
+        case "KeyM":
+          event.preventDefault()
+          toggleMute()
+          break
+        case "KeyF":
+          event.preventDefault()
+          toggleFullscreen()
+          break
+        case "KeyJ":
+        case "ArrowLeft":
+          event.preventDefault()
+          applyNativeState(seekNativePlayer({ seconds: -10, mode: "relative" }))
+          break
+        case "KeyL":
+        case "ArrowRight":
+          event.preventDefault()
+          applyNativeState(seekNativePlayer({ seconds: 10, mode: "relative" }))
+          break
+      }
+    }
+
+    document.addEventListener("keydown", handlePlayerKeyDown)
+    return () => document.removeEventListener("keydown", handlePlayerKeyDown)
+  }, [applyNativeState, isPlayable, toggleFullscreen, toggleMute, togglePlayback])
 
   if (!isPlayable) {
     return (
