@@ -38,6 +38,7 @@ The current implementation owns the native playback control path in `src-tauri/s
 - a same-process native video surface created from `native_player_set_bounds`;
 - play, pause, seek, volume, mute, rate, audio track, subtitle track, chapter, frame-step, screenshot, and destroy commands;
 - structured `track-list` and `chapter-list` reads through mpv node properties;
+- a lightweight `native-player://position` event for high-frequency playback position updates, so the polling loop does not repeatedly re-read or re-emit track and chapter metadata;
 - test-covered internal audio/subtitle/chapter extraction and external SRT/VTT subtitle registration;
 - React/shadcn controls in `components/video-player.tsx` with no `<video>`, `<audio>`, Shaka, or Limeplay path.
 
@@ -54,7 +55,7 @@ The current surface is native and in-process, but it is still a window-handle in
 - Native playback is the normal path; FFmpeg remux/transcode must not be part of ordinary playback.
 - Support play/pause, absolute and relative seek, volume, mute, playback rate, fullscreen, subtitles, audio tracks, chapter data, and screenshots.
 - Emit typed state, track, chapter, file-loaded, end-file, and error events from Rust to the frontend.
-- Send coarse position events from Rust and interpolate the visible scrubber locally.
+- Send coarse typed position events from Rust and interpolate the visible scrubber locally.
 - Keep the React/shadcn UI as the app and control layer.
 - Keep FFmpeg for thumbnails, metadata, and optional processing only.
 
