@@ -1,7 +1,7 @@
 pkgbase = melearner-bin
 	pkgdesc = local course learner
 	pkgver = 0.1.8
-	pkgrel = 32
+	pkgrel = 33
 	url = https://github.com/WhiteHades/melearner
 	arch = x86_64
 	license = MIT
