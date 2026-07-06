@@ -35,7 +35,7 @@ The current implementation owns the native playback control path in `src-tauri/s
 
 - local-file and approved-root validation;
 - embedded `libmpv2` lifecycle;
-- play, pause, seek, volume, mute, rate, audio track, subtitle track, chapter, delay, frame-step, screenshot, and destroy commands;
+- play, pause, seek, volume, mute, rate, audio track, subtitle track, chapter, frame-step, screenshot, and destroy commands;
 - structured `track-list` and `chapter-list` reads through mpv node properties;
 - React/shadcn controls in `components/video-player.tsx` with no `<video>`, `<audio>`, Shaka, or Limeplay path.
 

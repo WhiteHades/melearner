@@ -45,6 +45,7 @@ import {
   setNativePlayerRate,
   setNativePlayerVolume,
   stepNativePlayerFrame,
+  subscribeNativePlayerEvents,
   takeNativePlayerScreenshot,
   type NativePlayerState,
 } from "@/lib/native-player"
@@ -63,7 +64,6 @@ interface VideoPlayerProps {
 
 const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
 const POSITION_SAVE_MS = 5000
-const STATE_POLL_MS = 250
 
 const initialState: NativePlayerState = {
   path: null,
@@ -124,7 +124,17 @@ function VideoPlayerComponent({
     if (!isPlayable || !isTauri()) return
     let isActive = true
 
-    void loadNativePlayerFile({ path: lesson.path, allowedRoots: [libraryRoot], startTime: lesson.lastPosition || undefined, autoplay })
+    void loadNativePlayerFile({
+      path: lesson.path,
+      allowedRoots: [libraryRoot],
+      subtitles: lesson.subtitles.map((subtitle) => ({
+        path: subtitle.path,
+        label: subtitle.label,
+        language: subtitle.language,
+      })),
+      startTime: lesson.lastPosition || undefined,
+      autoplay,
+    })
       .then((next) => {
         if (!isActive) return
         setError(null)
@@ -138,7 +148,7 @@ function VideoPlayerComponent({
       isActive = false
       if (isTauri()) void destroyNativePlayer().catch(() => undefined)
     }
-  }, [autoplay, isPlayable, lesson.duration, lesson.id, lesson.lastPosition, lesson.path, libraryRoot])
+  }, [autoplay, isPlayable, lesson.duration, lesson.id, lesson.lastPosition, lesson.path, lesson.subtitles, libraryRoot])
 
   useEffect(() => {
     const surface = surfaceRef.current
@@ -157,30 +167,43 @@ function VideoPlayerComponent({
   useEffect(() => {
     if (!isPlayable || !isTauri()) return
     let cancelled = false
-    let inFlight = false
+    let unsubscribe: (() => void) | null = null
 
-    const poll = () => {
-      if (inFlight) return
-      inFlight = true
-      void getNativePlayerState()
-        .then((next) => {
-          if (!cancelled && next.path === lesson.path) setNativeState(next)
-        })
-        .catch((reason) => {
-          if (!cancelled) setError({ path: lesson.path, message: String(reason) })
-        })
-        .finally(() => {
-          inFlight = false
-        })
-    }
+    void subscribeNativePlayerEvents({
+      onState: (next) => {
+        if (!cancelled && (next.path === lesson.path || next.path === null)) setNativeState(next)
+      },
+      onEnd: (next) => {
+        if (!cancelled && next.path === lesson.path) onComplete()
+      },
+      onError: (message) => {
+        if (!cancelled) setError({ path: lesson.path, message })
+      },
+    })
+      .then((nextUnsubscribe) => {
+        if (cancelled) {
+          nextUnsubscribe()
+        } else {
+          unsubscribe = nextUnsubscribe
+        }
+      })
+      .catch((reason) => {
+        if (!cancelled) setError({ path: lesson.path, message: String(reason) })
+      })
 
-    poll()
-    const interval = window.setInterval(poll, STATE_POLL_MS)
+    void getNativePlayerState()
+      .then((next) => {
+        if (!cancelled && next.path === lesson.path) setNativeState(next)
+      })
+      .catch((reason) => {
+        if (!cancelled) setError({ path: lesson.path, message: String(reason) })
+      })
+
     return () => {
       cancelled = true
-      window.clearInterval(interval)
+      unsubscribe?.()
     }
-  }, [isPlayable, lesson.path])
+  }, [isPlayable, lesson.path, onComplete])
 
   useEffect(() => {
     const now = Date.now()
@@ -231,23 +254,23 @@ function VideoPlayerComponent({
     void setNativePlayerRate(rate).catch((reason) => setError({ path: lesson.path, message: String(reason) }))
   }, [fallbackState, lesson.path])
 
-  const changeAudioTrack = useCallback((id: string) => {
-    void selectNativePlayerAudioTrack(id)
+  const applyNativeState = useCallback((action: Promise<NativePlayerState>) => {
+    void action
       .then(setNativeState)
       .catch((reason) => setError({ path: lesson.path, message: String(reason) }))
   }, [lesson.path])
+
+  const changeAudioTrack = useCallback((id: string) => {
+    applyNativeState(selectNativePlayerAudioTrack(id))
+  }, [applyNativeState])
 
   const changeSubtitleTrack = useCallback((id: string | null) => {
-    void selectNativePlayerSubtitleTrack(id)
-      .then(setNativeState)
-      .catch((reason) => setError({ path: lesson.path, message: String(reason) }))
-  }, [lesson.path])
+    applyNativeState(selectNativePlayerSubtitleTrack(id))
+  }, [applyNativeState])
 
   const changeChapter = useCallback((id: string) => {
-    void selectNativePlayerChapter(id)
-      .then(setNativeState)
-      .catch((reason) => setError({ path: lesson.path, message: String(reason) }))
-  }, [lesson.path])
+    applyNativeState(selectNativePlayerChapter(id))
+  }, [applyNativeState])
 
   const toggleFullscreen = useCallback(() => {
     const surface = surfaceRef.current
