@@ -93,6 +93,8 @@ pub struct NativePlayerState {
     rate: f64,
     width: Option<i64>,
     height: Option<i64>,
+    surface_attached: bool,
+    surface_backend: Option<String>,
     audio_tracks: Vec<NativeTrack>,
     subtitle_tracks: Vec<NativeTrack>,
     selected_audio_track_id: Option<String>,
@@ -307,6 +309,7 @@ struct NativeSurfaceRect {
 struct NativeVideoSurface {
     window: Window,
     window_id: i64,
+    backend: &'static str,
 }
 
 impl NativeVideoSurface {
@@ -326,8 +329,12 @@ impl NativeVideoSurface {
             .show()
             .map_err(|err| format!("native player could not show video surface: {err}"))?;
 
-        let window_id = mpv_window_id(&window)?;
-        Ok(Self { window, window_id })
+        let handle = mpv_window_handle(&window)?;
+        Ok(Self {
+            window,
+            window_id: handle.id,
+            backend: handle.backend,
+        })
     }
 
     fn move_to(&self, parent: &WebviewWindow, bounds: NativePlayerBounds) -> Result<(), String> {
@@ -445,19 +452,26 @@ fn checked_surface_u32(value: f64, label: &str) -> Result<u32, String> {
 }
 
 #[cfg(windows)]
-fn mpv_window_id(window: &Window) -> Result<i64, String> {
-    Ok(window
-        .hwnd()
-        .map_err(|err| format!("native player could not read Win32 video surface handle: {err}"))?
-        .0 as isize as i64)
+fn mpv_window_handle(window: &Window) -> Result<NativeMpvWindowHandle, String> {
+    Ok(NativeMpvWindowHandle {
+        id: window
+            .hwnd()
+            .map_err(|err| {
+                format!("native player could not read Win32 video surface handle: {err}")
+            })?
+            .0 as isize as i64,
+        backend: "win32",
+    })
 }
 
 #[cfg(target_os = "macos")]
-fn mpv_window_id(window: &Window) -> Result<i64, String> {
-    Ok(window
-        .ns_view()
-        .map_err(|err| format!("native player could not read Cocoa video surface handle: {err}"))?
-        as isize as i64)
+fn mpv_window_handle(window: &Window) -> Result<NativeMpvWindowHandle, String> {
+    Ok(NativeMpvWindowHandle {
+        id: window.ns_view().map_err(|err| {
+            format!("native player could not read Cocoa video surface handle: {err}")
+        })? as isize as i64,
+        backend: "cocoa",
+    })
 }
 
 #[cfg(any(
@@ -467,15 +481,26 @@ fn mpv_window_id(window: &Window) -> Result<i64, String> {
     target_os = "netbsd",
     target_os = "openbsd"
 ))]
-fn mpv_window_id(window: &Window) -> Result<i64, String> {
+fn mpv_window_handle(window: &Window) -> Result<NativeMpvWindowHandle, String> {
     let handle = window
         .window_handle()
         .map_err(|err| format!("native player could not read video surface handle: {err}"))?;
     match handle.as_raw() {
-        RawWindowHandle::Xlib(handle) => Ok(handle.window as i64),
-        RawWindowHandle::Xcb(handle) => Ok(handle.window.get() as i64),
+        RawWindowHandle::Xlib(handle) => Ok(NativeMpvWindowHandle {
+            id: handle.window as i64,
+            backend: "xlib",
+        }),
+        RawWindowHandle::Xcb(handle) => Ok(NativeMpvWindowHandle {
+            id: handle.window.get() as i64,
+            backend: "xcb",
+        }),
         _ => Err("native player video surface requires an X11 window handle on Linux".to_string()),
     }
+}
+
+struct NativeMpvWindowHandle {
+    id: i64,
+    backend: &'static str,
 }
 
 struct NativePlayer {
@@ -536,6 +561,11 @@ impl NativePlayer {
         let rate = self.mpv.get_property("speed").unwrap_or(1.0);
         let width = self.mpv.get_property("width").ok();
         let height = self.mpv.get_property("height").ok();
+        let surface_attached = self.surface.is_some();
+        let surface_backend = self
+            .surface
+            .as_ref()
+            .map(|surface| surface.backend.to_string());
         let current_chapter_id = self
             .mpv
             .get_property("chapter")
@@ -557,6 +587,8 @@ impl NativePlayer {
             rate,
             width,
             height,
+            surface_attached,
+            surface_backend,
             audio_tracks: tracks.audio_tracks,
             subtitle_tracks: tracks.subtitle_tracks,
             selected_audio_track_id: tracks.selected_audio_track_id,
@@ -683,6 +715,8 @@ fn empty_state() -> NativePlayerState {
         rate: 1.0,
         width: None,
         height: None,
+        surface_attached: false,
+        surface_backend: None,
         audio_tracks: Vec::new(),
         subtitle_tracks: Vec::new(),
         selected_audio_track_id: None,
@@ -1610,6 +1644,14 @@ mod tests {
     }
 
     #[test]
+    fn empty_state_reports_no_native_surface() {
+        let state = empty_state();
+
+        assert!(!state.surface_attached);
+        assert_eq!(state.surface_backend, None);
+    }
+
+    #[test]
     fn native_player_reports_tracks_and_chapters() {
         let Some(fixture) = multitrack_media_fixture() else {
             return;
@@ -1649,12 +1691,7 @@ mod tests {
         let mut player = NativePlayer::new().expect("create native player");
 
         player
-            .load(
-                fixture.media.file.clone(),
-                fixture.subtitles,
-                None,
-                false,
-            )
+            .load(fixture.media.file.clone(), fixture.subtitles, None, false)
             .expect("load media fixture");
         let state = wait_for_state(&player, |state| {
             state

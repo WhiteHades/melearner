@@ -26,6 +26,8 @@ export type NativePlayerState = {
   rate: number
   width: number | null
   height: number | null
+  surfaceAttached: boolean
+  surfaceBackend: string | null
   audioTracks: NativeTrack[]
   subtitleTracks: NativeTrack[]
   selectedAudioTrackId: string | null
