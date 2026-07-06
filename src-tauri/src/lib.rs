@@ -1,4 +1,5 @@
 mod media;
+mod native_player;
 mod scanner;
 
 use tauri_plugin_sql::{Builder as SqlBuilder, Migration, MigrationKind};
@@ -257,7 +258,10 @@ pub fn run() {
 
         let course_path = std::path::PathBuf::from(path);
         if !course_path.is_dir() {
-            return Err(format!("course folder is not available: {}", course_path.display()));
+            return Err(format!(
+                "course folder is not available: {}",
+                course_path.display()
+            ));
         }
 
         let marker_path = course_path.join(".melearner-course.json");
@@ -321,8 +325,18 @@ pub fn run() {
             scanner::get_file_info,
             log_frontend,
             open_native,
-            media::prepare_playback_media,
-            media::cancel_playback_media,
+            media::generate_video_thumbnail,
+            native_player::native_player_load,
+            native_player::native_player_play,
+            native_player::native_player_pause,
+            native_player::native_player_seek,
+            native_player::native_player_set_volume,
+            native_player::native_player_set_muted,
+            native_player::native_player_set_rate,
+            native_player::native_player_set_bounds,
+            native_player::native_player_step_frame,
+            native_player::native_player_screenshot,
+            native_player::native_player_destroy,
             get_build_info,
             get_database_path,
             write_course_marker,

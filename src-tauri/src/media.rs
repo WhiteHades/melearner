@@ -1,7 +1,5 @@
 use seahash::SeaHasher;
 use serde::Serialize;
-use serde_json::Value;
-use std::collections::HashMap;
 use std::hash::Hasher;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -9,15 +7,15 @@ use std::sync::{Mutex, OnceLock};
 use std::time::UNIX_EPOCH;
 
 #[derive(Debug, Serialize)]
-pub struct PreparedMedia {
+pub struct GeneratedThumbnail {
     path: String,
 }
 
-static ACTIVE_PLAYBACK_JOBS: OnceLock<Mutex<HashMap<String, u32>>> = OnceLock::new();
-const MEDIA_CACHE_VERSION: &[u8] = b"prepared-media-v3-h264-baseline-no-b";
+static THUMBNAIL_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+const THUMBNAIL_CACHE_VERSION: &[u8] = b"course-thumbnail-v1";
 
-fn active_playback_jobs() -> &'static Mutex<HashMap<String, u32>> {
-    ACTIVE_PLAYBACK_JOBS.get_or_init(|| Mutex::new(HashMap::new()))
+fn thumbnail_lock() -> &'static Mutex<()> {
+    THUMBNAIL_LOCK.get_or_init(|| Mutex::new(()))
 }
 
 fn new_hasher() -> SeaHasher {
@@ -29,18 +27,18 @@ fn new_hasher() -> SeaHasher {
     )
 }
 
-fn media_cache_root() -> PathBuf {
-    if let Ok(path) = std::env::var("MELEARNER_MEDIA_CACHE") {
+fn thumbnail_cache_root() -> PathBuf {
+    if let Ok(path) = std::env::var("MELEARNER_THUMBNAIL_CACHE") {
         return PathBuf::from(path);
     }
 
     #[cfg(target_os = "windows")]
     {
         if let Ok(path) = std::env::var("LOCALAPPDATA") {
-            return PathBuf::from(path).join("melearner").join("media");
+            return PathBuf::from(path).join("melearner").join("thumbnails");
         }
         if let Ok(path) = std::env::var("APPDATA") {
-            return PathBuf::from(path).join("melearner").join("media");
+            return PathBuf::from(path).join("melearner").join("thumbnails");
         }
     }
 
@@ -51,31 +49,30 @@ fn media_cache_root() -> PathBuf {
                 .join("Library")
                 .join("Caches")
                 .join("melearner")
-                .join("media");
+                .join("thumbnails");
         }
     }
 
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         if let Ok(path) = std::env::var("XDG_CACHE_HOME") {
-            return PathBuf::from(path).join("melearner").join("media");
+            return PathBuf::from(path).join("melearner").join("thumbnails");
         }
         if let Ok(home) = std::env::var("HOME") {
             return PathBuf::from(home)
                 .join(".cache")
                 .join("melearner")
-                .join("media");
+                .join("thumbnails");
         }
     }
 
-    std::env::temp_dir().join("melearner-media")
+    std::env::temp_dir().join("melearner-thumbnails")
 }
 
-fn cache_key(path: &Path, metadata: &std::fs::Metadata, media_type: &str) -> String {
+fn thumbnail_cache_key(path: &Path, metadata: &std::fs::Metadata) -> String {
     let mut hasher = new_hasher();
     hasher.write(path.to_string_lossy().as_bytes());
-    hasher.write(media_type.as_bytes());
-    hasher.write(MEDIA_CACHE_VERSION);
+    hasher.write(THUMBNAIL_CACHE_VERSION);
     hasher.write(&metadata.len().to_le_bytes());
 
     if let Ok(modified) = metadata.modified() {
@@ -88,15 +85,10 @@ fn cache_key(path: &Path, metadata: &std::fs::Metadata, media_type: &str) -> Str
     format!("{:016x}", hasher.finish())
 }
 
-fn output_path(input: &Path, media_type: &str) -> Result<PathBuf, String> {
+fn thumbnail_output_path(input: &Path) -> Result<PathBuf, String> {
     let metadata =
-        std::fs::metadata(input).map_err(|err| format!("failed to read media metadata: {err}"))?;
-    let extension = if media_type == "audio" { "m4a" } else { "mp4" };
-    Ok(media_cache_root().join(format!(
-        "{}.{}",
-        cache_key(input, &metadata, media_type),
-        extension
-    )))
+        std::fs::metadata(input).map_err(|err| format!("failed to read video metadata: {err}"))?;
+    Ok(thumbnail_cache_root().join(format!("{}.jpg", thumbnail_cache_key(input, &metadata))))
 }
 
 fn media_tool_program(env_name: &str, program: &str) -> String {
@@ -125,426 +117,124 @@ fn ffmpeg_program() -> String {
     media_tool_program("MELEARNER_FFMPEG", "ffmpeg")
 }
 
-fn ffprobe_program() -> String {
-    media_tool_program("MELEARNER_FFPROBE", "ffprobe")
-}
-
-fn temp_output_path(output: &Path) -> PathBuf {
+fn thumbnail_temp_output_path(output: &Path) -> PathBuf {
     let file_name = output
         .file_name()
         .map(|name| name.to_string_lossy().to_string())
-        .unwrap_or_else(|| "prepared-media".to_string());
-    output.with_file_name(format!("{file_name}.part"))
+        .unwrap_or_else(|| "course-thumbnail.jpg".to_string());
+    output.with_file_name(format!("{file_name}.part.jpg"))
 }
 
-fn first_stream<'a>(probe: &'a Value, stream_type: &str) -> Option<&'a Value> {
-    probe
-        .get("streams")
-        .and_then(Value::as_array)
-        .and_then(|streams| {
-            streams.iter().find(|stream| {
-                stream.get("codec_type").and_then(Value::as_str) == Some(stream_type)
-            })
-        })
-}
-
-fn stream_codec(stream: &Value) -> Option<&str> {
-    stream.get("codec_name").and_then(Value::as_str)
-}
-
-fn audio_stream_browser_safe(stream: Option<&Value>) -> bool {
-    stream.is_some_and(|stream| stream_codec(stream) == Some("aac"))
-}
-
-fn h264_stream_browser_safe(stream: &Value) -> bool {
-    if stream_codec(stream) != Some("h264") {
-        return false;
-    }
-
-    if stream.get("pix_fmt").and_then(Value::as_str) != Some("yuv420p") {
-        return false;
-    }
-
-    let Some(level) = stream.get("level").and_then(Value::as_i64) else {
-        return false;
-    };
-    if level > 42 {
-        return false;
-    }
-
-    if stream
-        .get("has_b_frames")
-        .and_then(Value::as_i64)
-        .unwrap_or(0)
-        > 0
-    {
-        return false;
-    }
-
-    let profile = stream
-        .get("profile")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_ascii_lowercase();
-
-    (profile.contains("baseline") || profile.contains("main") || profile == "high")
-        && !profile.contains("10")
-        && !profile.contains("4:2")
-        && !profile.contains("4:4")
-}
-
-fn probe_browser_safe(probe: &Value, media_type: &str) -> bool {
-    if media_type == "audio" {
-        return audio_stream_browser_safe(first_stream(probe, "audio"));
-    }
-
-    let Some(video) = first_stream(probe, "video") else {
-        return false;
-    };
-
-    h264_stream_browser_safe(video)
-        && first_stream(probe, "audio")
-            .map(|audio| audio_stream_browser_safe(Some(audio)))
-            .unwrap_or(true)
-}
-
-fn probe_media(path: &Path) -> Result<Value, String> {
-    let output = Command::new(ffprobe_program())
-        .args([
-            "-v",
-            "error",
-            "-show_entries",
-            "stream=codec_type,codec_name,profile,level,pix_fmt,has_b_frames",
-            "-of",
-            "json",
-        ])
-        .arg(path)
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|err| format!("failed to start ffprobe: {err}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(if stderr.is_empty() {
-            output.status.to_string()
-        } else {
-            format!("{}: {stderr}", output.status)
-        });
-    }
-
-    serde_json::from_slice(&output.stdout)
-        .map_err(|err| format!("failed to parse ffprobe output: {err}"))
-}
-
-fn media_browser_safe(path: &Path, media_type: &str) -> bool {
-    probe_media(path)
-        .map(|probe| probe_browser_safe(&probe, media_type))
+fn existing_thumbnail_ready(output: &Path) -> bool {
+    output
+        .metadata()
+        .map(|metadata| metadata.len() > 0)
         .unwrap_or(false)
 }
 
-fn existing_output_ready(output: &Path, media_type: &str) -> bool {
-    let has_bytes = output
-        .metadata()
-        .map(|metadata| metadata.len() > 0)
-        .unwrap_or(false);
-    if !has_bytes {
-        return false;
-    }
-
-    media_browser_safe(output, media_type)
-}
-
-fn remux_args(input: &Path, output: &Path, media_type: &str) -> Vec<String> {
-    let mut args = vec![
+fn thumbnail_args(input: &Path, output: &Path, timestamp: &str) -> Vec<String> {
+    vec![
         "-hide_banner".to_string(),
         "-loglevel".to_string(),
         "error".to_string(),
         "-nostdin".to_string(),
         "-y".to_string(),
+        "-ss".to_string(),
+        timestamp.to_string(),
         "-i".to_string(),
         input.to_string_lossy().to_string(),
-    ];
-
-    if media_type == "audio" {
-        args.extend([
-            "-vn".to_string(),
-            "-map".to_string(),
-            "0:a:0".to_string(),
-            "-c:a".to_string(),
-            "copy".to_string(),
-            "-movflags".to_string(),
-            "+faststart".to_string(),
-            "-f".to_string(),
-            "mp4".to_string(),
-        ]);
-    } else {
-        args.extend([
-            "-map".to_string(),
-            "0:v:0?".to_string(),
-            "-map".to_string(),
-            "0:a:0?".to_string(),
-            "-dn".to_string(),
-            "-sn".to_string(),
-            "-c".to_string(),
-            "copy".to_string(),
-            "-movflags".to_string(),
-            "+faststart".to_string(),
-            "-f".to_string(),
-            "mp4".to_string(),
-        ]);
-    }
-
-    args.push(output.to_string_lossy().to_string());
-    args
+        "-frames:v".to_string(),
+        "1".to_string(),
+        "-vf".to_string(),
+        "scale='min(640,iw)':-2".to_string(),
+        "-q:v".to_string(),
+        "4".to_string(),
+        "-f".to_string(),
+        "image2".to_string(),
+        output.to_string_lossy().to_string(),
+    ]
 }
 
-fn transcode_args(input: &Path, output: &Path, media_type: &str) -> Vec<String> {
-    let mut args = vec![
-        "-hide_banner".to_string(),
-        "-loglevel".to_string(),
-        "error".to_string(),
-        "-nostdin".to_string(),
-        "-y".to_string(),
-        "-i".to_string(),
-        input.to_string_lossy().to_string(),
-    ];
+fn run_thumbnail_ffmpeg(input: &Path, output: &Path) -> Result<(), String> {
+    let attempts = ["00:00:03", "00:00:00.5"];
+    let mut last_error = "ffmpeg did not produce a thumbnail".to_string();
 
-    if media_type == "audio" {
-        args.extend([
-            "-vn".to_string(),
-            "-map".to_string(),
-            "0:a:0".to_string(),
-            "-c:a".to_string(),
-            "aac".to_string(),
-            "-b:a".to_string(),
-            "160k".to_string(),
-            "-threads".to_string(),
-            "1".to_string(),
-            "-f".to_string(),
-            "mp4".to_string(),
-        ]);
-    } else {
-        args.extend([
-            "-map".to_string(),
-            "0:v:0?".to_string(),
-            "-map".to_string(),
-            "0:a:0?".to_string(),
-            "-dn".to_string(),
-            "-sn".to_string(),
-            "-c:v".to_string(),
-            "libx264".to_string(),
-            "-preset".to_string(),
-            "veryfast".to_string(),
-            "-crf".to_string(),
-            "23".to_string(),
-            "-pix_fmt".to_string(),
-            "yuv420p".to_string(),
-            "-profile:v".to_string(),
-            "baseline".to_string(),
-            "-level:v".to_string(),
-            "4.0".to_string(),
-            "-x264-params".to_string(),
-            "bframes=0".to_string(),
-            "-c:a".to_string(),
-            "aac".to_string(),
-            "-b:a".to_string(),
-            "160k".to_string(),
-            "-threads".to_string(),
-            "2".to_string(),
-            "-filter_threads".to_string(),
-            "1".to_string(),
-            "-filter_complex_threads".to_string(),
-            "1".to_string(),
-            "-movflags".to_string(),
-            "+faststart".to_string(),
-            "-f".to_string(),
-            "mp4".to_string(),
-        ]);
-    }
-
-    args.push(output.to_string_lossy().to_string());
-    args
-}
-
-fn unregister_playback_job(job_key: &str, pid: u32) {
-    let Ok(mut jobs) = active_playback_jobs().lock() else {
-        return;
-    };
-
-    if jobs.get(job_key).copied() == Some(pid) {
-        jobs.remove(job_key);
-    }
-}
-
-fn kill_process(pid: u32) {
-    #[cfg(target_family = "unix")]
-    let _ = Command::new("kill")
-        .args(["-TERM", &pid.to_string()])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-
-    #[cfg(target_os = "windows")]
-    let _ = Command::new("taskkill")
-        .args(["/PID", &pid.to_string(), "/T", "/F"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-}
-
-fn cancel_all_playback_jobs() {
-    let pids = {
-        let Ok(mut jobs) = active_playback_jobs().lock() else {
-            return;
-        };
-
-        jobs.drain().map(|(_, pid)| pid).collect::<Vec<_>>()
-    };
-
-    for pid in pids {
-        kill_process(pid);
-    }
-}
-
-fn run_ffmpeg(job_key: &str, args: Vec<String>) -> Result<(), String> {
-    let child = Command::new(ffmpeg_program())
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|err| format!("failed to start ffmpeg: {err}"))?;
-
-    let pid = child.id();
-    if let Ok(mut jobs) = active_playback_jobs().lock() {
-        jobs.insert(job_key.to_string(), pid);
-    }
-
-    let ffmpeg_output = child
-        .wait_with_output()
-        .map_err(|err| format!("failed to wait for ffmpeg: {err}"));
-    unregister_playback_job(job_key, pid);
-    let ffmpeg_output = ffmpeg_output?;
-
-    if ffmpeg_output.status.success() {
-        return Ok(());
-    }
-
-    let stderr = String::from_utf8_lossy(&ffmpeg_output.stderr)
-        .trim()
-        .to_string();
-    let details = if stderr.is_empty() {
-        ffmpeg_output.status.to_string()
-    } else {
-        format!("{}: {stderr}", ffmpeg_output.status)
-    };
-    Err(details)
-}
-
-fn finalize_output(temp_output: &Path, output: &Path, media_type: &str) -> Result<(), String> {
-    if !existing_output_ready(temp_output, media_type) {
-        let _ = std::fs::remove_file(temp_output);
-        return Err("ffmpeg produced an unreadable media file".to_string());
-    }
-
-    if output.exists() {
+    for timestamp in attempts {
         let _ = std::fs::remove_file(output);
+        let ffmpeg_output = Command::new(ffmpeg_program())
+            .args(thumbnail_args(input, output, timestamp))
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|err| format!("failed to start ffmpeg: {err}"))?;
+
+        if ffmpeg_output.status.success() && existing_thumbnail_ready(output) {
+            return Ok(());
+        }
+
+        let stderr = String::from_utf8_lossy(&ffmpeg_output.stderr)
+            .trim()
+            .to_string();
+        last_error = if stderr.is_empty() {
+            ffmpeg_output.status.to_string()
+        } else {
+            format!("{}: {stderr}", ffmpeg_output.status)
+        };
     }
 
-    std::fs::rename(temp_output, output)
-        .map_err(|err| format!("failed to move prepared media into cache: {err}"))
+    Err(last_error)
 }
 
 #[tauri::command]
-pub async fn prepare_playback_media(
-    path: String,
-    media_type: String,
-) -> Result<PreparedMedia, String> {
+pub async fn generate_video_thumbnail(path: String) -> Result<GeneratedThumbnail, String> {
     tokio::task::spawn_blocking(move || {
         let input = PathBuf::from(path);
         if !input.exists() {
-            return Err("media file does not exist".to_string());
+            return Err("video file does not exist".to_string());
         }
 
-        let normalized_type = if media_type == "audio" {
-            "audio"
-        } else {
-            "video"
-        };
-        let output = output_path(&input, normalized_type)?;
-        let temp_output = temp_output_path(&output);
-        let job_key = output.to_string_lossy().to_string();
-
-        if existing_output_ready(&output, normalized_type) {
-            return Ok(PreparedMedia {
+        let output = thumbnail_output_path(&input)?;
+        if existing_thumbnail_ready(&output) {
+            return Ok(GeneratedThumbnail {
                 path: output.to_string_lossy().to_string(),
             });
         }
-        let _ = std::fs::remove_file(&output);
 
         if let Some(parent) = output.parent() {
             std::fs::create_dir_all(parent)
-                .map_err(|err| format!("failed to create media cache: {err}"))?;
+                .map_err(|err| format!("failed to create thumbnail cache: {err}"))?;
         }
-        cancel_all_playback_jobs();
+
+        let _guard = thumbnail_lock()
+            .lock()
+            .map_err(|_| "thumbnail generator lock is poisoned".to_string())?;
+
+        if existing_thumbnail_ready(&output) {
+            return Ok(GeneratedThumbnail {
+                path: output.to_string_lossy().to_string(),
+            });
+        }
+
+        let temp_output = thumbnail_temp_output_path(&output);
         let _ = std::fs::remove_file(&temp_output);
 
-        let remux_result = if media_browser_safe(&input, normalized_type) {
-            run_ffmpeg(&job_key, remux_args(&input, &temp_output, normalized_type))
-        } else {
-            Err("input media requires transcoding for browser playback".to_string())
-        };
-        if remux_result.is_err() {
+        if let Err(details) = run_thumbnail_ffmpeg(&input, &temp_output) {
             let _ = std::fs::remove_file(&temp_output);
-            let transcode_result = run_ffmpeg(
-                &job_key,
-                transcode_args(&input, &temp_output, normalized_type),
-            );
-            if let Err(details) = transcode_result {
-                let _ = std::fs::remove_file(&temp_output);
-                return Err(format!(
-                    "ffmpeg could not prepare this media file: {details}"
-                ));
-            }
+            return Err(format!("ffmpeg could not generate a thumbnail: {details}"));
         }
 
-        finalize_output(&temp_output, &output, normalized_type)?;
+        if output.exists() {
+            let _ = std::fs::remove_file(&output);
+        }
 
-        Ok(PreparedMedia {
+        std::fs::rename(&temp_output, &output)
+            .map_err(|err| format!("failed to move thumbnail into cache: {err}"))?;
+
+        Ok(GeneratedThumbnail {
             path: output.to_string_lossy().to_string(),
         })
     })
     .await
-    .map_err(|err| format!("media preparation task failed: {err}"))?
-}
-
-#[tauri::command]
-pub async fn cancel_playback_media(path: String, media_type: String) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || {
-        let input = PathBuf::from(path);
-        let normalized_type = if media_type == "audio" {
-            "audio"
-        } else {
-            "video"
-        };
-        let Ok(output) = output_path(&input, normalized_type) else {
-            return;
-        };
-        let job_key = output.to_string_lossy().to_string();
-        let pid = active_playback_jobs()
-            .lock()
-            .ok()
-            .and_then(|mut jobs| jobs.remove(&job_key));
-
-        if let Some(pid) = pid {
-            kill_process(pid);
-        }
-        let _ = std::fs::remove_file(temp_output_path(&output));
-    })
-    .await
-    .map_err(|err| format!("media cancellation task failed: {err}"))
+    .map_err(|err| format!("thumbnail generation task failed: {err}"))?
 }
 
 #[cfg(test)]
@@ -563,170 +253,89 @@ mod tests {
         path
     }
 
+    fn temp_path(name: &str, extension: &str) -> PathBuf {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("melearner-media-{name}-{suffix}.{extension}"))
+    }
+
     #[test]
-    fn output_path_uses_media_type_extension() {
-        let input = temp_file("output-path");
+    fn thumbnail_output_path_uses_jpg_extension() {
+        let input = temp_file("thumbnail-output-path");
 
-        let video = output_path(&input, "video").expect("video output path");
-        let audio = output_path(&input, "audio").expect("audio output path");
+        let thumbnail = thumbnail_output_path(&input).expect("thumbnail output path");
 
-        assert_eq!(video.extension().and_then(|ext| ext.to_str()), Some("mp4"));
-        assert_eq!(audio.extension().and_then(|ext| ext.to_str()), Some("m4a"));
-        assert_ne!(video, audio);
+        assert_eq!(
+            thumbnail.extension().and_then(|ext| ext.to_str()),
+            Some("jpg")
+        );
 
         let _ = fs::remove_file(input);
     }
 
     #[test]
-    fn remux_args_prepare_browser_safe_video_without_reencoding() {
-        let input = PathBuf::from("source.ts");
-        let output = PathBuf::from("prepared.mp4");
-        let args = remux_args(&input, &output, "video");
+    fn thumbnail_args_extract_scaled_jpeg_frame() {
+        let input = PathBuf::from("lecture.mp4");
+        let output = PathBuf::from("thumbnail.jpg");
+        let args = thumbnail_args(&input, &output, "00:00:03");
 
         assert!(
             args.windows(2)
-                .any(|pair| pair[0] == "-c" && pair[1] == "copy")
-        );
-        assert!(args.iter().any(|arg| arg == "-dn"));
-        assert!(args.iter().any(|arg| arg == "-sn"));
-        assert!(
-            args.windows(2)
-                .any(|pair| pair[0] == "-f" && pair[1] == "mp4")
-        );
-        assert_eq!(args.last().map(String::as_str), Some("prepared.mp4"));
-    }
-
-    #[test]
-    fn transcode_args_bound_cpu_for_browser_safe_video() {
-        let input = PathBuf::from("source.mkv");
-        let output = PathBuf::from("prepared.mp4");
-        let args = transcode_args(&input, &output, "video");
-
-        assert!(
-            args.windows(2)
-                .any(|pair| pair[0] == "-c:v" && pair[1] == "libx264")
+                .any(|pair| pair[0] == "-ss" && pair[1] == "00:00:03")
         );
         assert!(
             args.windows(2)
-                .any(|pair| pair[0] == "-pix_fmt" && pair[1] == "yuv420p")
+                .any(|pair| pair[0] == "-frames:v" && pair[1] == "1")
         );
         assert!(
             args.windows(2)
-                .any(|pair| pair[0] == "-level:v" && pair[1] == "4.0")
+                .any(|pair| pair[0] == "-vf" && pair[1] == "scale='min(640,iw)':-2")
         );
         assert!(
             args.windows(2)
-                .any(|pair| pair[0] == "-profile:v" && pair[1] == "baseline")
-        );
-        assert!(
-            args.windows(2)
-                .any(|pair| pair[0] == "-x264-params" && pair[1] == "bframes=0")
-        );
-        assert!(
-            args.windows(2)
-                .any(|pair| pair[0] == "-c:a" && pair[1] == "aac")
-        );
-        assert!(
-            args.windows(2)
-                .any(|pair| pair[0] == "-movflags" && pair[1] == "+faststart")
-        );
-        assert!(
-            args.windows(2)
-                .any(|pair| pair[0] == "-threads" && pair[1] == "2")
+                .any(|pair| pair[0] == "-f" && pair[1] == "image2")
         );
         assert!(args.iter().any(|arg| arg == "-nostdin"));
-        assert_eq!(args.last().map(String::as_str), Some("prepared.mp4"));
+        assert_eq!(args.last().map(String::as_str), Some("thumbnail.jpg"));
     }
 
     #[test]
-    fn browser_probe_rejects_h264_level_above_web_target() {
-        let probe = serde_json::json!({
-            "streams": [{
-                "codec_type": "video",
-                "codec_name": "h264",
-                "profile": "High",
-                "level": 51,
-                "pix_fmt": "yuv420p",
-                "has_b_frames": 0
-            }, {
-                "codec_type": "audio",
-                "codec_name": "aac"
-            }]
-        });
+    fn thumbnail_ffmpeg_generates_jpeg_when_ffmpeg_is_available() {
+        let source = temp_path("thumbnail-source", "mp4");
+        let output = temp_path("thumbnail-output", "jpg");
 
-        assert!(!probe_browser_safe(&probe, "video"));
-    }
+        let make_source = Command::new(ffmpeg_program())
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-nostdin",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=size=320x240:rate=1",
+                "-t",
+                "1",
+                "-pix_fmt",
+                "yuv420p",
+            ])
+            .arg(&source)
+            .stdin(Stdio::null())
+            .status();
 
-    #[test]
-    fn browser_probe_accepts_h264_level_four_aac_video() {
-        let probe = serde_json::json!({
-            "streams": [{
-                "codec_type": "video",
-                "codec_name": "h264",
-                "profile": "High",
-                "level": 40,
-                "pix_fmt": "yuv420p",
-                "has_b_frames": 0
-            }, {
-                "codec_type": "audio",
-                "codec_name": "aac"
-            }]
-        });
+        if !make_source.map(|status| status.success()).unwrap_or(false) {
+            let _ = fs::remove_file(source);
+            let _ = fs::remove_file(output);
+            return;
+        }
 
-        assert!(probe_browser_safe(&probe, "video"));
-    }
+        run_thumbnail_ffmpeg(&source, &output).expect("generate thumbnail");
+        assert!(existing_thumbnail_ready(&output));
 
-    #[test]
-    fn browser_probe_rejects_video_with_non_aac_audio() {
-        let probe = serde_json::json!({
-            "streams": [{
-                "codec_type": "video",
-                "codec_name": "h264",
-                "profile": "High",
-                "level": 40,
-                "pix_fmt": "yuv420p",
-                "has_b_frames": 0
-            }, {
-                "codec_type": "audio",
-                "codec_name": "opus"
-            }]
-        });
-
-        assert!(!probe_browser_safe(&probe, "video"));
-    }
-
-    #[test]
-    fn browser_probe_rejects_audio_without_audio_stream() {
-        let probe = serde_json::json!({
-            "streams": [{
-                "codec_type": "video",
-                "codec_name": "h264",
-                "profile": "High",
-                "level": 40,
-                "pix_fmt": "yuv420p",
-                "has_b_frames": 0
-            }]
-        });
-
-        assert!(!probe_browser_safe(&probe, "audio"));
-    }
-
-    #[test]
-    fn browser_probe_rejects_video_with_b_frames() {
-        let probe = serde_json::json!({
-            "streams": [{
-                "codec_type": "video",
-                "codec_name": "h264",
-                "profile": "High",
-                "level": 40,
-                "pix_fmt": "yuv420p",
-                "has_b_frames": 2
-            }, {
-                "codec_type": "audio",
-                "codec_name": "aac"
-            }]
-        });
-
-        assert!(!probe_browser_safe(&probe, "video"));
+        let _ = fs::remove_file(source);
+        let _ = fs::remove_file(output);
     }
 }
