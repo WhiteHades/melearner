@@ -42,6 +42,7 @@ The current implementation owns the native playback control path in `src-tauri/s
 - test-covered internal audio/subtitle/chapter extraction and external SRT/VTT subtitle registration;
 - React/shadcn controls in `components/video-player.tsx` with no `<video>`, `<audio>`, Shaka, or Limeplay path.
 - Fullscreen control uses the Tauri app window fullscreen state and then resyncs native-surface bounds; it must not use DOM fullscreen on the WebView placeholder element.
+- The native surface follows the WebView placeholder's viewport visibility. When the placeholder leaves the viewport, React tells Rust to hide the native surface so the separate video window cannot float over unrelated UI.
 
 `native_player_set_bounds` is part of the playback interface. It creates or moves a native Tauri window surface, gives its platform window handle to libmpv with `wid`, and switches libmpv from the idle `vo=null` state to GPU video output before media loading. On Linux, the current packaged-app path intentionally forces X11/XWayland because the `wid` surface needs an X11/XCB handle. Wayland-native rendering remains future work unless the app moves to a libmpv render-API renderer that is verified on Wayland.
 
