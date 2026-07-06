@@ -3,6 +3,7 @@ import {
   clearLibrarySearch,
   indexLibrarySearch,
   isTauri,
+  type LibrarySearchDocument,
   searchLibrary,
 } from "@/lib/tauri"
 
@@ -70,7 +71,12 @@ export async function indexCourses(courses: Course[], libraryPath: string | null
     return
   }
 
-  await indexLibrarySearch(libraryPath, documents.map((document) => document.path))
+  await indexLibrarySearch(libraryPath, documents.map((document): LibrarySearchDocument => ({
+    path: document.path,
+    name: document.name,
+    courseName: document.courseName,
+    sectionName: document.sectionName,
+  })))
 }
 
 export async function search(query: string, limit = 20): Promise<SearchResult[]> {

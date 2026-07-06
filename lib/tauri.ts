@@ -43,8 +43,15 @@ export interface LibrarySearchHit {
   score: number
 }
 
-export async function indexLibrarySearch(root: string, paths: string[]): Promise<void> {
-  return invoke<void>("index_library_search", { root, paths })
+export interface LibrarySearchDocument {
+  path: string
+  name: string
+  courseName: string
+  sectionName: string
+}
+
+export async function indexLibrarySearch(root: string, documents: LibrarySearchDocument[]): Promise<void> {
+  return invoke<void>("index_library_search", { root, documents })
 }
 
 export async function searchLibrary(query: string, limit?: number): Promise<LibrarySearchHit[]> {

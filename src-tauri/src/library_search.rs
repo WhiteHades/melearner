@@ -1,6 +1,6 @@
 use fff_search::case_insensitive_memmem;
 use fff_search::{FuzzyQuery, QueryParser};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -18,6 +18,15 @@ struct LibrarySearchEntry {
     relative_path: String,
     name: String,
     searchable: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibrarySearchDocument {
+    path: String,
+    name: String,
+    course_name: String,
+    section_name: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -67,13 +76,27 @@ fn file_name(path: &Path) -> String {
         .to_string()
 }
 
-fn build_library_search_index(root: &Path, paths: &[String]) -> Result<LibrarySearchIndex, String> {
+fn append_search_text(text: &mut String, value: &str) {
+    let value = value.trim();
+    if value.is_empty() {
+        return;
+    }
+    if !text.is_empty() {
+        text.push(' ');
+    }
+    text.push_str(value);
+}
+
+fn build_library_search_index(
+    root: &Path,
+    documents: &[LibrarySearchDocument],
+) -> Result<LibrarySearchIndex, String> {
     let root = canonical_root(root)?;
     let mut seen = HashSet::new();
     let mut entries = Vec::new();
 
-    for path in paths {
-        let Some(path) = canonical_search_path(Path::new(path)) else {
+    for document in documents {
+        let Some(path) = canonical_search_path(Path::new(&document.path)) else {
             continue;
         };
         if !path.starts_with(&root) || !seen.insert(path.clone()) {
@@ -81,8 +104,18 @@ fn build_library_search_index(root: &Path, paths: &[String]) -> Result<LibrarySe
         }
 
         let relative_path = normalized_relative_path(&path, &root);
-        let name = file_name(&path);
-        let searchable = format!("{relative_path} {name}");
+        let file_name = file_name(&path);
+        let name = if document.name.trim().is_empty() {
+            file_name.clone()
+        } else {
+            document.name.trim().to_string()
+        };
+        let mut searchable = String::new();
+        append_search_text(&mut searchable, &document.course_name);
+        append_search_text(&mut searchable, &document.section_name);
+        append_search_text(&mut searchable, &name);
+        append_search_text(&mut searchable, &relative_path);
+        append_search_text(&mut searchable, &file_name);
         entries.push(LibrarySearchEntry {
             path: path.to_string_lossy().to_string(),
             relative_path,
@@ -170,9 +203,12 @@ fn search_index_hits(
 }
 
 #[tauri::command]
-pub async fn index_library_search(root: String, paths: Vec<String>) -> Result<(), String> {
+pub async fn index_library_search(
+    root: String,
+    documents: Vec<LibrarySearchDocument>,
+) -> Result<(), String> {
     let root = PathBuf::from(root);
-    let index = tokio::task::spawn_blocking(move || build_library_search_index(&root, &paths))
+    let index = tokio::task::spawn_blocking(move || build_library_search_index(&root, &documents))
         .await
         .map_err(|err| format!("FFF search index task failed: {err}"))??;
 
@@ -238,6 +274,15 @@ mod tests {
         let _ = fs::remove_dir_all(path);
     }
 
+    fn search_document(path: &Path) -> LibrarySearchDocument {
+        LibrarySearchDocument {
+            path: path.to_string_lossy().to_string(),
+            name: String::new(),
+            course_name: String::new(),
+            section_name: String::new(),
+        }
+    }
+
     #[test]
     fn fff_search_finds_indexed_nested_course_media() {
         let root = temp_root("nested-course-media");
@@ -248,10 +293,7 @@ mod tests {
 
         let index = build_library_search_index(
             &root,
-            &[
-                welcome.to_string_lossy().to_string(),
-                heaps.to_string_lossy().to_string(),
-            ],
+            &[search_document(&welcome), search_document(&heaps)],
         )
         .expect("build FFF index");
         let hits = search_index_hits(&index, "binary heaps", 10);
@@ -272,13 +314,54 @@ mod tests {
         let outside = outside_root.join("Other/001 - Welcome.mp4");
         touch(&outside);
 
-        let index = build_library_search_index(&root, &[outside.to_string_lossy().to_string()])
+        let index = build_library_search_index(&root, &[search_document(&outside)])
             .expect("build FFF index");
 
         assert!(search_index_hits(&index, "welcome", 10).is_empty());
 
         cleanup(&root);
         cleanup(&outside_root);
+    }
+
+    #[test]
+    fn fff_search_uses_lesson_metadata_to_rank_same_section_results() {
+        let root = temp_root("lesson-metadata");
+        let notes = root.join("ARM/13 - Bitwise Operations/notes.pdf");
+        let lecture = root.join("ARM/13 - Bitwise Operations/lecture.mp4");
+        touch(&notes);
+        touch(&lecture);
+
+        let index = build_library_search_index(
+            &root,
+            &[
+                LibrarySearchDocument {
+                    path: notes.to_string_lossy().to_string(),
+                    name: "notes".to_string(),
+                    course_name: "ARM".to_string(),
+                    section_name: "13 - Bitwise Operations".to_string(),
+                },
+                LibrarySearchDocument {
+                    path: lecture.to_string_lossy().to_string(),
+                    name: "lecture".to_string(),
+                    course_name: "ARM".to_string(),
+                    section_name: "13 - Bitwise Operations".to_string(),
+                },
+            ],
+        )
+        .expect("build FFF index");
+        let hits = search_index_hits(&index, "lecture Bitwise Operations", 10);
+
+        assert_eq!(
+            hits.len(),
+            1,
+            "expected only lecture to match, got {hits:?}"
+        );
+        assert_eq!(
+            hits[0].relative_path,
+            "ARM/13 - Bitwise Operations/lecture.mp4"
+        );
+
+        cleanup(&root);
     }
 
     #[test]
