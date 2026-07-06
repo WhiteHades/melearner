@@ -342,6 +342,7 @@ pub fn run() {
             native_player::native_player_destroy,
             get_build_info,
             get_database_path,
+            get_startup_route,
             write_course_marker,
         ])
         .run(tauri::generate_context!())
@@ -454,6 +455,13 @@ struct BuildInfo {
     rust_version: &'static str,
 }
 
+#[derive(Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StartupRoute {
+    course_id: String,
+    lesson_id: Option<String>,
+}
+
 #[tauri::command]
 fn get_build_info() -> BuildInfo {
     BuildInfo {
@@ -462,5 +470,100 @@ fn get_build_info() -> BuildInfo {
         git_sha_long: env!("MELEARNER_GIT_SHA_LONG"),
         build_timestamp: env!("MELEARNER_BUILD_TIMESTAMP"),
         rust_version: env!("CARGO_PKG_RUST_VERSION"),
+    }
+}
+
+#[tauri::command]
+fn get_startup_route() -> Option<StartupRoute> {
+    startup_route_from_sources(
+        std::env::args().skip(1),
+        std::env::var("MELEARNER_OPEN_COURSE_ID").ok().as_deref(),
+        std::env::var("MELEARNER_OPEN_LESSON_ID").ok().as_deref(),
+    )
+}
+
+fn startup_route_from_sources(
+    args: impl IntoIterator<Item = impl AsRef<str>>,
+    env_course_id: Option<&str>,
+    env_lesson_id: Option<&str>,
+) -> Option<StartupRoute> {
+    let mut course_id = clean_startup_route_value(env_course_id);
+    let mut lesson_id = clean_startup_route_value(env_lesson_id);
+    let mut args = args.into_iter();
+
+    while let Some(arg) = args.next() {
+        let arg = arg.as_ref();
+        if let Some(value) = arg.strip_prefix("--open-course=") {
+            course_id = clean_startup_route_value(Some(value));
+        } else if arg == "--open-course" {
+            course_id = args
+                .next()
+                .and_then(|value| clean_startup_route_value(Some(value.as_ref())));
+        } else if let Some(value) = arg.strip_prefix("--open-lesson=") {
+            lesson_id = clean_startup_route_value(Some(value));
+        } else if arg == "--open-lesson" {
+            lesson_id = args
+                .next()
+                .and_then(|value| clean_startup_route_value(Some(value.as_ref())));
+        }
+    }
+
+    course_id.map(|course_id| StartupRoute {
+        course_id,
+        lesson_id,
+    })
+}
+
+fn clean_startup_route_value(value: Option<&str>) -> Option<String> {
+    value.and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn startup_route_uses_cli_args() {
+        assert_eq!(
+            startup_route_from_sources(
+                ["--open-course", "course-1", "--open-lesson", "lesson-1"],
+                None,
+                None,
+            ),
+            Some(StartupRoute {
+                course_id: "course-1".to_string(),
+                lesson_id: Some("lesson-1".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn startup_route_uses_env_when_cli_is_absent() {
+        assert_eq!(
+            startup_route_from_sources(
+                std::iter::empty::<&str>(),
+                Some(" course-2 "),
+                Some(" lesson-2 "),
+            ),
+            Some(StartupRoute {
+                course_id: "course-2".to_string(),
+                lesson_id: Some("lesson-2".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn startup_route_requires_course_id() {
+        assert_eq!(
+            startup_route_from_sources(["--open-lesson", "lesson-1"], None, None),
+            None
+        );
     }
 }
