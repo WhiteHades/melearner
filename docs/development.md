@@ -98,7 +98,7 @@ makepkg -f -C
 
 Run `makepkg` from `packaging/arch/`.
 
-On the maintainer laptop, app-behavior changes must update every launcher-visible installed instance by installing the built Arch package. The launcher desktop entry resolves `Exec=melearner` to `/usr/bin/melearner`; do not use `cargo install` or `~/.cargo/bin/melearner` for this app's installed instance.
+On the maintainer laptop, app-behavior changes must update every launcher-visible installed instance by installing the built Arch package. The launcher desktop entry must call `/usr/bin/melearner` directly instead of relying on `PATH`; do not use `cargo install` or `~/.cargo/bin/melearner` for this app's installed instance.
 
 For routine local install checks, use:
 
