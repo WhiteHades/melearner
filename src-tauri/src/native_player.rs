@@ -536,10 +536,19 @@ impl NativePlayer {
     ) -> Result<NativePlayerState, String> {
         match id {
             Some(id) => {
+                let id = id.trim().to_string();
                 let track_id = id
-                    .trim()
                     .parse::<i64>()
                     .map_err(|_| "track id must be numeric".to_string())?;
+                let tracks = self.track_state();
+                let (available_tracks, label) = match property {
+                    "aid" => (&tracks.audio_tracks, "audio"),
+                    "sid" => (&tracks.subtitle_tracks, "subtitle"),
+                    _ => return Err("track property is not supported".to_string()),
+                };
+                if !available_tracks.iter().any(|track| track.id == id) {
+                    return Err(format!("{label} track id is not available"));
+                }
                 self.mpv
                     .set_property(property, track_id)
                     .map_err(|err| format!("libmpv could not select track: {err}"))?;
@@ -550,6 +559,24 @@ impl NativePlayer {
                     .map_err(|err| format!("libmpv could not disable track: {err}"))?;
             }
         }
+        Ok(self.state())
+    }
+
+    fn select_chapter(&mut self, id: String) -> Result<NativePlayerState, String> {
+        let id = id.trim().to_string();
+        let chapter_id = id
+            .parse::<i64>()
+            .map_err(|_| "chapter id must be numeric".to_string())?;
+        if chapter_id < 0 {
+            return Err("chapter id must not be negative".to_string());
+        }
+        if !self.chapters().iter().any(|chapter| chapter.id == id) {
+            return Err("chapter id is not available".to_string());
+        }
+
+        self.mpv
+            .set_property("chapter", chapter_id)
+            .map_err(|err| format!("libmpv could not select chapter: {err}"))?;
         Ok(self.state())
     }
 
@@ -1185,28 +1212,7 @@ pub fn native_player_select_chapter(
     app: AppHandle,
     id: String,
 ) -> Result<NativePlayerState, String> {
-    let chapter_id = match id.trim().parse::<i64>() {
-        Ok(chapter_id) => chapter_id,
-        Err(_) => {
-            let err = "chapter id must be numeric".to_string();
-            emit_native_error(&app, &err);
-            return Err(err);
-        }
-    };
-    if chapter_id < 0 {
-        let err = "chapter id must not be negative".to_string();
-        emit_native_error(&app, &err);
-        return Err(err);
-    }
-
-    let result = with_player(|player| {
-        player
-            .mpv
-            .set_property("chapter", chapter_id)
-            .map_err(|err| format!("libmpv could not select chapter: {err}"))?;
-        Ok(player.state())
-    });
-    finish_state_command(&app, result)
+    finish_state_command(&app, with_player(|player| player.select_chapter(id)))
 }
 
 #[tauri::command]
@@ -1681,6 +1687,59 @@ mod tests {
         assert_eq!(state.chapters.len(), 2);
         assert_eq!(state.chapters[0].title.as_deref(), Some("Intro"));
         assert_eq!(state.chapters[1].start_time, 1.0);
+    }
+
+    #[test]
+    fn native_player_switches_and_validates_tracks_and_chapters() {
+        let Some(fixture) = multitrack_media_fixture() else {
+            return;
+        };
+        let mut player = NativePlayer::new().expect("create native player");
+
+        player
+            .load(fixture.file.clone(), Vec::new(), None, false)
+            .expect("load media fixture");
+        let state = wait_for_state(&player, |state| {
+            state.audio_tracks.len() == 2
+                && state.subtitle_tracks.len() == 2
+                && state.chapters.len() == 2
+        });
+        let second_audio_id = state.audio_tracks[1].id.clone();
+        let second_subtitle_id = state.subtitle_tracks[1].id.clone();
+
+        let state = player
+            .select_track("aid", Some(second_audio_id.clone()))
+            .expect("select second audio track");
+        assert_eq!(
+            state.selected_audio_track_id.as_deref(),
+            Some(second_audio_id.as_str())
+        );
+
+        let state = player
+            .select_track("sid", Some(second_subtitle_id.clone()))
+            .expect("select second subtitle track");
+        assert_eq!(
+            state.selected_subtitle_track_id.as_deref(),
+            Some(second_subtitle_id.as_str())
+        );
+
+        let state = player
+            .select_chapter("1".to_string())
+            .expect("select second chapter");
+        assert_eq!(state.current_chapter_id.as_deref(), Some("1"));
+
+        assert_eq!(
+            player
+                .select_track("aid", Some("9999".to_string()))
+                .expect_err("unknown audio track should fail"),
+            "audio track id is not available"
+        );
+        assert_eq!(
+            player
+                .select_chapter("9999".to_string())
+                .expect_err("unknown chapter should fail"),
+            "chapter id is not available"
+        );
     }
 
     #[test]
