@@ -35,6 +35,7 @@ export type NativePlayerBounds = {
 
 export type NativePlayerLoadOptions = {
   path: string
+  allowedRoots: string[]
   startTime?: number
   autoplay?: boolean
 }

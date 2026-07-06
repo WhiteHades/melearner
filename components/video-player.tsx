@@ -50,6 +50,7 @@ import type { Lesson } from "@/types"
 
 interface VideoPlayerProps {
   lesson: Lesson
+  libraryRoot: string
   onProgress: (currentTime: number, duration: number) => void
   onComplete: () => void
   onNext?: () => void
@@ -78,6 +79,7 @@ const initialState: NativePlayerState = {
 
 function VideoPlayerComponent({
   lesson,
+  libraryRoot,
   onProgress,
   onComplete,
   onNext,
@@ -115,7 +117,7 @@ function VideoPlayerComponent({
     if (!isPlayable || !isTauri()) return
     let isActive = true
 
-    void loadNativePlayerFile({ path: lesson.path, startTime: lesson.lastPosition || undefined, autoplay })
+    void loadNativePlayerFile({ path: lesson.path, allowedRoots: [libraryRoot], startTime: lesson.lastPosition || undefined, autoplay })
       .then((next) => {
         if (!isActive) return
         setError(null)
@@ -129,7 +131,7 @@ function VideoPlayerComponent({
       isActive = false
       if (isTauri()) void destroyNativePlayer().catch(() => undefined)
     }
-  }, [autoplay, isPlayable, lesson.duration, lesson.id, lesson.lastPosition, lesson.path])
+  }, [autoplay, isPlayable, lesson.duration, lesson.id, lesson.lastPosition, lesson.path, libraryRoot])
 
   useEffect(() => {
     const surface = surfaceRef.current
