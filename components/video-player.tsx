@@ -37,6 +37,9 @@ import {
   pauseNativePlayer,
   playNativePlayer,
   seekNativePlayer,
+  selectNativePlayerAudioTrack,
+  selectNativePlayerChapter,
+  selectNativePlayerSubtitleTrack,
   setNativePlayerBounds,
   setNativePlayerMuted,
   setNativePlayerRate,
@@ -77,6 +80,8 @@ const initialState: NativePlayerState = {
   subtitleTracks: [],
   selectedAudioTrackId: null,
   selectedSubtitleTrackId: null,
+  chapters: [],
+  currentChapterId: null,
 }
 
 function VideoPlayerComponent({
@@ -226,6 +231,24 @@ function VideoPlayerComponent({
     void setNativePlayerRate(rate).catch((reason) => setError({ path: lesson.path, message: String(reason) }))
   }, [fallbackState, lesson.path])
 
+  const changeAudioTrack = useCallback((id: string) => {
+    void selectNativePlayerAudioTrack(id)
+      .then(setNativeState)
+      .catch((reason) => setError({ path: lesson.path, message: String(reason) }))
+  }, [lesson.path])
+
+  const changeSubtitleTrack = useCallback((id: string | null) => {
+    void selectNativePlayerSubtitleTrack(id)
+      .then(setNativeState)
+      .catch((reason) => setError({ path: lesson.path, message: String(reason) }))
+  }, [lesson.path])
+
+  const changeChapter = useCallback((id: string) => {
+    void selectNativePlayerChapter(id)
+      .then(setNativeState)
+      .catch((reason) => setError({ path: lesson.path, message: String(reason) }))
+  }, [lesson.path])
+
   const toggleFullscreen = useCallback(() => {
     const surface = surfaceRef.current
     if (!surface) return
@@ -305,6 +328,9 @@ function VideoPlayerComponent({
             <PlayerMenu
               state={state}
               onRateChange={changeRate}
+              onAudioTrackChange={changeAudioTrack}
+              onSubtitleTrackChange={changeSubtitleTrack}
+              onChapterChange={changeChapter}
             />
             <PlayerIconButton label="Step frame" onClick={() => void stepNativePlayerFrame().catch((reason) => setError({ path: lesson.path, message: String(reason) }))}>
               <SlidersHorizontal />
@@ -358,9 +384,15 @@ function PlayerIconButton({
 function PlayerMenu({
   state,
   onRateChange,
+  onAudioTrackChange,
+  onSubtitleTrackChange,
+  onChapterChange,
 }: {
   state: NativePlayerState
   onRateChange: (rate: number) => void
+  onAudioTrackChange: (id: string) => void
+  onSubtitleTrackChange: (id: string | null) => void
+  onChapterChange: (id: string) => void
 }) {
   return (
     <DropdownMenu>
@@ -383,17 +415,64 @@ function PlayerMenu({
           <Captions className="size-4" />
           Captions
         </DropdownMenuLabel>
-        <DropdownMenuItem disabled>
-          {state.subtitleTracks.length === 0 ? "No subtitle tracks" : "Subtitle track selection"}
-        </DropdownMenuItem>
+        <DropdownMenuRadioGroup
+          value={state.selectedSubtitleTrackId ?? "off"}
+          onValueChange={(value) => onSubtitleTrackChange(value === "off" ? null : value)}
+        >
+          <DropdownMenuRadioItem value="off">Off</DropdownMenuRadioItem>
+          {state.subtitleTracks.map((track, index) => (
+            <DropdownMenuRadioItem key={track.id} value={track.id}>
+              {formatTrackLabel(track, index, "Subtitle")}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
         <DropdownMenuLabel>Audio</DropdownMenuLabel>
-        <DropdownMenuItem disabled>
-          {state.audioTracks.length === 0 ? "Default audio" : "Audio track selection"}
-        </DropdownMenuItem>
+        {state.audioTracks.length === 0 ? (
+          <DropdownMenuItem disabled>Default audio</DropdownMenuItem>
+        ) : (
+          <DropdownMenuRadioGroup
+            value={state.selectedAudioTrackId ?? state.audioTracks[0]?.id}
+            onValueChange={onAudioTrackChange}
+          >
+            {state.audioTracks.map((track, index) => (
+              <DropdownMenuRadioItem key={track.id} value={track.id}>
+                {formatTrackLabel(track, index, "Audio")}
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        )}
+        {state.chapters.length > 0 && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel>Chapters</DropdownMenuLabel>
+            {state.chapters.map((chapter, index) => (
+              <DropdownMenuItem key={chapter.id} onSelect={() => onChapterChange(chapter.id)}>
+                {formatChapterLabel(chapter, index)}
+              </DropdownMenuItem>
+            ))}
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   )
+}
+
+function formatTrackLabel(
+  track: NativePlayerState["audioTracks"][number],
+  index: number,
+  fallback: string,
+) {
+  if (track.title) return track.title
+  if (track.language) return `${fallback} ${index + 1} (${track.language})`
+  return `${fallback} ${index + 1}`
+}
+
+function formatChapterLabel(
+  chapter: NativePlayerState["chapters"][number],
+  index: number,
+) {
+  return `${formatDuration(chapter.startTime)} ${chapter.title ?? `Chapter ${index + 1}`}`
 }
 
 export const VideoPlayer = memo(VideoPlayerComponent)

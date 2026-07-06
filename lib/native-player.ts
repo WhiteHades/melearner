@@ -8,6 +8,12 @@ export type NativeTrack = {
   language: string | null
 }
 
+export type NativeChapter = {
+  id: string
+  title: string | null
+  startTime: number
+}
+
 export type NativePlayerState = {
   path: string | null
   paused: boolean
@@ -23,6 +29,8 @@ export type NativePlayerState = {
   subtitleTracks: NativeTrack[]
   selectedAudioTrackId: string | null
   selectedSubtitleTrackId: string | null
+  chapters: NativeChapter[]
+  currentChapterId: string | null
 }
 
 export type NativePlayerBounds = {
@@ -75,6 +83,26 @@ export function setNativePlayerMuted(muted: boolean): Promise<NativePlayerState>
 
 export function setNativePlayerRate(rate: number): Promise<NativePlayerState> {
   return invoke<NativePlayerState>("native_player_set_rate", { rate })
+}
+
+export function selectNativePlayerAudioTrack(id: string | null): Promise<NativePlayerState> {
+  return invoke<NativePlayerState>("native_player_select_audio_track", { id })
+}
+
+export function selectNativePlayerSubtitleTrack(id: string | null): Promise<NativePlayerState> {
+  return invoke<NativePlayerState>("native_player_select_subtitle_track", { id })
+}
+
+export function selectNativePlayerChapter(id: string): Promise<NativePlayerState> {
+  return invoke<NativePlayerState>("native_player_select_chapter", { id })
+}
+
+export function setNativePlayerAudioDelay(seconds: number): Promise<NativePlayerState> {
+  return invoke<NativePlayerState>("native_player_set_audio_delay", { seconds })
+}
+
+export function setNativePlayerSubtitleDelay(seconds: number): Promise<NativePlayerState> {
+  return invoke<NativePlayerState>("native_player_set_subtitle_delay", { seconds })
 }
 
 export function setNativePlayerBounds(bounds: NativePlayerBounds): Promise<void> {
