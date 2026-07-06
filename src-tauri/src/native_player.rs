@@ -6,7 +6,7 @@ use std::marker::PhantomData;
 use std::mem::MaybeUninit;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindow, Window};
 
 #[cfg(any(
@@ -578,6 +578,20 @@ impl NativePlayer {
             .unwrap_or_default()
     }
 
+    fn wait_until_track_list_ready(&self) -> Result<(), String> {
+        for _ in 0..40 {
+            let has_tracks = MpvNode::get(&self.mpv, "track-list")
+                .map(|tracks| !tracks.as_ref().array_items().is_empty())
+                .unwrap_or(false);
+            if has_tracks {
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        Err("libmpv did not finish opening media for external tracks".to_string())
+    }
+
     fn load(
         &mut self,
         path: PathBuf,
@@ -589,6 +603,10 @@ impl NativePlayer {
         self.mpv
             .command("loadfile", &[&path_string, "replace"])
             .map_err(|err| format!("libmpv could not load file: {err}"))?;
+
+        if !subtitles.is_empty() {
+            self.wait_until_track_list_ready()?;
+        }
 
         for subtitle in subtitles {
             subtitle.add_to_mpv(&self.mpv)?;
@@ -1281,6 +1299,11 @@ mod tests {
         file: PathBuf,
     }
 
+    struct ExternalSubtitleFixture {
+        media: MediaFixture,
+        subtitles: Vec<NativeSubtitleFile>,
+    }
+
     impl Drop for MediaFixture {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.root);
@@ -1401,6 +1424,41 @@ mod tests {
         assert!(status.success(), "ffmpeg fixture command failed");
 
         Some(MediaFixture { root, file })
+    }
+
+    fn external_subtitle_fixture() -> Option<ExternalSubtitleFixture> {
+        let Some(media) = multitrack_media_fixture() else {
+            return None;
+        };
+        let root = media.root.clone();
+        let english = root.join("external.en.srt");
+        let spanish = root.join("external.es.vtt");
+        fs::write(
+            &english,
+            "1\n00:00:00,000 --> 00:00:01,000\nExternal English\n",
+        )
+        .expect("write external english subtitle");
+        fs::write(
+            &spanish,
+            "WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nExternal Spanish\n",
+        )
+        .expect("write external spanish subtitle");
+
+        Some(ExternalSubtitleFixture {
+            media,
+            subtitles: vec![
+                NativeSubtitleFile {
+                    path: english,
+                    label: Some("External English".to_string()),
+                    language: Some("eng".to_string()),
+                },
+                NativeSubtitleFile {
+                    path: spanish,
+                    label: Some("External Spanish".to_string()),
+                    language: Some("spa".to_string()),
+                },
+            ],
+        })
     }
 
     fn wait_for_state(
@@ -1552,5 +1610,41 @@ mod tests {
         assert_eq!(state.chapters.len(), 2);
         assert_eq!(state.chapters[0].title.as_deref(), Some("Intro"));
         assert_eq!(state.chapters[1].start_time, 1.0);
+    }
+
+    #[test]
+    fn native_player_reports_external_subtitle_tracks() {
+        let Some(fixture) = external_subtitle_fixture() else {
+            return;
+        };
+        let mut player = NativePlayer::new().expect("create native player");
+
+        player
+            .load(
+                fixture.media.file.clone(),
+                fixture.subtitles,
+                None,
+                false,
+            )
+            .expect("load media fixture");
+        let state = wait_for_state(&player, |state| {
+            state
+                .subtitle_tracks
+                .iter()
+                .any(|track| track.title.as_deref() == Some("External English"))
+                && state
+                    .subtitle_tracks
+                    .iter()
+                    .any(|track| track.title.as_deref() == Some("External Spanish"))
+        });
+
+        assert!(state.subtitle_tracks.iter().any(|track| {
+            track.title.as_deref() == Some("External English")
+                && track.language.as_deref() == Some("eng")
+        }));
+        assert!(state.subtitle_tracks.iter().any(|track| {
+            track.title.as_deref() == Some("External Spanish")
+                && track.language.as_deref() == Some("spa")
+        }));
     }
 }
