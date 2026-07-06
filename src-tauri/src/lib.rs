@@ -222,12 +222,6 @@ fn get_migrations() -> Vec<Migration> {
 pub fn run() {
     let _ = write_startup_log("start");
 
-    #[cfg(target_os = "linux")]
-    {
-        // This runs before Tauri starts app threads, so no other thread can read the env concurrently.
-        unsafe { std::env::set_var("GST_PLUGIN_FEATURE_RANK", "avdec_h264:MAX") };
-    }
-
     fn get_db_path() -> std::path::PathBuf {
         std::env::var("HOME")
             .map(|h| {
