@@ -2217,6 +2217,7 @@ dependencies = [
  "libmpv2-sys",
  "log",
  "notify 6.1.1",
+ "raw-window-handle",
  "rayon",
  "seahash",
  "serde",
