@@ -37,7 +37,7 @@ Current implementation state:
 - Linux uses a glutin OpenGL surface created from the Tauri native window handle by default. The window-handle fallback still needs an X11/XCB handle and is for diagnosis, not the main playback path.
 - The native surface is hidden when its WebView placeholder leaves the viewport, then shown and moved again when the placeholder returns.
 - Packaged native-surface attach and render failures are written to `~/.melearner/native-surface.log` by default. Set `MELEARNER_NATIVE_SURFACE_LOG=/path/to/log` when running focused render diagnostics.
-- Packaged render verification can open a known lesson at launch with `--open-course <course-id> --open-lesson <lesson-id>`, or with `MELEARNER_OPEN_COURSE_ID` and `MELEARNER_OPEN_LESSON_ID`. Rust keeps the WebView URL as plain `index.html` and injects the route through `window.__MELEARNER_STARTUP_ROUTE__` before app JavaScript runs; the frontend applies that viewer route before hydration without making a startup-route IPC call.
+- Packaged render verification can open a known lesson at launch with `--open-course <course-id> --open-lesson <lesson-id>`, or with `MELEARNER_OPEN_COURSE_ID` and `MELEARNER_OPEN_LESSON_ID`. The packaged app must keep the static Tauri `main` window from `tauri.conf.json`; the frontend hydrates the library first, then reads the startup route with a short timeout and applies the viewer route asynchronously. Startup routing must never block library hydration.
 
 Rules for this pipeline:
 
