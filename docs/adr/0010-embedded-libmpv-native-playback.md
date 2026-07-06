@@ -38,9 +38,12 @@ The current implementation owns the native playback control path in `src-tauri/s
 - a same-process native video surface created from `native_player_set_bounds`;
 - play, pause, seek, volume, mute, rate, audio track, subtitle track, chapter, frame-step, screenshot, and destroy commands;
 - structured `track-list` and `chapter-list` reads through mpv node properties;
+- test-covered internal audio/subtitle/chapter extraction and external SRT/VTT subtitle registration;
 - React/shadcn controls in `components/video-player.tsx` with no `<video>`, `<audio>`, Shaka, or Limeplay path.
 
 `native_player_set_bounds` is part of the playback interface. It creates or moves a native Tauri window surface, gives its platform window handle to libmpv with `wid`, and switches libmpv from the idle `vo=null` state to GPU video output before media loading. On Linux, the current packaged-app path intentionally forces X11/XWayland because the `wid` surface needs an X11/XCB handle. Wayland-native rendering remains future work unless the app moves to a libmpv render-API renderer that is verified on Wayland.
+
+Rust refuses visible media loads until the native surface is attached, so a missing surface fails clearly instead of silently loading media through the idle `vo=null` path.
 
 The current surface is native and in-process, but it is still a window-handle integration rather than a full libmpv render-API compositor owned by the app. A change is not accepted as completed cross-platform native playback until packaged builds visibly render libmpv frames on Windows, macOS, and Linux and pass the verification matrix below.
 
@@ -85,4 +88,5 @@ Native playback is not accepted until these pass on packaged builds:
 - Player work should move through the native video engine instead of reintroducing a parallel browser-media engine.
 - Stale compatibility bridges, package dependencies, generated player files, and docs must be removed when the native path replaces them.
 - Cross-platform packaging must bundle or otherwise provide the correct libmpv dependencies for the end user.
+- On Arch Linux, the `mpv` package is currently required because it provides `libmpv.so`; melearner must not launch the `mpv` executable as a sidecar.
 - The repo must not add a sidecar player path as the final architecture.
