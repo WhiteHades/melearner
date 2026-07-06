@@ -380,6 +380,18 @@ impl NativeVideoSurface {
         mpv.set_property("vo", "gpu")
             .map_err(|err| format!("libmpv could not enable native video output: {err}"))
     }
+
+    fn set_visible(&self, visible: bool) -> Result<(), String> {
+        if visible {
+            self.window
+                .show()
+                .map_err(|err| format!("native player could not show video surface: {err}"))
+        } else {
+            self.window
+                .hide()
+                .map_err(|err| format!("native player could not hide video surface: {err}"))
+        }
+    }
 }
 
 impl Drop for NativeVideoSurface {
@@ -742,6 +754,13 @@ impl NativePlayer {
             }
         }
         Ok(self.state())
+    }
+
+    fn set_surface_visible(&mut self, visible: bool) -> Result<(), String> {
+        if let Some(surface) = &self.surface {
+            surface.set_visible(visible)?;
+        }
+        Ok(())
     }
 }
 
@@ -1347,6 +1366,15 @@ pub async fn native_player_set_bounds(
 }
 
 #[tauri::command]
+pub fn native_player_set_surface_visible(app: AppHandle, visible: bool) -> Result<(), String> {
+    let result = with_player(|player| player.set_surface_visible(visible));
+    if let Err(err) = &result {
+        emit_native_error(&app, err);
+    }
+    result
+}
+
+#[tauri::command]
 pub fn native_player_step_frame(app: AppHandle) -> Result<NativePlayerState, String> {
     let result = with_player(|player| {
         player
@@ -1711,6 +1739,18 @@ mod tests {
 
         assert!(!state.surface_attached);
         assert_eq!(state.surface_backend, None);
+    }
+
+    #[test]
+    fn native_player_surface_visibility_is_safe_without_surface() {
+        let mut player = NativePlayer::new().expect("create native player");
+
+        player
+            .set_surface_visible(false)
+            .expect("hide missing surface");
+        player
+            .set_surface_visible(true)
+            .expect("show missing surface");
     }
 
     #[test]

@@ -336,6 +336,7 @@ pub fn run() {
             native_player::native_player_select_subtitle_track,
             native_player::native_player_select_chapter,
             native_player::native_player_set_bounds,
+            native_player::native_player_set_surface_visible,
             native_player::native_player_step_frame,
             native_player::native_player_screenshot,
             native_player::native_player_destroy,
