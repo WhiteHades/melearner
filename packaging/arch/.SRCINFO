@@ -1,5 +1,5 @@
 pkgbase = melearner-bin
-	pkgdesc = local-first course learner
+	pkgdesc = local course learner
 	pkgver = 0.1.8
 	pkgrel = 17
 	url = https://github.com/WhiteHades/melearner
