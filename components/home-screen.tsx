@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react"
 import { useShallow } from "zustand/react/shallow"
 import { parseAsString, useQueryState } from "nuqs"
 import {
@@ -48,6 +48,13 @@ import {
 } from "@/lib/operations"
 import { search as searchLibrary, type SearchResult as LibrarySearchResult } from "@/lib/search"
 import { buildLearningStats, type LearningStats } from "@/lib/stats"
+import {
+  buildDashboardCourseCards,
+  selectCommandLessons,
+  selectResumeCourseCards,
+  selectVisibleCourseCards,
+  type CourseSummary,
+} from "@/lib/dashboard-selectors"
 import { useCourseStore } from "@/lib/stores/course-store"
 import { getBuildInfo, isTauri, selectFolderDialog, type BuildInfo } from "@/lib/tauri"
 import { cleanSectionName, cn } from "@/lib/utils"
@@ -56,6 +63,7 @@ import type { ActivityDay, Course, Lesson } from "@/types"
 type View = "library" | "viewer"
 type ViewMode = "grid" | "list"
 const EMPTY_SEARCH_RESULTS: LibrarySearchResult[] = []
+const EMPTY_COMMAND_LESSONS: Array<{ course: Course; lesson: Lesson }> = []
 
 export function HomeScreen() {
   const [viewParam, setViewParam] = useQueryState("view", parseAsString.withDefault("library"))
@@ -127,6 +135,8 @@ function LibraryDashboard({
   const [buildInfo, setBuildInfo] = useState<BuildInfo | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>("grid")
   const [searchQuery, setSearchQuery] = useState("")
+  const deferredSearchQuery = useDeferredValue(searchQuery)
+  const searchKey = deferredSearchQuery.trim()
   const [searchState, setSearchState] = useState<{ query: string; results: LibrarySearchResult[] }>({ query: "", results: [] })
   const [activityDays, setActivityDays] = useState<ActivityDay[]>([])
   const loadedCourses = useMemo(() => (hasHydrated ? courses : []), [courses, hasHydrated])
@@ -139,12 +149,17 @@ function LibraryDashboard({
       .join("\x01")
   }, [markerSyncCourses])
 
-  const resumeCourses = useMemo(() => selectResumeCourses(loadedCourses), [loadedCourses])
-  const continueCourse = resumeCourses[0] ?? null
-  const continueLesson = continueCourse ? selectContinueLesson(continueCourse) : null
-  const activeSearchResults = searchState.query === searchQuery.trim() ? searchState.results : EMPTY_SEARCH_RESULTS
-  const visibleCourses = useMemo(() => selectSearchCourses(loadedCourses, searchQuery, activeSearchResults), [loadedCourses, searchQuery, activeSearchResults])
-  const commandLessons = useMemo(() => selectCommandLessons(loadedCourses, searchQuery, activeSearchResults), [loadedCourses, searchQuery, activeSearchResults])
+  const courseCards = useMemo(() => buildDashboardCourseCards(loadedCourses), [loadedCourses])
+  const resumeCourseCards = useMemo(() => selectResumeCourseCards(courseCards), [courseCards])
+  const continueCourseCard = resumeCourseCards[0] ?? null
+  const continueCourse = continueCourseCard?.course ?? null
+  const continueLesson = continueCourseCard?.nextLesson ?? null
+  const activeSearchResults = searchState.query === searchKey ? searchState.results : EMPTY_SEARCH_RESULTS
+  const visibleCourseCards = useMemo(() => selectVisibleCourseCards(courseCards, searchKey, activeSearchResults), [courseCards, searchKey, activeSearchResults])
+  const commandLessons = useMemo(
+    () => cmdOpen ? selectCommandLessons(loadedCourses, searchKey, activeSearchResults, 50) : EMPTY_COMMAND_LESSONS,
+    [cmdOpen, loadedCourses, searchKey, activeSearchResults]
+  )
   const stats = useMemo(() => buildLearningStats(loadedCourses, activityDays), [loadedCourses, activityDays])
   const hasCourses = loadedCourses.length > 0
   const displayLibraryPath = libraryPath ? formatDisplayPath(libraryPath) : null
@@ -184,7 +199,7 @@ function LibraryDashboard({
   }, [hasHydrated])
 
   useEffect(() => {
-    const query = searchQuery.trim()
+    const query = searchKey
     if (!query) return
 
     let cancelled = false
@@ -201,7 +216,7 @@ function LibraryDashboard({
     return () => {
       cancelled = true
     }
-  }, [searchQuery, loadedCourses])
+  }, [searchKey, loadedCourses])
 
   useEffect(() => {
     markerSyncCoursesRef.current = markerSyncCourses
@@ -356,7 +371,7 @@ function LibraryDashboard({
 
           <section>
             <div className="paper-panel-strong overflow-hidden rounded-2xl">
-              <div className={cn("hero-panel relative grid gap-7 overflow-hidden p-7 md:p-9", resumeCourses.length > 0 && "md:grid-cols-[minmax(22rem,0.8fr)_minmax(0,1fr)]")}>
+              <div className={cn("hero-panel relative grid gap-7 overflow-hidden p-7 md:p-9", resumeCourseCards.length > 0 && "md:grid-cols-[minmax(22rem,0.8fr)_minmax(0,1fr)]")}>
                 <div className="relative z-10 flex flex-col justify-between gap-8">
                   <div className="flex flex-col gap-4">
                     <Badge variant="secondary" className="w-fit rounded-md">{isBootstrapping ? "Loading library" : "Welcome back"}</Badge>
@@ -394,15 +409,15 @@ function LibraryDashboard({
                   </div>
                 </div>
 
-                {resumeCourses.length > 0 && (
+                {resumeCourseCards.length > 0 && (
                   <div className={cn(
                     "relative z-10 grid gap-4",
-                    resumeCourses.length === 1 && "grid-cols-1",
-                    resumeCourses.length === 2 && "sm:grid-cols-2",
-                    resumeCourses.length >= 3 && "sm:grid-cols-2 xl:grid-cols-3"
+                    resumeCourseCards.length === 1 && "grid-cols-1",
+                    resumeCourseCards.length === 2 && "sm:grid-cols-2",
+                    resumeCourseCards.length >= 3 && "sm:grid-cols-2 xl:grid-cols-3"
                   )}>
-                    {resumeCourses.map((course) => (
-                      <ResumeCourseCard key={course.id} course={course} onOpenCourse={onOpenCourse} />
+                    {resumeCourseCards.map(({ course, summary, nextLesson }) => (
+                      <ResumeCourseCard key={course.id} course={course} summary={summary} nextLesson={nextLesson} onOpenCourse={onOpenCourse} />
                     ))}
                   </div>
                 )}
@@ -422,7 +437,7 @@ function LibraryDashboard({
                 <div className="flex flex-col gap-1.5">
                   <h2 className="text-2xl font-semibold tracking-tight">Your courses</h2>
                   <p className="text-sm text-muted-foreground">
-                    {visibleCourses.length} course{visibleCourses.length === 1 ? "" : "s"} shown{displayLibraryPath ? ` from ${displayLibraryPath}` : ""}
+                    {visibleCourseCards.length} course{visibleCourseCards.length === 1 ? "" : "s"} shown{displayLibraryPath ? ` from ${displayLibraryPath}` : ""}
                   </p>
                 </div>
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -465,8 +480,8 @@ function LibraryDashboard({
                 </div>
               </div>
               <div className={viewMode === "list" ? "flex flex-col gap-3" : "grid items-start gap-5 sm:grid-cols-2 xl:grid-cols-4"}>
-                {visibleCourses.map((course) => (
-                  <DashboardCourseCard key={course.id} course={course} viewMode={viewMode} onOpenCourse={onOpenCourse} />
+                {visibleCourseCards.map(({ course, summary, nextLesson }) => (
+                  <DashboardCourseCard key={course.id} course={course} summary={summary} nextLesson={nextLesson} viewMode={viewMode} onOpenCourse={onOpenCourse} />
                 ))}
               </div>
             </section>
@@ -489,7 +504,7 @@ function LibraryDashboard({
           <CommandEmpty>No results found.</CommandEmpty>
           {loadedCourses.length > 0 && (
             <CommandGroup heading="Courses">
-              {visibleCourses.filter((course) => !course.missingSince).slice(0, 12).map((course) => (
+              {visibleCourseCards.filter(({ course }) => !course.missingSince).slice(0, 12).map(({ course }) => (
                 <CommandItem
                   key={course.id}
                   value={`course ${course.name}`}
@@ -506,19 +521,19 @@ function LibraryDashboard({
           )}
           {loadedCourses.length > 0 && (
             <CommandGroup heading="Lessons">
-              {commandLessons.slice(0, 50).map(({ course, lesson }) => (
-                  <CommandItem
-                    key={lesson.id}
-                    value={`lesson ${lesson.name} ${course.name} ${lesson.sectionName}`}
-                    onSelect={() => {
-                      setCmdOpen(false)
-                      onOpenCourse(course, lesson.id)
-                    }}
-                  >
-                    <PlayCircle className="size-4" />
-                    <span className="truncate">{lesson.name}</span>
-                  </CommandItem>
-                ))}
+              {commandLessons.map(({ course, lesson }) => (
+                <CommandItem
+                  key={lesson.id}
+                  value={`lesson ${lesson.name} ${course.name} ${lesson.sectionName}`}
+                  onSelect={() => {
+                    setCmdOpen(false)
+                    onOpenCourse(course, lesson.id)
+                  }}
+                >
+                  <PlayCircle className="size-4" />
+                  <span className="truncate">{lesson.name}</span>
+                </CommandItem>
+              ))}
             </CommandGroup>
           )}
         </CommandList>
@@ -711,79 +726,6 @@ function formatStatDuration(seconds: number): string {
   return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`
 }
 
-function summarizeCourse(course: Course) {
-  const lessons = course.sections.flatMap((section) => section.lessons)
-  const completed = lessons.filter((lesson) => lesson.completed).length
-  return {
-    totalLessons: lessons.length,
-    completedLessons: completed,
-    progress: lessons.length > 0 ? Math.round((completed / lessons.length) * 100) : 0,
-  }
-}
-
-function selectResumeCourses(courses: Course[]) {
-  const sorted = courses
-    .filter((course) => !course.missingSince)
-    .sort((a, b) => {
-      const accessOrder = (b.lastAccessed ?? "").localeCompare(a.lastAccessed ?? "")
-      if (accessOrder !== 0) return accessOrder
-      return summarizeCourse(b).progress - summarizeCourse(a).progress
-    })
-
-  const activeOrRecent = sorted.filter((course) => course.lastAccessed || summarizeCourse(course).progress > 0)
-  return (activeOrRecent.length > 0 ? activeOrRecent : sorted.filter((course) => summarizeCourse(course).progress < 100))
-    .slice(0, 3)
-}
-
-function selectContinueLesson(course: Course) {
-  const lessons = course.sections.flatMap((section) => section.lessons)
-  return lessons.find((lesson) => !lesson.completed) ?? lessons[0] ?? null
-}
-
-function selectSearchCourses(courses: Course[], query: string, results: LibrarySearchResult[]) {
-  if (!query.trim()) return courses
-
-  const byId = new Map(courses.map((course) => [course.id, course]))
-  const seen = new Set<string>()
-  const matched: Course[] = []
-
-  for (const result of results) {
-    if (seen.has(result.courseId)) continue
-    const course = byId.get(result.courseId)
-    if (!course) continue
-    seen.add(result.courseId)
-    matched.push(course)
-  }
-
-  return matched
-}
-
-function allLessons(courses: Course[]): Array<{ course: Course; lesson: Lesson }> {
-  return courses
-    .filter((course) => !course.missingSince)
-    .flatMap((course) => course.sections.flatMap((section) => section.lessons.map((lesson) => ({ course, lesson }))))
-}
-
-function selectCommandLessons(courses: Course[], query: string, results: LibrarySearchResult[]): Array<{ course: Course; lesson: Lesson }> {
-  if (!query.trim()) return allLessons(courses)
-
-  const coursesById = new Map(courses.map((course) => [course.id, course]))
-  const lessonsById = new Map<string, { course: Course; lesson: Lesson }>()
-  for (const course of courses) {
-    if (course.missingSince) continue
-    for (const section of course.sections) {
-      for (const lesson of section.lessons) {
-        lessonsById.set(lesson.id, { course, lesson })
-      }
-    }
-  }
-
-  return results.flatMap((result) => {
-    if (!coursesById.has(result.courseId)) return []
-    return lessonsById.get(result.id) ?? []
-  })
-}
-
 function formatDisplayPath(path: string): string {
   const normalized = path.replace(/\\/g, "/")
   const unixHome = normalized.match(/^\/(home|Users)\/[^/]+(?:\/(.*))?$/)
@@ -795,10 +737,17 @@ function formatDisplayPath(path: string): string {
   return path
 }
 
-function ResumeCourseCard({ course, onOpenCourse }: { course: Course; onOpenCourse: (course: Course, lessonId?: string | null) => void }) {
-  const summary = summarizeCourse(course)
-  const nextLesson = selectContinueLesson(course)
-
+function ResumeCourseCard({
+  course,
+  summary,
+  nextLesson,
+  onOpenCourse,
+}: {
+  course: Course
+  summary: CourseSummary
+  nextLesson: Lesson | null
+  onOpenCourse: (course: Course, lessonId?: string | null) => void
+}) {
   return (
     <article
       role="button"
@@ -834,9 +783,19 @@ function ResumeCourseCard({ course, onOpenCourse }: { course: Course; onOpenCour
   )
 }
 
-function DashboardCourseCard({ course, viewMode, onOpenCourse }: { course: Course; viewMode: ViewMode; onOpenCourse: (course: Course, lessonId?: string | null) => void }) {
-  const summary = summarizeCourse(course)
-  const nextLesson = selectContinueLesson(course)
+function DashboardCourseCard({
+  course,
+  summary,
+  nextLesson,
+  viewMode,
+  onOpenCourse,
+}: {
+  course: Course
+  summary: CourseSummary
+  nextLesson: Lesson | null
+  viewMode: ViewMode
+  onOpenCourse: (course: Course, lessonId?: string | null) => void
+}) {
   const firstSection = course.sections[0]
   const isList = viewMode === "list"
   const isMissing = Boolean(course.missingSince)
