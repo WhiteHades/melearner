@@ -57,7 +57,7 @@ import {
   type CourseSummary,
 } from "@/lib/dashboard-selectors"
 import { useCourseStore } from "@/lib/stores/course-store"
-import { getBuildInfo, isTauri, selectFolderDialog, type BuildInfo } from "@/lib/tauri"
+import { getBuildInfo, getStartupRoute, isTauri, selectFolderDialog, type BuildInfo } from "@/lib/tauri"
 import { cleanSectionName, cn } from "@/lib/utils"
 import type { ActivityDay, Course, Lesson } from "@/types"
 
@@ -66,10 +66,16 @@ type ViewMode = "grid" | "list"
 const EMPTY_SEARCH_RESULTS: LibrarySearchResult[] = []
 const EMPTY_COMMAND_LESSONS: Array<{ course: Course; lesson: Lesson }> = []
 
+function lessonBelongsToCourse(course: Course, lessonId: string | null): lessonId is string {
+  if (!lessonId) return false
+  return course.sections.some((section) => section.lessons.some((lesson) => lesson.id === lessonId))
+}
+
 export function HomeScreen() {
   const [viewParam, setViewParam] = useQueryState("view", parseAsString.withDefault("library"))
   const [courseId, setCourseId] = useQueryState("course", parseAsString)
   const [lessonId, setLessonId] = useQueryState("lesson", parseAsString)
+  const startupRouteAppliedRef = useRef(false)
 
   const view = viewParam === "viewer" ? ("viewer" satisfies View) : "library"
   const courses = useCourseStore(useShallow((state) => state.courses))
@@ -86,6 +92,42 @@ export function HomeScreen() {
       setLessonId(null)
     }
   }, [view, hasHydrated, selectedCourse, setViewParam, setCourseId, setLessonId])
+
+  useEffect(() => {
+    if (!hasHydrated || !isTauri() || startupRouteAppliedRef.current) return
+    startupRouteAppliedRef.current = true
+    let cancelled = false
+
+    getStartupRoute()
+      .then((route) => {
+        if (cancelled || !route) return
+        const course = courses.find((course) => course.id === route.courseId && !course.missingSince)
+        if (!course) {
+          frontendLog("warn", "startup.route.courseMissing", { courseId: route.courseId })
+          return
+        }
+
+        const selectedLessonId = lessonBelongsToCourse(course, route.lessonId) ? route.lessonId : null
+        if (route.lessonId && !selectedLessonId) {
+          frontendLog("warn", "startup.route.lessonMissing", {
+            courseId: route.courseId,
+            lessonId: route.lessonId,
+          })
+        }
+
+        setCourseId(course.id)
+        setLessonId(selectedLessonId)
+        setViewParam("viewer")
+        void markCourseAccessed(course.id)
+      })
+      .catch((err) => {
+        frontendLog("warn", "startup.route.failed", { error: err instanceof Error ? err.message : String(err) })
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [courses, hasHydrated, setCourseId, setLessonId, setViewParam])
 
   const handleOpenCourse = useCallback(
     (course: Course, selectedLessonId: string | null = null) => {

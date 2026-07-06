@@ -83,8 +83,17 @@ export interface BuildInfo {
   rust_version: string
 }
 
+export interface StartupRoute {
+  courseId: string
+  lessonId: string | null
+}
+
 export async function getBuildInfo(): Promise<BuildInfo> {
   return invoke<BuildInfo>("get_build_info")
+}
+
+export async function getStartupRoute(): Promise<StartupRoute | null> {
+  return invoke<StartupRoute | null>("get_startup_route")
 }
 
 export async function getDatabasePath(): Promise<string> {
