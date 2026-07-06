@@ -100,6 +100,14 @@ Run `makepkg` from `packaging/arch/`.
 
 On the maintainer laptop, app-behavior changes must update every launcher-visible installed instance by installing the built Arch package. The launcher desktop entry resolves `Exec=melearner` to `/usr/bin/melearner`; do not use `cargo install` or `~/.cargo/bin/melearner` for this app's installed instance.
 
+For routine local install checks, use:
+
+```bash
+pnpm install:arch:fast
+```
+
+This script builds the static frontend, builds the release Tauri binary, packages `melearner-bin`, and installs the package that owns `/usr/bin/melearner`. It preserves ignored build caches such as `.next`, `out`, and `src-tauri/target` while the local build is still in progress, enables incremental Rust for local release builds, and uses `sccache` automatically when it is installed. Final release or handoff cleanup still removes generated artifacts after verification.
+
 Public Linux releases should publish only:
 
 - AppImage for portable Linux use

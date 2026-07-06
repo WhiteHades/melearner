@@ -15,6 +15,7 @@
     "tauri:build": "tauri build",
     "tauri:build:linux": "NO_STRIP=true tauri build --bundles appimage",
     "tauri:build:windows": "tauri build --target x86_64-pc-windows-msvc --bundles msi",
+    "install:arch:fast": "bash scripts/install-arch-fast.sh",
     "web:build": "next build",
     "web:start": "next start"
   },
