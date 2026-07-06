@@ -28,13 +28,13 @@ The canonical player is an in-app native playback surface controlled by typed Ta
 Current implementation state:
 
 - `src-tauri/src/native_player.rs` owns libmpv lifecycle, local-file validation, playback commands, track selection, chapter data, and structured native state.
-- `src-tauri/src/native_player/surface.rs` owns the native video surface backends. The default backend is still `window-handle:*` with `surfaceRenderApi=false`. `MELEARNER_SURFACE_BACKEND=render-api` selects the opt-in OpenGL/libmpv render thread and reports `render-api:opengl` with `surfaceRenderApi=true` after attachment. Do not make it the default until packaged visual playback has been verified on the target platform.
+- `src-tauri/src/native_player/surface.rs` owns the native video surface backends. The default backend is the OpenGL/libmpv render thread, which reports `render-api:opengl` with `surfaceRenderApi=true` after attachment. `MELEARNER_SURFACE_BACKEND=window-handle` selects the older native-window-handle fallback for diagnosis.
 - `native_player_set_bounds` creates and moves the same-process native video surface used by libmpv through the surface backend.
 - `components/video-player.tsx` owns the React/shadcn control band and surface measurement. It must not render `<video>` or `<audio>`.
 - Rust refuses visible media loads until a native surface has been attached.
 - File-loaded, end-file, and libmpv playback errors come from a dedicated libmpv event client, not from optimistic load responses or position-duration guessing.
 - Native-player tests cover internal audio/subtitle/chapter extraction and external SRT/VTT subtitle registration.
-- Linux defaults to X11/XWayland for the window-handle surface because the libmpv `wid` path needs an X11/XCB handle. The opt-in render-api path uses a glutin OpenGL surface created from the Tauri native window handle.
+- Linux uses a glutin OpenGL surface created from the Tauri native window handle by default. The window-handle fallback still needs an X11/XCB handle and is for diagnosis, not the main playback path.
 - The native surface is hidden when its WebView placeholder leaves the viewport, then shown and moved again when the placeholder returns.
 
 Rules for this pipeline:
@@ -45,7 +45,7 @@ Rules for this pipeline:
 - Use FFmpeg only for queued thumbnails, metadata, or explicit future processing work.
 - Remove stale player files, dependencies, docs, aliases, and generated artifacts in the same change that replaces them.
 - After any launchable behavior change on this laptop, install the native Arch package so the desktop launcher runs the updated `/usr/bin/melearner` binary. Do not treat `~/.cargo/bin/melearner` as an installed app instance.
-- The Arch package depends on `mpv` because Arch's `mpv` package provides `libmpv.so`; this is an embedded-library dependency, not permission to launch an external `mpv` process. It also depends on `libglvnd` for the opt-in OpenGL render-api backend.
+- The Arch package depends on `mpv` because Arch's `mpv` package provides `libmpv.so`; this is an embedded-library dependency, not permission to launch an external `mpv` process. It also depends on `libglvnd` for the default OpenGL render-api backend.
 See `docs/adr/0010-embedded-libmpv-native-playback.md`.
 
 ## Scroll Performance

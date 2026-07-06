@@ -35,7 +35,7 @@ The current implementation owns the native playback control path in `src-tauri/s
 
 - local-file and approved-root validation;
 - embedded `libmpv2` lifecycle;
-- a same-process native video surface created from `native_player_set_bounds`, with the current window-handle backend isolated in `src-tauri/src/native_player/surface.rs`;
+- a same-process native video surface created from `native_player_set_bounds`, with the render-api backend isolated in `src-tauri/src/native_player/surface.rs`;
 - play, pause, seek, volume, mute, rate, audio track, subtitle track, chapter, frame-step, screenshot, and destroy commands;
 - structured `track-list` and `chapter-list` reads through mpv node properties;
 - a lightweight `native-player://position` event for high-frequency playback position updates, so the polling loop does not repeatedly re-read or re-emit track and chapter metadata;
@@ -45,11 +45,11 @@ The current implementation owns the native playback control path in `src-tauri/s
 - Fullscreen control uses the Tauri app window fullscreen state and then resyncs native-surface bounds; it must not use DOM fullscreen on the WebView placeholder element.
 - The native surface follows the WebView placeholder's viewport visibility. When the placeholder leaves the viewport, React tells Rust to hide the native surface so the separate video window cannot float over unrelated UI.
 
-`native_player_set_bounds` is part of the playback interface. It creates or moves a native Tauri window surface through the selected surface backend. The default `window-handle:*` backend gives its platform window handle to libmpv with `wid` and switches libmpv from the idle `vo=null` state to GPU video output before media loading. The opt-in `MELEARNER_SURFACE_BACKEND=render-api` backend creates a glutin OpenGL surface from the Tauri native window handle, starts a dedicated render thread, switches libmpv to `vo=libmpv`, and drives `mpv_render_context_render` into the surface backbuffer. Native player state exposes `surfaceRenderApi`; it remains `false` for the default backend and becomes `true` for the render-api backend after attachment. On Linux, the default packaged-app path intentionally forces X11/XWayland because the `wid` surface needs an X11/XCB handle. The render-api path is the intended route away from that limitation, but it must pass packaged visual playback verification before becoming the default.
+`native_player_set_bounds` is part of the playback interface. It creates or moves a native Tauri window surface through the selected surface backend. The default backend creates a glutin OpenGL surface from the Tauri native window handle, starts a dedicated render thread, switches libmpv to `vo=libmpv`, and drives `mpv_render_context_render` into the surface backbuffer. Native player state exposes `surfaceRenderApi`; it becomes `true` for the default render-api backend after attachment. `MELEARNER_SURFACE_BACKEND=window-handle` is a diagnostic fallback that gives the platform window handle to libmpv with `wid`; on Linux this fallback still needs an X11/XCB handle.
 
 Rust refuses visible media loads until the native surface is attached, so a missing surface fails clearly instead of silently loading media through the idle `vo=null` path.
 
-The current default surface is native and in-process, but it is still a window-handle integration. The render-api backend exists as an opt-in OpenGL/libmpv render thread and must be visually verified in packaged builds before it is accepted as the production default. A change is not accepted as completed cross-platform native playback until packaged builds visibly render libmpv frames on Windows, macOS, and Linux and pass the verification matrix below.
+The current default surface is native, in-process, and render-api-first. A change is not accepted as completed cross-platform native playback until packaged builds visibly render libmpv frames on Windows, macOS, and Linux and pass the verification matrix below.
 
 ## Requirements
 
