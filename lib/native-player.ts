@@ -1,6 +1,7 @@
 "use client"
 
 import { invoke } from "@tauri-apps/api/core"
+import { listen } from "@tauri-apps/api/event"
 
 export type NativeTrack = {
   id: string
@@ -41,9 +42,16 @@ export type NativePlayerBounds = {
   scaleFactor: number
 }
 
+export type NativeSubtitleLoadOptions = {
+  path: string
+  label?: string
+  language?: string
+}
+
 export type NativePlayerLoadOptions = {
   path: string
   allowedRoots: string[]
+  subtitles?: NativeSubtitleLoadOptions[]
   startTime?: number
   autoplay?: boolean
 }
@@ -97,14 +105,6 @@ export function selectNativePlayerChapter(id: string): Promise<NativePlayerState
   return invoke<NativePlayerState>("native_player_select_chapter", { id })
 }
 
-export function setNativePlayerAudioDelay(seconds: number): Promise<NativePlayerState> {
-  return invoke<NativePlayerState>("native_player_set_audio_delay", { seconds })
-}
-
-export function setNativePlayerSubtitleDelay(seconds: number): Promise<NativePlayerState> {
-  return invoke<NativePlayerState>("native_player_set_subtitle_delay", { seconds })
-}
-
 export function setNativePlayerBounds(bounds: NativePlayerBounds): Promise<void> {
   return invoke<void>("native_player_set_bounds", { bounds })
 }
@@ -119,4 +119,23 @@ export function takeNativePlayerScreenshot(): Promise<string> {
 
 export function destroyNativePlayer(): Promise<void> {
   return invoke<void>("native_player_destroy")
+}
+
+export async function subscribeNativePlayerEvents({
+  onState,
+  onEnd,
+  onError,
+}: {
+  onState: (state: NativePlayerState) => void
+  onEnd: (state: NativePlayerState) => void
+  onError: (message: string) => void
+}): Promise<() => void> {
+  const unlisteners = await Promise.all([
+    listen<NativePlayerState>("native-player://state", (event) => onState(event.payload)),
+    listen<NativePlayerState>("native-player://end-file", (event) => onEnd(event.payload)),
+    listen<{ message: string }>("native-player://error", (event) => onError(event.payload.message)),
+  ])
+  return () => {
+    for (const unlisten of unlisteners) unlisten()
+  }
 }

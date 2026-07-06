@@ -6,11 +6,24 @@ use std::marker::PhantomData;
 use std::mem::MaybeUninit;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
+use tauri::{AppHandle, Emitter};
 
 static PLAYER: OnceLock<Mutex<Option<NativePlayer>>> = OnceLock::new();
+static POSITION_EVENT_RUN: OnceLock<Mutex<u64>> = OnceLock::new();
+const EVENT_STATE: &str = "native-player://state";
+const EVENT_TRACKS: &str = "native-player://tracks";
+const EVENT_CHAPTERS: &str = "native-player://chapters";
+const EVENT_FILE_LOADED: &str = "native-player://file-loaded";
+const EVENT_END_FILE: &str = "native-player://end-file";
+const EVENT_ERROR: &str = "native-player://error";
 
 fn player_slot() -> &'static Mutex<Option<NativePlayer>> {
     PLAYER.get_or_init(|| Mutex::new(None))
+}
+
+fn position_event_slot() -> &'static Mutex<u64> {
+    POSITION_EVENT_RUN.get_or_init(|| Mutex::new(0))
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -27,6 +40,34 @@ pub struct NativeChapter {
     id: String,
     title: Option<String>,
     start_time: f64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativePlayerTracksEvent {
+    audio_tracks: Vec<NativeTrack>,
+    subtitle_tracks: Vec<NativeTrack>,
+    selected_audio_track_id: Option<String>,
+    selected_subtitle_track_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativePlayerChaptersEvent {
+    chapters: Vec<NativeChapter>,
+    current_chapter_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativePlayerFileLoadedEvent {
+    path: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativePlayerErrorEvent {
+    message: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -65,8 +106,18 @@ pub struct NativePlayerBounds {
 pub struct NativePlayerLoadOptions {
     path: String,
     allowed_roots: Vec<String>,
+    #[serde(default)]
+    subtitles: Vec<NativeSubtitleLoadOptions>,
     start_time: Option<f64>,
     autoplay: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeSubtitleLoadOptions {
+    path: String,
+    label: Option<String>,
+    language: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -319,6 +370,7 @@ impl NativePlayer {
     fn load(
         &mut self,
         path: PathBuf,
+        subtitles: Vec<NativeSubtitleFile>,
         start_time: Option<f64>,
         autoplay: bool,
     ) -> Result<NativePlayerState, String> {
@@ -326,6 +378,10 @@ impl NativePlayer {
         self.mpv
             .command("loadfile", &[&path_string, "replace"])
             .map_err(|err| format!("libmpv could not load file: {err}"))?;
+
+        for subtitle in subtitles {
+            subtitle.add_to_mpv(&self.mpv)?;
+        }
 
         if let Some(start_time) = start_time.filter(|value| value.is_finite() && *value > 0.0) {
             self.mpv
@@ -370,6 +426,59 @@ impl NativePlayer {
         }
         Ok(self.state())
     }
+}
+
+fn empty_state() -> NativePlayerState {
+    NativePlayerState {
+        path: None,
+        paused: true,
+        buffering: false,
+        current_time: 0.0,
+        duration: 0.0,
+        volume: 1.0,
+        muted: false,
+        rate: 1.0,
+        width: None,
+        height: None,
+        audio_tracks: Vec::new(),
+        subtitle_tracks: Vec::new(),
+        selected_audio_track_id: None,
+        selected_subtitle_track_id: None,
+        chapters: Vec::new(),
+        current_chapter_id: None,
+    }
+}
+
+struct NativeSubtitleFile {
+    path: PathBuf,
+    label: Option<String>,
+    language: Option<String>,
+}
+
+impl NativeSubtitleFile {
+    fn add_to_mpv(&self, mpv: &Mpv) -> Result<(), String> {
+        let path = self.path.to_string_lossy().to_string();
+        match (&self.label, &self.language) {
+            (Some(label), Some(language)) => {
+                mpv.command("sub-add", &[&path, "auto", label, language])
+            }
+            (Some(label), None) => mpv.command("sub-add", &[&path, "auto", label]),
+            (None, Some(language)) => mpv.command("sub-add", &[&path, "auto", "", language]),
+            (None, None) => mpv.command("sub-add", &[&path, "auto"]),
+        }
+        .map_err(|err| format!("libmpv could not add subtitle file: {err}"))
+    }
+}
+
+fn blank_option(value: &Option<String>) -> Option<String> {
+    value.as_deref().and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
 }
 
 fn node_string_field(node: MpvNodeRef<'_>, field: &str) -> Option<String> {
@@ -516,6 +625,74 @@ fn canonical_local_file(path: &str, allowed_roots: &[String]) -> Result<PathBuf,
     Ok(canonical)
 }
 
+fn canonical_subtitle_files(
+    subtitles: &[NativeSubtitleLoadOptions],
+    allowed_roots: &[String],
+) -> Result<Vec<NativeSubtitleFile>, String> {
+    subtitles
+        .iter()
+        .map(|subtitle| {
+            Ok(NativeSubtitleFile {
+                path: canonical_local_file(&subtitle.path, allowed_roots)?,
+                label: blank_option(&subtitle.label),
+                language: blank_option(&subtitle.language),
+            })
+        })
+        .collect()
+}
+
+fn screenshot_root() -> PathBuf {
+    if let Ok(path) = std::env::var("MELEARNER_SCREENSHOT_DIR") {
+        if !path.trim().is_empty() {
+            return PathBuf::from(path);
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(home) = std::env::var("USERPROFILE") {
+            return PathBuf::from(home).join("Pictures").join("melearner");
+        }
+    }
+
+    if let Ok(home) = std::env::var("HOME") {
+        return PathBuf::from(home).join("Pictures").join("melearner");
+    }
+
+    std::env::temp_dir().join("melearner-screenshots")
+}
+
+fn screenshot_file_stem(path: Option<&Path>) -> String {
+    let source = path
+        .and_then(Path::file_stem)
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("capture");
+    let mut out = String::new();
+    for ch in source.chars().take(64) {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+    }
+    if out.is_empty() {
+        "capture".to_string()
+    } else {
+        out
+    }
+}
+
+fn screenshot_output_path(path: Option<&Path>) -> Result<PathBuf, String> {
+    let root = screenshot_root();
+    std::fs::create_dir_all(&root)
+        .map_err(|err| format!("failed to create screenshot directory: {err}"))?;
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|err| format!("system clock is before unix epoch: {err}"))?
+        .as_nanos();
+    Ok(root.join(format!("{}-{suffix}.png", screenshot_file_stem(path))))
+}
+
 fn with_player<T>(f: impl FnOnce(&mut NativePlayer) -> Result<T, String>) -> Result<T, String> {
     let mut guard = player_slot()
         .lock()
@@ -526,46 +703,194 @@ fn with_player<T>(f: impl FnOnce(&mut NativePlayer) -> Result<T, String>) -> Res
     f(guard.as_mut().expect("native player initialized"))
 }
 
-#[tauri::command]
-pub fn native_player_load(options: NativePlayerLoadOptions) -> Result<NativePlayerState, String> {
-    let path = canonical_local_file(&options.path, &options.allowed_roots)?;
-    with_player(|player| player.load(path, options.start_time, options.autoplay.unwrap_or(false)))
+fn with_existing_player<T>(
+    f: impl FnOnce(&mut NativePlayer) -> Result<T, String>,
+) -> Result<Option<T>, String> {
+    let mut guard = player_slot()
+        .lock()
+        .map_err(|_| "native player lock is poisoned".to_string())?;
+    match guard.as_mut() {
+        Some(player) => f(player).map(Some),
+        None => Ok(None),
+    }
+}
+
+fn next_position_event_run() -> u64 {
+    let mut guard = position_event_slot()
+        .lock()
+        .expect("position event run lock poisoned");
+    *guard = guard.wrapping_add(1);
+    *guard
+}
+
+fn is_position_event_run_current(run_id: u64) -> bool {
+    position_event_slot()
+        .lock()
+        .map(|guard| *guard == run_id)
+        .unwrap_or(false)
+}
+
+fn stop_position_events() {
+    let _ = next_position_event_run();
+}
+
+fn emit_native_error(app: &AppHandle, message: &str) {
+    let _ = app.emit(
+        EVENT_ERROR,
+        NativePlayerErrorEvent {
+            message: message.to_string(),
+        },
+    );
+}
+
+fn emit_native_state(app: &AppHandle, state: &NativePlayerState) -> Result<(), String> {
+    app.emit(EVENT_STATE, state.clone())
+        .map_err(|err| format!("native player could not emit state event: {err}"))?;
+    app.emit(
+        EVENT_TRACKS,
+        NativePlayerTracksEvent {
+            audio_tracks: state.audio_tracks.clone(),
+            subtitle_tracks: state.subtitle_tracks.clone(),
+            selected_audio_track_id: state.selected_audio_track_id.clone(),
+            selected_subtitle_track_id: state.selected_subtitle_track_id.clone(),
+        },
+    )
+    .map_err(|err| format!("native player could not emit tracks event: {err}"))?;
+    app.emit(
+        EVENT_CHAPTERS,
+        NativePlayerChaptersEvent {
+            chapters: state.chapters.clone(),
+            current_chapter_id: state.current_chapter_id.clone(),
+        },
+    )
+    .map_err(|err| format!("native player could not emit chapters event: {err}"))?;
+    Ok(())
+}
+
+fn finish_state_command(
+    app: &AppHandle,
+    result: Result<NativePlayerState, String>,
+    emit_file_loaded: bool,
+) -> Result<NativePlayerState, String> {
+    match result {
+        Ok(state) => {
+            emit_native_state(app, &state)?;
+            if emit_file_loaded {
+                if let Some(path) = &state.path {
+                    app.emit(
+                        EVENT_FILE_LOADED,
+                        NativePlayerFileLoadedEvent { path: path.clone() },
+                    )
+                    .map_err(|err| {
+                        format!("native player could not emit file-loaded event: {err}")
+                    })?;
+                }
+            }
+            Ok(state)
+        }
+        Err(err) => {
+            emit_native_error(app, &err);
+            Err(err)
+        }
+    }
+}
+
+fn start_position_events(app: AppHandle) {
+    let run_id = next_position_event_run();
+    std::thread::spawn(move || {
+        let mut emitted_end = false;
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            if !is_position_event_run_current(run_id) {
+                break;
+            }
+
+            match with_existing_player(|player| Ok(player.state())) {
+                Ok(Some(state)) => {
+                    let _ = emit_native_state(&app, &state);
+                    let is_ended = state.path.is_some()
+                        && state.duration > 0.0
+                        && state.current_time >= state.duration - 0.5;
+                    if is_ended && !emitted_end {
+                        let _ = app.emit(EVENT_END_FILE, state.clone());
+                        emitted_end = true;
+                    } else if !is_ended {
+                        emitted_end = false;
+                    }
+                }
+                Ok(None) => break,
+                Err(err) => {
+                    emit_native_error(&app, &err);
+                    break;
+                }
+            }
+        }
+    });
 }
 
 #[tauri::command]
-pub fn native_player_state() -> Result<NativePlayerState, String> {
-    with_player(|player| Ok(player.state()))
+pub fn native_player_load(
+    app: AppHandle,
+    options: NativePlayerLoadOptions,
+) -> Result<NativePlayerState, String> {
+    stop_position_events();
+    let result = canonical_local_file(&options.path, &options.allowed_roots).and_then(|path| {
+        let subtitles = canonical_subtitle_files(&options.subtitles, &options.allowed_roots)?;
+        with_player(|player| {
+            player.load(
+                path,
+                subtitles,
+                options.start_time,
+                options.autoplay.unwrap_or(false),
+            )
+        })
+    });
+    let state = finish_state_command(&app, result, true)?;
+    start_position_events(app);
+    Ok(state)
 }
 
 #[tauri::command]
-pub fn native_player_play() -> Result<NativePlayerState, String> {
-    with_player(|player| {
+pub fn native_player_state(app: AppHandle) -> Result<NativePlayerState, String> {
+    finish_state_command(&app, with_player(|player| Ok(player.state())), false)
+}
+
+#[tauri::command]
+pub fn native_player_play(app: AppHandle) -> Result<NativePlayerState, String> {
+    let result = with_player(|player| {
         player
             .mpv
             .set_property("pause", false)
             .map_err(|err| format!("libmpv could not play: {err}"))?;
         Ok(player.state())
-    })
+    });
+    finish_state_command(&app, result, false)
 }
 
 #[tauri::command]
-pub fn native_player_pause() -> Result<NativePlayerState, String> {
-    with_player(|player| {
+pub fn native_player_pause(app: AppHandle) -> Result<NativePlayerState, String> {
+    let result = with_player(|player| {
         player
             .mpv
             .set_property("pause", true)
             .map_err(|err| format!("libmpv could not pause: {err}"))?;
         Ok(player.state())
-    })
+    });
+    finish_state_command(&app, result, false)
 }
 
 #[tauri::command]
-pub fn native_player_seek(options: NativePlayerSeekOptions) -> Result<NativePlayerState, String> {
+pub fn native_player_seek(
+    app: AppHandle,
+    options: NativePlayerSeekOptions,
+) -> Result<NativePlayerState, String> {
     if !options.seconds.is_finite() {
-        return Err("seek target is not finite".to_string());
+        let err = "seek target is not finite".to_string();
+        emit_native_error(&app, &err);
+        return Err(err);
     }
 
-    with_player(|player| {
+    let result = with_player(|player| {
         let seconds = options.seconds.to_string();
         let mode = match options.mode {
             NativePlayerSeekMode::Absolute => "absolute",
@@ -576,109 +901,109 @@ pub fn native_player_seek(options: NativePlayerSeekOptions) -> Result<NativePlay
             .command("seek", &[&seconds, mode])
             .map_err(|err| format!("libmpv could not seek: {err}"))?;
         Ok(player.state())
-    })
+    });
+    finish_state_command(&app, result, false)
 }
 
 #[tauri::command]
-pub fn native_player_set_volume(volume: f64) -> Result<NativePlayerState, String> {
+pub fn native_player_set_volume(app: AppHandle, volume: f64) -> Result<NativePlayerState, String> {
     if !volume.is_finite() {
-        return Err("volume is not finite".to_string());
+        let err = "volume is not finite".to_string();
+        emit_native_error(&app, &err);
+        return Err(err);
     }
 
-    with_player(|player| {
+    let result = with_player(|player| {
         player
             .mpv
             .set_property("volume", volume.clamp(0.0, 1.0) * 100.0)
             .map_err(|err| format!("libmpv could not set volume: {err}"))?;
         Ok(player.state())
-    })
+    });
+    finish_state_command(&app, result, false)
 }
 
 #[tauri::command]
-pub fn native_player_set_muted(muted: bool) -> Result<NativePlayerState, String> {
-    with_player(|player| {
+pub fn native_player_set_muted(app: AppHandle, muted: bool) -> Result<NativePlayerState, String> {
+    let result = with_player(|player| {
         player
             .mpv
             .set_property("mute", muted)
             .map_err(|err| format!("libmpv could not set mute: {err}"))?;
         Ok(player.state())
-    })
+    });
+    finish_state_command(&app, result, false)
 }
 
 #[tauri::command]
-pub fn native_player_set_rate(rate: f64) -> Result<NativePlayerState, String> {
+pub fn native_player_set_rate(app: AppHandle, rate: f64) -> Result<NativePlayerState, String> {
     if !rate.is_finite() || !(0.25..=4.0).contains(&rate) {
-        return Err("playback rate must be between 0.25 and 4.0".to_string());
+        let err = "playback rate must be between 0.25 and 4.0".to_string();
+        emit_native_error(&app, &err);
+        return Err(err);
     }
 
-    with_player(|player| {
+    let result = with_player(|player| {
         player
             .mpv
             .set_property("speed", rate)
             .map_err(|err| format!("libmpv could not set playback rate: {err}"))?;
         Ok(player.state())
-    })
+    });
+    finish_state_command(&app, result, false)
 }
 
 #[tauri::command]
-pub fn native_player_select_audio_track(id: Option<String>) -> Result<NativePlayerState, String> {
-    with_player(|player| player.select_track("aid", id))
+pub fn native_player_select_audio_track(
+    app: AppHandle,
+    id: Option<String>,
+) -> Result<NativePlayerState, String> {
+    finish_state_command(
+        &app,
+        with_player(|player| player.select_track("aid", id)),
+        false,
+    )
 }
 
 #[tauri::command]
 pub fn native_player_select_subtitle_track(
+    app: AppHandle,
     id: Option<String>,
 ) -> Result<NativePlayerState, String> {
-    with_player(|player| player.select_track("sid", id))
+    finish_state_command(
+        &app,
+        with_player(|player| player.select_track("sid", id)),
+        false,
+    )
 }
 
 #[tauri::command]
-pub fn native_player_select_chapter(id: String) -> Result<NativePlayerState, String> {
-    let chapter_id = id
-        .trim()
-        .parse::<i64>()
-        .map_err(|_| "chapter id must be numeric".to_string())?;
+pub fn native_player_select_chapter(
+    app: AppHandle,
+    id: String,
+) -> Result<NativePlayerState, String> {
+    let chapter_id = match id.trim().parse::<i64>() {
+        Ok(chapter_id) => chapter_id,
+        Err(_) => {
+            let err = "chapter id must be numeric".to_string();
+            emit_native_error(&app, &err);
+            return Err(err);
+        }
+    };
     if chapter_id < 0 {
-        return Err("chapter id must not be negative".to_string());
+        let err = "chapter id must not be negative".to_string();
+        emit_native_error(&app, &err);
+        return Err(err);
     }
 
-    with_player(|player| {
+    let result = with_player(|player| {
         player
             .mpv
             .set_property("chapter", chapter_id)
             .map_err(|err| format!("libmpv could not select chapter: {err}"))?;
         Ok(player.state())
-    })
-}
-
-#[tauri::command]
-pub fn native_player_set_audio_delay(seconds: f64) -> Result<NativePlayerState, String> {
-    if !seconds.is_finite() {
-        return Err("audio delay is not finite".to_string());
-    }
-
-    with_player(|player| {
-        player
-            .mpv
-            .set_property("audio-delay", seconds)
-            .map_err(|err| format!("libmpv could not set audio delay: {err}"))?;
-        Ok(player.state())
-    })
-}
-
-#[tauri::command]
-pub fn native_player_set_subtitle_delay(seconds: f64) -> Result<NativePlayerState, String> {
-    if !seconds.is_finite() {
-        return Err("subtitle delay is not finite".to_string());
-    }
-
-    with_player(|player| {
-        player
-            .mpv
-            .set_property("sub-delay", seconds)
-            .map_err(|err| format!("libmpv could not set subtitle delay: {err}"))?;
-        Ok(player.state())
-    })
+    });
+    finish_state_command(&app, result, false)
 }
 
 #[tauri::command]
@@ -694,33 +1019,42 @@ pub fn native_player_set_bounds(bounds: NativePlayerBounds) -> Result<(), String
 }
 
 #[tauri::command]
-pub fn native_player_step_frame() -> Result<NativePlayerState, String> {
-    with_player(|player| {
+pub fn native_player_step_frame(app: AppHandle) -> Result<NativePlayerState, String> {
+    let result = with_player(|player| {
         player
             .mpv
             .command("frame-step", &[])
             .map_err(|err| format!("libmpv could not step frame: {err}"))?;
         Ok(player.state())
-    })
+    });
+    finish_state_command(&app, result, false)
 }
 
 #[tauri::command]
-pub fn native_player_screenshot() -> Result<String, String> {
-    with_player(|player| {
+pub fn native_player_screenshot(app: AppHandle) -> Result<String, String> {
+    let result = with_player(|player| {
+        let output = screenshot_output_path(player.path.as_deref())?;
+        let output_string = output.to_string_lossy().to_string();
         player
             .mpv
-            .command("screenshot", &["video"])
+            .command("screenshot-to-file", &[&output_string, "video"])
             .map_err(|err| format!("libmpv could not take screenshot: {err}"))?;
-        Ok(String::new())
-    })
+        Ok(output_string)
+    });
+    if let Err(err) = &result {
+        emit_native_error(&app, err);
+    }
+    result
 }
 
 #[tauri::command]
-pub fn native_player_destroy() -> Result<(), String> {
+pub fn native_player_destroy(app: AppHandle) -> Result<(), String> {
+    stop_position_events();
     let mut guard = player_slot()
         .lock()
         .map_err(|_| "native player lock is poisoned".to_string())?;
     *guard = None;
+    let _ = app.emit(EVENT_STATE, empty_state());
     Ok(())
 }
 
@@ -923,6 +1257,40 @@ mod tests {
     }
 
     #[test]
+    fn canonical_subtitle_files_rejects_file_outside_approved_root() {
+        let root = std::env::temp_dir().join(format!(
+            "melearner-native-player-root-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time before unix epoch")
+                .as_nanos()
+        ));
+        fs::create_dir(&root).expect("create temp root");
+        let subtitle = temp_media_file();
+        let roots = vec![root.to_string_lossy().to_string()];
+        let subtitles = vec![NativeSubtitleLoadOptions {
+            path: subtitle.to_string_lossy().to_string(),
+            label: Some(" English ".to_string()),
+            language: Some(" en ".to_string()),
+        }];
+
+        assert!(canonical_subtitle_files(&subtitles, &roots).is_err());
+
+        let _ = fs::remove_file(subtitle);
+        let _ = fs::remove_dir(root);
+    }
+
+    #[test]
+    fn screenshot_file_stem_sanitizes_source_name() {
+        let path = PathBuf::from("13 - Shifting Operations!.mkv");
+
+        assert_eq!(
+            screenshot_file_stem(Some(&path)),
+            "13_-_Shifting_Operations_"
+        );
+    }
+
+    #[test]
     fn native_player_reports_tracks_and_chapters() {
         let Some(fixture) = multitrack_media_fixture() else {
             return;
@@ -930,7 +1298,7 @@ mod tests {
         let mut player = NativePlayer::new().expect("create native player");
 
         player
-            .load(fixture.file.clone(), None, false)
+            .load(fixture.file.clone(), Vec::new(), None, false)
             .expect("load media fixture");
         let state = wait_for_state(&player, |state| {
             state.audio_tracks.len() == 2

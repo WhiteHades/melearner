@@ -337,8 +337,6 @@ pub fn run() {
             native_player::native_player_select_audio_track,
             native_player::native_player_select_subtitle_track,
             native_player::native_player_select_chapter,
-            native_player::native_player_set_audio_delay,
-            native_player::native_player_set_subtitle_delay,
             native_player::native_player_set_bounds,
             native_player::native_player_step_frame,
             native_player::native_player_screenshot,
