@@ -316,6 +316,35 @@ fn read_dir_sorted(path: &Path) -> Vec<std::fs::DirEntry> {
     entries
 }
 
+fn visible_child_dirs(path: &Path) -> Vec<PathBuf> {
+    read_dir_sorted(path)
+        .iter()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir() && !is_ignored(path) && !is_partial_folder(path))
+        .collect()
+}
+
+fn looks_like_section_folder(path: &Path) -> bool {
+    let name = lower_name(path);
+    let trimmed = name.trim();
+    trimmed.chars().next().is_some_and(|c| c.is_ascii_digit())
+        || trimmed.contains("section")
+        || trimmed.contains("module")
+        || trimmed.contains("chapter")
+        || trimmed.contains("lecture")
+}
+
+fn should_scan_root_as_single_course(subdirs: &[PathBuf]) -> bool {
+    if subdirs.len() < 2 {
+        return false;
+    }
+
+    subdirs.iter().all(|path| {
+        looks_like_section_folder(path)
+            && !should_scan_root_as_single_course(&visible_child_dirs(path))
+    })
+}
+
 fn file_type_key(file_type: FileType) -> &'static [u8] {
     match file_type {
         FileType::Video => b"video",
@@ -602,6 +631,19 @@ pub fn scan_library(root_path: &str) -> ScanResult {
         };
     }
 
+    if should_scan_root_as_single_course(&subdirs) {
+        let (course, course_warnings) = scan_course(&root);
+        if !course.sections.is_empty() {
+            extend_warnings(&mut warnings, course_warnings);
+            return ScanResult {
+                scan_type: ScanType::SingleCourse,
+                courses: Box::new([course]),
+                warnings: warnings.into_boxed_slice(),
+            };
+        }
+        extend_warnings(&mut warnings, course_warnings);
+    }
+
     let scanned = subdirs
         .iter()
         .map(|dir| {
@@ -856,6 +898,89 @@ mod tests {
                 .any(|file| file.name.as_ref() == "001 - Arrays.mp4"
                     && file.file_type == FileType::Video)
         );
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn treats_section_only_course_root_as_single_course() {
+        let root = temp_root("section-only-course-root");
+        touch(&root.join("01 - Intro/001 - Welcome.mp4"));
+        touch(&root.join("02 - Data Structures/001 - Arrays.mp4"));
+        touch(&root.join("03 - Trees/001 - Binary Trees.pdf"));
+
+        let result = scan_library(&root.to_string_lossy());
+
+        assert_eq!(result.scan_type, ScanType::SingleCourse);
+        assert_eq!(result.courses.len(), 1);
+        let root_name = root.file_name().unwrap().to_string_lossy();
+        assert_eq!(result.courses[0].name.as_ref(), root_name.as_ref());
+        assert_eq!(result.courses[0].sections.len(), 3);
+
+        let files = result.courses[0]
+            .sections
+            .iter()
+            .flat_map(|section| section.files.iter())
+            .collect::<Vec<_>>();
+
+        assert_eq!(files.len(), 3);
+        assert!(
+            files
+                .iter()
+                .any(|file| file.relative_path.as_ref() == "01 - Intro/001 - Welcome.mp4")
+        );
+        assert!(
+            files
+                .iter()
+                .any(|file| file.relative_path.as_ref() == "02 - Data Structures/001 - Arrays.mp4")
+        );
+        assert!(
+            files
+                .iter()
+                .any(|file| file.relative_path.as_ref() == "03 - Trees/001 - Binary Trees.pdf")
+        );
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn keeps_numbered_course_folders_as_library() {
+        let root = temp_root("numbered-course-library");
+        touch(&root.join("01 - Rust Basics/01 - Intro/001 - Welcome.mp4"));
+        touch(&root.join("01 - Rust Basics/02 - Ownership/001 - Borrowing.mp4"));
+        touch(&root.join("02 - Python Basics/01 - Intro/001 - Welcome.mp4"));
+        touch(&root.join("02 - Python Basics/02 - Data/001 - Lists.mp4"));
+
+        let result = scan_library(&root.to_string_lossy());
+
+        assert_eq!(result.scan_type, ScanType::Library);
+        assert_eq!(result.courses.len(), 2);
+        assert!(
+            result
+                .courses
+                .iter()
+                .any(|course| course.name.as_ref() == "01 - Rust Basics")
+        );
+        assert!(
+            result
+                .courses
+                .iter()
+                .any(|course| course.name.as_ref() == "02 - Python Basics")
+        );
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn keeps_empty_section_named_folders_as_empty_library_scan() {
+        let root = temp_root("empty-section-named-folders");
+        fs::create_dir_all(root.join("01 - Intro")).expect("create empty section");
+        fs::create_dir_all(root.join("02 - Data Structures")).expect("create empty section");
+
+        let result = scan_library(&root.to_string_lossy());
+
+        assert_eq!(result.scan_type, ScanType::Library);
+        assert!(result.courses.is_empty());
 
         cleanup(&root);
     }
