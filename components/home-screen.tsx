@@ -10,6 +10,7 @@ import {
   LayoutGrid,
   List,
   Loader2,
+  AlertTriangle,
   PlayCircle,
   RefreshCw,
   Search,
@@ -58,7 +59,7 @@ export function HomeScreen() {
   }, [courses, courseId])
 
   useEffect(() => {
-    if (view === "viewer" && hasHydrated && !selectedCourse) {
+    if (view === "viewer" && hasHydrated && (!selectedCourse || selectedCourse.missingSince)) {
       setViewParam("library")
       setCourseId(null)
       setLessonId(null)
@@ -67,6 +68,7 @@ export function HomeScreen() {
 
   const handleOpenCourse = useCallback(
     (course: Course, selectedLessonId: string | null = null) => {
+      if (course.missingSince) return
       setCourseId(course.id)
       setLessonId(selectedLessonId)
       setViewParam("viewer")
@@ -399,7 +401,7 @@ function LibraryDashboard({
           <CommandEmpty>No results found.</CommandEmpty>
           {loadedCourses.length > 0 && (
             <CommandGroup heading="Courses">
-              {loadedCourses.slice(0, 12).map((course) => (
+              {loadedCourses.filter((course) => !course.missingSince).slice(0, 12).map((course) => (
                 <CommandItem
                   key={course.id}
                   value={`course ${course.name}`}
@@ -448,7 +450,8 @@ function summarizeCourse(course: Course) {
 }
 
 function selectResumeCourses(courses: Course[]) {
-  const sorted = [...courses]
+  const sorted = courses
+    .filter((course) => !course.missingSince)
     .sort((a, b) => {
       const accessOrder = (b.lastAccessed ?? "").localeCompare(a.lastAccessed ?? "")
       if (accessOrder !== 0) return accessOrder
@@ -478,7 +481,9 @@ function filterCourses(courses: Course[], query: string) {
 }
 
 function allLessons(courses: Course[]): Array<{ course: Course; lesson: Lesson }> {
-  return courses.flatMap((course) => course.sections.flatMap((section) => section.lessons.map((lesson) => ({ course, lesson }))))
+  return courses
+    .filter((course) => !course.missingSince)
+    .flatMap((course) => course.sections.flatMap((section) => section.lessons.map((lesson) => ({ course, lesson }))))
 }
 
 function formatDisplayPath(path: string): string {
@@ -536,13 +541,18 @@ function DashboardCourseCard({ course, viewMode, onOpenCourse }: { course: Cours
   const nextLesson = selectContinueLesson(course)
   const firstSection = course.sections[0]
   const isList = viewMode === "list"
+  const isMissing = Boolean(course.missingSince)
 
   return (
     <article
-      role="button"
-      tabIndex={0}
-      onClick={() => onOpenCourse(course, nextLesson?.id ?? null)}
+      role={isMissing ? undefined : "button"}
+      tabIndex={isMissing ? -1 : 0}
+      aria-disabled={isMissing || undefined}
+      onClick={() => {
+        if (!isMissing) onOpenCourse(course, nextLesson?.id ?? null)
+      }}
       onKeyDown={(event) => {
+        if (isMissing) return
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault()
           onOpenCourse(course, nextLesson?.id ?? null)
@@ -550,7 +560,8 @@ function DashboardCourseCard({ course, viewMode, onOpenCourse }: { course: Cours
       }}
       className={cn(
         "paper-panel group cursor-pointer overflow-hidden rounded-xl transition-[border-color,box-shadow] hover:border-primary/70 hover:shadow-[var(--shadow-panel)] [contain-intrinsic-size:280px] [content-visibility:auto]",
-        isList ? "grid gap-0 md:grid-cols-[240px_minmax(0,1fr)]" : "flex flex-col"
+        isList ? "grid gap-0 md:grid-cols-[240px_minmax(0,1fr)]" : "flex flex-col",
+        isMissing && "cursor-default opacity-75 hover:border-border hover:shadow-none"
       )}
     >
       <CourseArtwork course={course} className={cn("h-40 min-h-40 shrink-0", isList && "h-full min-h-40")} />
@@ -558,6 +569,7 @@ function DashboardCourseCard({ course, viewMode, onOpenCourse }: { course: Cours
         <div className="flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant="secondary" className="rounded-md">{course.sections.length} sections</Badge>
+            {isMissing && <Badge variant="outline" className="rounded-md"><AlertTriangle className="size-3" /> Missing folder</Badge>}
             {summary.progress === 100 && <Badge className="rounded-md"><CheckCircle2 className="size-3" /> Complete</Badge>}
           </div>
           <h3 className="line-clamp-2 text-lg font-semibold leading-snug tracking-tight">{course.name}</h3>
