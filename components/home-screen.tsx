@@ -19,6 +19,7 @@ import {
   RefreshCw,
   Search,
 } from "lucide-react"
+import { AppBootstrap } from "@/components/app-bootstrap"
 import { BrandLogo } from "@/components/brand-logo"
 import { CourseViewerLayout } from "@/components/course-viewer/layout"
 import { CourseArtwork } from "@/components/course-artwork"
@@ -129,29 +130,33 @@ export function HomeScreen() {
     setLessonId(null)
   }, [setViewParam, setCourseId, setLessonId])
 
-  if (view === "viewer") {
-    if (!hasHydrated) {
-      return (
+  const content =
+    view === "viewer" ? (
+      !hasHydrated ? (
         <main className="flex h-full items-center justify-center bg-background text-foreground">
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="size-4 animate-spin" />
             Loading course
           </div>
         </main>
+      ) : (
+        <CourseViewerLayout
+          course={selectedCourse}
+          onBack={handleBack}
+          selectedLessonId={lessonId}
+          onLessonChange={setLessonId}
+        />
       )
-    }
-
-    return (
-      <CourseViewerLayout
-        course={selectedCourse}
-        onBack={handleBack}
-        selectedLessonId={lessonId}
-        onLessonChange={setLessonId}
-      />
+    ) : (
+      <LibraryDashboard courses={courses} hasHydrated={hasHydrated} onOpenCourse={handleOpenCourse} />
     )
-  }
 
-  return <LibraryDashboard courses={courses} hasHydrated={hasHydrated} onOpenCourse={handleOpenCourse} />
+  return (
+    <>
+      <AppBootstrap />
+      {content}
+    </>
+  )
 }
 
 function LibraryDashboard({
