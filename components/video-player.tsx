@@ -111,6 +111,12 @@ function VideoPlayerComponent({
   const [visibleCurrentTime, setVisibleCurrentTime] = useState(lesson.lastPosition)
   const [error, setError] = useState<{ path: string; message: string } | null>(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
+  const [loadSnapshot] = useState(() => ({
+    id: lesson.id,
+    path: lesson.path,
+    lastPosition: lesson.lastPosition,
+    subtitles: lesson.subtitles,
+  }))
   const isPlayable = lesson.type === "video" || lesson.type === "audio"
   const fallbackState = useMemo<NativePlayerState>(() => ({
     ...initialState,
@@ -159,14 +165,14 @@ function VideoPlayerComponent({
     void (async () => {
       await updateBounds()
       const next = await loadNativePlayerFile({
-        path: lesson.path,
+        path: loadSnapshot.path,
         allowedRoots: [libraryRoot],
-        subtitles: lesson.subtitles.map((subtitle) => ({
+        subtitles: loadSnapshot.subtitles.map((subtitle) => ({
           path: subtitle.path,
           label: subtitle.label,
           language: subtitle.language,
         })),
-        startTime: lesson.lastPosition || undefined,
+        startTime: loadSnapshot.lastPosition || undefined,
         autoplay,
       })
 
@@ -175,14 +181,14 @@ function VideoPlayerComponent({
       setNativeState(next)
     })()
       .catch((reason) => {
-        if (isActive) setError({ path: lesson.path, message: String(reason) })
+        if (isActive) setError({ path: loadSnapshot.path, message: String(reason) })
       })
 
     return () => {
       isActive = false
       if (isTauri()) void destroyNativePlayer().catch(() => undefined)
     }
-  }, [autoplay, isPlayable, lesson.duration, lesson.id, lesson.lastPosition, lesson.path, lesson.subtitles, libraryRoot, updateBounds])
+  }, [autoplay, isPlayable, libraryRoot, loadSnapshot, updateBounds])
 
   useEffect(() => {
     isSeekingRef.current = false
