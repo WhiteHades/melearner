@@ -1,3 +1,5 @@
+mod surface;
+
 use libmpv2::{
     Mpv,
     events::{Event, mpv_event_id},
@@ -11,22 +13,12 @@ use std::mem::MaybeUninit;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindow, Window};
-
-#[cfg(any(
-    target_os = "linux",
-    target_os = "dragonfly",
-    target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "openbsd"
-))]
-use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use surface::NativeVideoSurface;
+use tauri::{AppHandle, Emitter, Manager};
 
 static PLAYER: OnceLock<Mutex<Option<NativePlayer>>> = OnceLock::new();
 static PLAYBACK_EVENT_RUN: OnceLock<Mutex<u64>> = OnceLock::new();
 static POSITION_EVENT_RUN: OnceLock<Mutex<u64>> = OnceLock::new();
-static SURFACE_WINDOW_RUN: OnceLock<Mutex<u64>> = OnceLock::new();
-const NATIVE_SURFACE_LABEL: &str = "native-player-surface";
 const EVENT_STATE: &str = "native-player://state";
 const EVENT_POSITION: &str = "native-player://position";
 const EVENT_TRACKS: &str = "native-player://tracks";
@@ -45,18 +37,6 @@ fn position_event_slot() -> &'static Mutex<u64> {
 
 fn playback_event_slot() -> &'static Mutex<u64> {
     PLAYBACK_EVENT_RUN.get_or_init(|| Mutex::new(0))
-}
-
-fn surface_window_slot() -> &'static Mutex<u64> {
-    SURFACE_WINDOW_RUN.get_or_init(|| Mutex::new(0))
-}
-
-fn next_surface_window_label() -> Result<String, String> {
-    let mut guard = surface_window_slot()
-        .lock()
-        .map_err(|_| "native player surface label lock is poisoned".to_string())?;
-    *guard = guard.wrapping_add(1);
-    Ok(format!("{NATIVE_SURFACE_LABEL}-{}", *guard))
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -337,224 +317,6 @@ impl<'a> MpvNodeRef<'a> {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct NativeSurfaceRect {
-    x: i32,
-    y: i32,
-    width: u32,
-    height: u32,
-}
-
-struct NativeVideoSurface {
-    window: Window,
-    window_id: i64,
-    backend: &'static str,
-}
-
-impl NativeVideoSurface {
-    fn attach(
-        app: &AppHandle,
-        parent: &WebviewWindow,
-        bounds: NativePlayerBounds,
-    ) -> Result<Self, String> {
-        let origin = parent
-            .inner_position()
-            .map_err(|err| format!("native player could not read host window position: {err}"))?;
-        let rect = surface_rect_for_bounds(origin, bounds)?;
-        let window = build_surface_window(app, parent, rect)?;
-
-        apply_surface_rect(&window, rect)?;
-        window
-            .show()
-            .map_err(|err| format!("native player could not show video surface: {err}"))?;
-
-        let handle = mpv_window_handle(&window)?;
-        Ok(Self {
-            window,
-            window_id: handle.id,
-            backend: handle.backend,
-        })
-    }
-
-    fn move_to(&self, parent: &WebviewWindow, bounds: NativePlayerBounds) -> Result<(), String> {
-        let origin = parent
-            .inner_position()
-            .map_err(|err| format!("native player could not read host window position: {err}"))?;
-        apply_surface_rect(&self.window, surface_rect_for_bounds(origin, bounds)?)
-    }
-
-    fn attach_to_mpv(&self, mpv: &Mpv) -> Result<(), String> {
-        mpv.set_property("wid", self.window_id)
-            .map_err(|err| format!("libmpv could not attach to native video surface: {err}"))?;
-        mpv.set_property("vo", "gpu")
-            .map_err(|err| format!("libmpv could not enable native video output: {err}"))
-    }
-
-    fn set_visible(&self, visible: bool) -> Result<(), String> {
-        if visible {
-            self.window
-                .show()
-                .map_err(|err| format!("native player could not show video surface: {err}"))
-        } else {
-            self.window
-                .hide()
-                .map_err(|err| format!("native player could not hide video surface: {err}"))
-        }
-    }
-}
-
-impl Drop for NativeVideoSurface {
-    fn drop(&mut self) {
-        let _ = self.window.close();
-    }
-}
-
-fn apply_surface_rect(window: &Window, rect: NativeSurfaceRect) -> Result<(), String> {
-    window
-        .set_size(PhysicalSize::new(rect.width, rect.height))
-        .map_err(|err| format!("native player could not resize video surface: {err}"))?;
-    window
-        .set_position(PhysicalPosition::new(rect.x, rect.y))
-        .map_err(|err| format!("native player could not move video surface: {err}"))
-}
-
-fn build_surface_window(
-    app: &AppHandle,
-    parent: &WebviewWindow,
-    rect: NativeSurfaceRect,
-) -> Result<Window, String> {
-    let label = next_surface_window_label()?;
-    let builder = tauri::WindowBuilder::new(app, label)
-        .title("melearner video")
-        .decorations(false)
-        .resizable(false)
-        .focused(false)
-        .focusable(false)
-        .visible(false)
-        .skip_taskbar(true)
-        .inner_size(rect.width as f64, rect.height as f64)
-        .position(rect.x as f64, rect.y as f64);
-
-    #[cfg(windows)]
-    let builder = builder.parent_raw(
-        parent
-            .hwnd()
-            .map_err(|err| format!("native player could not read host window handle: {err}"))?,
-    );
-
-    #[cfg(target_os = "macos")]
-    let builder = builder.parent_raw(
-        parent
-            .ns_window()
-            .map_err(|err| format!("native player could not read host window handle: {err}"))?,
-    );
-
-    #[cfg(any(
-        target_os = "linux",
-        target_os = "dragonfly",
-        target_os = "freebsd",
-        target_os = "netbsd",
-        target_os = "openbsd"
-    ))]
-    let builder = {
-        let gtk_window = parent
-            .gtk_window()
-            .map_err(|err| format!("native player could not read host window handle: {err}"))?;
-        builder.transient_for_raw(&gtk_window)
-    };
-
-    builder
-        .build()
-        .map_err(|err| format!("native player could not create video surface: {err}"))
-}
-
-fn surface_rect_for_bounds(
-    origin: PhysicalPosition<i32>,
-    bounds: NativePlayerBounds,
-) -> Result<NativeSurfaceRect, String> {
-    if bounds.width <= 0 || bounds.height <= 0 {
-        return Err("native player bounds are invalid".to_string());
-    }
-    if !bounds.scale_factor.is_finite() || bounds.scale_factor <= 0.0 {
-        return Err("native player scale factor is invalid".to_string());
-    }
-
-    Ok(NativeSurfaceRect {
-        x: checked_surface_i32(origin.x as f64 + bounds.x as f64 * bounds.scale_factor, "x")?,
-        y: checked_surface_i32(origin.y as f64 + bounds.y as f64 * bounds.scale_factor, "y")?,
-        width: checked_surface_u32(bounds.width as f64 * bounds.scale_factor, "width")?,
-        height: checked_surface_u32(bounds.height as f64 * bounds.scale_factor, "height")?,
-    })
-}
-
-fn checked_surface_i32(value: f64, label: &str) -> Result<i32, String> {
-    let rounded = value.round();
-    if !rounded.is_finite() || rounded < i32::MIN as f64 || rounded > i32::MAX as f64 {
-        return Err(format!("native player surface {label} is out of range"));
-    }
-    Ok(rounded as i32)
-}
-
-fn checked_surface_u32(value: f64, label: &str) -> Result<u32, String> {
-    let rounded = value.round();
-    if !rounded.is_finite() || rounded <= 0.0 || rounded > u32::MAX as f64 {
-        return Err(format!("native player surface {label} is out of range"));
-    }
-    Ok(rounded as u32)
-}
-
-#[cfg(windows)]
-fn mpv_window_handle(window: &Window) -> Result<NativeMpvWindowHandle, String> {
-    Ok(NativeMpvWindowHandle {
-        id: window
-            .hwnd()
-            .map_err(|err| {
-                format!("native player could not read Win32 video surface handle: {err}")
-            })?
-            .0 as isize as i64,
-        backend: "win32",
-    })
-}
-
-#[cfg(target_os = "macos")]
-fn mpv_window_handle(window: &Window) -> Result<NativeMpvWindowHandle, String> {
-    Ok(NativeMpvWindowHandle {
-        id: window.ns_view().map_err(|err| {
-            format!("native player could not read Cocoa video surface handle: {err}")
-        })? as isize as i64,
-        backend: "cocoa",
-    })
-}
-
-#[cfg(any(
-    target_os = "linux",
-    target_os = "dragonfly",
-    target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "openbsd"
-))]
-fn mpv_window_handle(window: &Window) -> Result<NativeMpvWindowHandle, String> {
-    let handle = window
-        .window_handle()
-        .map_err(|err| format!("native player could not read video surface handle: {err}"))?;
-    match handle.as_raw() {
-        RawWindowHandle::Xlib(handle) => Ok(NativeMpvWindowHandle {
-            id: handle.window as i64,
-            backend: "xlib",
-        }),
-        RawWindowHandle::Xcb(handle) => Ok(NativeMpvWindowHandle {
-            id: handle.window.get() as i64,
-            backend: "xcb",
-        }),
-        _ => Err("native player video surface requires an X11 window handle on Linux".to_string()),
-    }
-}
-
-struct NativeMpvWindowHandle {
-    id: i64,
-    backend: &'static str,
-}
-
 struct NativePlayer {
     mpv: Mpv,
     path: Option<PathBuf>,
@@ -630,10 +392,7 @@ impl NativePlayer {
         let chapters = self.chapters();
         let position = self.position_event();
         let surface_attached = self.surface.is_some();
-        let surface_backend = self
-            .surface
-            .as_ref()
-            .map(|surface| surface.backend.to_string());
+        let surface_backend = self.surface.as_ref().map(|surface| surface.backend_label());
 
         NativePlayerState {
             path: position.path,
@@ -1788,8 +1547,8 @@ mod tests {
         let origin = tauri::PhysicalPosition::new(100, 200);
 
         assert_eq!(
-            surface_rect_for_bounds(origin, bounds).expect("surface rect"),
-            NativeSurfaceRect {
+            surface::surface_rect_for_bounds(origin, bounds).expect("surface rect"),
+            surface::NativeSurfaceRect {
                 x: 118,
                 y: 251,
                 width: 960,
@@ -1800,12 +1559,20 @@ mod tests {
 
     #[test]
     fn native_surface_window_labels_are_unique() {
-        let first = next_surface_window_label().expect("first surface label");
-        let second = next_surface_window_label().expect("second surface label");
+        let first = surface::next_surface_window_label().expect("first surface label");
+        let second = surface::next_surface_window_label().expect("second surface label");
 
-        assert!(first.starts_with(NATIVE_SURFACE_LABEL));
-        assert!(second.starts_with(NATIVE_SURFACE_LABEL));
+        assert!(first.starts_with("native-player-surface"));
+        assert!(second.starts_with("native-player-surface"));
         assert_ne!(first, second);
+    }
+
+    #[test]
+    fn native_surface_backend_labels_window_handle_path() {
+        assert_eq!(
+            surface::NativeSurfaceBackend::WindowHandle("xcb").label(),
+            "window-handle:xcb"
+        );
     }
 
     #[test]
