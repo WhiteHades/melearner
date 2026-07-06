@@ -632,6 +632,20 @@ impl NativePlayer {
         Ok(self.state())
     }
 
+    fn load_visible(
+        &mut self,
+        path: PathBuf,
+        subtitles: Vec<NativeSubtitleFile>,
+        start_time: Option<f64>,
+        autoplay: bool,
+    ) -> Result<NativePlayerState, String> {
+        if self.surface.is_none() {
+            return Err("native video surface is not attached".to_string());
+        }
+
+        self.load(path, subtitles, start_time, autoplay)
+    }
+
     fn select_track(
         &mut self,
         property: &str,
@@ -1066,7 +1080,7 @@ pub fn native_player_load(
     let result = canonical_local_file(&options.path, &options.allowed_roots).and_then(|path| {
         let subtitles = canonical_subtitle_files(&options.subtitles, &options.allowed_roots)?;
         with_player(|player| {
-            player.load(
+            player.load_visible(
                 path,
                 subtitles,
                 options.start_time,
@@ -1578,6 +1592,21 @@ mod tests {
                 height: 540,
             }
         );
+    }
+
+    #[test]
+    fn native_player_visible_load_requires_surface() {
+        let file = temp_media_file();
+        let mut player = NativePlayer::new().expect("create native player");
+
+        assert_eq!(
+            player
+                .load_visible(file.clone(), Vec::new(), None, false)
+                .expect_err("visible load should require surface"),
+            "native video surface is not attached"
+        );
+
+        let _ = fs::remove_file(file);
     }
 
     #[test]
