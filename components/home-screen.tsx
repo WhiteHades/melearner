@@ -74,6 +74,8 @@ export function HomeScreen() {
   const view = viewParam === "viewer" ? ("viewer" satisfies View) : "library"
   const courses = useCourseStore(useShallow((state) => state.courses))
   const hasHydrated = useCourseStore((state) => state.hasHydrated)
+  const startupRoute = useCourseStore((state) => state.startupRoute)
+  const setStartupRoute = useCourseStore((state) => state.setStartupRoute)
 
   const selectedCourse = useMemo(() => {
     return courses.find((course: Course) => course.id === courseId) ?? null
@@ -86,6 +88,29 @@ export function HomeScreen() {
       setLessonId(null)
     }
   }, [view, hasHydrated, selectedCourse, setViewParam, setCourseId, setLessonId])
+
+  useEffect(() => {
+    if (!hasHydrated || !startupRoute) return
+
+    const course = courses.find((course: Course) => course.id === startupRoute.courseId && !course.missingSince)
+    if (!course) {
+      setStartupRoute(null)
+      return
+    }
+
+    const selectedLessonId =
+      startupRoute.lessonId &&
+      course.sections.some((section) => section.lessons.some((lesson) => lesson.id === startupRoute.lessonId))
+        ? startupRoute.lessonId
+        : null
+
+    setCourseId(course.id)
+    setLessonId(selectedLessonId)
+    setViewParam("viewer")
+    setStartupRoute(null)
+    void markCourseAccessed(course.id)
+    frontendLog("info", "startup.route.applied", { courseId: course.id, lessonId: selectedLessonId })
+  }, [courses, hasHydrated, startupRoute, setCourseId, setLessonId, setStartupRoute, setViewParam])
 
   const handleOpenCourse = useCallback(
     (course: Course, selectedLessonId: string | null = null) => {

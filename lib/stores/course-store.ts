@@ -6,6 +6,7 @@ interface CourseState {
   libraryPath: string | null
   scanMode: "idle" | "selecting" | "refreshing"
   hasHydrated: boolean
+  startupRoute: { courseId: string; lessonId: string | null } | null
 }
 
 interface CourseActions {
@@ -16,6 +17,7 @@ interface CourseActions {
   setLibraryPath: (path: string | null) => void
   setScanMode: (scanMode: CourseState["scanMode"]) => void
   setHasHydrated: (hasHydrated: boolean) => void
+  setStartupRoute: (startupRoute: CourseState["startupRoute"]) => void
 }
 
 type CourseStore = CourseState & CourseActions
@@ -25,6 +27,7 @@ const initialState: CourseState = {
   libraryPath: null,
   scanMode: "idle",
   hasHydrated: false,
+  startupRoute: null,
 }
 
 type CourseStoreSet = StoreApi<CourseStore>["setState"]
@@ -111,6 +114,8 @@ const createCourseStore = (set: CourseStoreSet): CourseStore => ({
   setScanMode: (scanMode) => set({ scanMode }),
 
   setHasHydrated: (hasHydrated) => set({ hasHydrated }),
+
+  setStartupRoute: (startupRoute) => set({ startupRoute }),
 })
 
 const useCourseStoreInternal = create<CourseStore>()(createCourseStore)

@@ -4,7 +4,6 @@ import { useEffect } from "react"
 import { log } from "evlog/next/client"
 import { hydrateCourseThumbnails } from "@/lib/course-thumbnails"
 import { initDatabase, loadPersistedLibrary, syncLibrary } from "@/lib/database"
-import { markCourseAccessed } from "@/lib/operations"
 import { indexCourses } from "@/lib/search"
 import { useCourseStore } from "@/lib/stores/course-store"
 import { getStartupRoute, isTauri, type StartupRoute } from "@/lib/tauri"
@@ -97,8 +96,12 @@ async function getStartupRouteWithTimeout(): Promise<StartupRoute | null> {
   }
 }
 
-function applyStartupRoute(courses: Course[], route: StartupRoute | null): string | null {
-  if (!route || typeof window === "undefined" || courses.length === 0) return null
+function queueStartupRoute(
+  courses: Course[],
+  route: StartupRoute | null,
+  setStartupRoute: (route: StartupRoute | null) => void,
+): string | null {
+  if (!route || courses.length === 0) return null
 
   const course = courses.find((course) => course.id === route.courseId && !course.missingSince)
   if (!course) {
@@ -114,29 +117,23 @@ function applyStartupRoute(courses: Course[], route: StartupRoute | null): strin
     })
   }
 
-  const url = new URL(window.location.href)
-  url.searchParams.set("view", "viewer")
-  url.searchParams.set("course", course.id)
-  if (selectedLessonId) {
-    url.searchParams.set("lesson", selectedLessonId)
-  } else {
-    url.searchParams.delete("lesson")
-  }
-  window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`)
-  window.dispatchEvent(new PopStateEvent("popstate", { state: null }))
-  frontendLog("info", "startup.route.applied", { courseId: course.id, lessonId: selectedLessonId })
+  setStartupRoute({ courseId: course.id, lessonId: selectedLessonId })
+  frontendLog("info", "startup.route.queued", { courseId: course.id, lessonId: selectedLessonId })
   return course.id
 }
 
-async function applyStartupRouteAfterHydration(courses: Course[]): Promise<void> {
-  const startupCourseId = applyStartupRoute(courses, await getStartupRouteWithTimeout())
-  if (startupCourseId) void markCourseAccessed(startupCourseId)
+async function queueStartupRouteAfterHydration(
+  courses: Course[],
+  setStartupRoute: (route: StartupRoute | null) => void,
+): Promise<void> {
+  queueStartupRoute(courses, await getStartupRouteWithTimeout(), setStartupRoute)
 }
 
 export function AppBootstrap() {
   const setHasHydrated = useCourseStore((state) => state.setHasHydrated)
   const setCourses = useCourseStore((state) => state.setCourses)
   const hydrateLibrary = useCourseStore((state) => state.hydrateLibrary)
+  const setStartupRoute = useCourseStore((state) => state.setStartupRoute)
 
   useEffect(() => {
     frontendLog("info", "app.bootstrap", {
@@ -256,7 +253,7 @@ export function AppBootstrap() {
         library = await loadPersistedLibrary()
       }
       hydrateLibrary(library.courses, library.libraryPath)
-      void applyStartupRouteAfterHydration(library.courses)
+      void queueStartupRouteAfterHydration(library.courses, setStartupRoute)
       frontendLog("info", "app.bootstrap.libraryLoad.done", {
         ms: Math.round(t()),
         coursesCount: library.courses.length,
@@ -283,7 +280,7 @@ export function AppBootstrap() {
         })
         setHasHydrated(true)
       })
-  }, [hydrateLibrary, setCourses, setHasHydrated])
+  }, [hydrateLibrary, setCourses, setHasHydrated, setStartupRoute])
 
   return null
 }
