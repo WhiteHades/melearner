@@ -1,14 +1,17 @@
 import Database from "@tauri-apps/plugin-sql"
 import type { Course, Lesson, Note, Section, SubtitleFile } from "@/types"
-import { isTauri, getDatabasePath } from "./tauri"
+import { isTauri, getDatabasePath } from "./tauri.ts"
 import {
   persistedLessonIdentitySignature,
   scannedLessonIdentitySignature,
   selectCourseIdentityMatch,
   selectLessonIdentityMatch,
-} from "./course-identity"
+} from "./course-identity.ts"
 
-let db: Database | null = null
+type DatabaseConnection = Pick<Database, "execute" | "select">
+
+let db: DatabaseConnection | null = null
+let testDatabase: DatabaseConnection | null = null
 let dbPathPromise: Promise<string | null> | null = null
 const SQLITE_BATCH_SIZE = 500
 const SQLITE_MAX_PARAMETERS = 900
@@ -125,7 +128,8 @@ async function resolveDatabasePath(): Promise<string | null> {
   return dbPathPromise
 }
 
-async function getDatabase(): Promise<Database | null> {
+async function getDatabase(): Promise<DatabaseConnection | null> {
+  if (testDatabase) return testDatabase
   if (!isTauri()) return null
 
   if (!db) {
@@ -137,6 +141,12 @@ async function getDatabase(): Promise<Database | null> {
   }
 
   return db
+}
+
+export function __setDatabaseForTests(database: DatabaseConnection | null): void {
+  testDatabase = database
+  db = null
+  dbPathPromise = null
 }
 
 function createPlaceholders(count: number): string {
@@ -179,7 +189,7 @@ function childPathPattern(path: string): string {
   return `${escapeLikePattern(prefix)}%`
 }
 
-async function executeTransaction<T>(database: Database, work: () => Promise<T>): Promise<T> {
+async function executeTransaction<T>(database: DatabaseConnection, work: () => Promise<T>): Promise<T> {
   await database.execute("BEGIN")
   try {
     const result = await work()
@@ -291,7 +301,7 @@ async function readSetting(key: string): Promise<string | null> {
   return rows[0]?.value ?? null
 }
 
-async function writeSetting(database: Database, key: string, value: string | null): Promise<void> {
+async function writeSetting(database: DatabaseConnection, key: string, value: string | null): Promise<void> {
   if (value === null) {
     await database.execute(`DELETE FROM app_settings WHERE key = $1`, [key])
     return
