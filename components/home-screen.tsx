@@ -74,7 +74,10 @@ function scheduleHomeStateUpdate(work: () => void): void {
     return
   }
 
-  window.setTimeout(work, 0)
+  window.setTimeout(() => {
+    frontendLog("info", "home.stateUpdate.apply")
+    work()
+  }, 0)
 }
 
 function replaceStartupUrl(courseId: string, lessonId: string | null): void {
