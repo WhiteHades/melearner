@@ -2,8 +2,10 @@ param(
   [string]$MsiDirectory = "src-tauri\target\x86_64-pc-windows-gnu\release\bundle\msi",
   [Parameter(Mandatory = $true)][string]$PfxPath,
   [Parameter(Mandatory = $true)][string]$PfxPassword,
-  [Parameter(Mandatory = $true)][string]$PublicCertPath,
-  [string]$Subject = "CN=melearner Windows MSI test artifact"
+  [string]$PublicCertPath = "",
+  [string]$Subject = "Windows code-signing certificate",
+  [string]$TimestampUrl = "",
+  [switch]$AllowUntrustedRoot
 )
 
 Set-StrictMode -Version Latest
@@ -76,7 +78,8 @@ function Invoke-Checked {
 function Test-SignedFile {
   param(
     [string]$SignToolPath,
-    [string]$Path
+    [string]$Path,
+    [switch]$AllowUntrustedRoot
   )
 
   $result = Invoke-Native `
@@ -93,9 +96,13 @@ function Test-SignedFile {
     throw "signtool did not find an Authenticode signature on $Path"
   }
   if ($verificationOutput -match "not trusted" -or $verificationOutput -match "root certificate") {
-    Write-Output "signature is present; self-signed test certificate is expected to be untrusted"
-    $global:LASTEXITCODE = 0
-    return
+    if ($AllowUntrustedRoot) {
+      Write-Output "signature is present; self-signed test certificate is expected to be untrusted"
+      $global:LASTEXITCODE = 0
+      return
+    }
+
+    throw "signature chain is not trusted for $Path"
   }
 
   throw "unexpected signtool verification failure for $Path"
@@ -107,7 +114,7 @@ if (!(Test-Path -LiteralPath $MsiDirectory)) {
 if (!(Test-Path -LiteralPath $PfxPath)) {
   throw "PFX file does not exist: $PfxPath"
 }
-if (!(Test-Path -LiteralPath $PublicCertPath)) {
+if ($PublicCertPath -and !(Test-Path -LiteralPath $PublicCertPath)) {
   throw "public certificate file does not exist: $PublicCertPath"
 }
 
@@ -125,12 +132,18 @@ if ($msiFiles.Count -lt 1) {
 Write-Output "found $($msiFiles.Count) MSI file(s) in $MsiDirectory"
 
 foreach ($msi in $msiFiles) {
+  $signArguments = @("sign", "/f", $PfxPath, "/p", $PfxPassword, "/fd", "SHA256")
+  if ($TimestampUrl) {
+    $signArguments += @("/tr", $TimestampUrl, "/td", "SHA256")
+  }
+  $signArguments += @("/v", $msi.FullName)
+
   Invoke-Checked `
     -Description "signing $($msi.FullName)" `
     -Command $signTool.FullName `
-    -Arguments @("sign", "/f", $PfxPath, "/p", $PfxPassword, "/fd", "SHA256", "/v", $msi.FullName)
+    -Arguments $signArguments
 
-  Test-SignedFile -SignToolPath $signTool.FullName -Path $msi.FullName
+  Test-SignedFile -SignToolPath $signTool.FullName -Path $msi.FullName -AllowUntrustedRoot:$AllowUntrustedRoot
 
   Write-Output "signed $($msi.FullName) with $Subject"
 }

@@ -111,17 +111,48 @@ jobs:
             throw "MSI WiX source does not include staged mpv dependency DLLs"
           }
 
-      - name: create test signing certificate
+      - name: prepare windows signing certificate
         shell: bash
+        env:
+          WINDOWS_CODE_SIGNING_PFX_BASE64: ${{ secrets.WINDOWS_CODE_SIGNING_PFX_BASE64 }}
+          WINDOWS_CODE_SIGNING_PFX_PASSWORD: ${{ secrets.WINDOWS_CODE_SIGNING_PFX_PASSWORD }}
+          WINDOWS_CODE_SIGNING_TIMESTAMP_URL: ${{ vars.WINDOWS_CODE_SIGNING_TIMESTAMP_URL }}
         run: |
           set -euo pipefail
-          cert_dir="$(cygpath -u "$RUNNER_TEMP")/melearner-test-signing"
+          cert_dir="$(cygpath -u "$RUNNER_TEMP")/melearner-windows-signing"
           workspace="$(cygpath -u "$GITHUB_WORKSPACE")"
           msi_dir="$workspace/src-tauri/target/x86_64-pc-windows-gnu/release/bundle/msi"
+          signing_info="$msi_dir/melearner-windows-msi-signing.txt"
           public_cert="$msi_dir/melearner-windows-msi-test-signing.cer"
+          mkdir -p "$cert_dir"
+
+          if [[ -n "${WINDOWS_CODE_SIGNING_PFX_BASE64:-}" || -n "${WINDOWS_CODE_SIGNING_PFX_PASSWORD:-}" ]]; then
+            if [[ -z "${WINDOWS_CODE_SIGNING_PFX_BASE64:-}" || -z "${WINDOWS_CODE_SIGNING_PFX_PASSWORD:-}" ]]; then
+              echo "WINDOWS_CODE_SIGNING_PFX_BASE64 and WINDOWS_CODE_SIGNING_PFX_PASSWORD must be set together." >&2
+              exit 1
+            fi
+
+            echo "::add-mask::$WINDOWS_CODE_SIGNING_PFX_PASSWORD"
+            printf '%s' "$WINDOWS_CODE_SIGNING_PFX_BASE64" | base64 -d > "$cert_dir/melearner-code-signing.pfx"
+            {
+              echo "WINDOWS_SIGNING_MODE=production"
+              echo "WINDOWS_SIGNING_PFX=$(cygpath -w "$cert_dir/melearner-code-signing.pfx")"
+              echo "WINDOWS_SIGNING_PFX_PASSWORD=$WINDOWS_CODE_SIGNING_PFX_PASSWORD"
+              echo "WINDOWS_SIGNING_SUBJECT=trusted Windows code-signing certificate"
+              if [[ -n "${WINDOWS_CODE_SIGNING_TIMESTAMP_URL:-}" ]]; then
+                echo "WINDOWS_SIGNING_TIMESTAMP_URL=$WINDOWS_CODE_SIGNING_TIMESTAMP_URL"
+              fi
+            } >> "$GITHUB_ENV"
+            {
+              echo "mode=production"
+              echo "certificate=WINDOWS_CODE_SIGNING_PFX_BASE64"
+              echo "timestamp_url=${WINDOWS_CODE_SIGNING_TIMESTAMP_URL:-}"
+            } > "$signing_info"
+            exit 0
+          fi
+
           pfx_password="$(openssl rand -hex 16)"
           echo "::add-mask::$pfx_password"
-          mkdir -p "$cert_dir"
           cat > "$cert_dir/openssl-code-signing.cnf" <<'EOF'
           [ req ]
           distinguished_name = req_distinguished_name
@@ -140,16 +171,39 @@ jobs:
           openssl pkcs12 -export -out "$cert_dir/melearner-test-signing.pfx" -inkey "$cert_dir/melearner-test-signing.key" -in "$cert_dir/melearner-test-signing.pem" -passout "pass:$pfx_password"
           openssl x509 -in "$cert_dir/melearner-test-signing.pem" -outform DER -out "$public_cert"
           {
-            echo "WINDOWS_TEST_SIGNING_PFX=$(cygpath -w "$cert_dir/melearner-test-signing.pfx")"
-            echo "WINDOWS_TEST_SIGNING_PFX_PASSWORD=$pfx_password"
-            echo "WINDOWS_TEST_SIGNING_CERT=$(cygpath -w "$public_cert")"
+            echo "WINDOWS_SIGNING_MODE=test"
+            echo "WINDOWS_SIGNING_PFX=$(cygpath -w "$cert_dir/melearner-test-signing.pfx")"
+            echo "WINDOWS_SIGNING_PFX_PASSWORD=$pfx_password"
+            echo "WINDOWS_SIGNING_PUBLIC_CERT=$(cygpath -w "$public_cert")"
+            echo "WINDOWS_SIGNING_SUBJECT=CN=melearner Windows MSI test artifact"
+            echo "WINDOWS_SIGNING_ALLOW_UNTRUSTED_ROOT=true"
           } >> "$GITHUB_ENV"
+          {
+            echo "mode=test"
+            echo "certificate=per-run self-signed test certificate"
+            echo "public_certificate=melearner-windows-msi-test-signing.cer"
+          } > "$signing_info"
 
-      - name: sign msi with test certificate
+      - name: sign msi
         shell: powershell
         timeout-minutes: 3
         run: |
-          .\scripts\sign-windows-msi-test.ps1 -MsiDirectory "src-tauri\target\x86_64-pc-windows-gnu\release\bundle\msi" -PfxPath "$env:WINDOWS_TEST_SIGNING_PFX" -PfxPassword "$env:WINDOWS_TEST_SIGNING_PFX_PASSWORD" -PublicCertPath "$env:WINDOWS_TEST_SIGNING_CERT"
+          $signArgs = @{
+            MsiDirectory = "src-tauri\target\x86_64-pc-windows-gnu\release\bundle\msi"
+            PfxPath = "$env:WINDOWS_SIGNING_PFX"
+            PfxPassword = "$env:WINDOWS_SIGNING_PFX_PASSWORD"
+            Subject = "$env:WINDOWS_SIGNING_SUBJECT"
+          }
+          if ($env:WINDOWS_SIGNING_PUBLIC_CERT) {
+            $signArgs.PublicCertPath = "$env:WINDOWS_SIGNING_PUBLIC_CERT"
+          }
+          if ($env:WINDOWS_SIGNING_TIMESTAMP_URL) {
+            $signArgs.TimestampUrl = "$env:WINDOWS_SIGNING_TIMESTAMP_URL"
+          }
+          if ($env:WINDOWS_SIGNING_ALLOW_UNTRUSTED_ROOT -eq "true") {
+            $signArgs.AllowUntrustedRoot = $true
+          }
+          .\scripts\sign-windows-msi.ps1 @signArgs
 
       - name: upload signed msi artifact
         uses: actions/upload-artifact@v4
@@ -158,4 +212,5 @@ jobs:
           path: |
             src-tauri/target/x86_64-pc-windows-gnu/release/bundle/msi/*.msi
             src-tauri/target/x86_64-pc-windows-gnu/release/bundle/msi/melearner-windows-msi-test-signing.cer
+            src-tauri/target/x86_64-pc-windows-gnu/release/bundle/msi/melearner-windows-msi-signing.txt
           retention-days: 14
