@@ -307,7 +307,6 @@ export function useAppBootstrap({
         })
         void hydrateCourseThumbnails(library.courses, (courses) => {
           setCourses(courses)
-          onHydrated?.({ courses, libraryPath: library.libraryPath })
         })
       })
     })()

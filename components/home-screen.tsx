@@ -141,7 +141,7 @@ export function HomeScreen() {
   const [startupRouteOverride, setStartupRouteOverride] = useState<StartupRoute | null>(null)
   const appliedStartupRouteRef = useRef<string | null>(null)
   const pendingStartupRouteRef = useRef<StartupRoute | null>(null)
-  const courses = bootstrappedLibrary?.courses ?? storeCourses
+  const courses = storeHasHydrated ? storeCourses : bootstrappedLibrary?.courses ?? storeCourses
   const hasHydrated = Boolean(bootstrappedLibrary) || storeHasHydrated
   const effectiveView = startupRouteOverride ? "viewer" : view
   const effectiveCourseId = startupRouteOverride?.courseId ?? courseId
