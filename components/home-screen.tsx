@@ -101,10 +101,18 @@ export function HomeScreen() {
   const effectiveLessonId = startupRouteOverride ? startupRouteOverride.lessonId : lessonId
 
   const handleBootstrapHydrated = useCallback((library: BootstrappedLibrary) => {
+    frontendLog("info", "home.bootstrap.hydrated", {
+      coursesCount: library.courses.length,
+      libraryPath: library.libraryPath,
+    })
     setBootstrappedLibrary(library)
   }, [])
 
   const handleStartupRoute = useCallback((route: StartupRoute | null) => {
+    frontendLog("info", "home.startupRoute.received", {
+      courseId: route?.courseId ?? null,
+      lessonId: route?.lessonId ?? null,
+    })
     setStartupRouteOverride(route)
   }, [])
 
@@ -113,6 +121,17 @@ export function HomeScreen() {
   const selectedCourse = useMemo(() => {
     return courses.find((course: Course) => course.id === effectiveCourseId) ?? null
   }, [courses, effectiveCourseId])
+
+  useEffect(() => {
+    frontendLog("info", "home.visibleState", {
+      hasHydrated,
+      effectiveView,
+      coursesCount: courses.length,
+      courseId: effectiveCourseId,
+      lessonId: effectiveLessonId,
+      selectedCourse: selectedCourse?.id ?? null,
+    })
+  }, [courses.length, effectiveCourseId, effectiveLessonId, effectiveView, hasHydrated, selectedCourse])
 
   useEffect(() => {
     if (effectiveView === "viewer" && hasHydrated && (!selectedCourse || selectedCourse.missingSince)) {
