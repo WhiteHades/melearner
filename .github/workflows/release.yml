@@ -93,11 +93,16 @@ jobs:
 
       - name: build arch package
         run: |
-          docker run --rm -v "$PWD:/workspace" -w /workspace archlinux:base-devel bash -lc '
+          docker run --rm \
+            -e RUNNER_UID="$(id -u)" \
+            -e RUNNER_GID="$(id -g)" \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            archlinux:base-devel bash -euo pipefail -c '
             pacman -Syu --noconfirm
-            pacman -S --noconfirm git nodejs pnpm rust webkit2gtk-4.1 gtk3 libayatana-appindicator librsvg openssl patchelf mpv ffmpeg libglvnd xdg-utils
-            useradd -m builder
-            chown -R builder:builder /workspace
+            pacman -S --noconfirm cargo ffmpeg git gtk3 libayatana-appindicator libglvnd librsvg nodejs openssl patchelf pkgconf pnpm rust mpv webkit2gtk-4.1 xdg-utils
+            groupadd -g "$RUNNER_GID" runner || true
+            useradd -m -u "$RUNNER_UID" -g "$RUNNER_GID" builder
             su builder -c "cd /workspace && pnpm install --frozen-lockfile"
             su builder -c "cd /workspace && NO_STRIP=true pnpm tauri build --no-bundle --ci"
             su builder -c "cd /workspace/packaging/arch && makepkg -f --noconfirm"

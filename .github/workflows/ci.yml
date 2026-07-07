@@ -45,11 +45,16 @@ jobs:
 
       - name: arch native-player rust checks
         run: |
-          docker run --rm -v "$PWD:/workspace" -w /workspace archlinux:base-devel bash -lc '
+          docker run --rm \
+            -e RUNNER_UID="$(id -u)" \
+            -e RUNNER_GID="$(id -g)" \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            archlinux:base-devel bash -euo pipefail -c '
             pacman -Syu --noconfirm
-            pacman -S --noconfirm ffmpeg git gtk3 libayatana-appindicator libglvnd libmpv librsvg openssl patchelf pkgconf rust webkit2gtk-4.1 xdg-utils
-            useradd -m builder
-            chown -R builder:builder /workspace
+            pacman -S --noconfirm cargo ffmpeg git gtk3 libayatana-appindicator libglvnd librsvg openssl patchelf pkgconf rust mpv webkit2gtk-4.1 xdg-utils
+            groupadd -g "$RUNNER_GID" runner || true
+            useradd -m -u "$RUNNER_UID" -g "$RUNNER_GID" builder
             su builder -c "cd /workspace && cargo test --manifest-path src-tauri/Cargo.toml"
             su builder -c "cd /workspace && cargo check --manifest-path src-tauri/Cargo.toml"
           '
