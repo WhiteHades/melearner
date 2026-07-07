@@ -1119,8 +1119,6 @@ pub fn native_player_load(
     app: AppHandle,
     options: NativePlayerLoadOptions,
 ) -> Result<NativePlayerState, String> {
-    stop_position_events();
-    stop_playback_events();
     let result = canonical_local_file(&options.path, &options.allowed_roots).and_then(|path| {
         let subtitles = canonical_subtitle_files(&options.subtitles, &options.allowed_roots)?;
         let pending_bounds = current_pending_bounds()?;
@@ -1150,6 +1148,8 @@ pub fn native_player_load(
             return Err(err);
         }
     };
+    stop_position_events();
+    stop_playback_events();
     start_position_events(app.clone());
     start_playback_events(app, event_client);
     Ok(state)
@@ -1361,8 +1361,11 @@ mod tests {
     use super::*;
     use std::fs;
     use std::process::Command;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::thread;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    static TEST_PATH_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     struct MediaFixture {
         root: PathBuf,
@@ -1380,11 +1383,17 @@ mod tests {
         }
     }
 
-    fn temp_media_file() -> PathBuf {
-        let suffix = SystemTime::now()
+    fn unique_test_suffix() -> String {
+        let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system time before unix epoch")
             .as_nanos();
+        let counter = TEST_PATH_COUNTER.fetch_add(1, Ordering::Relaxed);
+        format!("{}-{}-{counter}", std::process::id(), nanos)
+    }
+
+    fn temp_media_file() -> PathBuf {
+        let suffix = unique_test_suffix();
         let path = std::env::temp_dir().join(format!("melearner-native-player-{suffix}.mp4"));
         fs::write(&path, b"fixture").expect("write fixture");
         path
@@ -1401,10 +1410,7 @@ mod tests {
             return None;
         }
 
-        let suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time before unix epoch")
-            .as_nanos();
+        let suffix = unique_test_suffix();
         let root = std::env::temp_dir().join(format!("melearner-native-player-media-{suffix}"));
         fs::create_dir(&root).expect("create media fixture root");
         fs::write(
@@ -1557,10 +1563,7 @@ mod tests {
     fn canonical_local_file_accepts_file_under_approved_root() {
         let root = std::env::temp_dir().join(format!(
             "melearner-native-player-root-{}",
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("system time before unix epoch")
-                .as_nanos()
+            unique_test_suffix()
         ));
         fs::create_dir(&root).expect("create temp root");
         let file = root.join("lesson.mp4");
@@ -1579,10 +1582,7 @@ mod tests {
     fn canonical_local_file_rejects_file_outside_approved_root() {
         let root = std::env::temp_dir().join(format!(
             "melearner-native-player-root-{}",
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("system time before unix epoch")
-                .as_nanos()
+            unique_test_suffix()
         ));
         fs::create_dir(&root).expect("create temp root");
         let file = temp_media_file();
@@ -1598,10 +1598,7 @@ mod tests {
     fn canonical_subtitle_files_rejects_file_outside_approved_root() {
         let root = std::env::temp_dir().join(format!(
             "melearner-native-player-root-{}",
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("system time before unix epoch")
-                .as_nanos()
+            unique_test_suffix()
         ));
         fs::create_dir(&root).expect("create temp root");
         let subtitle = temp_media_file();
