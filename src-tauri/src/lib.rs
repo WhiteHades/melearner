@@ -301,8 +301,8 @@ pub fn run() {
     let startup_route_script = startup_route_initialization_script(startup_route.as_ref());
 
     tauri::Builder::default()
-        .append_invoke_initialization_script(startup_route_script)
         .manage(StartupRouteState(startup_route))
+        .plugin(startup_route_plugin(startup_route_script))
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(
@@ -494,6 +494,12 @@ fn startup_route_from_runtime() -> Option<StartupRoute> {
 fn startup_route_initialization_script(route: Option<&StartupRoute>) -> String {
     let value = serde_json::to_string(&route).unwrap_or_else(|_| "null".to_string());
     format!("window.__MELEARNER_STARTUP_ROUTE__ = {value};")
+}
+
+fn startup_route_plugin<R: tauri::Runtime>(script: String) -> tauri::plugin::TauriPlugin<R> {
+    tauri::plugin::Builder::<R, ()>::new("startup-route")
+        .js_init_script(script)
+        .build()
 }
 
 #[tauri::command]
