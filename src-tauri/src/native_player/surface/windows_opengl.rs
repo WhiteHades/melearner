@@ -254,7 +254,7 @@ impl WindowsInWindowSurface {
     fn set_visible(&self, visible: bool) {
         let command = if visible { SW_SHOW } else { SW_HIDE };
         unsafe {
-            ShowWindow(self.hwnd, command);
+            let _ = ShowWindow(self.hwnd, command);
         }
         if visible {
             self.schedule_render();
@@ -305,7 +305,10 @@ impl Drop for WindowsInWindowSurface {
 
 fn dispatch_windows_render(id: u64) {
     WINDOWS_SURFACES.with(|surfaces| {
-        if let Some(surface) = surfaces.borrow_mut().get_mut(&id) {
+        let Ok(mut surfaces) = surfaces.try_borrow_mut() else {
+            return;
+        };
+        if let Some(surface) = surfaces.get_mut(&id) {
             surface.render_now();
         }
     });
@@ -525,8 +528,11 @@ unsafe extern "C" fn windows_mpv_update_callback(ctx: *mut c_void) {
     let callback = unsafe { &*ctx.cast::<WindowsRenderCallback>() };
     let id = callback.id;
     let parent = callback.parent.clone();
-    let _ = parent.run_on_main_thread(move || {
-        dispatch_windows_render(id);
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(1));
+        let _ = parent.run_on_main_thread(move || {
+            dispatch_windows_render(id);
+        });
     });
 }
 

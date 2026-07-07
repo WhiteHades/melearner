@@ -184,6 +184,79 @@ function newProcesses(before, after) {
   return after.filter((line) => !previous.has(line))
 }
 
+function listWindowsForProcess(pid) {
+  if (process.platform !== "win32") return []
+
+  const script = `
+$code = @'
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+
+public static class MelearnerWindowList {
+  public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+  [DllImport("user32.dll")]
+  public static extern bool EnumWindows(EnumWindowsProc enumProc, IntPtr lParam);
+
+  [DllImport("user32.dll")]
+  public static extern bool IsWindowVisible(IntPtr hWnd);
+
+  [DllImport("user32.dll")]
+  public static extern int GetWindowTextLength(IntPtr hWnd);
+
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+  public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int maxCount);
+
+  [DllImport("user32.dll")]
+  public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+}
+'@
+Add-Type $code
+$targetPid = [uint32]${Number(pid)}
+$titles = New-Object System.Collections.Generic.List[string]
+[MelearnerWindowList]::EnumWindows({
+  param([IntPtr]$hwnd, [IntPtr]$lparam)
+  [uint32]$windowPid = 0
+  [void][MelearnerWindowList]::GetWindowThreadProcessId($hwnd, [ref]$windowPid)
+  if ($windowPid -eq $targetPid -and [MelearnerWindowList]::IsWindowVisible($hwnd)) {
+    $length = [MelearnerWindowList]::GetWindowTextLength($hwnd)
+    if ($length -gt 0) {
+      $builder = New-Object System.Text.StringBuilder ($length + 1)
+      [void][MelearnerWindowList]::GetWindowText($hwnd, $builder, $builder.Capacity)
+      $titles.Add($builder.ToString())
+    }
+  }
+  return $true
+}, [IntPtr]::Zero) | Out-Null
+$titles | ConvertTo-Json -Compress
+`
+
+  const result = spawnSync("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script], {
+    encoding: "utf8",
+  })
+  if (result.status !== 0) {
+    throw new Error(`could not inspect app windows: ${result.stderr.trim() || result.stdout.trim()}`)
+  }
+  const output = result.stdout.trim()
+  if (!output) return []
+  const parsed = JSON.parse(output)
+  return Array.isArray(parsed) ? parsed : [parsed]
+}
+
+function validateAppWindows(pid) {
+  const titles = listWindowsForProcess(pid)
+  const separateVideoWindows = titles.filter((title) => /\bmelearner video\b/i.test(title))
+  if (separateVideoWindows.length > 0) {
+    throw new Error(`native playback opened a separate video window: ${separateVideoWindows.join(", ")}`)
+  }
+  const melearnerWindows = titles.filter((title) => /\bmelearner\b/i.test(title))
+  if (process.platform === "win32" && melearnerWindows.length !== 1) {
+    throw new Error(`expected exactly one visible melearner window, found ${melearnerWindows.length}: ${titles.join(", ") || "none"}`)
+  }
+  return titles
+}
+
 function requireNumber(value, label) {
   const parsed = Number(value)
   if (!Number.isInteger(parsed) || parsed < 0) {
@@ -315,6 +388,7 @@ async function main() {
     const ready = await Promise.race([waitForReady({ frontendLog, frontendStartLines, timeoutMs }), childFailure])
     const context = ready.context || {}
     validateReadyContext(context, expectedBackend)
+    const appWindowTitles = validateAppWindows(child.pid)
     assertCount(context, "audioTracks", options.expectAudioTracks || process.env.MELEARNER_EXPECT_AUDIO_TRACKS, "audio track")
     assertCount(context, "subtitleTracks", options.expectSubtitleTracks || process.env.MELEARNER_EXPECT_SUBTITLE_TRACKS, "subtitle track")
     assertCount(context, "chapters", options.expectChapters || process.env.MELEARNER_EXPECT_CHAPTERS, "chapter")
@@ -331,7 +405,7 @@ async function main() {
     }
 
     console.log(
-      `native playback verified: platform=${platform.name} course=${courseId} lesson=${lessonId} backend=${context.surfaceBackend} frames=${context.surfaceRenderedFrames} surface=${context.surfaceRenderWidth}x${context.surfaceRenderHeight} ffmpeg=none`,
+      `native playback verified: platform=${platform.name} course=${courseId} lesson=${lessonId} backend=${context.surfaceBackend} frames=${context.surfaceRenderedFrames} surface=${context.surfaceRenderWidth}x${context.surfaceRenderHeight} ffmpeg=none windows=${appWindowTitles.join("|") || "none"}`,
     )
   } finally {
     stopApp(child)
