@@ -24,7 +24,6 @@ const courseIndex: CourseIndex = {
   byId: new Map(),
   lessonsById: new Map(),
 }
-const SYNC_RETRY_DELAYS_MS = [250, 500, 1000, 2000, 4000]
 
 function buildCourseIndex(courses: ReadonlyArray<Course>): CourseIndex {
   const byId = new Map<string, Course>()
@@ -86,32 +85,6 @@ function errorMessage(err: unknown): string {
   return JSON.stringify(err)
 }
 
-function isDatabaseLockedError(err: unknown): boolean {
-  const message = errorMessage(err).toLowerCase()
-  return message.includes("database is locked") || message.includes("code: 5")
-}
-
-function wait(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, ms))
-}
-
-async function syncLibraryWithLockRetry(
-  courses: Course[],
-  path: string,
-  logWarn: (context: Record<string, unknown>) => void
-) {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return await syncLibrary(courses, path)
-    } catch (err) {
-      const delay = SYNC_RETRY_DELAYS_MS[attempt]
-      if (delay === undefined || !isDatabaseLockedError(err)) throw err
-      logWarn({ attempt: attempt + 1, delayMs: delay, error: errorMessage(err) })
-      await wait(delay)
-    }
-  }
-}
-
 export async function scanLibraryAt(path: string): Promise<{ courses: Course[]; warnings: string[] }> {
   const { frontendLog } = await import("@/lib/frontend-log")
   frontendLog("info", `scanLibraryAt start: path=${path}`)
@@ -124,9 +97,7 @@ export async function scanLibraryAt(path: string): Promise<{ courses: Course[]; 
   frontendLog("info", `processScanResult returned: ${scanned.length} courses`)
 
   const syncResult = isTauri()
-    ? await syncLibraryWithLockRetry(scanned, path, (context) => {
-        frontendLog("warn", "scan.sync.retry", context)
-      }).catch((err) => {
+    ? await syncLibrary(scanned, path).catch((err) => {
         throw new Error(`Saving scan failed: ${errorMessage(err)}`)
       })
     : { courses: scanned, warnings: [] }

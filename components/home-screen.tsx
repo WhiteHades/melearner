@@ -76,6 +76,7 @@ declare global {
 
 const EMPTY_SEARCH_RESULTS: LibrarySearchResult[] = []
 const EMPTY_COMMAND_LESSONS: Array<{ course: Course; lesson: Lesson }> = []
+const STARTUP_AUTO_SCAN_DELAY_MS = 10000
 
 function scheduleHomeStateUpdate(work: () => void): void {
   if (typeof window === "undefined") {
@@ -476,20 +477,24 @@ function LibraryDashboard({
     const path = readAutoScanPath()
     if (!path) return
 
-    setScanMode("selecting")
-    scanLibraryAt(path)
-      .then((result) => {
-        setError(null)
-        setWarnings(result.warnings)
-      })
-      .catch((err) => {
-        const detail = err instanceof Error
-          ? `${err.name}: ${err.message}\n${err.stack ?? ""}`
-          : `non-Error throw: ${JSON.stringify(err)}`
-        frontendLog("error", `autoScan failed: ${detail}`)
-        setError(`autoScan failed: ${detail}`)
-      })
-      .finally(() => setScanMode("idle"))
+    const timer = window.setTimeout(() => {
+      setScanMode("selecting")
+      scanLibraryAt(path)
+        .then((result) => {
+          setError(null)
+          setWarnings(result.warnings)
+        })
+        .catch((err) => {
+          const detail = err instanceof Error
+            ? `${err.name}: ${err.message}\n${err.stack ?? ""}`
+            : `non-Error throw: ${JSON.stringify(err)}`
+          frontendLog("error", `autoScan failed: ${detail}`)
+          setError(`autoScan failed: ${detail}`)
+        })
+        .finally(() => setScanMode("idle"))
+    }, STARTUP_AUTO_SCAN_DELAY_MS)
+
+    return () => window.clearTimeout(timer)
   }, [hasHydrated, setScanMode])
 
   async function handleSelectFolder() {
