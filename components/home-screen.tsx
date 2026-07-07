@@ -69,6 +69,20 @@ type BootstrappedLibrary = { courses: Course[]; libraryPath: string | null }
 const EMPTY_SEARCH_RESULTS: LibrarySearchResult[] = []
 const EMPTY_COMMAND_LESSONS: Array<{ course: Course; lesson: Lesson }> = []
 
+function replaceStartupUrl(courseId: string, lessonId: string | null): void {
+  if (typeof window === "undefined") return
+
+  const url = new URL(window.location.href)
+  url.searchParams.set("view", "viewer")
+  url.searchParams.set("course", courseId)
+  if (lessonId) {
+    url.searchParams.set("lesson", lessonId)
+  } else {
+    url.searchParams.delete("lesson")
+  }
+  window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`)
+}
+
 export function HomeScreen() {
   const [viewParam, setViewParam] = useQueryState("view", parseAsString.withDefault("library"))
   const [courseId, setCourseId] = useQueryState("course", parseAsString)
@@ -129,15 +143,13 @@ export function HomeScreen() {
         ? startupRoute.lessonId
         : null
 
-    setCourseId(course.id)
-    setLessonId(selectedLessonId)
-    setViewParam("viewer")
     setStartupViewer({ courseId: course.id, lessonId: selectedLessonId })
+    replaceStartupUrl(course.id, selectedLessonId)
     setPendingStartupRoute(null)
     setStartupRoute(null)
     void markCourseAccessed(course.id)
     frontendLog("info", "startup.route.applied", { courseId: course.id, lessonId: selectedLessonId })
-  }, [courses, hasHydrated, startupRoute, setCourseId, setLessonId, setStartupRoute, setViewParam])
+  }, [courses, hasHydrated, startupRoute, setStartupRoute])
 
   const handleOpenCourse = useCallback(
     (course: Course, selectedLessonId: string | null = null) => {
