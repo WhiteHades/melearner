@@ -298,6 +298,7 @@ async function main() {
       HOME: home,
       MELEARNER_OPEN_COURSE_ID: courseId,
       MELEARNER_OPEN_LESSON_ID: lessonId,
+      MELEARNER_DB_PATH: dbPath,
       MELEARNER_FRONTEND_LOG: frontendLog,
       MELEARNER_NATIVE_SURFACE_LOG: surfaceLog,
     },
