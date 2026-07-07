@@ -93,14 +93,13 @@ export function HomeScreen() {
   const storeHasHydrated = useCourseStore((state) => state.hasHydrated)
   const setStartupRoute = useCourseStore((state) => state.setStartupRoute)
   const [bootstrappedLibrary, setBootstrappedLibrary] = useState<BootstrappedLibrary | null>(null)
-  const [pendingStartupRoute, setPendingStartupRoute] = useState<StartupRoute | null>(null)
-  const [startupViewer, setStartupViewer] = useState<StartupRoute | null>(null)
+  const [startupRouteOverride, setStartupRouteOverride] = useState<StartupRoute | null>(null)
+  const appliedStartupRouteRef = useRef<string | null>(null)
   const courses = bootstrappedLibrary?.courses ?? storeCourses
   const hasHydrated = Boolean(bootstrappedLibrary) || storeHasHydrated
-  const startupRoute = pendingStartupRoute
-  const effectiveView = startupViewer ? "viewer" : view
-  const effectiveCourseId = startupViewer?.courseId ?? courseId
-  const effectiveLessonId = startupViewer ? startupViewer.lessonId : lessonId
+  const effectiveView = startupRouteOverride ? "viewer" : view
+  const effectiveCourseId = startupRouteOverride?.courseId ?? courseId
+  const effectiveLessonId = startupRouteOverride ? startupRouteOverride.lessonId : lessonId
 
   const handleBootstrapHydrated = useCallback((library: BootstrappedLibrary) => {
     flushSync(() => {
@@ -110,7 +109,7 @@ export function HomeScreen() {
 
   const handleStartupRoute = useCallback((route: StartupRoute | null) => {
     flushSync(() => {
-      setPendingStartupRoute(route)
+      setStartupRouteOverride(route)
     })
   }, [])
 
@@ -120,7 +119,7 @@ export function HomeScreen() {
 
   useEffect(() => {
     if (effectiveView === "viewer" && hasHydrated && (!selectedCourse || selectedCourse.missingSince)) {
-      setStartupViewer(null)
+      setStartupRouteOverride(null)
       setViewParam("library")
       setCourseId(null)
       setLessonId(null)
@@ -128,33 +127,38 @@ export function HomeScreen() {
   }, [effectiveView, hasHydrated, selectedCourse, setViewParam, setCourseId, setLessonId])
 
   useEffect(() => {
-    if (!hasHydrated || !startupRoute) return
+    if (!hasHydrated || !startupRouteOverride) return
 
-    const course = courses.find((course: Course) => course.id === startupRoute.courseId && !course.missingSince)
+    const course = courses.find((course: Course) => course.id === startupRouteOverride.courseId && !course.missingSince)
     if (!course) {
-      setPendingStartupRoute(null)
+      setStartupRouteOverride(null)
       setStartupRoute(null)
       return
     }
 
     const selectedLessonId =
-      startupRoute.lessonId &&
-      course.sections.some((section) => section.lessons.some((lesson) => lesson.id === startupRoute.lessonId))
-        ? startupRoute.lessonId
+      startupRouteOverride.lessonId &&
+      course.sections.some((section) => section.lessons.some((lesson) => lesson.id === startupRouteOverride.lessonId))
+        ? startupRouteOverride.lessonId
         : null
 
-    setStartupViewer({ courseId: course.id, lessonId: selectedLessonId })
-    replaceStartupUrl(course.id, selectedLessonId)
-    setPendingStartupRoute(null)
+    const routeKey = `${course.id}\0${selectedLessonId ?? ""}`
+    if (startupRouteOverride.lessonId !== selectedLessonId) {
+      setStartupRouteOverride({ courseId: course.id, lessonId: selectedLessonId })
+    }
     setStartupRoute(null)
-    void markCourseAccessed(course.id)
-    frontendLog("info", "startup.route.applied", { courseId: course.id, lessonId: selectedLessonId })
-  }, [courses, hasHydrated, startupRoute, setStartupRoute])
+    if (appliedStartupRouteRef.current !== routeKey) {
+      appliedStartupRouteRef.current = routeKey
+      replaceStartupUrl(course.id, selectedLessonId)
+      void markCourseAccessed(course.id)
+      frontendLog("info", "startup.route.applied", { courseId: course.id, lessonId: selectedLessonId })
+    }
+  }, [courses, hasHydrated, startupRouteOverride, setStartupRoute])
 
   const handleOpenCourse = useCallback(
     (course: Course, selectedLessonId: string | null = null) => {
       if (course.missingSince) return
-      setStartupViewer(null)
+      setStartupRouteOverride(null)
       setCourseId(course.id)
       setLessonId(selectedLessonId)
       setViewParam("viewer")
@@ -164,7 +168,7 @@ export function HomeScreen() {
   )
 
   const handleBack = useCallback(() => {
-    setStartupViewer(null)
+    setStartupRouteOverride(null)
     setViewParam("library")
     setCourseId(null)
     setLessonId(null)
@@ -172,7 +176,7 @@ export function HomeScreen() {
 
   const handleLessonChange = useCallback(
     (nextLessonId: string | null) => {
-      setStartupViewer((current) => current ? { ...current, lessonId: nextLessonId } : current)
+      setStartupRouteOverride((current) => current ? { ...current, lessonId: nextLessonId } : current)
       setLessonId(nextLessonId)
     },
     [setLessonId]
