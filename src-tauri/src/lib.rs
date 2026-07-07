@@ -302,10 +302,8 @@ pub fn run() {
         let _ = std::fs::create_dir_all(parent);
     }
 
-    let startup_route_script = startup_initialization_script(
-        startup_route.as_ref(),
-        startup_auto_scan_path.as_deref(),
-    );
+    let startup_route_script =
+        startup_initialization_script(startup_route.as_ref(), startup_auto_scan_path.as_deref());
 
     tauri::Builder::default()
         .manage(StartupRouteState(startup_route))
