@@ -27,7 +27,7 @@ chmod +x melearner_<version>_amd64.AppImage
 
 ## Windows and macOS
 
-Windows and macOS installers are not production release targets yet. The app's playback engine is embedded libmpv, and those platforms still need true in-window native render hosts before their packages can be advertised as supported.
+Windows and macOS installers are not production release targets yet. The app's playback engine is embedded libmpv, and those platforms have source render hosts, but their packages still need clean-machine visual playback verification and deliberate libmpv dependency bundling before they can be advertised as supported.
 
 Do not publish Windows MSI, NSIS, macOS DMG, or macOS app-bundle release artifacts until each platform can visibly play local media through the embedded native surface in one app window on a clean machine.
 

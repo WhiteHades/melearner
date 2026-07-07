@@ -12,7 +12,8 @@ permissions:
   contents: write
 
 # Windows and macOS release jobs must not be restored until their native
-# in-window libmpv render hosts exist and pass packaged visual playback checks.
+# in-window libmpv render hosts pass packaged visual playback checks and
+# libmpv dependencies are bundled deliberately.
 jobs:
   ensure-release:
     name: ensure release
