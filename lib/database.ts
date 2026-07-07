@@ -14,6 +14,7 @@ type DatabaseConnection = Pick<Database, "execute" | "select">
 let db: DatabaseConnection | null = null
 let testDatabase: DatabaseConnection | null = null
 let dbPathPromise: Promise<string | null> | null = null
+let databaseWriteQueue: Promise<void> = Promise.resolve()
 const SQLITE_BATCH_SIZE = 500
 const SQLITE_MAX_PARAMETERS = 900
 const LIBRARY_PATH_SETTING = "libraryPath"
@@ -166,6 +167,7 @@ export function __setDatabaseForTests(database: DatabaseConnection | null): void
   testDatabase = database
   db = null
   dbPathPromise = null
+  databaseWriteQueue = Promise.resolve()
 }
 
 function createPlaceholders(count: number): string {
@@ -218,6 +220,12 @@ async function executeTransaction<T>(database: DatabaseConnection, work: () => P
     await database.execute("ROLLBACK").catch(() => undefined)
     throw error
   }
+}
+
+async function serializeDatabaseWrite<T>(work: () => Promise<T>): Promise<T> {
+  const result = databaseWriteQueue.then(work, work)
+  databaseWriteQueue = result.then(() => undefined, () => undefined)
+  return result
 }
 
 function makeSubtitleId(lessonId: string, index: number): string {
@@ -613,6 +621,10 @@ export async function syncLibrary(courses: Course[], libraryPath: string): Promi
     return { courses, warnings: [] }
   }
 
+  return serializeDatabaseWrite(() => syncLibraryWithDatabase(database, courses, libraryPath))
+}
+
+async function syncLibraryWithDatabase(database: DatabaseConnection, courses: Course[], libraryPath: string): Promise<SyncLibraryResult> {
   const warnings: string[] = []
   const coursePaths = courses.map((course) => course.path)
   const courseFingerprints = uniqueValues(courses.map((course) => course.fingerprint))
@@ -924,45 +936,47 @@ export async function updateLessonProgress(
   const database = await getDatabase()
   if (!database) return
 
-  const rows = await database.select<PersistedLessonProgressRow[]>(
-    `SELECT course_id, watched_time, last_position, completed FROM lessons WHERE id = $1`,
-    [lessonId]
-  )
-  const previous = rows[0]
-  if (!previous) return
-
-  const previousWatchedTime = previous.watched_time ?? 0
-  const watchedDelta = Math.max(0, Math.round(watchedTime - previousWatchedTime))
-  const completedValue = completed ? 1 : 0
-  const completionChanged = Boolean(previous.completed) !== completed
-
-  await executeTransaction(database, async () => {
-    await database.execute(
-      `UPDATE lessons SET watched_time = $1, last_position = $2, completed = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4`,
-      [watchedTime, lastPosition, completedValue, lessonId]
+  await serializeDatabaseWrite(async () => {
+    const rows = await database.select<PersistedLessonProgressRow[]>(
+      `SELECT course_id, watched_time, last_position, completed FROM lessons WHERE id = $1`,
+      [lessonId]
     )
+    const previous = rows[0]
+    if (!previous) return
 
-    if (watchedDelta > 0 || completionChanged) {
+    const previousWatchedTime = previous.watched_time ?? 0
+    const watchedDelta = Math.max(0, Math.round(watchedTime - previousWatchedTime))
+    const completedValue = completed ? 1 : 0
+    const completionChanged = Boolean(previous.completed) !== completed
+
+    await executeTransaction(database, async () => {
       await database.execute(
-        `INSERT INTO lesson_activity (
-          id,
-          course_id,
-          lesson_id,
-          activity_date,
-          watched_seconds,
-          completed,
-          created_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)`,
-        [
-          makeActivityId(lessonId),
-          previous.course_id,
-          lessonId,
-          todayKey(),
-          watchedDelta,
-          completionChanged && completed ? 1 : 0,
-        ]
+        `UPDATE lessons SET watched_time = $1, last_position = $2, completed = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4`,
+        [watchedTime, lastPosition, completedValue, lessonId]
       )
-    }
+
+      if (watchedDelta > 0 || completionChanged) {
+        await database.execute(
+          `INSERT INTO lesson_activity (
+            id,
+            course_id,
+            lesson_id,
+            activity_date,
+            watched_seconds,
+            completed,
+            created_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)`,
+          [
+            makeActivityId(lessonId),
+            previous.course_id,
+            lessonId,
+            todayKey(),
+            watchedDelta,
+            completionChanged && completed ? 1 : 0,
+          ]
+        )
+      }
+    })
   })
 }
 
@@ -998,16 +1012,20 @@ export async function updateCourseLastAccessed(
   const database = await getDatabase()
   if (!database) return
 
-  await database.execute(`UPDATE courses SET last_accessed = $1 WHERE id = $2`, [timestamp, courseId])
+  await serializeDatabaseWrite(() =>
+    database.execute(`UPDATE courses SET last_accessed = $1 WHERE id = $2`, [timestamp, courseId])
+  )
 }
 
 export async function saveNote(note: Note): Promise<void> {
   const database = await getDatabase()
   if (!database) return
 
-  await database.execute(
-    `INSERT INTO notes (id, lesson_id, timestamp, text, created_at) VALUES ($1, $2, $3, $4, $5)`,
-    [note.id, note.lessonId, note.timestamp, note.text, note.createdAt]
+  await serializeDatabaseWrite(() =>
+    database.execute(
+      `INSERT INTO notes (id, lesson_id, timestamp, text, created_at) VALUES ($1, $2, $3, $4, $5)`,
+      [note.id, note.lessonId, note.timestamp, note.text, note.createdAt]
+    )
   )
 }
 
@@ -1036,5 +1054,5 @@ export async function deleteNote(noteId: string): Promise<void> {
   const database = await getDatabase()
   if (!database) return
 
-  await database.execute(`DELETE FROM notes WHERE id = $1`, [noteId])
+  await serializeDatabaseWrite(() => database.execute(`DELETE FROM notes WHERE id = $1`, [noteId]))
 }

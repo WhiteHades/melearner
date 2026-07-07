@@ -1,6 +1,6 @@
 "use client"
 
-import { isTauri } from "@/lib/tauri"
+import { isTauri } from "./tauri.ts"
 
 export function frontendLog(level: "info" | "warn" | "error" | "debug", message: string, context?: Record<string, unknown>) {
   if (!isTauri()) return
