@@ -72,9 +72,7 @@ function schedulePostHydrationWork(work: () => void): void {
     return
   }
 
-  window.requestAnimationFrame(() => {
-    window.setTimeout(work, 0)
-  })
+  window.setTimeout(work, 0)
 }
 
 function lessonBelongsToCourse(course: Course, lessonId: string | null): lessonId is string {
@@ -288,6 +286,7 @@ export function useAppBootstrap({
         frontendLog("info", "app.bootstrap.libraryLoad.start", { ms: Math.round(t()) })
         library = await loadPersistedLibrary()
       }
+      hydrateLibrary(library.courses, library.libraryPath)
       await resolveStartupRouteBeforeHydration(library.courses, (route) => {
         onStartupRoute?.(route)
       })
@@ -303,7 +302,6 @@ export function useAppBootstrap({
         libraryPath: library.libraryPath,
       })
       schedulePostHydrationWork(() => {
-        hydrateLibrary(library.courses, library.libraryPath)
         void indexCourses(library.courses, library.libraryPath).catch((error) => {
           frontendLog("warn", "app.bootstrap.searchIndex.failed", { error: String(error) })
         })
