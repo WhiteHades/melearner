@@ -27,6 +27,7 @@ static SURFACE_WINDOW_RUN: OnceLock<Mutex<u64>> = OnceLock::new();
 const NATIVE_SURFACE_LABEL: &str = "native-player-surface";
 const SURFACE_BACKEND_ENV: &str = "MELEARNER_SURFACE_BACKEND";
 const NATIVE_SURFACE_LOG_ENV: &str = "MELEARNER_NATIVE_SURFACE_LOG";
+const OVERLAY_SURFACE_ENV: &str = "MELEARNER_ALLOW_OVERLAY_SURFACE";
 const RENDER_HANDLE_ATTEMPTS: usize = 20;
 const RENDER_HANDLE_RETRY_DELAY: Duration = Duration::from_millis(25);
 
@@ -176,6 +177,8 @@ impl NativeVideoSurface {
         bounds: NativePlayerBounds,
         mpv: &Mpv,
     ) -> Result<Self, String> {
+        reject_linux_overlay_surface_by_default()?;
+
         match NativeSurfaceBackendPreference::current()? {
             NativeSurfaceBackendPreference::WindowHandle => {
                 Self::attach_window_handle(app, parent, bounds)
@@ -356,6 +359,24 @@ impl Drop for NativeVideoSurface {
         }
         let _ = self.window.close();
     }
+}
+
+#[cfg(target_os = "linux")]
+fn reject_linux_overlay_surface_by_default() -> Result<(), String> {
+    if std::env::var(OVERLAY_SURFACE_ENV).ok().as_deref() == Some("1") {
+        return Ok(());
+    }
+
+    let message = format!(
+        "one-window native video surface is not implemented on Linux yet; the old separate-window overlay surface is disabled. Set {OVERLAY_SURFACE_ENV}=1 only for diagnostic overlay testing"
+    );
+    record_native_surface_runtime_log(&message);
+    Err(message)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn reject_linux_overlay_surface_by_default() -> Result<(), String> {
+    Ok(())
 }
 
 struct RenderApiSurface {
