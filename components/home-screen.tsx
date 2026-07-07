@@ -81,6 +81,17 @@ function scheduleHomeStateUpdate(work: () => void): void {
   }, 0)
 }
 
+function scheduleAfterPaint(work: () => void): void {
+  if (typeof window === "undefined") {
+    work()
+    return
+  }
+
+  window.requestAnimationFrame(() => {
+    window.setTimeout(work, 0)
+  })
+}
+
 function readRouteState(): RouteState {
   if (typeof window === "undefined") return { view: "library", courseId: null, lessonId: null }
 
@@ -140,26 +151,44 @@ export function HomeScreen() {
   const [bootstrappedLibrary, setBootstrappedLibrary] = useState<BootstrappedLibrary | null>(null)
   const [startupRouteOverride, setStartupRouteOverride] = useState<StartupRoute | null>(null)
   const appliedStartupRouteRef = useRef<string | null>(null)
+  const pendingStartupRouteRef = useRef<StartupRoute | null>(null)
   const courses = bootstrappedLibrary?.courses ?? storeCourses
   const hasHydrated = Boolean(bootstrappedLibrary) || storeHasHydrated
   const effectiveView = startupRouteOverride ? "viewer" : view
   const effectiveCourseId = startupRouteOverride?.courseId ?? courseId
   const effectiveLessonId = startupRouteOverride ? startupRouteOverride.lessonId : lessonId
 
+  const applyPendingStartupRoute = useCallback(() => {
+    const route = pendingStartupRouteRef.current
+    if (!route) return
+
+    pendingStartupRouteRef.current = null
+    scheduleAfterPaint(() => {
+      frontendLog("info", "home.startupRoute.applyAfterPaint", {
+        courseId: route.courseId,
+        lessonId: route.lessonId,
+      })
+      setStartupRouteOverride(route)
+    })
+  }, [])
+
   const handleBootstrapHydrated = useCallback((library: BootstrappedLibrary) => {
     frontendLog("info", "home.bootstrap.hydrated", {
       coursesCount: library.courses.length,
       libraryPath: library.libraryPath,
     })
-    scheduleHomeStateUpdate(() => setBootstrappedLibrary(library))
-  }, [])
+    scheduleHomeStateUpdate(() => {
+      setBootstrappedLibrary(library)
+      applyPendingStartupRoute()
+    })
+  }, [applyPendingStartupRoute])
 
   const handleStartupRoute = useCallback((route: StartupRoute | null) => {
     frontendLog("info", "home.startupRoute.received", {
       courseId: route?.courseId ?? null,
       lessonId: route?.lessonId ?? null,
     })
-    scheduleHomeStateUpdate(() => setStartupRouteOverride(route))
+    pendingStartupRouteRef.current = route
   }, [])
 
   useAppBootstrap({ onHydrated: handleBootstrapHydrated, onStartupRoute: handleStartupRoute })
