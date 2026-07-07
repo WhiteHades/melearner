@@ -433,6 +433,7 @@ function VideoPlayerComponent({
   }, [fallbackState, lesson.path])
 
   const commitSeek = useCallback((value: number[]) => {
+    if (!isLoaded) return
     const currentTime = value[0] ?? 0
     isSeekingRef.current = true
     setVisibleCurrentTime(currentTime)
@@ -448,41 +449,45 @@ function VideoPlayerComponent({
         setError({ path: lesson.path, message: String(reason) })
       })
     onProgress(currentTime, state.duration)
-  }, [fallbackState, lesson.path, onProgress, state.duration])
+  }, [fallbackState, isLoaded, lesson.path, onProgress, state.duration])
 
   const changeVolume = useCallback((value: number[]) => {
+    if (!isLoaded) return
     const volume = value[0] ?? 0
     setNativeState((current) => ({ ...(current.path === lesson.path ? current : fallbackState), volume, muted: volume === 0 }))
     void setNativePlayerVolume(volume).catch((reason) => setError({ path: lesson.path, message: String(reason) }))
-  }, [fallbackState, lesson.path])
+  }, [fallbackState, isLoaded, lesson.path])
 
   const toggleMute = useCallback(() => {
+    if (!isLoaded) return
     const muted = !state.muted
     setNativeState((current) => ({ ...(current.path === lesson.path ? current : fallbackState), muted }))
     void setNativePlayerMuted(muted).catch((reason) => setError({ path: lesson.path, message: String(reason) }))
-  }, [fallbackState, lesson.path, state.muted])
+  }, [fallbackState, isLoaded, lesson.path, state.muted])
 
   const changeRate = useCallback((rate: number) => {
+    if (!isLoaded) return
     setNativeState((current) => ({ ...(current.path === lesson.path ? current : fallbackState), rate }))
     void setNativePlayerRate(rate).catch((reason) => setError({ path: lesson.path, message: String(reason) }))
-  }, [fallbackState, lesson.path])
+  }, [fallbackState, isLoaded, lesson.path])
 
-  const applyNativeState = useCallback((action: Promise<NativePlayerState>) => {
-    void action
+  const applyNativeState = useCallback((action: () => Promise<NativePlayerState>) => {
+    if (!isLoaded) return
+    void action()
       .then(setNativeState)
       .catch((reason) => setError({ path: lesson.path, message: String(reason) }))
-  }, [lesson.path])
+  }, [isLoaded, lesson.path])
 
   const changeAudioTrack = useCallback((id: string) => {
-    applyNativeState(selectNativePlayerAudioTrack(id))
+    applyNativeState(() => selectNativePlayerAudioTrack(id))
   }, [applyNativeState])
 
   const changeSubtitleTrack = useCallback((id: string | null) => {
-    applyNativeState(selectNativePlayerSubtitleTrack(id))
+    applyNativeState(() => selectNativePlayerSubtitleTrack(id))
   }, [applyNativeState])
 
   const changeChapter = useCallback((id: string) => {
-    applyNativeState(selectNativePlayerChapter(id))
+    applyNativeState(() => selectNativePlayerChapter(id))
   }, [applyNativeState])
 
   const toggleFullscreen = useCallback(() => {
@@ -523,12 +528,12 @@ function VideoPlayerComponent({
         case "KeyJ":
         case "ArrowLeft":
           event.preventDefault()
-          applyNativeState(seekNativePlayer({ seconds: -10, mode: "relative" }))
+          applyNativeState(() => seekNativePlayer({ seconds: -10, mode: "relative" }))
           break
         case "KeyL":
         case "ArrowRight":
           event.preventDefault()
-          applyNativeState(seekNativePlayer({ seconds: 10, mode: "relative" }))
+          applyNativeState(() => seekNativePlayer({ seconds: 10, mode: "relative" }))
           break
       }
     }
@@ -587,9 +592,10 @@ function VideoPlayerComponent({
             onValueCommit={commitSeek}
             step={0.1}
             value={[Math.min(displayCurrentTime, Math.max(state.duration, 1))]}
+            disabled={!isLoaded}
           />
           <div className="flex flex-wrap items-center gap-3">
-            <PlayerIconButton label={state.muted ? "Unmute" : "Mute"} onClick={toggleMute}>
+            <PlayerIconButton label={state.muted ? "Unmute" : "Mute"} onClick={toggleMute} disabled={!isLoaded}>
               {state.muted ? <VolumeX /> : <Volume2 />}
             </PlayerIconButton>
             <Slider
@@ -600,6 +606,7 @@ function VideoPlayerComponent({
               onValueChange={changeVolume}
               step={0.01}
               value={[state.muted ? 0 : state.volume]}
+              disabled={!isLoaded}
             />
             <PlayerMenu
               state={state}
@@ -607,11 +614,18 @@ function VideoPlayerComponent({
               onAudioTrackChange={changeAudioTrack}
               onSubtitleTrackChange={changeSubtitleTrack}
               onChapterChange={changeChapter}
+              disabled={!isLoaded}
             />
-            <PlayerIconButton label="Step frame" onClick={() => void stepNativePlayerFrame().catch((reason) => setError({ path: lesson.path, message: String(reason) }))}>
+            <PlayerIconButton label="Step frame" disabled={!isLoaded} onClick={() => {
+              if (!isLoaded) return
+              void stepNativePlayerFrame().catch((reason) => setError({ path: lesson.path, message: String(reason) }))
+            }}>
               <SlidersHorizontal />
             </PlayerIconButton>
-            <PlayerIconButton label="Screenshot" onClick={() => void takeNativePlayerScreenshot().catch((reason) => setError({ path: lesson.path, message: String(reason) }))}>
+            <PlayerIconButton label="Screenshot" disabled={!isLoaded} onClick={() => {
+              if (!isLoaded) return
+              void takeNativePlayerScreenshot().catch((reason) => setError({ path: lesson.path, message: String(reason) }))
+            }}>
               <Camera />
             </PlayerIconButton>
             <PlayerIconButton label={isFullscreen ? "Exit fullscreen" : "Fullscreen"} onClick={toggleFullscreen}>
@@ -633,10 +647,12 @@ function VideoPlayerComponent({
 function PlayerIconButton({
   label,
   onClick,
+  disabled = false,
   children,
 }: {
   label: string
   onClick: () => void
+  disabled?: boolean
   children: ReactNode
 }) {
   return (
@@ -648,6 +664,7 @@ function PlayerIconButton({
           className="text-white hover:bg-white/10 hover:text-white"
           onClick={onClick}
           aria-label={label}
+          disabled={disabled}
         >
           {children}
         </Button>
@@ -663,17 +680,19 @@ function PlayerMenu({
   onAudioTrackChange,
   onSubtitleTrackChange,
   onChapterChange,
+  disabled,
 }: {
   state: NativePlayerState
   onRateChange: (rate: number) => void
   onAudioTrackChange: (id: string) => void
   onSubtitleTrackChange: (id: string | null) => void
   onChapterChange: (id: string) => void
+  disabled: boolean
 }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="sm" className="min-w-16 text-white hover:bg-white/10 hover:text-white">
+        <Button variant="ghost" size="sm" className="min-w-16 text-white hover:bg-white/10 hover:text-white" disabled={disabled}>
           {state.rate}x
         </Button>
       </DropdownMenuTrigger>
