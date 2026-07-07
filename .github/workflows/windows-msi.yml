@@ -113,6 +113,7 @@ jobs:
 
       - name: sign msi with test certificate
         shell: powershell
+        timeout-minutes: 3
         run: |
           .\scripts\sign-windows-msi-test.ps1 -MsiDirectory "src-tauri\target\x86_64-pc-windows-gnu\release\bundle\msi"
 
