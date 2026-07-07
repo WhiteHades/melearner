@@ -31,6 +31,21 @@ Windows and macOS installers are not production release targets yet. The app's p
 
 Do not publish Windows MSI, NSIS, macOS DMG, or macOS app-bundle release artifacts until each platform can visibly play local media through the embedded native surface in one app window on a clean machine.
 
+Windows portable test artifacts are available from the manually dispatched `windows portable test build` workflow. These artifacts are for end-to-end testing only, not supported production releases:
+
+1. Open the [Actions page](https://github.com/WhiteHades/melearner/actions/workflows/windows-portable.yml).
+2. Open the latest successful run for the commit you want to test.
+3. Download `melearner-windows-portable-<commit-sha>`.
+4. Unzip the downloaded artifact, then unzip `melearner-windows-portable.zip`.
+5. Run `melearner.exe`, scan a local course folder, and open a playable lesson.
+
+From GitHub CLI:
+
+```bash
+gh run list --repo WhiteHades/melearner --workflow windows-portable.yml --branch main
+gh run download "<run-id>" --repo WhiteHades/melearner --name "melearner-windows-portable-<commit-sha>" --dir dist/download
+```
+
 Maintainer verification from a checkout:
 
 ```bash

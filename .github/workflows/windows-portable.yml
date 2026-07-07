@@ -1,0 +1,95 @@
+name: windows portable test build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-portable:
+    name: windows portable artifact
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install pnpm
+        run: npm install -g pnpm@11.10.0
+
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: pnpm
+
+      - name: install rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+
+      - name: install windows native-player deps
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            git
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-mpv
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-sqlite3
+            mingw-w64-ucrt-x86_64-zlib
+
+      - name: rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+          key: windows-gnu-portable
+
+      - name: install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      - name: build no-bundle portable app
+        shell: pwsh
+        env:
+          CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: C:\msys64\ucrt64\bin\gcc.exe
+          CC_x86_64_pc_windows_gnu: C:\msys64\ucrt64\bin\gcc.exe
+          LIBRARY_PATH: C:\msys64\ucrt64\lib
+          PKG_CONFIG_PATH: C:\msys64\ucrt64\lib\pkgconfig
+          RUSTFLAGS: -L native=C:\msys64\ucrt64\lib
+        run: |
+          $env:PATH = "C:\msys64\ucrt64\bin;$env:USERPROFILE\.cargo\bin;$env:PATH"
+          pnpm tauri build --no-bundle --ci --target x86_64-pc-windows-gnu
+
+      - name: stage native runtime DLLs
+        shell: pwsh
+        run: |
+          pnpm stage:windows-runtime -- --app-bin "src-tauri\target\x86_64-pc-windows-gnu\release\melearner.exe"
+
+      - name: create portable zip
+        shell: pwsh
+        run: |
+          $releaseDir = "src-tauri\target\x86_64-pc-windows-gnu\release"
+          $portableDir = "dist\windows-portable\melearner-windows-portable"
+          New-Item -ItemType Directory -Force $portableDir | Out-Null
+          Copy-Item "$releaseDir\melearner.exe" $portableDir
+          Copy-Item "$releaseDir\*.dll" $portableDir
+          @"
+          melearner Windows portable test build
+
+          This is a workflow artifact for end-to-end Windows playback testing.
+          It is not a signed production installer.
+
+          Unzip the artifact, run melearner.exe, scan a local course folder,
+          open a playable lesson, and confirm video renders inside the normal
+          melearner window.
+          "@ | Set-Content "$portableDir\README.txt"
+          Compress-Archive -Path "$portableDir\*" -DestinationPath "dist\windows-portable\melearner-windows-portable.zip" -Force
+
+      - name: upload portable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: melearner-windows-portable-${{ github.sha }}
+          path: dist/windows-portable/melearner-windows-portable.zip
+          retention-days: 14
