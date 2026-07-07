@@ -14,9 +14,22 @@ permissions:
 # Windows and macOS release jobs must not be restored until their native
 # in-window libmpv render hosts exist and pass packaged visual playback checks.
 jobs:
-  linux-x86-64:
-    name: linux x86_64 assets
+  ensure-release:
+    name: ensure release
     runs-on: ubuntu-22.04
+
+    steps:
+      - name: ensure release exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "${{ inputs.tag }}" >/dev/null || \
+            gh release create "${{ inputs.tag }}" --title "melearner ${{ inputs.tag }}" --notes "release assets for ${{ inputs.tag }}."
+
+  linux-appimage:
+    name: linux appimage
+    runs-on: ubuntu-22.04
+    needs: ensure-release
 
     steps:
       - uses: actions/checkout@v4
@@ -63,12 +76,37 @@ jobs:
           mkdir -p dist/release
           cp src-tauri/target/release/bundle/appimage/*.AppImage dist/release/
 
-      - name: ensure release exists
+      - name: upload release assets
         env:
           GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ inputs.tag }}" dist/release/* --clobber
+
+  linux-arch-package:
+    name: linux arch package
+    runs-on: ubuntu-22.04
+    needs: ensure-release
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: build arch package
         run: |
-          gh release view "${{ inputs.tag }}" >/dev/null || \
-            gh release create "${{ inputs.tag }}" --title "melearner ${{ inputs.tag }}" --notes "release assets for ${{ inputs.tag }}."
+          docker run --rm -v "$PWD:/workspace" -w /workspace archlinux:base-devel bash -lc '
+            pacman -Syu --noconfirm
+            pacman -S --noconfirm git nodejs pnpm rust webkit2gtk-4.1 gtk3 libayatana-appindicator librsvg openssl patchelf mpv ffmpeg libglvnd xdg-utils
+            useradd -m builder
+            chown -R builder:builder /workspace
+            su builder -c "cd /workspace && pnpm install --frozen-lockfile"
+            su builder -c "cd /workspace && NO_STRIP=true pnpm tauri build --no-bundle --ci"
+            su builder -c "cd /workspace/packaging/arch && makepkg -f --noconfirm"
+          '
+
+      - name: stage curated assets
+        run: |
+          mkdir -p dist/release
+          cp packaging/arch/*.pkg.tar.zst dist/release/
 
       - name: upload release assets
         env:

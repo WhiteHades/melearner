@@ -11,7 +11,7 @@ Do not publish Windows or macOS release assets until those platforms have true i
 
 Arch users should install through the AUR package `melearner-bin`. The native arch package asset remains available for optional manual `pacman -U` installs and as the AUR source asset.
 
-The release workflow builds the Linux AppImage only. The arch asset is built from `packaging/arch/PKGBUILD` after a clean no-bundle release binary exists.
+The release workflow builds the Linux AppImage and the native arch package asset. The arch asset is built from `packaging/arch/PKGBUILD` after a clean no-bundle release binary exists.
 
 when building appimage on arch, set `NO_STRIP=true`; the arch PKGBUILD's `options=("!strip")` only covers pacman packaging.
 
