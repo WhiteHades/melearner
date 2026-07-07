@@ -7,6 +7,37 @@ frontend_log="${MELEARNER_FRONTEND_LOG:-$HOME/.melearner/frontend.log}"
 surface_log="${MELEARNER_NATIVE_SURFACE_LOG:-$HOME/.melearner/native-surface.log}"
 course_id="${1:-${MELEARNER_OPEN_COURSE_ID:-}}"
 lesson_id="${2:-${MELEARNER_OPEN_LESSON_ID:-}}"
+expect_audio_tracks="${3:-${MELEARNER_EXPECT_AUDIO_TRACKS:-}}"
+expect_subtitle_tracks="${4:-${MELEARNER_EXPECT_SUBTITLE_TRACKS:-}}"
+expect_chapters="${5:-${MELEARNER_EXPECT_CHAPTERS:-}}"
+
+json_number_field() {
+  local field="$1"
+  sed -n "s/.*\"${field}\":\\([0-9][0-9]*\\).*/\\1/p" <<<"$ready_line"
+}
+
+require_count() {
+  local label="$1"
+  local field="$2"
+  local expected="$3"
+
+  if [[ -z "$expected" ]]; then
+    return 0
+  fi
+
+  if [[ ! "$expected" =~ ^[0-9]+$ ]]; then
+    echo "$label expectation must be a non-negative integer: $expected" >&2
+    exit 1
+  fi
+
+  local actual
+  actual="$(json_number_field "$field")"
+  if [[ -z "$actual" || "$actual" -ne "$expected" ]]; then
+    echo "native player ready line has unexpected $label count: expected $expected, got ${actual:-missing}" >&2
+    echo "$ready_line" >&2
+    exit 1
+  fi
+}
 
 if [[ ! -x "$app_bin" ]]; then
   echo "installed app is not executable: $app_bin" >&2
@@ -82,15 +113,19 @@ for expected in '"surfaceAttached":true' '"surfaceBackend":"render-api:gtk-openg
   fi
 done
 
-frames="$(sed -n 's/.*"surfaceRenderedFrames":\([0-9][0-9]*\).*/\1/p' <<<"$ready_line")"
-width="$(sed -n 's/.*"surfaceRenderWidth":\([0-9][0-9]*\).*/\1/p' <<<"$ready_line")"
-height="$(sed -n 's/.*"surfaceRenderHeight":\([0-9][0-9]*\).*/\1/p' <<<"$ready_line")"
+frames="$(json_number_field "surfaceRenderedFrames")"
+width="$(json_number_field "surfaceRenderWidth")"
+height="$(json_number_field "surfaceRenderHeight")"
 
 if [[ -z "$frames" || -z "$width" || -z "$height" || "$frames" -lt 1 || "$width" -lt 2 || "$height" -lt 2 ]]; then
   echo "native player reported invalid render diagnostics" >&2
   echo "$ready_line" >&2
   exit 1
 fi
+
+require_count "audio track" "audioTracks" "$expect_audio_tracks"
+require_count "subtitle track" "subtitleTracks" "$expect_subtitle_tracks"
+require_count "chapter" "chapters" "$expect_chapters"
 
 if ! tail -n +"$((surface_start_lines + 1))" "$surface_log" | rg -q 'native gtk render-api submitted first frame'; then
   echo "native surface log did not record a submitted first frame" >&2
