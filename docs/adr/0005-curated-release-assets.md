@@ -7,7 +7,7 @@ for linux x86_64 releases, publish these assets:
 - `melearner_<version>_amd64.AppImage` for portable linux use
 - `melearner-bin-<version>-<pkgrel>-x86_64.pkg.tar.zst` as the native arch package asset
 
-Do not publish Windows or macOS release assets until those platforms have true in-window native libmpv render hosts and packaged visual playback verification on clean machines.
+Do not publish Windows or macOS release assets until those platforms have packaged visual playback verification on clean machines with deliberately bundled libmpv dependencies. Source render hosts exist for both platforms, but source presence is not release readiness.
 
 Arch users should install through the AUR package `melearner-bin`. The native arch package asset remains available for optional manual `pacman -U` installs and as the AUR source asset.
 
