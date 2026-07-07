@@ -1,6 +1,7 @@
 import Database from "@tauri-apps/plugin-sql"
 import type { ActivityDay, Course, Lesson, Note, Section, SubtitleFile } from "@/types"
 import { isTauri, getDatabasePath } from "./tauri.ts"
+import { frontendLog } from "./frontend-log.ts"
 import {
   persistedLessonIdentitySignature,
   scannedLessonIdentitySignature,
@@ -16,6 +17,10 @@ let dbPathPromise: Promise<string | null> | null = null
 const SQLITE_BATCH_SIZE = 500
 const SQLITE_MAX_PARAMETERS = 900
 const LIBRARY_PATH_SETTING = "libraryPath"
+
+const databaseLog = (message: string, context?: Record<string, unknown>) => {
+  frontendLog("info", `database.${message}`, context)
+}
 
 type PersistedCourseRow = {
   id: string
@@ -528,10 +533,15 @@ export async function initDatabase(): Promise<void> {
 }
 
 export async function loadPersistedLibrary(): Promise<PersistedLibrary> {
+  const startedAt = typeof performance !== "undefined" ? performance.now() : 0
+  const elapsed = () => typeof performance !== "undefined" ? Math.round(performance.now() - startedAt) : 0
+  databaseLog("loadPersistedLibrary.start")
   const database = await getDatabase()
   if (!database) return { courses: [], libraryPath: null }
+  databaseLog("loadPersistedLibrary.databaseReady", { ms: elapsed() })
 
   const libraryPath = await readSetting(LIBRARY_PATH_SETTING)
+  databaseLog("loadPersistedLibrary.settingLoaded", { ms: elapsed(), hasLibraryPath: Boolean(libraryPath) })
   const courseRows = libraryPath
     ? await database.select<PersistedCourseRow[]>(
         `SELECT ${COURSE_SELECT_COLUMNS}
@@ -545,6 +555,7 @@ export async function loadPersistedLibrary(): Promise<PersistedLibrary> {
          FROM courses
          ORDER BY COALESCE(last_accessed, '') DESC, name COLLATE NOCASE ASC`
       )
+  databaseLog("loadPersistedLibrary.coursesLoaded", { ms: elapsed(), count: courseRows.length })
 
   if (courseRows.length === 0) return { courses: [], libraryPath }
 
@@ -567,6 +578,11 @@ export async function loadPersistedLibrary(): Promise<PersistedLibrary> {
       batch
     ))
   }
+  databaseLog("loadPersistedLibrary.outlineLoaded", {
+    ms: elapsed(),
+    sectionCount: sectionRows.length,
+    lessonCount: lessonRows.length,
+  })
 
   const lessonIds = lessonRows.map((lesson) => lesson.id)
   const subtitleRows: PersistedSubtitleRow[] = []
@@ -580,9 +596,13 @@ export async function loadPersistedLibrary(): Promise<PersistedLibrary> {
       batch
     ))
   }
+  databaseLog("loadPersistedLibrary.subtitlesLoaded", { ms: elapsed(), count: subtitleRows.length })
+
+  const courses = rowsToCourses(courseRows, sectionRows, lessonRows, subtitleRows)
+  databaseLog("loadPersistedLibrary.done", { ms: elapsed(), count: courses.length })
 
   return {
-    courses: rowsToCourses(courseRows, sectionRows, lessonRows, subtitleRows),
+    courses,
     libraryPath: libraryPath ?? inferLibraryPath(courseRows),
   }
 }
