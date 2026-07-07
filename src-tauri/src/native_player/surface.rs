@@ -99,30 +99,23 @@ pub(super) struct NativeSurfaceRect {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum NativeSurfaceBackend {
-    WindowHandle(&'static str),
     RenderApi(&'static str),
 }
 
 impl NativeSurfaceBackend {
     pub(super) fn label(self) -> String {
         match self {
-            Self::WindowHandle(name) => format!("window-handle:{name}"),
             Self::RenderApi(name) => format!("render-api:{name}"),
         }
     }
 
     pub(super) fn uses_render_api(self) -> bool {
-        match self {
-            Self::WindowHandle(_) => false,
-            Self::RenderApi(_) => true,
-        }
+        true
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum NativeSurfaceBackendPreference {
-    #[cfg_attr(target_os = "linux", allow(dead_code))]
-    WindowHandle,
     RenderApi,
 }
 
@@ -156,24 +149,14 @@ impl NativeSurfaceBackendPreference {
     pub(super) fn from_env_value(value: Option<&str>) -> Result<Self, String> {
         match value.map(str::trim).filter(|value| !value.is_empty()) {
             None | Some("render-api") => Ok(Self::RenderApi),
-            Some("window-handle") => window_handle_backend_preference(),
+            Some("window-handle") => Err(format!(
+                "{SURFACE_BACKEND_ENV}=window-handle is disabled; playback must use the render-api surface"
+            )),
             Some(value) => Err(format!(
-                "invalid {SURFACE_BACKEND_ENV} value {value:?}; expected render-api or window-handle"
+                "invalid {SURFACE_BACKEND_ENV} value {value:?}; expected render-api"
             )),
         }
     }
-}
-
-#[cfg(target_os = "linux")]
-fn window_handle_backend_preference() -> Result<NativeSurfaceBackendPreference, String> {
-    Err(format!(
-        "{SURFACE_BACKEND_ENV}=window-handle is disabled on Linux; playback must use the in-window render-api surface"
-    ))
-}
-
-#[cfg(not(target_os = "linux"))]
-fn window_handle_backend_preference() -> Result<NativeSurfaceBackendPreference, String> {
-    Ok(NativeSurfaceBackendPreference::WindowHandle)
 }
 
 pub struct NativeVideoSurface {
@@ -187,10 +170,6 @@ enum NativeSurfaceAttachment {
     GtkInWindow {
         handle: linux_gtk::GtkInWindowSurfaceHandle,
     },
-    WindowHandle {
-        window: Window,
-        window_id: i64,
-    },
     #[cfg_attr(target_os = "linux", allow(dead_code))]
     RenderApi {
         window: Window,
@@ -200,16 +179,12 @@ enum NativeSurfaceAttachment {
 
 impl NativeVideoSurface {
     pub(super) fn attach(
-        app: &AppHandle,
+        _app: &AppHandle,
         parent: &WebviewWindow,
         bounds: NativePlayerBounds,
         mpv: &Mpv,
     ) -> Result<Self, String> {
         match NativeSurfaceBackendPreference::current()? {
-            NativeSurfaceBackendPreference::WindowHandle => {
-                Self::attach_window_handle(app, parent, bounds)
-                    .and_then(|surface| Self::attach_surface_to_mpv(surface, mpv))
-            }
             NativeSurfaceBackendPreference::RenderApi => {
                 #[cfg(target_os = "linux")]
                 {
@@ -218,41 +193,8 @@ impl NativeVideoSurface {
                 }
 
                 #[cfg(not(target_os = "linux"))]
-                match Self::attach_render_api(app, parent, bounds)
+                Self::attach_render_api(_app, parent, bounds)
                     .and_then(|surface| Self::attach_surface_to_mpv(surface, mpv))
-                {
-                    Ok(surface) => Ok(surface),
-                    Err(render_err) => {
-                        let display = parent.display_handle().map_err(|err| {
-                            format!(
-                                "native render-api surface failed ({render_err}); native player could not read host display for fallback: {err}"
-                            )
-                        })?;
-                        if !window_handle_fallback_supported(display.as_raw()) {
-                            let message = format!(
-                                "native render-api surface failed ({render_err}); window-handle fallback is not supported on this display backend"
-                            );
-                            record_native_surface_runtime_log(&message);
-                            return Err(message);
-                        }
-                        log::warn!(
-                            "native render-api surface failed; falling back to window-handle surface: {render_err}"
-                        );
-                        record_native_surface_runtime_log(&format!(
-                            "native render-api surface failed; falling back to window-handle surface: {render_err}"
-                        ));
-                        Self::attach_window_handle(app, parent, bounds)
-                        .and_then(|surface| Self::attach_surface_to_mpv(surface, mpv))
-                        .map_err(|fallback_err| {
-                            record_native_surface_runtime_log(&format!(
-                                "native window-handle fallback failed after render-api failure: {fallback_err}"
-                            ));
-                            format!(
-                                "native render-api surface failed ({render_err}); window-handle fallback failed ({fallback_err})"
-                            )
-                        })
-                    }
-                }
             }
         }
     }
@@ -260,35 +202,6 @@ impl NativeVideoSurface {
     fn attach_surface_to_mpv(mut surface: Self, mpv: &Mpv) -> Result<Self, String> {
         surface.attach_to_mpv(mpv)?;
         Ok(surface)
-    }
-
-    fn attach_window_handle(
-        app: &AppHandle,
-        parent: &WebviewWindow,
-        bounds: NativePlayerBounds,
-    ) -> Result<Self, String> {
-        reject_linux_overlay_surface_by_default()?;
-
-        let origin = parent
-            .inner_position()
-            .map_err(|err| format!("native player could not read host window position: {err}"))?;
-        let rect = surface_rect_for_bounds(origin, bounds)?;
-        let window = build_surface_window(app, parent, rect)?;
-
-        apply_surface_rect(&window, rect)?;
-        window
-            .show()
-            .map_err(|err| format!("native player could not show video surface: {err}"))?;
-
-        let handle = mpv_window_handle(&window)?;
-        Ok(Self {
-            rect,
-            backend: NativeSurfaceBackend::WindowHandle(handle.backend),
-            attachment: NativeSurfaceAttachment::WindowHandle {
-                window,
-                window_id: handle.id,
-            },
-        })
     }
 
     #[cfg(target_os = "linux")]
@@ -356,8 +269,7 @@ impl NativeVideoSurface {
         match &self.attachment {
             #[cfg(target_os = "linux")]
             NativeSurfaceAttachment::GtkInWindow { .. } => {}
-            NativeSurfaceAttachment::WindowHandle { window, .. }
-            | NativeSurfaceAttachment::RenderApi { window, .. } => {
+            NativeSurfaceAttachment::RenderApi { window, .. } => {
                 apply_surface_rect(window, rect)?;
             }
         }
@@ -381,13 +293,6 @@ impl NativeVideoSurface {
                 })?;
                 handle.attach_to_mpv(mpv)
             }
-            NativeSurfaceAttachment::WindowHandle { window_id, .. } => {
-                mpv.set_property("wid", *window_id).map_err(|err| {
-                    format!("libmpv could not attach to native video surface: {err}")
-                })?;
-                mpv.set_property("vo", "gpu")
-                    .map_err(|err| format!("libmpv could not enable native video output: {err}"))
-            }
             NativeSurfaceAttachment::RenderApi { window, renderer } => {
                 mpv.set_property("vo", "libmpv").map_err(|err| {
                     format!("libmpv could not enable render-api video output: {err}")
@@ -403,8 +308,7 @@ impl NativeVideoSurface {
         match &self.attachment {
             #[cfg(target_os = "linux")]
             NativeSurfaceAttachment::GtkInWindow { handle } => handle.set_visible(visible),
-            NativeSurfaceAttachment::WindowHandle { window, .. }
-            | NativeSurfaceAttachment::RenderApi { window, .. } => {
+            NativeSurfaceAttachment::RenderApi { window, .. } => {
                 if visible {
                     window
                         .show()
@@ -422,7 +326,6 @@ impl NativeVideoSurface {
         match &self.attachment {
             #[cfg(target_os = "linux")]
             NativeSurfaceAttachment::GtkInWindow { handle } => handle.request_render(),
-            NativeSurfaceAttachment::WindowHandle { .. } => Ok(()),
             NativeSurfaceAttachment::RenderApi {
                 renderer: Some(renderer),
                 ..
@@ -457,9 +360,6 @@ impl Drop for NativeVideoSurface {
         match &mut self.attachment {
             #[cfg(target_os = "linux")]
             NativeSurfaceAttachment::GtkInWindow { .. } => {}
-            NativeSurfaceAttachment::WindowHandle { window, .. } => {
-                let _ = window.close();
-            }
             NativeSurfaceAttachment::RenderApi { window, renderer } => {
                 renderer.take();
                 let _ = window.close();
@@ -855,15 +755,6 @@ fn render_api_display_handle(display: RawDisplayHandle) -> Option<RenderApiDispl
     }
 }
 
-#[cfg_attr(target_os = "linux", allow(dead_code))]
-fn window_handle_fallback_supported(display: RawDisplayHandle) -> bool {
-    match display {
-        RawDisplayHandle::Xlib(_) | RawDisplayHandle::Xcb(_) => true,
-        RawDisplayHandle::Wayland(_) => false,
-        _ => cfg!(windows) || cfg!(target_os = "macos"),
-    }
-}
-
 #[cfg(target_os = "macos")]
 fn display_api_preference(_window: RawWindowHandle) -> DisplayApiPreference {
     DisplayApiPreference::Cgl
@@ -989,58 +880,6 @@ fn checked_surface_u32(value: f64, label: &str) -> Result<u32, String> {
     Ok(rounded as u32)
 }
 
-#[cfg(windows)]
-fn mpv_window_handle(window: &Window) -> Result<NativeMpvWindowHandle, String> {
-    Ok(NativeMpvWindowHandle {
-        id: window
-            .hwnd()
-            .map_err(|err| {
-                format!("native player could not read Win32 video surface handle: {err}")
-            })?
-            .0 as isize as i64,
-        backend: "win32",
-    })
-}
-
-#[cfg(target_os = "macos")]
-fn mpv_window_handle(window: &Window) -> Result<NativeMpvWindowHandle, String> {
-    Ok(NativeMpvWindowHandle {
-        id: window.ns_view().map_err(|err| {
-            format!("native player could not read Cocoa video surface handle: {err}")
-        })? as isize as i64,
-        backend: "cocoa",
-    })
-}
-
-#[cfg(any(
-    target_os = "linux",
-    target_os = "dragonfly",
-    target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "openbsd"
-))]
-fn mpv_window_handle(window: &Window) -> Result<NativeMpvWindowHandle, String> {
-    let handle = window
-        .window_handle()
-        .map_err(|err| format!("native player could not read video surface handle: {err}"))?;
-    match handle.as_raw() {
-        RawWindowHandle::Xlib(handle) => Ok(NativeMpvWindowHandle {
-            id: handle.window as i64,
-            backend: "xlib",
-        }),
-        RawWindowHandle::Xcb(handle) => Ok(NativeMpvWindowHandle {
-            id: handle.window.get() as i64,
-            backend: "xcb",
-        }),
-        _ => Err("native player video surface requires an X11 window handle on Linux".to_string()),
-    }
-}
-
-struct NativeMpvWindowHandle {
-    id: i64,
-    backend: &'static str,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1078,22 +917,6 @@ mod tests {
             ))),
             None
         );
-    }
-
-    #[test]
-    fn window_handle_fallback_is_not_supported_on_wayland() {
-        let xlib = display_ptr();
-        let wayland = display_ptr();
-
-        assert!(window_handle_fallback_supported(RawDisplayHandle::Xlib(
-            XlibDisplayHandle::new(Some(xlib), 0),
-        )));
-        assert!(window_handle_fallback_supported(RawDisplayHandle::Xcb(
-            XcbDisplayHandle::new(Some(display_ptr()), 0),
-        )));
-        assert!(!window_handle_fallback_supported(
-            RawDisplayHandle::Wayland(WaylandDisplayHandle::new(wayland),)
-        ));
     }
 
     #[test]

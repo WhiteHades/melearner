@@ -1683,14 +1683,6 @@ mod tests {
     }
 
     #[test]
-    fn native_surface_backend_labels_window_handle_path() {
-        let backend = surface::NativeSurfaceBackend::WindowHandle("xcb");
-
-        assert_eq!(backend.label(), "window-handle:xcb");
-        assert!(!backend.uses_render_api());
-    }
-
-    #[test]
     fn native_surface_backend_labels_render_api_path() {
         let backend = surface::NativeSurfaceBackend::RenderApi("opengl");
 
@@ -1717,17 +1709,10 @@ mod tests {
                 .expect("render api backend preference"),
             surface::NativeSurfaceBackendPreference::RenderApi
         );
-        #[cfg(target_os = "linux")]
         assert!(
             surface::NativeSurfaceBackendPreference::from_env_value(Some("window-handle"))
-                .expect_err("linux window-handle backend should fail")
-                .contains("in-window render-api surface")
-        );
-        #[cfg(not(target_os = "linux"))]
-        assert_eq!(
-            surface::NativeSurfaceBackendPreference::from_env_value(Some("window-handle"))
-                .expect("window handle backend preference"),
-            surface::NativeSurfaceBackendPreference::WindowHandle
+                .expect_err("window-handle backend should fail")
+                .contains("render-api surface")
         );
         assert!(
             surface::NativeSurfaceBackendPreference::from_env_value(Some("browser-video"))
