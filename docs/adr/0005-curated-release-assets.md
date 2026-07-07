@@ -7,11 +7,11 @@ for linux x86_64 releases, publish these assets:
 - `melearner_<version>_amd64.AppImage` for portable linux use
 - `melearner-bin-<version>-<pkgrel>-x86_64.pkg.tar.zst` as the native arch package asset
 
-for windows x86_64 releases, publish an MSI only after it is built on Windows and tested on a clean Windows VM.
+Do not publish Windows or macOS release assets until those platforms have true in-window native libmpv render hosts and packaged visual playback verification on clean machines.
 
 Arch users should install through the AUR package `melearner-bin`. The native arch package asset remains available for optional manual `pacman -U` installs and as the AUR source asset.
 
-The release workflow builds the AppImage. The arch asset is built from `packaging/arch/PKGBUILD` after a clean no-bundle release binary exists.
+The release workflow builds the Linux AppImage only. The arch asset is built from `packaging/arch/PKGBUILD` after a clean no-bundle release binary exists.
 
 when building appimage on arch, set `NO_STRIP=true`; the arch PKGBUILD's `options=("!strip")` only covers pacman packaging.
 
@@ -28,4 +28,4 @@ The required local update path is:
 
 Do not use `cargo install` or `~/.cargo/bin/melearner` as the local update path for this app; Cargo binaries are developer build artifacts, not the installed launcher target. If a task changes app behavior but the Arch-installed `/usr/bin/melearner` instance is not updated, the final summary must say that the launcher still runs the previous installed build.
 
-do not upload deb, rpm, app tarballs, updater json, nsis, dmg, or duplicated architecture variants unless that platform is being intentionally supported and tested for the release.
+do not upload deb, rpm, app tarballs, updater json, msi, nsis, dmg, app bundles, or duplicated architecture variants unless that platform is being intentionally supported and tested for the release.

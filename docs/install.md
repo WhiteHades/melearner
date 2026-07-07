@@ -25,27 +25,11 @@ chmod +x melearner_<version>_amd64.AppImage
 ./melearner_<version>_amd64.AppImage
 ```
 
-## Windows
+## Windows and macOS
 
-Windows MSI support requires a Windows build machine because Tauri's MSI bundler uses WiX on Windows. Published Windows installers should be treated as supported only after clean-VM testing.
+Windows and macOS installers are not production release targets yet. The app's playback engine is embedded libmpv, and those platforms still need true in-window native render hosts before their packages can be advertised as supported.
 
-For local Windows builds:
-
-```powershell
-pnpm install
-pnpm tauri build --target x86_64-pc-windows-msvc --bundles msi
-```
-
-Required tools:
-
-- Rust MSVC toolchain
-- Node.js and pnpm
-- Microsoft C++ Build Tools
-- WiX Toolset for MSI bundling
-- WebView2 Runtime on the target machine, or a bundled/offline WebView2 installer mode
-- Bundled libmpv runtime libraries for native playback
-
-Windows release artifacts must be built and tested on Windows before publishing.
+Do not publish Windows MSI, NSIS, macOS DMG, or macOS app-bundle release artifacts until each platform can visibly play local media through the embedded native surface in one app window on a clean machine.
 
 FFmpeg is not part of ordinary playback. If Windows thumbnail generation is supported without user-installed FFmpeg, bundle FFmpeg deliberately and handle licensing.
 

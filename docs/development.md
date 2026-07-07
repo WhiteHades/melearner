@@ -140,18 +140,11 @@ Before finishing iterative build or install work, remove package tarballs, packa
 
 See `docs/adr/0009-remove-stale-and-redundant-artifacts.md`.
 
-## Windows MSI Builds
+## Windows and macOS Release Gate
 
-MSI builds require Windows and WiX:
+The release workflow is Linux-only while Windows and macOS lack true in-window native render hosts. Do not restore Windows MSI, NSIS, macOS DMG, or macOS app-bundle release jobs until the platform render host exists, libmpv dependencies are bundled deliberately, and packaged playback is verified on a clean machine.
 
-```powershell
-pnpm install
-pnpm tauri build --target x86_64-pc-windows-msvc --bundles msi
-```
-
-The release workflow includes a Windows MSI job on `windows-latest`. It must still be validated on a clean Windows VM before a Windows release is advertised as supported.
-
-Before publishing a Windows MSI, test on a clean Windows VM:
+Before publishing a Windows or macOS installer, test on a clean machine:
 
 - Install and launch
 - WebView2 availability for the app shell
