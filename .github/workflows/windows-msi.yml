@@ -111,9 +111,16 @@ jobs:
             throw "MSI WiX source does not include staged mpv dependency DLLs"
           }
 
-      - name: upload msi artifact
+      - name: sign msi with test certificate
+        shell: powershell
+        run: |
+          .\scripts\sign-windows-msi-test.ps1 -MsiDirectory "src-tauri\target\x86_64-pc-windows-gnu\release\bundle\msi"
+
+      - name: upload signed msi artifact
         uses: actions/upload-artifact@v4
         with:
-          name: melearner-windows-msi-${{ github.sha }}
-          path: src-tauri/target/x86_64-pc-windows-gnu/release/bundle/msi/*.msi
+          name: melearner-windows-signed-msi-${{ github.sha }}
+          path: |
+            src-tauri/target/x86_64-pc-windows-gnu/release/bundle/msi/*.msi
+            src-tauri/target/x86_64-pc-windows-gnu/release/bundle/msi/melearner-windows-msi-test-signing.cer
           retention-days: 14
