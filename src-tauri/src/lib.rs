@@ -3,6 +3,8 @@ mod media;
 mod native_player;
 mod scanner;
 
+const FRONTEND_LOG_ENV: &str = "MELEARNER_FRONTEND_LOG";
+
 use tauri_plugin_sql::{Builder as SqlBuilder, Migration, MigrationKind};
 
 fn get_migrations() -> Vec<Migration> {
@@ -395,13 +397,7 @@ fn log_frontend(message: String) {
     use std::fs;
     use std::io::Write;
 
-    let log_path = std::env::var("HOME")
-        .map(|h| {
-            std::path::PathBuf::from(h)
-                .join(".melearner")
-                .join("frontend.log")
-        })
-        .unwrap_or_else(|_| std::path::PathBuf::from("/tmp/melearner-frontend.log"));
+    let log_path = frontend_log_path();
 
     if let Some(parent) = log_path.parent() {
         let _ = fs::create_dir_all(parent);
@@ -419,6 +415,28 @@ fn log_frontend(message: String) {
     {
         let _ = writeln!(f, "[{timestamp}] {message}");
     }
+}
+
+fn frontend_log_path() -> std::path::PathBuf {
+    let configured = std::env::var(FRONTEND_LOG_ENV).ok();
+    let home = std::env::var("HOME").ok();
+    frontend_log_path_from_values(configured.as_deref(), home.as_deref())
+}
+
+fn frontend_log_path_from_values(
+    configured: Option<&str>,
+    home: Option<&str>,
+) -> std::path::PathBuf {
+    if let Some(configured) = configured.map(str::trim).filter(|value| !value.is_empty()) {
+        return std::path::PathBuf::from(configured);
+    }
+
+    home.map(|home| {
+        std::path::PathBuf::from(home)
+            .join(".melearner")
+            .join("frontend.log")
+    })
+    .unwrap_or_else(|| std::path::PathBuf::from("/tmp/melearner-frontend.log"))
 }
 
 #[tauri::command]
@@ -663,6 +681,25 @@ mod tests {
         assert_eq!(
             startup_initialization_script(None, None),
             "window.__MELEARNER_STARTUP_ROUTE__ = null;\nwindow.__MELEARNER_AUTO_SCAN_PATH__ = null;"
+        );
+    }
+
+    #[test]
+    fn frontend_log_path_uses_explicit_env_path() {
+        assert_eq!(
+            frontend_log_path_from_values(
+                Some(" /tmp/melearner/frontend.log "),
+                Some("/home/user")
+            ),
+            std::path::PathBuf::from("/tmp/melearner/frontend.log")
+        );
+    }
+
+    #[test]
+    fn frontend_log_path_defaults_to_home() {
+        assert_eq!(
+            frontend_log_path_from_values(None, Some("/home/user")),
+            std::path::PathBuf::from("/home/user/.melearner/frontend.log")
         );
     }
 }
