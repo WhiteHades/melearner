@@ -57,38 +57,6 @@ function Invoke-Checked {
   }
 }
 
-function Add-CertificateToStore {
-  param(
-    [System.Security.Cryptography.X509Certificates.X509Certificate2]$Certificate,
-    [string]$StoreName
-  )
-
-  $store = [System.Security.Cryptography.X509Certificates.X509Store]::new($StoreName, "CurrentUser")
-  $store.Open("ReadWrite")
-  try {
-    $store.Add($Certificate)
-  } finally {
-    $store.Close()
-  }
-}
-
-function Remove-CertificateFromStore {
-  param(
-    [string]$Thumbprint,
-    [string]$StoreName
-  )
-
-  $store = [System.Security.Cryptography.X509Certificates.X509Store]::new($StoreName, "CurrentUser")
-  $store.Open("ReadWrite")
-  try {
-    foreach ($match in @($store.Certificates.Find("FindByThumbprint", $Thumbprint, $false))) {
-      $store.Remove($match)
-    }
-  } finally {
-    $store.Close()
-  }
-}
-
 if (!(Test-Path -LiteralPath $MsiDirectory)) {
   throw "MSI directory does not exist: $MsiDirectory"
 }
@@ -112,27 +80,26 @@ if ($msiFiles.Count -lt 1) {
 }
 Write-Output "found $($msiFiles.Count) MSI file(s) in $MsiDirectory"
 
-$cert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($PublicCertPath)
-try {
-  Add-CertificateToStore -Certificate $cert -StoreName "Root"
-  Add-CertificateToStore -Certificate $cert -StoreName "TrustedPublisher"
-  Write-Output "trusted public test certificate $($cert.Thumbprint) for CI verification"
+Invoke-Checked `
+  -Description "trusting public test certificate in CurrentUser Root store" `
+  -Command "certutil.exe" `
+  -Arguments @("-user", "-addstore", "Root", $PublicCertPath)
 
-  foreach ($msi in $msiFiles) {
-    Invoke-Checked `
-      -Description "signing $($msi.FullName)" `
-      -Command $signTool.FullName `
-      -Arguments @("sign", "/f", $PfxPath, "/p", $PfxPassword, "/fd", "SHA256", "/v", $msi.FullName)
+Invoke-Checked `
+  -Description "trusting public test certificate in CurrentUser TrustedPublisher store" `
+  -Command "certutil.exe" `
+  -Arguments @("-user", "-addstore", "TrustedPublisher", $PublicCertPath)
 
-    Invoke-Checked `
-      -Description "verifying $($msi.FullName)" `
-      -Command $signTool.FullName `
-      -Arguments @("verify", "/pa", "/v", $msi.FullName)
+foreach ($msi in $msiFiles) {
+  Invoke-Checked `
+    -Description "signing $($msi.FullName)" `
+    -Command $signTool.FullName `
+    -Arguments @("sign", "/f", $PfxPath, "/p", $PfxPassword, "/fd", "SHA256", "/v", $msi.FullName)
 
-    Write-Output "signed $($msi.FullName) with $Subject ($($cert.Thumbprint))"
-  }
-} finally {
-  foreach ($storeName in @("Root", "TrustedPublisher")) {
-    Remove-CertificateFromStore -Thumbprint $cert.Thumbprint -StoreName $storeName
-  }
+  Invoke-Checked `
+    -Description "verifying $($msi.FullName)" `
+    -Command $signTool.FullName `
+    -Arguments @("verify", "/pa", "/v", $msi.FullName)
+
+  Write-Output "signed $($msi.FullName) with $Subject"
 }
