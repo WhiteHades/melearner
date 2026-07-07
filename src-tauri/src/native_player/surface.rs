@@ -1,4 +1,7 @@
 use super::NativePlayerBounds;
+#[cfg(target_os = "linux")]
+mod linux_gtk;
+
 use glutin::{
     config::{ConfigTemplateBuilder, GlConfig},
     context::{ContextAttributesBuilder, GlProfile, NotCurrentGlContext},
@@ -165,7 +168,15 @@ pub struct NativeVideoSurface {
 }
 
 enum NativeSurfaceAttachment {
-    WindowHandle { window: Window, window_id: i64 },
+    #[cfg(target_os = "linux")]
+    GtkInWindow {
+        handle: linux_gtk::GtkInWindowSurfaceHandle,
+    },
+    WindowHandle {
+        window: Window,
+        window_id: i64,
+    },
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     RenderApi {
         window: Window,
         renderer: Option<RenderApiSurface>,
@@ -179,14 +190,19 @@ impl NativeVideoSurface {
         bounds: NativePlayerBounds,
         mpv: &Mpv,
     ) -> Result<Self, String> {
-        reject_linux_overlay_surface_by_default()?;
-
         match NativeSurfaceBackendPreference::current()? {
             NativeSurfaceBackendPreference::WindowHandle => {
                 Self::attach_window_handle(app, parent, bounds)
                     .and_then(|surface| Self::attach_surface_to_mpv(surface, mpv))
             }
             NativeSurfaceBackendPreference::RenderApi => {
+                #[cfg(target_os = "linux")]
+                {
+                    return Self::attach_gtk_in_window(parent, bounds)
+                        .and_then(|surface| Self::attach_surface_to_mpv(surface, mpv));
+                }
+
+                #[cfg(not(target_os = "linux"))]
                 match Self::attach_render_api(app, parent, bounds)
                     .and_then(|surface| Self::attach_surface_to_mpv(surface, mpv))
                 {
@@ -236,6 +252,8 @@ impl NativeVideoSurface {
         parent: &WebviewWindow,
         bounds: NativePlayerBounds,
     ) -> Result<Self, String> {
+        reject_linux_overlay_surface_by_default()?;
+
         let origin = parent
             .inner_position()
             .map_err(|err| format!("native player could not read host window position: {err}"))?;
@@ -258,11 +276,29 @@ impl NativeVideoSurface {
         })
     }
 
+    #[cfg(target_os = "linux")]
+    fn attach_gtk_in_window(
+        parent: &WebviewWindow,
+        bounds: NativePlayerBounds,
+    ) -> Result<Self, String> {
+        let rect = surface_rect_for_local_bounds(bounds)?;
+        Ok(Self {
+            rect,
+            backend: NativeSurfaceBackend::RenderApi("gtk-opengl"),
+            attachment: NativeSurfaceAttachment::GtkInWindow {
+                handle: linux_gtk::GtkInWindowSurfaceHandle::attach(parent, rect)?,
+            },
+        })
+    }
+
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     fn attach_render_api(
         app: &AppHandle,
         parent: &WebviewWindow,
         bounds: NativePlayerBounds,
     ) -> Result<Self, String> {
+        reject_linux_overlay_surface_by_default()?;
+
         let origin = parent
             .inner_position()
             .map_err(|err| format!("native player could not read host window position: {err}"))?;
@@ -289,12 +325,22 @@ impl NativeVideoSurface {
         parent: &WebviewWindow,
         bounds: NativePlayerBounds,
     ) -> Result<(), String> {
+        #[cfg(target_os = "linux")]
+        if let NativeSurfaceAttachment::GtkInWindow { handle } = &self.attachment {
+            let rect = surface_rect_for_local_bounds(bounds)?;
+            handle.move_to(rect)?;
+            self.rect = rect;
+            return Ok(());
+        }
+
         let origin = parent
             .inner_position()
             .map_err(|err| format!("native player could not read host window position: {err}"))?;
         let rect = surface_rect_for_bounds(origin, bounds)?;
 
         match &self.attachment {
+            #[cfg(target_os = "linux")]
+            NativeSurfaceAttachment::GtkInWindow { .. } => {}
             NativeSurfaceAttachment::WindowHandle { window, .. }
             | NativeSurfaceAttachment::RenderApi { window, .. } => {
                 apply_surface_rect(window, rect)?;
@@ -313,6 +359,13 @@ impl NativeVideoSurface {
 
     fn attach_to_mpv(&mut self, mpv: &Mpv) -> Result<(), String> {
         match &mut self.attachment {
+            #[cfg(target_os = "linux")]
+            NativeSurfaceAttachment::GtkInWindow { handle } => {
+                mpv.set_property("vo", "libmpv").map_err(|err| {
+                    format!("libmpv could not enable gtk render-api video output: {err}")
+                })?;
+                handle.attach_to_mpv(mpv)
+            }
             NativeSurfaceAttachment::WindowHandle { window_id, .. } => {
                 mpv.set_property("wid", *window_id).map_err(|err| {
                     format!("libmpv could not attach to native video surface: {err}")
@@ -333,16 +386,18 @@ impl NativeVideoSurface {
 
     pub(super) fn set_visible(&self, visible: bool) -> Result<(), String> {
         match &self.attachment {
+            #[cfg(target_os = "linux")]
+            NativeSurfaceAttachment::GtkInWindow { handle } => handle.set_visible(visible),
             NativeSurfaceAttachment::WindowHandle { window, .. }
             | NativeSurfaceAttachment::RenderApi { window, .. } => {
                 if visible {
-                    window.show().map_err(|err| {
-                        format!("native player could not show video surface: {err}")
-                    })
+                    window
+                        .show()
+                        .map_err(|err| format!("native player could not show video surface: {err}"))
                 } else {
-                    window.hide().map_err(|err| {
-                        format!("native player could not hide video surface: {err}")
-                    })
+                    window
+                        .hide()
+                        .map_err(|err| format!("native player could not hide video surface: {err}"))
                 }
             }
         }
@@ -358,6 +413,8 @@ impl NativeVideoSurface {
 
     pub(super) fn diagnostics(&self) -> NativeSurfaceDiagnostics {
         match &self.attachment {
+            #[cfg(target_os = "linux")]
+            NativeSurfaceAttachment::GtkInWindow { handle } => handle.diagnostics(),
             NativeSurfaceAttachment::RenderApi {
                 renderer: Some(renderer),
                 ..
@@ -370,6 +427,8 @@ impl NativeVideoSurface {
 impl Drop for NativeVideoSurface {
     fn drop(&mut self) {
         match &mut self.attachment {
+            #[cfg(target_os = "linux")]
+            NativeSurfaceAttachment::GtkInWindow { .. } => {}
             NativeSurfaceAttachment::WindowHandle { window, .. } => {
                 let _ = window.close();
             }
@@ -529,7 +588,9 @@ fn wait_for_render_api_handles(window: &Window) -> Result<RenderApiRawHandles, S
             (display, window) => {
                 last_error = match (display.err(), window.err()) {
                     (Some(display_err), Some(window_err)) => {
-                        format!("display handle error: {display_err}; window handle error: {window_err}")
+                        format!(
+                            "display handle error: {display_err}; window handle error: {window_err}"
+                        )
                     }
                     (Some(display_err), None) => format!("display handle error: {display_err}"),
                     (None, Some(window_err)) => format!("window handle error: {window_err}"),
@@ -744,6 +805,7 @@ fn render_api_display_handle(display: RawDisplayHandle) -> Option<RenderApiDispl
     }
 }
 
+#[cfg_attr(target_os = "linux", allow(dead_code))]
 fn window_handle_fallback_supported(display: RawDisplayHandle) -> bool {
     match display {
         RawDisplayHandle::Xlib(_) | RawDisplayHandle::Xcb(_) => true,
@@ -840,6 +902,22 @@ pub(super) fn surface_rect_for_bounds(
     Ok(NativeSurfaceRect {
         x: checked_surface_i32(origin.x as f64 + bounds.x as f64 * bounds.scale_factor, "x")?,
         y: checked_surface_i32(origin.y as f64 + bounds.y as f64 * bounds.scale_factor, "y")?,
+        width: checked_surface_u32(bounds.width as f64 * bounds.scale_factor, "width")?,
+        height: checked_surface_u32(bounds.height as f64 * bounds.scale_factor, "height")?,
+    })
+}
+
+fn surface_rect_for_local_bounds(bounds: NativePlayerBounds) -> Result<NativeSurfaceRect, String> {
+    if bounds.width <= 0 || bounds.height <= 0 {
+        return Err("native player bounds are invalid".to_string());
+    }
+    if !bounds.scale_factor.is_finite() || bounds.scale_factor <= 0.0 {
+        return Err("native player scale factor is invalid".to_string());
+    }
+
+    Ok(NativeSurfaceRect {
+        x: checked_surface_i32(bounds.x as f64 * bounds.scale_factor, "x")?,
+        y: checked_surface_i32(bounds.y as f64 * bounds.scale_factor, "y")?,
         width: checked_surface_u32(bounds.width as f64 * bounds.scale_factor, "width")?,
         height: checked_surface_u32(bounds.height as f64 * bounds.scale_factor, "height")?,
     })
