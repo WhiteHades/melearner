@@ -28,6 +28,12 @@ jobs:
         with:
           targets: x86_64-pc-windows-gnu
 
+      - name: install rust gnu host
+        shell: pwsh
+        run: |
+          rustup toolchain install stable-x86_64-pc-windows-gnu --profile minimal
+          "RUSTUP_TOOLCHAIN=stable-x86_64-pc-windows-gnu" >> $env:GITHUB_ENV
+
       - name: install windows native-player deps
         uses: msys2/setup-msys2@v2
         with:
