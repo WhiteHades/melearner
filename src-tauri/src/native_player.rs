@@ -539,6 +539,9 @@ impl NativePlayer {
         }
 
         self.path = Some(path);
+        if let Some(surface) = &self.surface {
+            surface.request_render()?;
+        }
         Ok(self.state())
     }
 

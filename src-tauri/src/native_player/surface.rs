@@ -415,6 +415,19 @@ impl NativeVideoSurface {
         }
     }
 
+    pub(super) fn request_render(&self) -> Result<(), String> {
+        match &self.attachment {
+            #[cfg(target_os = "linux")]
+            NativeSurfaceAttachment::GtkInWindow { handle } => handle.request_render(),
+            NativeSurfaceAttachment::WindowHandle { .. } => Ok(()),
+            NativeSurfaceAttachment::RenderApi {
+                renderer: Some(renderer),
+                ..
+            } => renderer.request_render(),
+            NativeSurfaceAttachment::RenderApi { renderer: None, .. } => Ok(()),
+        }
+    }
+
     pub(super) fn backend_label(&self) -> String {
         self.backend.label()
     }
@@ -518,6 +531,12 @@ impl RenderApiSurface {
         self.commands
             .send(RenderApiCommand::Resize(rect))
             .map_err(|err| format!("native render-api could not send resize command: {err}"))
+    }
+
+    fn request_render(&self) -> Result<(), String> {
+        self.commands
+            .send(RenderApiCommand::Render)
+            .map_err(|err| format!("native render-api could not send render command: {err}"))
     }
 
     fn diagnostics(&self) -> NativeSurfaceDiagnostics {

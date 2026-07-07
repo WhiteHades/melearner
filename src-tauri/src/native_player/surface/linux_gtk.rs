@@ -93,6 +93,19 @@ impl GtkInWindowSurfaceHandle {
         })
     }
 
+    pub(super) fn request_render(&self) -> Result<(), String> {
+        let id = self.id;
+        run_on_gtk_thread(&self.parent, move |_parent| {
+            GTK_SURFACES.with(|surfaces| {
+                let surfaces = surfaces.borrow();
+                let surface = surfaces
+                    .get(&id)
+                    .ok_or_else(|| "gtk native video surface is missing".to_string())?;
+                surface.request_render()
+            })
+        })
+    }
+
     pub(super) fn diagnostics(&self) -> super::NativeSurfaceDiagnostics {
         self.diagnostics.snapshot()
     }
@@ -232,6 +245,7 @@ impl GtkInWindowSurface {
         if !self.gl_area.is_realized() {
             self.gl_area.realize();
         }
+        self.render_state.borrow_mut().realize(&self.gl_area);
         queue_gl_area_render(&self.gl_area);
         Ok(())
     }
@@ -248,6 +262,23 @@ impl GtkInWindowSurface {
             queue_gl_area_render(&self.gl_area);
         } else {
             self.gl_area.hide();
+        }
+    }
+
+    fn request_render(&self) -> Result<(), String> {
+        if !self.gl_area.is_realized() {
+            self.gl_area.realize();
+        }
+        {
+            let mut state = self.render_state.borrow_mut();
+            state.realize(&self.gl_area);
+            state.render(&self.gl_area);
+        }
+        queue_gl_area_render(&self.gl_area);
+
+        match self.render_state.borrow().diagnostics.snapshot().last_error {
+            Some(err) => Err(err),
+            None => Ok(()),
         }
     }
 }
