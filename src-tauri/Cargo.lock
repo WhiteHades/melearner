@@ -2640,6 +2640,7 @@ dependencies = [
  "fff-search",
  "glutin",
  "jwalk",
+ "libc",
  "libmpv2",
  "libmpv2-sys",
  "log",

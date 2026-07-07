@@ -1,9 +1,18 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    configure_libmpv_numeric_locale();
     #[cfg(target_os = "linux")]
     configure_linux_gtk_backend();
     melearner_lib::run();
+}
+
+fn configure_libmpv_numeric_locale() {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    unsafe {
+        let locale = std::ffi::CString::new("C").expect("static locale should not contain nul");
+        libc::setlocale(libc::LC_NUMERIC, locale.as_ptr());
+    }
 }
 
 #[cfg(target_os = "linux")]
