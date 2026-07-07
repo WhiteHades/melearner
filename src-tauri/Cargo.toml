@@ -37,3 +37,7 @@ libmpv2-sys = "4.0.1"
 raw-window-handle = "0.6"
 fff-search = "0.9.7-nightly.fce72fa"
 glutin = "0.32.3"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+libloading = "0.8"
