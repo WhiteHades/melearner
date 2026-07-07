@@ -218,8 +218,10 @@ export function HomeScreen() {
 
   useEffect(() => {
     if (effectiveView === "viewer" && hasHydrated && (!selectedCourse || selectedCourse.missingSince)) {
-      setStartupRouteOverride(null)
-      updateRouteState({ view: "library", courseId: null, lessonId: null }, "replace")
+      scheduleHomeStateUpdate(() => {
+        setStartupRouteOverride(null)
+        updateRouteState({ view: "library", courseId: null, lessonId: null }, "replace")
+      })
     }
   }, [effectiveView, hasHydrated, selectedCourse, updateRouteState])
 
@@ -228,8 +230,10 @@ export function HomeScreen() {
 
     const course = courses.find((course: Course) => course.id === startupRouteOverride.courseId && !course.missingSince)
     if (!course) {
-      setStartupRouteOverride(null)
-      setStartupRoute(null)
+      scheduleHomeStateUpdate(() => {
+        setStartupRouteOverride(null)
+        setStartupRoute(null)
+      })
       return
     }
 
@@ -241,7 +245,9 @@ export function HomeScreen() {
 
     const routeKey = `${course.id}\0${selectedLessonId ?? ""}`
     if (startupRouteOverride.lessonId !== selectedLessonId) {
-      setStartupRouteOverride({ courseId: course.id, lessonId: selectedLessonId })
+      scheduleHomeStateUpdate(() => {
+        setStartupRouteOverride({ courseId: course.id, lessonId: selectedLessonId })
+      })
     }
     setStartupRoute(null)
     if (appliedStartupRouteRef.current !== routeKey) {
