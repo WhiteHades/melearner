@@ -31,6 +31,9 @@ export type NativePlayerState = {
   surfaceRenderApi: boolean
   surfaceRenderThreadAlive: boolean
   surfaceRenderedFrames: number
+  surfaceRenderWidth: number | null
+  surfaceRenderHeight: number | null
+  surfaceRenderUpdateFlags: number
   surfaceRenderError: string | null
   audioTracks: NativeTrack[]
   subtitleTracks: NativeTrack[]
@@ -69,6 +72,9 @@ export type NativePlayerPositionEvent = {
   height: number | null
   surfaceRenderThreadAlive: boolean
   surfaceRenderedFrames: number
+  surfaceRenderWidth: number | null
+  surfaceRenderHeight: number | null
+  surfaceRenderUpdateFlags: number
   surfaceRenderError: string | null
   currentChapterId: string | null
 }
