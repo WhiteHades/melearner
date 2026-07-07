@@ -500,7 +500,7 @@ impl NativePlayer {
             std::thread::sleep(Duration::from_millis(50));
         }
 
-        Err("libmpv did not finish opening media for external tracks".to_string())
+        Err("libmpv did not finish opening media tracks".to_string())
     }
 
     fn load(
@@ -515,9 +515,7 @@ impl NativePlayer {
             .command("loadfile", &[&path_string, "replace"])
             .map_err(|err| format!("libmpv could not load file: {err}"))?;
 
-        if !subtitles.is_empty() {
-            self.wait_until_track_list_ready()?;
-        }
+        self.wait_until_track_list_ready()?;
 
         for subtitle in subtitles {
             subtitle.add_to_mpv(&self.mpv)?;
@@ -1744,9 +1742,13 @@ mod tests {
         };
         let mut player = NativePlayer::new().expect("create native player");
 
-        player
+        let state = player
             .load(fixture.file.clone(), Vec::new(), None, false)
             .expect("load media fixture");
+        assert_eq!(state.audio_tracks.len(), 2);
+        assert_eq!(state.subtitle_tracks.len(), 2);
+        assert_eq!(state.chapters.len(), 2);
+
         let state = wait_for_state(&player, |state| {
             state.audio_tracks.len() == 2
                 && state.subtitle_tracks.len() == 2
@@ -1829,9 +1831,18 @@ mod tests {
         };
         let mut player = NativePlayer::new().expect("create native player");
 
-        player
+        let state = player
             .load(fixture.media.file.clone(), fixture.subtitles, None, false)
             .expect("load media fixture");
+        assert!(state.subtitle_tracks.iter().any(|track| {
+            track.title.as_deref() == Some("External English")
+                && track.language.as_deref() == Some("eng")
+        }));
+        assert!(state.subtitle_tracks.iter().any(|track| {
+            track.title.as_deref() == Some("External Spanish")
+                && track.language.as_deref() == Some("spa")
+        }));
+
         let state = wait_for_state(&player, |state| {
             state
                 .subtitle_tracks
