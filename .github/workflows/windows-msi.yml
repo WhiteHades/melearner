@@ -41,11 +41,32 @@ jobs:
             mingw-w64-ucrt-x86_64-sqlite3
             mingw-w64-ucrt-x86_64-zlib
 
+      - name: resolve msys2 paths
+        shell: pwsh
+        run: |
+          $candidates = @(
+            "C:\msys64",
+            "$env:RUNNER_TEMP\msys64"
+          )
+          $msysRoot = $candidates | Where-Object { Test-Path "$_\ucrt64\bin\gcc.exe" } | Select-Object -First 1
+          if (!$msysRoot) {
+            throw "could not find MSYS2 UCRT gcc.exe"
+          }
+          $ucrtBin = "$msysRoot\ucrt64\bin"
+          $ucrtLib = "$msysRoot\ucrt64\lib"
+          "MSYS2_ROOT=$msysRoot" >> $env:GITHUB_ENV
+          "UCRT64_BIN=$ucrtBin" >> $env:GITHUB_ENV
+          "CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=$ucrtBin\gcc.exe" >> $env:GITHUB_ENV
+          "CC_x86_64_pc_windows_gnu=$ucrtBin\gcc.exe" >> $env:GITHUB_ENV
+          "LIBRARY_PATH=$ucrtLib" >> $env:GITHUB_ENV
+          "PKG_CONFIG_PATH=$ucrtLib\pkgconfig" >> $env:GITHUB_ENV
+          "RUSTFLAGS=-L native=$ucrtLib" >> $env:GITHUB_ENV
+
       - name: rust cache
         uses: swatinem/rust-cache@v2
         with:
           workspaces: "./src-tauri -> target"
-          key: windows-gnu-msi
+          key: windows-gnu-native-player
 
       - name: wix cache
         uses: actions/cache@v4
@@ -58,31 +79,20 @@ jobs:
 
       - name: build no-bundle app
         shell: pwsh
-        env:
-          CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: C:\msys64\ucrt64\bin\gcc.exe
-          CC_x86_64_pc_windows_gnu: C:\msys64\ucrt64\bin\gcc.exe
-          LIBRARY_PATH: C:\msys64\ucrt64\lib
-          PKG_CONFIG_PATH: C:\msys64\ucrt64\lib\pkgconfig
-          RUSTFLAGS: -L native=C:\msys64\ucrt64\lib
         run: |
-          $env:PATH = "C:\msys64\ucrt64\bin;$env:USERPROFILE\.cargo\bin;$env:PATH"
+          $env:PATH = "$env:UCRT64_BIN;$env:USERPROFILE\.cargo\bin;$env:PATH"
           pnpm tauri build --no-bundle --ci --target x86_64-pc-windows-gnu
 
       - name: stage native runtime DLLs
         shell: pwsh
         run: |
-          pnpm stage:windows-runtime -- --app-bin "src-tauri\target\x86_64-pc-windows-gnu\release\melearner.exe"
+          $env:PATH = "$env:UCRT64_BIN;$env:PATH"
+          pnpm stage:windows-runtime -- --msys-root "$env:MSYS2_ROOT" --app-bin "src-tauri\target\x86_64-pc-windows-gnu\release\melearner.exe"
 
       - name: bundle msi
         shell: pwsh
-        env:
-          CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: C:\msys64\ucrt64\bin\gcc.exe
-          CC_x86_64_pc_windows_gnu: C:\msys64\ucrt64\bin\gcc.exe
-          LIBRARY_PATH: C:\msys64\ucrt64\lib
-          PKG_CONFIG_PATH: C:\msys64\ucrt64\lib\pkgconfig
-          RUSTFLAGS: -L native=C:\msys64\ucrt64\lib
         run: |
-          $env:PATH = "C:\msys64\ucrt64\bin;$env:USERPROFILE\.cargo\bin;$env:PATH"
+          $env:PATH = "$env:UCRT64_BIN;$env:USERPROFILE\.cargo\bin;$env:PATH"
           pnpm tauri bundle --bundles msi --ci --target x86_64-pc-windows-gnu
           $wixSource = "src-tauri\target\x86_64-pc-windows-gnu\release\wix\x64\main.wxs"
           if (!(Select-String -LiteralPath $wixSource -Pattern "libmpv-2.dll" -Quiet)) {
