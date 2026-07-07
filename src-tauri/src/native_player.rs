@@ -1699,6 +1699,18 @@ mod tests {
                 .expect("render api backend preference"),
             surface::NativeSurfaceBackendPreference::RenderApi
         );
+        #[cfg(target_os = "linux")]
+        assert!(
+            surface::NativeSurfaceBackendPreference::from_env_value(Some("window-handle"))
+                .expect_err("linux window-handle backend should fail")
+                .contains("in-window render-api surface")
+        );
+        #[cfg(not(target_os = "linux"))]
+        assert_eq!(
+            surface::NativeSurfaceBackendPreference::from_env_value(Some("window-handle"))
+                .expect("window handle backend preference"),
+            surface::NativeSurfaceBackendPreference::WindowHandle
+        );
         assert!(
             surface::NativeSurfaceBackendPreference::from_env_value(Some("browser-video"))
                 .expect_err("invalid backend preference should fail")

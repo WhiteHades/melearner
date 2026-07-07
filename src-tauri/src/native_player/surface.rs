@@ -30,7 +30,6 @@ static SURFACE_WINDOW_RUN: OnceLock<Mutex<u64>> = OnceLock::new();
 const NATIVE_SURFACE_LABEL: &str = "native-player-surface";
 const SURFACE_BACKEND_ENV: &str = "MELEARNER_SURFACE_BACKEND";
 const NATIVE_SURFACE_LOG_ENV: &str = "MELEARNER_NATIVE_SURFACE_LOG";
-const OVERLAY_SURFACE_ENV: &str = "MELEARNER_ALLOW_OVERLAY_SURFACE";
 const RENDER_HANDLE_ATTEMPTS: usize = 20;
 const RENDER_HANDLE_RETRY_DELAY: Duration = Duration::from_millis(25);
 
@@ -122,6 +121,7 @@ impl NativeSurfaceBackend {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum NativeSurfaceBackendPreference {
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     WindowHandle,
     RenderApi,
 }
@@ -153,12 +153,24 @@ impl NativeSurfaceBackendPreference {
     pub(super) fn from_env_value(value: Option<&str>) -> Result<Self, String> {
         match value.map(str::trim).filter(|value| !value.is_empty()) {
             None | Some("render-api") => Ok(Self::RenderApi),
-            Some("window-handle") => Ok(Self::WindowHandle),
+            Some("window-handle") => window_handle_backend_preference(),
             Some(value) => Err(format!(
                 "invalid {SURFACE_BACKEND_ENV} value {value:?}; expected render-api or window-handle"
             )),
         }
     }
+}
+
+#[cfg(target_os = "linux")]
+fn window_handle_backend_preference() -> Result<NativeSurfaceBackendPreference, String> {
+    Err(format!(
+        "{SURFACE_BACKEND_ENV}=window-handle is disabled on Linux; playback must use the in-window render-api surface"
+    ))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn window_handle_backend_preference() -> Result<NativeSurfaceBackendPreference, String> {
+    Ok(NativeSurfaceBackendPreference::WindowHandle)
 }
 
 pub struct NativeVideoSurface {
@@ -442,13 +454,8 @@ impl Drop for NativeVideoSurface {
 
 #[cfg(target_os = "linux")]
 fn reject_linux_overlay_surface_by_default() -> Result<(), String> {
-    if std::env::var(OVERLAY_SURFACE_ENV).ok().as_deref() == Some("1") {
-        return Ok(());
-    }
-
-    let message = format!(
-        "one-window native video surface is not implemented on Linux yet; the old separate-window overlay surface is disabled. Set {OVERLAY_SURFACE_ENV}=1 only for diagnostic overlay testing"
-    );
+    let message =
+        "Linux playback uses the in-window GTK render-api surface; separate native video windows are disabled".to_string();
     record_native_surface_runtime_log(&message);
     Err(message)
 }
@@ -845,7 +852,7 @@ fn build_surface_window(
 ) -> Result<Window, String> {
     let label = next_surface_window_label()?;
     let builder = tauri::WindowBuilder::new(app, label)
-        .title("melearner video")
+        .title("melearner")
         .decorations(false)
         .resizable(false)
         .focused(false)
