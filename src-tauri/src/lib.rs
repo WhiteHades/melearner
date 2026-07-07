@@ -226,6 +226,10 @@ pub fn run() {
     if startup_route.is_some() {
         let _ = write_startup_log("startup.route.ready");
     }
+    let startup_auto_scan_path = startup_auto_scan_path_from_runtime();
+    if startup_auto_scan_path.is_some() {
+        let _ = write_startup_log("startup.auto_scan.ready");
+    }
 
     fn get_db_path() -> std::path::PathBuf {
         std::env::var("HOME")
@@ -298,7 +302,10 @@ pub fn run() {
         let _ = std::fs::create_dir_all(parent);
     }
 
-    let startup_route_script = startup_route_initialization_script(startup_route.as_ref());
+    let startup_route_script = startup_initialization_script(
+        startup_route.as_ref(),
+        startup_auto_scan_path.as_deref(),
+    );
 
     tauri::Builder::default()
         .manage(StartupRouteState(startup_route))
@@ -491,9 +498,23 @@ fn startup_route_from_runtime() -> Option<StartupRoute> {
     )
 }
 
-fn startup_route_initialization_script(route: Option<&StartupRoute>) -> String {
-    let value = serde_json::to_string(&route).unwrap_or_else(|_| "null".to_string());
-    format!("window.__MELEARNER_STARTUP_ROUTE__ = {value};")
+fn startup_auto_scan_path_from_runtime() -> Option<String> {
+    startup_auto_scan_path_from_sources(
+        std::env::args().skip(1),
+        std::env::var("MELEARNER_AUTO_SCAN_PATH").ok().as_deref(),
+    )
+}
+
+fn startup_initialization_script(
+    route: Option<&StartupRoute>,
+    auto_scan_path: Option<&str>,
+) -> String {
+    let route_value = serde_json::to_string(&route).unwrap_or_else(|_| "null".to_string());
+    let auto_scan_value = serde_json::to_string(&clean_startup_route_value(auto_scan_path))
+        .unwrap_or_else(|_| "null".to_string());
+    format!(
+        "window.__MELEARNER_STARTUP_ROUTE__ = {route_value};\nwindow.__MELEARNER_AUTO_SCAN_PATH__ = {auto_scan_value};"
+    )
 }
 
 fn startup_route_plugin<R: tauri::Runtime>(script: String) -> tauri::plugin::TauriPlugin<R> {
@@ -537,6 +558,27 @@ fn startup_route_from_sources(
         course_id,
         lesson_id,
     })
+}
+
+fn startup_auto_scan_path_from_sources(
+    args: impl IntoIterator<Item = impl AsRef<str>>,
+    env_path: Option<&str>,
+) -> Option<String> {
+    let mut path = clean_startup_route_value(env_path);
+    let mut args = args.into_iter();
+
+    while let Some(arg) = args.next() {
+        let arg = arg.as_ref();
+        if let Some(value) = arg.strip_prefix("--auto-scan=") {
+            path = clean_startup_route_value(Some(value));
+        } else if arg == "--auto-scan" {
+            path = args
+                .next()
+                .and_then(|value| clean_startup_route_value(Some(value.as_ref())));
+        }
+    }
+
+    path
 }
 
 fn clean_startup_route_value(value: Option<&str>) -> Option<String> {
@@ -593,17 +635,36 @@ mod tests {
     }
 
     #[test]
-    fn startup_route_initialization_script_sets_window_value() {
+    fn startup_auto_scan_path_uses_cli_or_env() {
         assert_eq!(
-            startup_route_initialization_script(Some(&StartupRoute {
-                course_id: "course-1".to_string(),
-                lesson_id: Some("lesson-1".to_string()),
-            })),
-            r#"window.__MELEARNER_STARTUP_ROUTE__ = {"courseId":"course-1","lessonId":"lesson-1"};"#
+            startup_auto_scan_path_from_sources(["--auto-scan", "/courses"], None),
+            Some("/courses".to_string())
         );
         assert_eq!(
-            startup_route_initialization_script(None),
-            "window.__MELEARNER_STARTUP_ROUTE__ = null;"
+            startup_auto_scan_path_from_sources(std::iter::empty::<&str>(), Some(" /library ")),
+            Some("/library".to_string())
+        );
+        assert_eq!(
+            startup_auto_scan_path_from_sources(["--auto-scan="], Some("")),
+            None
+        );
+    }
+
+    #[test]
+    fn startup_initialization_script_sets_window_values() {
+        assert_eq!(
+            startup_initialization_script(
+                Some(&StartupRoute {
+                    course_id: "course-1".to_string(),
+                    lesson_id: Some("lesson-1".to_string()),
+                }),
+                Some(" /courses ")
+            ),
+            "window.__MELEARNER_STARTUP_ROUTE__ = {\"courseId\":\"course-1\",\"lessonId\":\"lesson-1\"};\nwindow.__MELEARNER_AUTO_SCAN_PATH__ = \"/courses\";"
+        );
+        assert_eq!(
+            startup_initialization_script(None, None),
+            "window.__MELEARNER_STARTUP_ROUTE__ = null;\nwindow.__MELEARNER_AUTO_SCAN_PATH__ = null;"
         );
     }
 }

@@ -67,6 +67,13 @@ type ViewMode = "grid" | "list"
 type BootstrappedLibrary = { courses: Course[]; libraryPath: string | null }
 type RouteState = { view: View; courseId: string | null; lessonId: string | null }
 type RouteWriteMode = "push" | "replace"
+
+declare global {
+  interface Window {
+    __MELEARNER_AUTO_SCAN_PATH__?: string | null
+  }
+}
+
 const EMPTY_SEARCH_RESULTS: LibrarySearchResult[] = []
 const EMPTY_COMMAND_LESSONS: Array<{ course: Course; lesson: Lesson }> = []
 
@@ -124,6 +131,19 @@ function writeRouteState(route: RouteState, mode: RouteWriteMode = "push"): void
   } else {
     window.history.pushState(null, "", nextUrl)
   }
+}
+
+function readAutoScanPath(): string | null {
+  if (typeof window === "undefined") return null
+
+  const initializedPath = typeof window.__MELEARNER_AUTO_SCAN_PATH__ === "string"
+    ? window.__MELEARNER_AUTO_SCAN_PATH__.trim()
+    : ""
+  window.__MELEARNER_AUTO_SCAN_PATH__ = null
+  if (initializedPath) return initializedPath
+
+  if (!window.location.search.includes("autoScan=")) return null
+  return new URL(window.location.href).searchParams.get("autoScan")
 }
 
 export function HomeScreen() {
@@ -452,11 +472,7 @@ function LibraryDashboard({
 
   useEffect(() => {
     if (!isTauri()) return
-    if (typeof window === "undefined") return
-    if (!window.location.search.includes("autoScan=")) return
-
-    const url = new URL(window.location.href)
-    const path = url.searchParams.get("autoScan")
+    const path = readAutoScanPath()
     if (!path) return
 
     setScanMode("selecting")
