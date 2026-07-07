@@ -87,6 +87,8 @@ node --test --experimental-transform-types lib/course-identity.test.mjs lib/data
 
 The command currently emits Node experimental-loader warnings; the tests should still pass.
 
+SQLite write rule: frontend writes must go through the serialized write queue and ordinary autocommit statements. Do not add manual `BEGIN`, `COMMIT`, or `ROLLBACK` calls through `tauri-plugin-sql`; the plugin uses a `sqlx` pool, so separate frontend commands are not a pinned transaction and can lock the database during large scans. Move any future true transaction to Rust where one connection can be held for the whole operation.
+
 ## Linux Release Builds
 
 Build the AppImage:
