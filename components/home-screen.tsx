@@ -81,17 +81,6 @@ function scheduleHomeStateUpdate(work: () => void): void {
   }, 0)
 }
 
-function scheduleAfterPaint(work: () => void): void {
-  if (typeof window === "undefined") {
-    work()
-    return
-  }
-
-  window.requestAnimationFrame(() => {
-    window.setTimeout(work, 0)
-  })
-}
-
 function readRouteState(): RouteState {
   if (typeof window === "undefined") return { view: "library", courseId: null, lessonId: null }
 
@@ -163,13 +152,11 @@ export function HomeScreen() {
     if (!route) return
 
     pendingStartupRouteRef.current = null
-    scheduleAfterPaint(() => {
-      frontendLog("info", "home.startupRoute.applyAfterPaint", {
-        courseId: route.courseId,
-        lessonId: route.lessonId,
-      })
-      setStartupRouteOverride(route)
+    frontendLog("info", "home.startupRoute.applyDeferred", {
+      courseId: route.courseId,
+      lessonId: route.lessonId,
     })
+    setStartupRouteOverride(route)
   }, [])
 
   const handleBootstrapHydrated = useCallback((library: BootstrappedLibrary) => {
