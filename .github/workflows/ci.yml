@@ -109,3 +109,61 @@ jobs:
         run: |
           export LIBRARY_PATH="$(brew --prefix mpv)/lib:${LIBRARY_PATH:-}"
           cargo check --manifest-path src-tauri/Cargo.toml
+
+  windows-compile:
+    name: windows compile readiness
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install pnpm
+        run: npm install -g pnpm@11.10.0
+
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: pnpm
+
+      - name: install rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+
+      - name: install windows native-player deps
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            git
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-mpv
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-zlib
+
+      - name: rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+          key: windows-gnu-native-player
+
+      - name: install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      - name: build frontend assets
+        run: pnpm build
+
+      - name: cargo check
+        shell: msys2 {0}
+        env:
+          CARGO_BUILD_TARGET: x86_64-pc-windows-gnu
+          CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: gcc
+          CC_x86_64_pc_windows_gnu: gcc
+          LIBRARY_PATH: /ucrt64/lib
+          PKG_CONFIG_PATH: /ucrt64/lib/pkgconfig
+          RUSTFLAGS: -L native=/ucrt64/lib
+        run: |
+          export PATH="/c/Users/runneradmin/.cargo/bin:/ucrt64/bin:$PATH"
+          cargo check --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-gnu
