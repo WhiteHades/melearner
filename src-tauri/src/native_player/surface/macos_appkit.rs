@@ -164,7 +164,7 @@ impl MacosInWindowSurface {
                 "macos native video surface must be created on the main thread".to_string()
             })?;
             let webview = unsafe { &*webview.inner().cast::<NSView>() };
-            let frame = ns_rect_for_surface(rect);
+            let frame = ns_rect_for_surface_in_view(webview, rect);
             let pixel_format = NSOpenGLView::defaultPixelFormat(mtm);
             let view = NSOpenGLView::initWithFrame_pixelFormat(
                 NSOpenGLView::alloc(mtm),
@@ -196,7 +196,12 @@ impl MacosInWindowSurface {
     }
 
     fn move_to(&mut self, rect: NativeSurfaceRect) {
-        self.view.setFrame(ns_rect_for_surface(rect));
+        if let Some(superview) = unsafe { self.view.superview() } {
+            self.view
+                .setFrame(ns_rect_for_surface_in_view(&superview, rect));
+        } else {
+            self.view.setFrame(ns_rect_for_surface(rect));
+        }
         self.view.update();
         self.schedule_render();
     }
@@ -492,6 +497,19 @@ fn find_gl_symbol(name: *const c_char) -> Option<*mut c_void> {
 fn ns_rect_for_surface(rect: NativeSurfaceRect) -> NSRect {
     NSRect::new(
         NSPoint::new(rect.x as f64, rect.y as f64),
+        NSSize::new(rect.width as f64, rect.height as f64),
+    )
+}
+
+fn ns_rect_for_surface_in_view(view: &NSView, rect: NativeSurfaceRect) -> NSRect {
+    let y = if view.isFlipped() {
+        rect.y as f64
+    } else {
+        let frame = view.frame();
+        frame.size.height - rect.y as f64 - rect.height as f64
+    };
+    NSRect::new(
+        NSPoint::new(rect.x as f64, y),
         NSSize::new(rect.width as f64, rect.height as f64),
     )
 }
