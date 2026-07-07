@@ -58,12 +58,13 @@ import {
   type CourseSummary,
 } from "@/lib/dashboard-selectors"
 import { useCourseStore } from "@/lib/stores/course-store"
-import { getBuildInfo, isTauri, selectFolderDialog, type BuildInfo } from "@/lib/tauri"
+import { getBuildInfo, isTauri, selectFolderDialog, type BuildInfo, type StartupRoute } from "@/lib/tauri"
 import { cleanSectionName, cn } from "@/lib/utils"
 import type { ActivityDay, Course, Lesson } from "@/types"
 
 type View = "library" | "viewer"
 type ViewMode = "grid" | "list"
+type BootstrappedLibrary = { courses: Course[]; libraryPath: string | null }
 const EMPTY_SEARCH_RESULTS: LibrarySearchResult[] = []
 const EMPTY_COMMAND_LESSONS: Array<{ course: Course; lesson: Lesson }> = []
 
@@ -73,10 +74,14 @@ export function HomeScreen() {
   const [lessonId, setLessonId] = useQueryState("lesson", parseAsString)
 
   const view = viewParam === "viewer" ? ("viewer" satisfies View) : "library"
-  const courses = useCourseStore(useShallow((state) => state.courses))
-  const hasHydrated = useCourseStore((state) => state.hasHydrated)
-  const startupRoute = useCourseStore((state) => state.startupRoute)
+  const storeCourses = useCourseStore(useShallow((state) => state.courses))
+  const storeHasHydrated = useCourseStore((state) => state.hasHydrated)
   const setStartupRoute = useCourseStore((state) => state.setStartupRoute)
+  const [bootstrappedLibrary, setBootstrappedLibrary] = useState<BootstrappedLibrary | null>(null)
+  const [pendingStartupRoute, setPendingStartupRoute] = useState<StartupRoute | null>(null)
+  const courses = bootstrappedLibrary?.courses ?? storeCourses
+  const hasHydrated = Boolean(bootstrappedLibrary) || storeHasHydrated
+  const startupRoute = pendingStartupRoute
 
   const selectedCourse = useMemo(() => {
     return courses.find((course: Course) => course.id === courseId) ?? null
@@ -95,6 +100,7 @@ export function HomeScreen() {
 
     const course = courses.find((course: Course) => course.id === startupRoute.courseId && !course.missingSince)
     if (!course) {
+      setPendingStartupRoute(null)
       setStartupRoute(null)
       return
     }
@@ -108,6 +114,7 @@ export function HomeScreen() {
     setCourseId(course.id)
     setLessonId(selectedLessonId)
     setViewParam("viewer")
+    setPendingStartupRoute(null)
     setStartupRoute(null)
     void markCourseAccessed(course.id)
     frontendLog("info", "startup.route.applied", { courseId: course.id, lessonId: selectedLessonId })
@@ -148,12 +155,17 @@ export function HomeScreen() {
         />
       )
     ) : (
-      <LibraryDashboard courses={courses} hasHydrated={hasHydrated} onOpenCourse={handleOpenCourse} />
+      <LibraryDashboard
+        courses={courses}
+        hasHydrated={hasHydrated}
+        libraryPathOverride={bootstrappedLibrary?.libraryPath}
+        onOpenCourse={handleOpenCourse}
+      />
     )
 
   return (
     <>
-      <AppBootstrap />
+      <AppBootstrap onHydrated={setBootstrappedLibrary} onStartupRoute={setPendingStartupRoute} />
       {content}
     </>
   )
@@ -162,13 +174,16 @@ export function HomeScreen() {
 function LibraryDashboard({
   courses,
   hasHydrated,
+  libraryPathOverride,
   onOpenCourse,
 }: {
   courses: Course[]
   hasHydrated: boolean
+  libraryPathOverride?: string | null
   onOpenCourse: (course: Course, lessonId?: string | null) => void
 }) {
-  const libraryPath = useCourseStore((state) => state.libraryPath)
+  const storeLibraryPath = useCourseStore((state) => state.libraryPath)
+  const libraryPath = libraryPathOverride ?? storeLibraryPath
   const scanMode = useCourseStore((state) => state.scanMode)
   const setScanMode = useCourseStore((state) => state.setScanMode)
   const [error, setError] = useState<string | null>(null)

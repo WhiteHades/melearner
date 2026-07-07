@@ -15,6 +15,8 @@ const t = () => (typeof performance !== "undefined" ? performance.now() - t0 : 0
 const STARTUP_ROUTE_TIMEOUT_MS = 500
 const STARTUP_ROUTE_TIMEOUT = Symbol("startup-route-timeout")
 
+type HydratedLibrary = Awaited<ReturnType<typeof loadPersistedLibrary>>
+
 type LegacyCourseStore = {
   state?: {
     courses?: unknown
@@ -129,7 +131,13 @@ async function queueStartupRouteAfterHydration(
   queueStartupRoute(courses, await getStartupRouteWithTimeout(), setStartupRoute)
 }
 
-export function AppBootstrap() {
+export function AppBootstrap({
+  onHydrated,
+  onStartupRoute,
+}: {
+  onHydrated?: (library: HydratedLibrary) => void
+  onStartupRoute?: (route: StartupRoute | null) => void
+}) {
   const setHasHydrated = useCourseStore((state) => state.setHasHydrated)
   const setCourses = useCourseStore((state) => state.setCourses)
   const hydrateLibrary = useCourseStore((state) => state.hydrateLibrary)
@@ -253,7 +261,11 @@ export function AppBootstrap() {
         library = await loadPersistedLibrary()
       }
       hydrateLibrary(library.courses, library.libraryPath)
-      void queueStartupRouteAfterHydration(library.courses, setStartupRoute)
+      onHydrated?.(library)
+      void queueStartupRouteAfterHydration(library.courses, (route) => {
+        setStartupRoute(route)
+        onStartupRoute?.(route)
+      })
       frontendLog("info", "app.bootstrap.libraryLoad.done", {
         ms: Math.round(t()),
         coursesCount: library.courses.length,
@@ -270,6 +282,7 @@ export function AppBootstrap() {
         })
         void hydrateCourseThumbnails(library.courses, (courses) => {
           setCourses(courses)
+          onHydrated?.({ courses, libraryPath: library.libraryPath })
         })
       })
     })()
@@ -280,7 +293,7 @@ export function AppBootstrap() {
         })
         setHasHydrated(true)
       })
-  }, [hydrateLibrary, setCourses, setHasHydrated, setStartupRoute])
+  }, [hydrateLibrary, onHydrated, onStartupRoute, setCourses, setHasHydrated, setStartupRoute])
 
   return null
 }
