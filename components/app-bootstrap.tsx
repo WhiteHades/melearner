@@ -291,7 +291,6 @@ export function AppBootstrap({
       await resolveStartupRouteBeforeHydration(library.courses, (route) => {
         onStartupRoute?.(route)
       })
-      hydrateLibrary(library.courses, library.libraryPath)
       onHydrated?.(library)
       frontendLog("info", "app.bootstrap.libraryLoad.done", {
         ms: Math.round(t()),
@@ -304,6 +303,7 @@ export function AppBootstrap({
         libraryPath: library.libraryPath,
       })
       schedulePostHydrationWork(() => {
+        hydrateLibrary(library.courses, library.libraryPath)
         void indexCourses(library.courses, library.libraryPath).catch((error) => {
           frontendLog("warn", "app.bootstrap.searchIndex.failed", { error: String(error) })
         })
