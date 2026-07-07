@@ -47,6 +47,8 @@ The current implementation owns the native playback control path in `src-tauri/s
 
 `native_player_set_bounds` is part of the playback interface. It creates or moves a native Tauri window surface through the selected surface backend. The default backend creates a glutin OpenGL surface from the Tauri native window handle, starts a dedicated render thread, switches libmpv to `vo=libmpv`, and drives `mpv_render_context_render` into the surface backbuffer. Native player state exposes `surfaceRenderApi`; it becomes `true` for the default render-api backend after attachment. It also exposes `surfaceRenderThreadAlive`, `surfaceRenderedFrames`, and `surfaceRenderError` so verification can prove whether the render thread is alive, submitting frames, or failing after attachment. `MELEARNER_SURFACE_BACKEND=window-handle` is a diagnostic fallback that gives the platform window handle to libmpv with `wid`; on Linux this fallback still needs an X11/XCB handle.
 
+Normal Linux startup must not force `GDK_BACKEND=x11`. Hyprland and other Wayland compositors should use GTK's compositor-native backend so the WebView backing surface resizes and repaints with the tiled window. X11 is allowed only through explicit diagnostics such as `MELEARNER_FORCE_GDK_X11=1` or the `MELEARNER_SURFACE_BACKEND=window-handle` fallback.
+
 Rust refuses visible media loads until the native surface is attached, so a missing surface fails clearly instead of silently loading media through the idle `vo=null` path.
 
 The current default surface is native, in-process, and render-api-first. A change is not accepted as completed cross-platform native playback until packaged builds visibly render libmpv frames on Windows, macOS, and Linux and pass the verification matrix below.
