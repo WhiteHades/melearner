@@ -3,6 +3,7 @@ mod media;
 mod native_player;
 mod scanner;
 
+const DATABASE_PATH_ENV: &str = "MELEARNER_DB_PATH";
 const FRONTEND_LOG_ENV: &str = "MELEARNER_FRONTEND_LOG";
 
 use tauri_plugin_sql::{Builder as SqlBuilder, Migration, MigrationKind};
@@ -233,18 +234,6 @@ pub fn run() {
         let _ = write_startup_log("startup.auto_scan.ready");
     }
 
-    fn get_db_path() -> std::path::PathBuf {
-        std::env::var("HOME")
-            .map(|h| {
-                std::path::PathBuf::from(h)
-                    .join(".local")
-                    .join("share")
-                    .join("melearner")
-                    .join("melearner.db")
-            })
-            .unwrap_or_else(|_| std::path::PathBuf::from("melearner.db"))
-    }
-
     fn get_db_url() -> String {
         format!("sqlite:{}", get_db_path().display())
     }
@@ -437,6 +426,72 @@ fn frontend_log_path_from_values(
             .join("frontend.log")
     })
     .unwrap_or_else(|| std::path::PathBuf::from("/tmp/melearner-frontend.log"))
+}
+
+fn get_db_path() -> std::path::PathBuf {
+    let configured = std::env::var(DATABASE_PATH_ENV).ok();
+    let home = std::env::var("HOME").ok();
+    let local_app_data = std::env::var("LOCALAPPDATA").ok();
+    let path = database_path_from_values(
+        configured.as_deref(),
+        home.as_deref(),
+        local_app_data.as_deref(),
+        std::env::consts::OS,
+    );
+
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    path
+}
+
+fn database_path_from_values(
+    configured: Option<&str>,
+    home: Option<&str>,
+    local_app_data: Option<&str>,
+    target_os: &str,
+) -> std::path::PathBuf {
+    if let Some(configured) = configured.map(str::trim).filter(|value| !value.is_empty()) {
+        return std::path::PathBuf::from(configured);
+    }
+
+    match target_os {
+        "windows" => local_app_data
+            .map(|path| {
+                std::path::PathBuf::from(path)
+                    .join("melearner")
+                    .join("melearner.db")
+            })
+            .or_else(|| {
+                home.map(|home| {
+                    std::path::PathBuf::from(home)
+                        .join("AppData")
+                        .join("Local")
+                        .join("melearner")
+                        .join("melearner.db")
+                })
+            })
+            .unwrap_or_else(|| std::env::temp_dir().join("melearner").join("melearner.db")),
+        "macos" => home
+            .map(|home| {
+                std::path::PathBuf::from(home)
+                    .join("Library")
+                    .join("Application Support")
+                    .join("melearner")
+                    .join("melearner.db")
+            })
+            .unwrap_or_else(|| std::env::temp_dir().join("melearner").join("melearner.db")),
+        _ => home
+            .map(|home| {
+                std::path::PathBuf::from(home)
+                    .join(".local")
+                    .join("share")
+                    .join("melearner")
+                    .join("melearner.db")
+            })
+            .unwrap_or_else(|| std::env::temp_dir().join("melearner").join("melearner.db")),
+    }
 }
 
 #[tauri::command]
@@ -700,6 +755,50 @@ mod tests {
         assert_eq!(
             frontend_log_path_from_values(None, Some("/home/user")),
             std::path::PathBuf::from("/home/user/.melearner/frontend.log")
+        );
+    }
+
+    #[test]
+    fn database_path_uses_explicit_env_path() {
+        assert_eq!(
+            database_path_from_values(
+                Some(" /tmp/melearner/test.db "),
+                Some("/home/user"),
+                None,
+                "linux"
+            ),
+            std::path::PathBuf::from("/tmp/melearner/test.db")
+        );
+    }
+
+    #[test]
+    fn database_path_preserves_linux_location() {
+        assert_eq!(
+            database_path_from_values(None, Some("/home/user"), None, "linux"),
+            std::path::PathBuf::from("/home/user/.local/share/melearner/melearner.db")
+        );
+    }
+
+    #[test]
+    fn database_path_uses_windows_local_app_data() {
+        assert_eq!(
+            database_path_from_values(
+                None,
+                Some("C:/Users/Ada"),
+                Some("C:/Users/Ada/AppData/Local"),
+                "windows"
+            ),
+            std::path::PathBuf::from("C:/Users/Ada/AppData/Local/melearner/melearner.db")
+        );
+    }
+
+    #[test]
+    fn database_path_uses_macos_application_support() {
+        assert_eq!(
+            database_path_from_values(None, Some("/Users/ada"), None, "macos"),
+            std::path::PathBuf::from(
+                "/Users/ada/Library/Application Support/melearner/melearner.db"
+            )
         );
     }
 }

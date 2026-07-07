@@ -13,7 +13,7 @@ melearner is local-first.
 
 Local data paths:
 
-- Database: `$HOME/.local/share/melearner/melearner.db`
+- Database: `$HOME/.local/share/melearner/melearner.db` on Linux, `%LOCALAPPDATA%\melearner\melearner.db` on Windows, and `$HOME/Library/Application Support/melearner/melearner.db` on macOS.
 - Logs: `~/.melearner/`
 - User course files: wherever you keep them
 

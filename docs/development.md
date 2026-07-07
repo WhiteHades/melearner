@@ -167,7 +167,7 @@ Windows media notes:
 
 ## Architecture Notes
 
-- The database lives at `$HOME/.local/share/melearner/melearner.db`.
+- The database lives at `$HOME/.local/share/melearner/melearner.db` on Linux, `%LOCALAPPDATA%\melearner\melearner.db` on Windows, and `$HOME/Library/Application Support/melearner/melearner.db` on macOS. Set `MELEARNER_DB_PATH` only for focused verification or migration diagnostics.
 - Documents and thumbnails load through Tauri asset URLs, not a localhost media server.
 - Playable lessons use the native player module.
 - The frontend calls Tauri commands directly.

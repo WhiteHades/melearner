@@ -130,6 +130,12 @@ function defaultHome() {
 }
 
 function defaultDbPath(home) {
+  if (process.platform === "win32") {
+    return join(process.env.LOCALAPPDATA || join(home, "AppData", "Local"), "melearner", "melearner.db")
+  }
+  if (process.platform === "darwin") {
+    return join(home, "Library", "Application Support", "melearner", "melearner.db")
+  }
   return join(home, ".local", "share", "melearner", "melearner.db")
 }
 
