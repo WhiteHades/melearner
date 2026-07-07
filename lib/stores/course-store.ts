@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useRef, useSyncExternalStore } from "react"
 import { createStore, type StoreApi } from "zustand/vanilla"
 import type { Course, Lesson } from "@/types"
 
@@ -131,23 +131,11 @@ export const useCourseStore = (<T>(selector: (state: CourseStore) => T): T => {
   const selectorRef = useRef(selector)
   selectorRef.current = selector
 
-  const [selected, setSelected] = useState(() => selector(useCourseStoreInternal.getState()))
-  const selectedRef = useRef(selected)
-  selectedRef.current = selected
-
-  useEffect(() => {
-    const update = (state: CourseStore) => {
-      const next = selectorRef.current(state)
-      if (Object.is(selectedRef.current, next)) return
-      selectedRef.current = next
-      setSelected(next)
-    }
-    const unsubscribe = useCourseStoreInternal.subscribe(update)
-    update(useCourseStoreInternal.getState())
-    return unsubscribe
-  }, [])
-
-  return selected
+  return useSyncExternalStore(
+    useCourseStoreInternal.subscribe,
+    () => selectorRef.current(useCourseStoreInternal.getState()),
+    () => selectorRef.current(useCourseStoreInternal.getState())
+  )
 }) as UseCourseStore
 
 useCourseStore.getState = useCourseStoreInternal.getState
