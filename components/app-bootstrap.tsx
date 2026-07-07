@@ -130,7 +130,7 @@ async function getStartupRouteWithTimeout(): Promise<StartupRoute | null> {
 function queueStartupRoute(
   courses: Course[],
   route: StartupRoute | null,
-  setStartupRoute: (route: StartupRoute | null) => void,
+  applyStartupRoute: (route: StartupRoute | null) => void,
 ): string | null {
   if (!route || courses.length === 0) return null
 
@@ -148,16 +148,16 @@ function queueStartupRoute(
     })
   }
 
-  setStartupRoute({ courseId: course.id, lessonId: selectedLessonId })
+  applyStartupRoute({ courseId: course.id, lessonId: selectedLessonId })
   frontendLog("info", "startup.route.queued", { courseId: course.id, lessonId: selectedLessonId })
   return course.id
 }
 
 async function resolveStartupRouteBeforeHydration(
   courses: Course[],
-  setStartupRoute: (route: StartupRoute | null) => void,
+  applyStartupRoute: (route: StartupRoute | null) => void,
 ): Promise<void> {
-  queueStartupRoute(courses, await getStartupRouteWithTimeout(), setStartupRoute)
+  queueStartupRoute(courses, await getStartupRouteWithTimeout(), applyStartupRoute)
 }
 
 export function AppBootstrap({
@@ -170,7 +170,6 @@ export function AppBootstrap({
   const setHasHydrated = useCourseStore((state) => state.setHasHydrated)
   const setCourses = useCourseStore((state) => state.setCourses)
   const hydrateLibrary = useCourseStore((state) => state.hydrateLibrary)
-  const setStartupRoute = useCourseStore((state) => state.setStartupRoute)
 
   useEffect(() => {
     frontendLog("info", "app.bootstrap", {
@@ -290,7 +289,6 @@ export function AppBootstrap({
         library = await loadPersistedLibrary()
       }
       await resolveStartupRouteBeforeHydration(library.courses, (route) => {
-        setStartupRoute(route)
         onStartupRoute?.(route)
       })
       hydrateLibrary(library.courses, library.libraryPath)
@@ -322,7 +320,7 @@ export function AppBootstrap({
         })
         setHasHydrated(true)
       })
-  }, [hydrateLibrary, onHydrated, onStartupRoute, setCourses, setHasHydrated, setStartupRoute])
+  }, [hydrateLibrary, onHydrated, onStartupRoute, setCourses, setHasHydrated])
 
   return null
 }
