@@ -25,30 +25,6 @@ jobs:
           node-version: lts/*
           cache: pnpm
 
-      - name: install rust stable
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: install linux native-player deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            ffmpeg \
-            libayatana-appindicator3-dev \
-            libgtk-3-dev \
-            libmpv-dev \
-            librsvg2-dev \
-            libssl-dev \
-            libwebkit2gtk-4.1-dev \
-            libxdo-dev \
-            mpv \
-            patchelf \
-            pkg-config
-
-      - name: rust cache
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: "./src-tauri -> target"
-
       - name: install frontend deps
         run: pnpm install --frozen-lockfile
 
@@ -64,8 +40,16 @@ jobs:
       - name: node data tests
         run: node --test --experimental-transform-types lib/course-identity.test.mjs lib/database-sqlite-fixture.test.mjs lib/stats.test.mjs
 
-      - name: cargo test
-        run: cargo test --manifest-path src-tauri/Cargo.toml
+      - name: build frontend assets
+        run: pnpm build
 
-      - name: cargo check
-        run: cargo check --manifest-path src-tauri/Cargo.toml
+      - name: arch native-player rust checks
+        run: |
+          docker run --rm -v "$PWD:/workspace" -w /workspace archlinux:base-devel bash -lc '
+            pacman -Syu --noconfirm
+            pacman -S --noconfirm ffmpeg git gtk3 libayatana-appindicator libglvnd libmpv librsvg openssl patchelf pkgconf rust webkit2gtk-4.1 xdg-utils
+            useradd -m builder
+            chown -R builder:builder /workspace
+            su builder -c "cd /workspace && cargo test --manifest-path src-tauri/Cargo.toml"
+            su builder -c "cd /workspace && cargo check --manifest-path src-tauri/Cargo.toml"
+          '
