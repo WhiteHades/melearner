@@ -94,6 +94,7 @@ function Test-SignedFile {
   }
   if ($verificationOutput -match "not trusted" -or $verificationOutput -match "root certificate") {
     Write-Output "signature is present; self-signed test certificate is expected to be untrusted"
+    $global:LASTEXITCODE = 0
     return
   }
 

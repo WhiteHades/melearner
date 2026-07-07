@@ -903,8 +903,7 @@ async function syncLibraryWithDatabase(database: DatabaseConnection, courses: Co
      SET missing_since = COALESCE(missing_since, $3),
          last_scanned_at = $3
      WHERE (path = $1 OR path LIKE $2 ESCAPE '~')
-       ${missingExclusion}
-       AND (last_scanned_at IS NULL OR last_scanned_at <> $3)`,
+       ${missingExclusion}`,
     [libraryPath, childPathPattern(libraryPath), scanStamp, ...resolvedCourseIds]
   )
   await database.execute(
