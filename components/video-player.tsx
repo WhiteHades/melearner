@@ -52,6 +52,7 @@ import {
   type NativePlayerBounds,
   type NativePlayerState,
 } from "@/lib/native-player"
+import { frontendLog } from "@/lib/frontend-log"
 import { isTauri } from "@/lib/tauri"
 import { formatDuration } from "@/lib/utils"
 import type { Lesson } from "@/types"
@@ -181,6 +182,11 @@ function VideoPlayerComponent({
     void (async () => {
       const shouldAutoplay = autoplayNextLoadRef.current || autoplay
       autoplayNextLoadRef.current = false
+      frontendLog("info", "native.player.load.start", {
+        path: loadSnapshot.path,
+        lessonId: loadSnapshot.id,
+        autoplay: shouldAutoplay,
+      })
       await updateBounds()
       const next = await loadNativePlayerFile({
         path: loadSnapshot.path,
@@ -195,11 +201,29 @@ function VideoPlayerComponent({
       })
 
       if (!isActive) return
+      frontendLog("info", "native.player.load.ready", {
+        path: loadSnapshot.path,
+        surfaceAttached: next.surfaceAttached,
+        surfaceBackend: next.surfaceBackend,
+        surfaceRenderApi: next.surfaceRenderApi,
+        surfaceRenderThreadAlive: next.surfaceRenderThreadAlive,
+        surfaceRenderedFrames: next.surfaceRenderedFrames,
+        surfaceRenderError: next.surfaceRenderError,
+        audioTracks: next.audioTracks.length,
+        subtitleTracks: next.subtitleTracks.length,
+        chapters: next.chapters.length,
+      })
       setError(null)
       setNativeState(next)
     })()
       .catch((reason) => {
-        if (isActive) setError({ path: loadSnapshot.path, message: String(reason) })
+        if (isActive) {
+          frontendLog("error", "native.player.load.failed", {
+            path: loadSnapshot.path,
+            error: String(reason),
+          })
+          setError({ path: loadSnapshot.path, message: String(reason) })
+        }
       })
 
     return () => {
