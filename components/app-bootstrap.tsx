@@ -17,6 +17,12 @@ const STARTUP_ROUTE_TIMEOUT = Symbol("startup-route-timeout")
 
 type HydratedLibrary = Awaited<ReturnType<typeof loadPersistedLibrary>>
 
+declare global {
+  interface Window {
+    __MELEARNER_STARTUP_ROUTE__?: StartupRoute | null
+  }
+}
+
 type LegacyCourseStore = {
   state?: {
     courses?: unknown
@@ -82,7 +88,30 @@ function startupRouteTimeout(): Promise<typeof STARTUP_ROUTE_TIMEOUT> {
   })
 }
 
+function readInitializedStartupRoute(): StartupRoute | null {
+  if (typeof window === "undefined") return null
+
+  const route = window.__MELEARNER_STARTUP_ROUTE__
+  window.__MELEARNER_STARTUP_ROUTE__ = null
+
+  if (
+    !isRecord(route) ||
+    typeof route.courseId !== "string" ||
+    (route.lessonId !== null && typeof route.lessonId !== "string")
+  ) {
+    return null
+  }
+
+  return {
+    courseId: route.courseId,
+    lessonId: route.lessonId,
+  }
+}
+
 async function getStartupRouteWithTimeout(): Promise<StartupRoute | null> {
+  const initializedRoute = readInitializedStartupRoute()
+  if (initializedRoute) return initializedRoute
+
   if (!isTauri() || typeof window === "undefined") return null
 
   try {

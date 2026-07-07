@@ -298,7 +298,10 @@ pub fn run() {
         let _ = std::fs::create_dir_all(parent);
     }
 
+    let startup_route_script = startup_route_initialization_script(startup_route.as_ref());
+
     tauri::Builder::default()
+        .append_invoke_initialization_script(startup_route_script)
         .manage(StartupRouteState(startup_route))
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
@@ -488,6 +491,11 @@ fn startup_route_from_runtime() -> Option<StartupRoute> {
     )
 }
 
+fn startup_route_initialization_script(route: Option<&StartupRoute>) -> String {
+    let value = serde_json::to_string(&route).unwrap_or_else(|_| "null".to_string());
+    format!("window.__MELEARNER_STARTUP_ROUTE__ = {value};")
+}
+
 #[tauri::command]
 fn get_startup_route(state: tauri::State<'_, StartupRouteState>) -> Option<StartupRoute> {
     state.0.clone()
@@ -575,6 +583,21 @@ mod tests {
         assert_eq!(
             startup_route_from_sources(["--open-lesson", "lesson-1"], None, None),
             None
+        );
+    }
+
+    #[test]
+    fn startup_route_initialization_script_sets_window_value() {
+        assert_eq!(
+            startup_route_initialization_script(Some(&StartupRoute {
+                course_id: "course-1".to_string(),
+                lesson_id: Some("lesson-1".to_string()),
+            })),
+            r#"window.__MELEARNER_STARTUP_ROUTE__ = {"courseId":"course-1","lessonId":"lesson-1"};"#
+        );
+        assert_eq!(
+            startup_route_initialization_script(None),
+            "window.__MELEARNER_STARTUP_ROUTE__ = null;"
         );
     }
 }
