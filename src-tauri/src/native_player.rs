@@ -27,6 +27,7 @@ const EVENT_CHAPTERS: &str = "native-player://chapters";
 const EVENT_FILE_LOADED: &str = "native-player://file-loaded";
 const EVENT_END_FILE: &str = "native-player://end-file";
 const EVENT_ERROR: &str = "native-player://error";
+const PLAYER_NOT_LOADED_ERROR: &str = "native player media is not loaded";
 
 fn player_slot() -> &'static Mutex<Option<NativePlayer>> {
     PLAYER.get_or_init(|| Mutex::new(None))
@@ -908,6 +909,21 @@ fn with_existing_player<T>(
     }
 }
 
+fn with_loaded_player<T>(
+    f: impl FnOnce(&mut NativePlayer) -> Result<T, String>,
+) -> Result<T, String> {
+    let mut guard = player_slot()
+        .lock()
+        .map_err(|_| "native player lock is poisoned".to_string())?;
+    let Some(player) = guard.as_mut() else {
+        return Err(PLAYER_NOT_LOADED_ERROR.to_string());
+    };
+    if player.path.is_none() {
+        return Err(PLAYER_NOT_LOADED_ERROR.to_string());
+    }
+    f(player)
+}
+
 fn remember_pending_bounds(bounds: NativePlayerBounds) -> Result<(), String> {
     let mut guard = pending_bounds_slot()
         .lock()
@@ -1148,7 +1164,7 @@ pub fn native_player_state(app: AppHandle) -> Result<NativePlayerState, String> 
 
 #[tauri::command]
 pub fn native_player_play(app: AppHandle) -> Result<NativePlayerState, String> {
-    let result = with_player(|player| {
+    let result = with_loaded_player(|player| {
         player
             .mpv
             .set_property("pause", false)
@@ -1160,7 +1176,7 @@ pub fn native_player_play(app: AppHandle) -> Result<NativePlayerState, String> {
 
 #[tauri::command]
 pub fn native_player_pause(app: AppHandle) -> Result<NativePlayerState, String> {
-    let result = with_player(|player| {
+    let result = with_loaded_player(|player| {
         player
             .mpv
             .set_property("pause", true)
@@ -1181,7 +1197,7 @@ pub fn native_player_seek(
         return Err(err);
     }
 
-    let result = with_player(|player| {
+    let result = with_loaded_player(|player| {
         let seconds = options.seconds.to_string();
         let mode = match options.mode {
             NativePlayerSeekMode::Absolute => "absolute",
@@ -1204,7 +1220,7 @@ pub fn native_player_set_volume(app: AppHandle, volume: f64) -> Result<NativePla
         return Err(err);
     }
 
-    let result = with_player(|player| {
+    let result = with_loaded_player(|player| {
         player
             .mpv
             .set_property("volume", volume.clamp(0.0, 1.0) * 100.0)
@@ -1216,7 +1232,7 @@ pub fn native_player_set_volume(app: AppHandle, volume: f64) -> Result<NativePla
 
 #[tauri::command]
 pub fn native_player_set_muted(app: AppHandle, muted: bool) -> Result<NativePlayerState, String> {
-    let result = with_player(|player| {
+    let result = with_loaded_player(|player| {
         player
             .mpv
             .set_property("mute", muted)
@@ -1234,7 +1250,7 @@ pub fn native_player_set_rate(app: AppHandle, rate: f64) -> Result<NativePlayerS
         return Err(err);
     }
 
-    let result = with_player(|player| {
+    let result = with_loaded_player(|player| {
         player
             .mpv
             .set_property("speed", rate)
@@ -1249,7 +1265,10 @@ pub fn native_player_select_audio_track(
     app: AppHandle,
     id: Option<String>,
 ) -> Result<NativePlayerState, String> {
-    finish_state_command(&app, with_player(|player| player.select_track("aid", id)))
+    finish_state_command(
+        &app,
+        with_loaded_player(|player| player.select_track("aid", id)),
+    )
 }
 
 #[tauri::command]
@@ -1257,7 +1276,10 @@ pub fn native_player_select_subtitle_track(
     app: AppHandle,
     id: Option<String>,
 ) -> Result<NativePlayerState, String> {
-    finish_state_command(&app, with_player(|player| player.select_track("sid", id)))
+    finish_state_command(
+        &app,
+        with_loaded_player(|player| player.select_track("sid", id)),
+    )
 }
 
 #[tauri::command]
@@ -1265,7 +1287,7 @@ pub fn native_player_select_chapter(
     app: AppHandle,
     id: String,
 ) -> Result<NativePlayerState, String> {
-    finish_state_command(&app, with_player(|player| player.select_chapter(id)))
+    finish_state_command(&app, with_loaded_player(|player| player.select_chapter(id)))
 }
 
 #[tauri::command]
@@ -1295,7 +1317,7 @@ pub fn native_player_set_surface_visible(app: AppHandle, visible: bool) -> Resul
 
 #[tauri::command]
 pub fn native_player_step_frame(app: AppHandle) -> Result<NativePlayerState, String> {
-    let result = with_player(|player| {
+    let result = with_loaded_player(|player| {
         player
             .mpv
             .command("frame-step", &[])
@@ -1307,7 +1329,7 @@ pub fn native_player_step_frame(app: AppHandle) -> Result<NativePlayerState, Str
 
 #[tauri::command]
 pub fn native_player_screenshot(app: AppHandle) -> Result<String, String> {
-    let result = with_player(|player| {
+    let result = with_loaded_player(|player| {
         let output = screenshot_output_path(player.path.as_deref())?;
         let output_string = output.to_string_lossy().to_string();
         player
