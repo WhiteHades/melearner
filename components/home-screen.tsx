@@ -80,9 +80,13 @@ export function HomeScreen() {
   const setStartupRoute = useCourseStore((state) => state.setStartupRoute)
   const [bootstrappedLibrary, setBootstrappedLibrary] = useState<BootstrappedLibrary | null>(null)
   const [pendingStartupRoute, setPendingStartupRoute] = useState<StartupRoute | null>(null)
+  const [startupViewer, setStartupViewer] = useState<StartupRoute | null>(null)
   const courses = bootstrappedLibrary?.courses ?? storeCourses
   const hasHydrated = Boolean(bootstrappedLibrary) || storeHasHydrated
   const startupRoute = pendingStartupRoute
+  const effectiveView = startupViewer ? "viewer" : view
+  const effectiveCourseId = startupViewer?.courseId ?? courseId
+  const effectiveLessonId = startupViewer ? startupViewer.lessonId : lessonId
 
   const handleBootstrapHydrated = useCallback((library: BootstrappedLibrary) => {
     flushSync(() => {
@@ -97,16 +101,17 @@ export function HomeScreen() {
   }, [])
 
   const selectedCourse = useMemo(() => {
-    return courses.find((course: Course) => course.id === courseId) ?? null
-  }, [courses, courseId])
+    return courses.find((course: Course) => course.id === effectiveCourseId) ?? null
+  }, [courses, effectiveCourseId])
 
   useEffect(() => {
-    if (view === "viewer" && hasHydrated && (!selectedCourse || selectedCourse.missingSince)) {
+    if (effectiveView === "viewer" && hasHydrated && (!selectedCourse || selectedCourse.missingSince)) {
+      setStartupViewer(null)
       setViewParam("library")
       setCourseId(null)
       setLessonId(null)
     }
-  }, [view, hasHydrated, selectedCourse, setViewParam, setCourseId, setLessonId])
+  }, [effectiveView, hasHydrated, selectedCourse, setViewParam, setCourseId, setLessonId])
 
   useEffect(() => {
     if (!hasHydrated || !startupRoute) return
@@ -127,6 +132,7 @@ export function HomeScreen() {
     setCourseId(course.id)
     setLessonId(selectedLessonId)
     setViewParam("viewer")
+    setStartupViewer({ courseId: course.id, lessonId: selectedLessonId })
     setPendingStartupRoute(null)
     setStartupRoute(null)
     void markCourseAccessed(course.id)
@@ -136,6 +142,7 @@ export function HomeScreen() {
   const handleOpenCourse = useCallback(
     (course: Course, selectedLessonId: string | null = null) => {
       if (course.missingSince) return
+      setStartupViewer(null)
       setCourseId(course.id)
       setLessonId(selectedLessonId)
       setViewParam("viewer")
@@ -145,13 +152,22 @@ export function HomeScreen() {
   )
 
   const handleBack = useCallback(() => {
+    setStartupViewer(null)
     setViewParam("library")
     setCourseId(null)
     setLessonId(null)
   }, [setViewParam, setCourseId, setLessonId])
 
+  const handleLessonChange = useCallback(
+    (nextLessonId: string | null) => {
+      setStartupViewer((current) => current ? { ...current, lessonId: nextLessonId } : current)
+      setLessonId(nextLessonId)
+    },
+    [setLessonId]
+  )
+
   const content =
-    view === "viewer" ? (
+    effectiveView === "viewer" ? (
       !hasHydrated ? (
         <main className="flex h-full items-center justify-center bg-background text-foreground">
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -163,8 +179,8 @@ export function HomeScreen() {
         <CourseViewerLayout
           course={selectedCourse}
           onBack={handleBack}
-          selectedLessonId={lessonId}
-          onLessonChange={setLessonId}
+          selectedLessonId={effectiveLessonId}
+          onLessonChange={handleLessonChange}
         />
       )
     ) : (
