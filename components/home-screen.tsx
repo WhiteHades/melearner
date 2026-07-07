@@ -2,7 +2,6 @@
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react"
 import { useShallow } from "zustand/react/shallow"
-import { parseAsString, useQueryState } from "nuqs"
 import {
   BarChart3,
   BookOpen,
@@ -65,6 +64,8 @@ import type { ActivityDay, Course, Lesson } from "@/types"
 type View = "library" | "viewer"
 type ViewMode = "grid" | "list"
 type BootstrappedLibrary = { courses: Course[]; libraryPath: string | null }
+type RouteState = { view: View; courseId: string | null; lessonId: string | null }
+type RouteWriteMode = "push" | "replace"
 const EMPTY_SEARCH_RESULTS: LibrarySearchResult[] = []
 const EMPTY_COMMAND_LESSONS: Array<{ course: Course; lesson: Lesson }> = []
 
@@ -80,26 +81,59 @@ function scheduleHomeStateUpdate(work: () => void): void {
   }, 0)
 }
 
-function replaceStartupUrl(courseId: string, lessonId: string | null): void {
+function readRouteState(): RouteState {
+  if (typeof window === "undefined") return { view: "library", courseId: null, lessonId: null }
+
+  const params = new URLSearchParams(window.location.search)
+  if (params.get("view") !== "viewer") {
+    return { view: "library", courseId: null, lessonId: null }
+  }
+
+  return {
+    view: "viewer",
+    courseId: params.get("course"),
+    lessonId: params.get("lesson"),
+  }
+}
+
+function writeRouteState(route: RouteState, mode: RouteWriteMode = "push"): void {
   if (typeof window === "undefined") return
 
   const url = new URL(window.location.href)
-  url.searchParams.set("view", "viewer")
-  url.searchParams.set("course", courseId)
-  if (lessonId) {
-    url.searchParams.set("lesson", lessonId)
+  if (route.view === "viewer" && route.courseId) {
+    url.searchParams.set("view", "viewer")
+    url.searchParams.set("course", route.courseId)
+    if (route.lessonId) {
+      url.searchParams.set("lesson", route.lessonId)
+    } else {
+      url.searchParams.delete("lesson")
+    }
   } else {
+    url.searchParams.delete("view")
+    url.searchParams.delete("course")
     url.searchParams.delete("lesson")
   }
-  window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`)
+
+  const nextUrl = `${url.pathname}${url.search}${url.hash}`
+  const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`
+  if (nextUrl === currentUrl) return
+
+  if (mode === "replace") {
+    window.history.replaceState(null, "", nextUrl)
+  } else {
+    window.history.pushState(null, "", nextUrl)
+  }
 }
 
 export function HomeScreen() {
-  const [viewParam, setViewParam] = useQueryState("view", parseAsString.withDefault("library"))
-  const [courseId, setCourseId] = useQueryState("course", parseAsString)
-  const [lessonId, setLessonId] = useQueryState("lesson", parseAsString)
-
-  const view = viewParam === "viewer" ? ("viewer" satisfies View) : "library"
+  const [routeState, setRouteState] = useState<RouteState>(() => readRouteState())
+  const updateRouteState = useCallback((nextRouteState: RouteState, mode: RouteWriteMode = "push") => {
+    setRouteState(nextRouteState)
+    writeRouteState(nextRouteState, mode)
+  }, [])
+  const view = routeState.view
+  const courseId = routeState.courseId
+  const lessonId = routeState.lessonId
   const storeCourses = useCourseStore(useShallow((state) => state.courses))
   const storeHasHydrated = useCourseStore((state) => state.hasHydrated)
   const setStartupRoute = useCourseStore((state) => state.setStartupRoute)
@@ -130,6 +164,14 @@ export function HomeScreen() {
 
   useAppBootstrap({ onHydrated: handleBootstrapHydrated, onStartupRoute: handleStartupRoute })
 
+  useEffect(() => {
+    if (typeof window === "undefined") return
+
+    const handlePopState = () => setRouteState(readRouteState())
+    window.addEventListener("popstate", handlePopState)
+    return () => window.removeEventListener("popstate", handlePopState)
+  }, [])
+
   const selectedCourse = useMemo(() => {
     return courses.find((course: Course) => course.id === effectiveCourseId) ?? null
   }, [courses, effectiveCourseId])
@@ -148,11 +190,9 @@ export function HomeScreen() {
   useEffect(() => {
     if (effectiveView === "viewer" && hasHydrated && (!selectedCourse || selectedCourse.missingSince)) {
       setStartupRouteOverride(null)
-      setViewParam("library")
-      setCourseId(null)
-      setLessonId(null)
+      updateRouteState({ view: "library", courseId: null, lessonId: null }, "replace")
     }
-  }, [effectiveView, hasHydrated, selectedCourse, setViewParam, setCourseId, setLessonId])
+  }, [effectiveView, hasHydrated, selectedCourse, updateRouteState])
 
   useEffect(() => {
     if (!hasHydrated || !startupRouteOverride) return
@@ -177,37 +217,35 @@ export function HomeScreen() {
     setStartupRoute(null)
     if (appliedStartupRouteRef.current !== routeKey) {
       appliedStartupRouteRef.current = routeKey
-      replaceStartupUrl(course.id, selectedLessonId)
+      updateRouteState({ view: "viewer", courseId: course.id, lessonId: selectedLessonId }, "replace")
       void markCourseAccessed(course.id)
       frontendLog("info", "startup.route.applied", { courseId: course.id, lessonId: selectedLessonId })
     }
-  }, [courses, hasHydrated, startupRouteOverride, setStartupRoute])
+  }, [courses, hasHydrated, startupRouteOverride, setStartupRoute, updateRouteState])
 
   const handleOpenCourse = useCallback(
     (course: Course, selectedLessonId: string | null = null) => {
       if (course.missingSince) return
       setStartupRouteOverride(null)
-      setCourseId(course.id)
-      setLessonId(selectedLessonId)
-      setViewParam("viewer")
+      updateRouteState({ view: "viewer", courseId: course.id, lessonId: selectedLessonId })
       void markCourseAccessed(course.id)
     },
-    [setCourseId, setLessonId, setViewParam]
+    [updateRouteState]
   )
 
   const handleBack = useCallback(() => {
     setStartupRouteOverride(null)
-    setViewParam("library")
-    setCourseId(null)
-    setLessonId(null)
-  }, [setViewParam, setCourseId, setLessonId])
+    updateRouteState({ view: "library", courseId: null, lessonId: null })
+  }, [updateRouteState])
 
   const handleLessonChange = useCallback(
     (nextLessonId: string | null) => {
       setStartupRouteOverride((current) => current ? { ...current, lessonId: nextLessonId } : current)
-      setLessonId(nextLessonId)
+      if (effectiveCourseId) {
+        updateRouteState({ view: "viewer", courseId: effectiveCourseId, lessonId: nextLessonId }, "replace")
+      }
     },
-    [setLessonId]
+    [effectiveCourseId, updateRouteState]
   )
 
   const content =
@@ -507,7 +545,7 @@ function LibraryDashboard({
               <div className={cn("hero-panel relative grid gap-7 overflow-hidden p-7 md:p-9", resumeCourseCards.length > 0 && "md:grid-cols-[minmax(22rem,0.8fr)_minmax(0,1fr)]")}>
                 <div className="relative z-10 flex flex-col justify-between gap-8">
                   <div className="flex flex-col gap-4">
-                    <Badge variant="secondary" className="w-fit rounded-md">{isBootstrapping ? "Loading library" : "Welcome back"}</Badge>
+                    {!isBootstrapping && <Badge variant="secondary" className="w-fit rounded-md">Welcome back</Badge>}
                     <div className="flex flex-col gap-2">
                       <h1 className="max-w-2xl text-4xl font-bold tracking-tight md:text-5xl">
                         {isBootstrapping ? "Loading your library" : continueCourse ? continueCourse.name : "Build your learning library"}
@@ -522,24 +560,21 @@ function LibraryDashboard({
                     </div>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-3">
-                    {isBootstrapping ? (
-                      <Button type="button" size="lg" disabled className="rounded-md">
-                        <Loader2 data-icon="inline-start" className="animate-spin" />
-                        Loading library
-                      </Button>
-                    ) : continueCourse ? (
-                      <Button type="button" size="lg" onClick={() => onOpenCourse(continueCourse, continueLesson?.id ?? null)} className="rounded-md">
-                        <PlayCircle data-icon="inline-start" />
-                        Resume learning
-                      </Button>
-                    ) : (
-                      <Button type="button" size="lg" onClick={handleSelectFolder} disabled={scanMode !== "idle"} className="rounded-md">
-                        <FolderOpen data-icon="inline-start" />
-                        Scan root folder
-                      </Button>
-                    )}
-                  </div>
+                  {!isBootstrapping && (
+                    <div className="flex flex-wrap items-center gap-3">
+                      {continueCourse ? (
+                        <Button type="button" size="lg" onClick={() => onOpenCourse(continueCourse, continueLesson?.id ?? null)} className="rounded-md">
+                          <PlayCircle data-icon="inline-start" />
+                          Resume learning
+                        </Button>
+                      ) : (
+                        <Button type="button" size="lg" onClick={handleSelectFolder} disabled={scanMode !== "idle"} className="rounded-md">
+                          <FolderOpen data-icon="inline-start" />
+                          Scan root folder
+                        </Button>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {resumeCourseCards.length > 0 && (
