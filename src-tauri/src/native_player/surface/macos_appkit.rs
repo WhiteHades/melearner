@@ -4,7 +4,7 @@ use super::{NativeSurfaceRect, RenderApiDiagnostics, record_native_surface_runti
 use libmpv2::Mpv;
 use libmpv2_sys as mpv_sys;
 use objc2::{
-    AllocAnyThread, ClassType, MainThreadMarker,
+    ClassType, MainThreadMarker, MainThreadOnly,
     rc::{Retained, autoreleasepool},
 };
 use objc2_app_kit::{NSOpenGLView, NSView};
@@ -167,7 +167,7 @@ impl MacosInWindowSurface {
             let frame = ns_rect_for_surface(rect);
             let pixel_format = NSOpenGLView::defaultPixelFormat(mtm);
             let view = NSOpenGLView::initWithFrame_pixelFormat(
-                NSOpenGLView::alloc(),
+                NSOpenGLView::alloc(mtm),
                 frame,
                 Some(&pixel_format),
             )
@@ -277,7 +277,7 @@ impl MacosRenderState {
             return;
         };
         context.makeCurrentContext();
-        context.update();
+        context.update(view.mtm());
 
         if self.renderer.is_none() {
             let Some(mpv_client) = self.mpv_client.as_ref() else {
@@ -301,7 +301,7 @@ impl MacosRenderState {
             return;
         };
         context.makeCurrentContext();
-        context.update();
+        context.update(view.mtm());
 
         let frame = view.frame();
         let width = (frame.size.width.round() as i32).max(1);

@@ -355,6 +355,8 @@ impl NativePlayer {
             init.set_option("keep-open", true)?;
             init.set_option("hwdec", "auto-safe")?;
             init.set_option("vo", "null")?;
+            #[cfg(test)]
+            init.set_option("ao", "null")?;
             Ok(())
         })
         .map_err(|err| format!("failed to initialize libmpv: {err}"))?;
