@@ -270,11 +270,13 @@ impl WindowsInWindowSurface {
     }
 
     fn realize(&mut self) {
-        self.render_state.realize(self.hdc, self.gl_context);
+        self.render_state
+            .realize(&self.parent, self.hdc, self.gl_context);
     }
 
     fn render_now(&mut self) {
-        self.render_state.render(self.hdc, self.gl_context);
+        self.render_state
+            .render(&self.parent, self.hdc, self.gl_context);
     }
 
     fn schedule_render(&self) {
@@ -332,7 +334,7 @@ impl WindowsRenderState {
         self.mpv_client = Some(mpv_client);
     }
 
-    fn realize(&mut self, hdc: HDC, gl_context: HGLRC) {
+    fn realize(&mut self, parent: &WebviewWindow, hdc: HDC, gl_context: HGLRC) {
         if let Err(err) = unsafe { wglMakeCurrent(hdc, gl_context) } {
             self.record_error(format!(
                 "native player could not make WGL context current: {err}"
@@ -344,7 +346,7 @@ impl WindowsRenderState {
             let Some(mpv_client) = self.mpv_client.as_ref() else {
                 return;
             };
-            match WindowsMpvRenderer::new(self.id, mpv_client) {
+            match WindowsMpvRenderer::new(self.id, parent, mpv_client) {
                 Ok(renderer) => {
                     self.renderer = Some(renderer);
                     self.diagnostics.set_alive(true);
@@ -356,8 +358,8 @@ impl WindowsRenderState {
         }
     }
 
-    fn render(&mut self, hdc: HDC, gl_context: HGLRC) {
-        self.realize(hdc, gl_context);
+    fn render(&mut self, parent: &WebviewWindow, hdc: HDC, gl_context: HGLRC) {
+        self.realize(parent, hdc, gl_context);
         let Some(renderer) = self.renderer.as_mut() else {
             return;
         };
@@ -408,7 +410,7 @@ struct WindowsMpvRenderer {
 }
 
 impl WindowsMpvRenderer {
-    fn new(id: u64, mpv_client: &Mpv) -> Result<Self, String> {
+    fn new(id: u64, parent: &WebviewWindow, mpv_client: &Mpv) -> Result<Self, String> {
         let mut init_params = mpv_sys::mpv_opengl_init_params {
             get_proc_address: Some(windows_get_proc_address),
             get_proc_address_ctx: ptr::null_mut(),
@@ -442,7 +444,11 @@ impl WindowsMpvRenderer {
             ));
         }
 
-        let callback_ctx = Box::into_raw(Box::new(id)).cast::<c_void>();
+        let callback_ctx = Box::into_raw(Box::new(WindowsRenderCallback {
+            id,
+            parent: parent.clone(),
+        }))
+        .cast::<c_void>();
         unsafe {
             mpv_sys::mpv_render_context_set_update_callback(
                 context,
@@ -500,20 +506,27 @@ impl Drop for WindowsMpvRenderer {
         unsafe {
             mpv_sys::mpv_render_context_set_update_callback(self.context, None, ptr::null_mut());
             mpv_sys::mpv_render_context_free(self.context);
-            drop(Box::from_raw(self.callback_ctx.cast::<u64>()));
+            drop(Box::from_raw(
+                self.callback_ctx.cast::<WindowsRenderCallback>(),
+            ));
         }
     }
+}
+
+struct WindowsRenderCallback {
+    id: u64,
+    parent: WebviewWindow,
 }
 
 unsafe extern "C" fn windows_mpv_update_callback(ctx: *mut c_void) {
     if ctx.is_null() {
         return;
     }
-    let id = unsafe { *ctx.cast::<u64>() };
-    WINDOWS_SURFACES.with(|surfaces| {
-        if let Some(surface) = surfaces.borrow().get(&id) {
-            surface.schedule_render();
-        }
+    let callback = unsafe { &*ctx.cast::<WindowsRenderCallback>() };
+    let id = callback.id;
+    let parent = callback.parent.clone();
+    let _ = parent.run_on_main_thread(move || {
+        dispatch_windows_render(id);
     });
 }
 
