@@ -159,15 +159,17 @@ impl NativeSurfaceBackendPreference {
 }
 
 pub struct NativeVideoSurface {
-    window: Window,
     rect: NativeSurfaceRect,
     backend: NativeSurfaceBackend,
     attachment: NativeSurfaceAttachment,
 }
 
 enum NativeSurfaceAttachment {
-    WindowHandle { window_id: i64 },
-    RenderApi { renderer: Option<RenderApiSurface> },
+    WindowHandle { window: Window, window_id: i64 },
+    RenderApi {
+        window: Window,
+        renderer: Option<RenderApiSurface>,
+    },
 }
 
 impl NativeVideoSurface {
@@ -247,10 +249,10 @@ impl NativeVideoSurface {
 
         let handle = mpv_window_handle(&window)?;
         Ok(Self {
-            window,
             rect,
             backend: NativeSurfaceBackend::WindowHandle(handle.backend),
             attachment: NativeSurfaceAttachment::WindowHandle {
+                window,
                 window_id: handle.id,
             },
         })
@@ -273,10 +275,12 @@ impl NativeVideoSurface {
             .map_err(|err| format!("native player could not show video surface: {err}"))?;
 
         Ok(Self {
-            window,
             rect,
             backend: NativeSurfaceBackend::RenderApi("opengl"),
-            attachment: NativeSurfaceAttachment::RenderApi { renderer: None },
+            attachment: NativeSurfaceAttachment::RenderApi {
+                window,
+                renderer: None,
+            },
         })
     }
 
@@ -289,14 +293,19 @@ impl NativeVideoSurface {
             .inner_position()
             .map_err(|err| format!("native player could not read host window position: {err}"))?;
         let rect = surface_rect_for_bounds(origin, bounds)?;
-        apply_surface_rect(&self.window, rect)?;
+
+        match &self.attachment {
+            NativeSurfaceAttachment::WindowHandle { window, .. }
+            | NativeSurfaceAttachment::RenderApi { window, .. } => {
+                apply_surface_rect(window, rect)?;
+            }
+        }
         self.rect = rect;
 
-        if let NativeSurfaceAttachment::RenderApi {
-            renderer: Some(renderer),
-        } = &self.attachment
-        {
-            renderer.resize(rect)?;
+        if let NativeSurfaceAttachment::RenderApi { renderer, .. } = &self.attachment {
+            if let Some(renderer) = renderer {
+                renderer.resize(rect)?;
+            }
         }
 
         Ok(())
@@ -304,18 +313,18 @@ impl NativeVideoSurface {
 
     fn attach_to_mpv(&mut self, mpv: &Mpv) -> Result<(), String> {
         match &mut self.attachment {
-            NativeSurfaceAttachment::WindowHandle { window_id } => {
+            NativeSurfaceAttachment::WindowHandle { window_id, .. } => {
                 mpv.set_property("wid", *window_id).map_err(|err| {
                     format!("libmpv could not attach to native video surface: {err}")
                 })?;
                 mpv.set_property("vo", "gpu")
                     .map_err(|err| format!("libmpv could not enable native video output: {err}"))
             }
-            NativeSurfaceAttachment::RenderApi { renderer } => {
+            NativeSurfaceAttachment::RenderApi { window, renderer } => {
                 mpv.set_property("vo", "libmpv").map_err(|err| {
                     format!("libmpv could not enable render-api video output: {err}")
                 })?;
-                *renderer = Some(RenderApiSurface::start(&self.window, self.rect, mpv)?);
+                *renderer = Some(RenderApiSurface::start(window, self.rect, mpv)?);
                 record_native_surface_runtime_log("native render-api surface attached");
                 Ok(())
             }
@@ -323,14 +332,19 @@ impl NativeVideoSurface {
     }
 
     pub(super) fn set_visible(&self, visible: bool) -> Result<(), String> {
-        if visible {
-            self.window
-                .show()
-                .map_err(|err| format!("native player could not show video surface: {err}"))
-        } else {
-            self.window
-                .hide()
-                .map_err(|err| format!("native player could not hide video surface: {err}"))
+        match &self.attachment {
+            NativeSurfaceAttachment::WindowHandle { window, .. }
+            | NativeSurfaceAttachment::RenderApi { window, .. } => {
+                if visible {
+                    window.show().map_err(|err| {
+                        format!("native player could not show video surface: {err}")
+                    })
+                } else {
+                    window.hide().map_err(|err| {
+                        format!("native player could not hide video surface: {err}")
+                    })
+                }
+            }
         }
     }
 
@@ -346,6 +360,7 @@ impl NativeVideoSurface {
         match &self.attachment {
             NativeSurfaceAttachment::RenderApi {
                 renderer: Some(renderer),
+                ..
             } => renderer.diagnostics(),
             _ => NativeSurfaceDiagnostics::default(),
         }
@@ -354,10 +369,15 @@ impl NativeVideoSurface {
 
 impl Drop for NativeVideoSurface {
     fn drop(&mut self) {
-        if let NativeSurfaceAttachment::RenderApi { renderer } = &mut self.attachment {
-            renderer.take();
+        match &mut self.attachment {
+            NativeSurfaceAttachment::WindowHandle { window, .. } => {
+                let _ = window.close();
+            }
+            NativeSurfaceAttachment::RenderApi { window, renderer } => {
+                renderer.take();
+                let _ = window.close();
+            }
         }
-        let _ = self.window.close();
     }
 }
 
