@@ -119,6 +119,7 @@ function VideoPlayerComponent({
   const [nativeState, setNativeState] = useState<NativePlayerState>(initialState)
   const [visibleCurrentTime, setVisibleCurrentTime] = useState(lesson.lastPosition)
   const [error, setError] = useState<{ path: string; message: string } | null>(null)
+  const [statusMessage, setStatusMessage] = useState<string | null>(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [loadRequested, setLoadRequested] = useState(true)
   const autoplayNextLoadRef = useRef(autoplay)
@@ -220,6 +221,7 @@ function VideoPlayerComponent({
         chapters: next.chapters.length,
       })
       setError(null)
+      setStatusMessage(null)
       setNativeState(next)
     })()
       .catch((reason) => {
@@ -527,6 +529,19 @@ function VideoPlayerComponent({
     applyNativeState(stepNativePlayerFrame)
   }, [applyNativeState])
 
+  const takeScreenshot = useCallback(() => {
+    if (!isLoaded) return
+    void takeNativePlayerScreenshot()
+      .then((path) => {
+        setError(null)
+        setStatusMessage(`Screenshot saved to ${path}`)
+      })
+      .catch((reason) => {
+        setStatusMessage(null)
+        setError({ path: lesson.path, message: String(reason) })
+      })
+  }, [isLoaded, lesson.path])
+
   const toggleFullscreen = useCallback(() => {
     if (!surfaceRef.current || !isTauri()) return
     const appWindow = getCurrentWindow()
@@ -610,6 +625,11 @@ function VideoPlayerComponent({
             {error.message}
           </div>
         )}
+        {!error && statusMessage && (
+          <div aria-live="polite" className="absolute inset-x-6 bottom-6 truncate rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-xs text-white/80">
+            {statusMessage}
+          </div>
+        )}
       </div>
 
       <div className="border-t border-white/10 bg-black/95 px-4 py-3">
@@ -656,10 +676,7 @@ function VideoPlayerComponent({
             <PlayerIconButton label="Step frame" disabled={!isLoaded} onClick={stepFrame}>
               <SlidersHorizontal />
             </PlayerIconButton>
-            <PlayerIconButton label="Screenshot" disabled={!isLoaded} onClick={() => {
-              if (!isLoaded) return
-              void takeNativePlayerScreenshot().catch((reason) => setError({ path: lesson.path, message: String(reason) }))
-            }}>
+            <PlayerIconButton label="Screenshot" disabled={!isLoaded} onClick={takeScreenshot}>
               <Camera />
             </PlayerIconButton>
             <PlayerIconButton label={isFullscreen ? "Exit fullscreen" : "Fullscreen"} onClick={toggleFullscreen}>
