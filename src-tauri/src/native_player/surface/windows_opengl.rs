@@ -582,7 +582,7 @@ fn configure_pixel_format(hdc: HDC) -> Result<(), String> {
         nSize: mem::size_of::<PIXELFORMATDESCRIPTOR>() as u16,
         nVersion: 1,
         dwFlags: PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER,
-        iPixelType: PFD_TYPE_RGBA.0,
+        iPixelType: PFD_TYPE_RGBA,
         cColorBits: 32,
         cDepthBits: 0,
         cStencilBits: 0,
