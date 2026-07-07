@@ -11,6 +11,8 @@ on:
 permissions:
   contents: write
 
+# Windows and macOS release jobs must not be restored until their native
+# in-window libmpv render hosts exist and pass packaged visual playback checks.
 jobs:
   linux-x86-64:
     name: linux x86_64 assets
@@ -67,60 +69,6 @@ jobs:
         run: |
           gh release view "${{ inputs.tag }}" >/dev/null || \
             gh release create "${{ inputs.tag }}" --title "melearner ${{ inputs.tag }}" --notes "release assets for ${{ inputs.tag }}."
-
-      - name: upload release assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ inputs.tag }}" dist/release/* --clobber
-
-  windows-x86-64:
-    name: windows x86_64 msi
-    runs-on: windows-latest
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.tag }}
-
-      - name: install pnpm
-        run: npm install -g pnpm@11.10.0
-
-      - name: setup node
-        uses: actions/setup-node@v4
-        with:
-          node-version: lts/*
-          cache: pnpm
-
-      - name: install rust stable
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-pc-windows-msvc
-
-      - name: install wix
-        run: choco install wixtoolset --no-progress -y
-
-      - name: rust cache
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: "./src-tauri -> target"
-
-      - name: install frontend deps
-        run: pnpm install --frozen-lockfile
-
-      - name: build windows msi
-        run: pnpm tauri build --target x86_64-pc-windows-msvc --bundles msi
-
-      - name: stage curated assets
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path dist/release | Out-Null
-          Copy-Item src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi dist/release/
-
-      - name: ensure release exists
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release view "${{ inputs.tag }}" 2>$null || gh release create "${{ inputs.tag }}" --title "melearner ${{ inputs.tag }}" --notes "release assets for ${{ inputs.tag }}."
 
       - name: upload release assets
         env:
