@@ -153,7 +153,7 @@ function queueStartupRoute(
   return course.id
 }
 
-async function queueStartupRouteAfterHydration(
+async function resolveStartupRouteBeforeHydration(
   courses: Course[],
   setStartupRoute: (route: StartupRoute | null) => void,
 ): Promise<void> {
@@ -289,12 +289,12 @@ export function AppBootstrap({
         frontendLog("info", "app.bootstrap.libraryLoad.start", { ms: Math.round(t()) })
         library = await loadPersistedLibrary()
       }
-      hydrateLibrary(library.courses, library.libraryPath)
-      onHydrated?.(library)
-      void queueStartupRouteAfterHydration(library.courses, (route) => {
+      await resolveStartupRouteBeforeHydration(library.courses, (route) => {
         setStartupRoute(route)
         onStartupRoute?.(route)
       })
+      hydrateLibrary(library.courses, library.libraryPath)
+      onHydrated?.(library)
       frontendLog("info", "app.bootstrap.libraryLoad.done", {
         ms: Math.round(t()),
         coursesCount: library.courses.length,
