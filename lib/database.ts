@@ -212,7 +212,7 @@ function childPathPattern(path: string): string {
 }
 
 async function executeTransaction<T>(database: DatabaseConnection, work: () => Promise<T>): Promise<T> {
-  await database.execute("BEGIN")
+  await database.execute("BEGIN IMMEDIATE")
   try {
     const result = await work()
     await database.execute("COMMIT")
