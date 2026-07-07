@@ -339,6 +339,7 @@ struct NativePlayer {
 
 impl NativePlayer {
     fn new() -> Result<Self, String> {
+        configure_libmpv_numeric_locale();
         let mpv = Mpv::with_initializer(|init| {
             init.set_option("config", false)?;
             init.set_option("load-scripts", false)?;
@@ -611,6 +612,14 @@ impl NativePlayer {
             surface.set_visible(visible)?;
         }
         Ok(())
+    }
+}
+
+fn configure_libmpv_numeric_locale() {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    unsafe {
+        let locale = CString::new("C").expect("static locale should not contain nul");
+        libc::setlocale(libc::LC_NUMERIC, locale.as_ptr());
     }
 }
 
