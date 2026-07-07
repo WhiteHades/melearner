@@ -3,6 +3,8 @@ use super::NativePlayerBounds;
 mod linux_gtk;
 #[cfg(target_os = "macos")]
 mod macos_appkit;
+#[cfg(target_os = "windows")]
+mod windows_opengl;
 
 use libmpv2::Mpv;
 use std::{
@@ -146,7 +148,11 @@ enum NativeSurfaceAttachment {
     MacosInWindow {
         handle: macos_appkit::MacosInWindowSurfaceHandle,
     },
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(target_os = "windows")]
+    WindowsInWindow {
+        handle: windows_opengl::WindowsInWindowSurfaceHandle,
+    },
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     Unsupported,
 }
 
@@ -174,8 +180,17 @@ impl NativeVideoSurface {
 
                     #[cfg(not(target_os = "macos"))]
                     {
-                        let _ = (parent, bounds, mpv);
-                        Err(unsupported_platform_surface_error())
+                        #[cfg(target_os = "windows")]
+                        {
+                            return Self::attach_windows_in_window(parent, bounds)
+                                .and_then(|surface| Self::attach_surface_to_mpv(surface, mpv));
+                        }
+
+                        #[cfg(not(target_os = "windows"))]
+                        {
+                            let _ = (parent, bounds, mpv);
+                            Err(unsupported_platform_surface_error())
+                        }
                     }
                 }
             }
@@ -217,6 +232,21 @@ impl NativeVideoSurface {
         })
     }
 
+    #[cfg(target_os = "windows")]
+    fn attach_windows_in_window(
+        parent: &WebviewWindow,
+        bounds: NativePlayerBounds,
+    ) -> Result<Self, String> {
+        let rect = surface_rect_for_local_bounds(bounds)?;
+        Ok(Self {
+            rect,
+            backend: NativeSurfaceBackend::RenderApi("wgl-opengl"),
+            attachment: NativeSurfaceAttachment::WindowsInWindow {
+                handle: windows_opengl::WindowsInWindowSurfaceHandle::attach(parent, rect)?,
+            },
+        })
+    }
+
     pub(super) fn move_to(
         &mut self,
         _parent: &WebviewWindow,
@@ -244,8 +274,20 @@ impl NativeVideoSurface {
 
             #[cfg(not(target_os = "macos"))]
             {
-                let _ = bounds;
-                return Err(unsupported_platform_surface_error());
+                #[cfg(target_os = "windows")]
+                {
+                    let NativeSurfaceAttachment::WindowsInWindow { handle } = &self.attachment;
+                    let rect = surface_rect_for_local_bounds(bounds)?;
+                    handle.move_to(rect)?;
+                    self.rect = rect;
+                    return Ok(());
+                }
+
+                #[cfg(not(target_os = "windows"))]
+                {
+                    let _ = bounds;
+                    return Err(unsupported_platform_surface_error());
+                }
             }
         }
     }
@@ -266,7 +308,14 @@ impl NativeVideoSurface {
                 })?;
                 handle.attach_to_mpv(mpv)
             }
-            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+            #[cfg(target_os = "windows")]
+            NativeSurfaceAttachment::WindowsInWindow { handle } => {
+                mpv.set_property("vo", "libmpv").map_err(|err| {
+                    format!("libmpv could not enable windows render-api video output: {err}")
+                })?;
+                handle.attach_to_mpv(mpv)
+            }
+            #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
             NativeSurfaceAttachment::Unsupported => {
                 let _ = mpv;
                 Err(unsupported_platform_surface_error())
@@ -280,7 +329,9 @@ impl NativeVideoSurface {
             NativeSurfaceAttachment::GtkInWindow { handle } => handle.set_visible(visible),
             #[cfg(target_os = "macos")]
             NativeSurfaceAttachment::MacosInWindow { handle } => handle.set_visible(visible),
-            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+            #[cfg(target_os = "windows")]
+            NativeSurfaceAttachment::WindowsInWindow { handle } => handle.set_visible(visible),
+            #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
             NativeSurfaceAttachment::Unsupported => {
                 let _ = visible;
                 Err(unsupported_platform_surface_error())
@@ -294,7 +345,9 @@ impl NativeVideoSurface {
             NativeSurfaceAttachment::GtkInWindow { handle } => handle.request_render(),
             #[cfg(target_os = "macos")]
             NativeSurfaceAttachment::MacosInWindow { handle } => handle.request_render(),
-            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+            #[cfg(target_os = "windows")]
+            NativeSurfaceAttachment::WindowsInWindow { handle } => handle.request_render(),
+            #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
             NativeSurfaceAttachment::Unsupported => Err(unsupported_platform_surface_error()),
         }
     }
@@ -313,7 +366,9 @@ impl NativeVideoSurface {
             NativeSurfaceAttachment::GtkInWindow { handle } => handle.diagnostics(),
             #[cfg(target_os = "macos")]
             NativeSurfaceAttachment::MacosInWindow { handle } => handle.diagnostics(),
-            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+            #[cfg(target_os = "windows")]
+            NativeSurfaceAttachment::WindowsInWindow { handle } => handle.diagnostics(),
+            #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
             NativeSurfaceAttachment::Unsupported => NativeSurfaceDiagnostics::default(),
         }
     }
@@ -326,13 +381,15 @@ impl Drop for NativeVideoSurface {
             NativeSurfaceAttachment::GtkInWindow { .. } => {}
             #[cfg(target_os = "macos")]
             NativeSurfaceAttachment::MacosInWindow { .. } => {}
-            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+            #[cfg(target_os = "windows")]
+            NativeSurfaceAttachment::WindowsInWindow { .. } => {}
+            #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
             NativeSurfaceAttachment::Unsupported => {}
         }
     }
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 fn unsupported_platform_surface_error() -> String {
     let message = "native in-window render surface is not implemented for this platform; normal playback must not create a separate video window".to_string();
     record_native_surface_runtime_log(&message);
