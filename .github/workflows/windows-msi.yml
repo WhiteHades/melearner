@@ -111,11 +111,45 @@ jobs:
             throw "MSI WiX source does not include staged mpv dependency DLLs"
           }
 
+      - name: create test signing certificate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cert_dir="$(cygpath -u "$RUNNER_TEMP")/melearner-test-signing"
+          workspace="$(cygpath -u "$GITHUB_WORKSPACE")"
+          msi_dir="$workspace/src-tauri/target/x86_64-pc-windows-gnu/release/bundle/msi"
+          public_cert="$msi_dir/melearner-windows-msi-test-signing.cer"
+          pfx_password="$(openssl rand -hex 16)"
+          echo "::add-mask::$pfx_password"
+          mkdir -p "$cert_dir"
+          cat > "$cert_dir/openssl-code-signing.cnf" <<'EOF'
+          [ req ]
+          distinguished_name = req_distinguished_name
+          x509_extensions = v3_req
+          prompt = no
+
+          [ req_distinguished_name ]
+          CN = melearner Windows MSI test artifact
+
+          [ v3_req ]
+          basicConstraints = critical,CA:true
+          keyUsage = critical,digitalSignature
+          extendedKeyUsage = codeSigning
+          EOF
+          openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 14 -keyout "$cert_dir/melearner-test-signing.key" -out "$cert_dir/melearner-test-signing.pem" -config "$cert_dir/openssl-code-signing.cnf"
+          openssl pkcs12 -export -out "$cert_dir/melearner-test-signing.pfx" -inkey "$cert_dir/melearner-test-signing.key" -in "$cert_dir/melearner-test-signing.pem" -passout "pass:$pfx_password"
+          openssl x509 -in "$cert_dir/melearner-test-signing.pem" -outform DER -out "$public_cert"
+          {
+            echo "WINDOWS_TEST_SIGNING_PFX=$(cygpath -w "$cert_dir/melearner-test-signing.pfx")"
+            echo "WINDOWS_TEST_SIGNING_PFX_PASSWORD=$pfx_password"
+            echo "WINDOWS_TEST_SIGNING_CERT=$(cygpath -w "$public_cert")"
+          } >> "$GITHUB_ENV"
+
       - name: sign msi with test certificate
         shell: powershell
         timeout-minutes: 3
         run: |
-          .\scripts\sign-windows-msi-test.ps1 -MsiDirectory "src-tauri\target\x86_64-pc-windows-gnu\release\bundle\msi"
+          .\scripts\sign-windows-msi-test.ps1 -MsiDirectory "src-tauri\target\x86_64-pc-windows-gnu\release\bundle\msi" -PfxPath "$env:WINDOWS_TEST_SIGNING_PFX" -PfxPassword "$env:WINDOWS_TEST_SIGNING_PFX_PASSWORD" -PublicCertPath "$env:WINDOWS_TEST_SIGNING_CERT"
 
       - name: upload signed msi artifact
         uses: actions/upload-artifact@v4

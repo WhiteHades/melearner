@@ -1,7 +1,9 @@
 param(
   [string]$MsiDirectory = "src-tauri\target\x86_64-pc-windows-gnu\release\bundle\msi",
-  [string]$Subject = "CN=melearner Windows MSI test artifact",
-  [int]$ValidDays = 14
+  [Parameter(Mandatory = $true)][string]$PfxPath,
+  [Parameter(Mandatory = $true)][string]$PfxPassword,
+  [Parameter(Mandatory = $true)][string]$PublicCertPath,
+  [string]$Subject = "CN=melearner Windows MSI test artifact"
 )
 
 Set-StrictMode -Version Latest
@@ -29,26 +31,6 @@ function Find-SignTool {
   }
 
   return $matches | Sort-Object FullName -Descending | Select-Object -First 1
-}
-
-function Find-OpenSsl {
-  $candidates = @(
-    (Join-Path ([Environment]::GetFolderPath("ProgramFiles")) "Git\usr\bin\openssl.exe"),
-    (Join-Path ([Environment]::GetFolderPath("ProgramFilesX86")) "Git\usr\bin\openssl.exe")
-  )
-
-  foreach ($candidate in $candidates) {
-    if (Test-Path -LiteralPath $candidate) {
-      return Get-Item -LiteralPath $candidate
-    }
-  }
-
-  $fromPath = Get-Command openssl.exe -ErrorAction SilentlyContinue
-  if ($fromPath) {
-    return Get-Item -LiteralPath $fromPath.Source
-  }
-
-  return $null
 }
 
 function Invoke-Checked {
@@ -107,63 +89,14 @@ function Remove-CertificateFromStore {
   }
 }
 
-function New-TestSigningCertificateFiles {
-  param(
-    [string]$OpenSslPath,
-    [string]$OutputDirectory,
-    [string]$CertificateSubject,
-    [int]$CertificateValidDays,
-    [string]$PfxPassword,
-    [string]$PublicCertPath
-  )
-
-  $commonName = $CertificateSubject
-  if ($commonName.StartsWith("CN=")) {
-    $commonName = $commonName.Substring(3)
-  }
-
-  $configPath = Join-Path $OutputDirectory "openssl-code-signing.cnf"
-  $keyPath = Join-Path $OutputDirectory "melearner-test-signing.key"
-  $pemPath = Join-Path $OutputDirectory "melearner-test-signing.pem"
-  $pfxPath = Join-Path $OutputDirectory "melearner-test-signing.pfx"
-
-  $config = @"
-[ req ]
-distinguished_name = req_distinguished_name
-x509_extensions = v3_req
-prompt = no
-
-[ req_distinguished_name ]
-CN = $commonName
-
-[ v3_req ]
-basicConstraints = critical,CA:true
-keyUsage = critical,digitalSignature
-extendedKeyUsage = codeSigning
-"@
-
-  Set-Content -LiteralPath $configPath -Value $config -Encoding ascii
-
-  Invoke-Checked `
-    -Description "creating per-run self-signed test code-signing certificate" `
-    -Command $OpenSslPath `
-    -Arguments @("req", "-x509", "-newkey", "rsa:2048", "-sha256", "-nodes", "-days", "$CertificateValidDays", "-keyout", $keyPath, "-out", $pemPath, "-config", $configPath)
-
-  Invoke-Checked `
-    -Description "exporting temporary test signing PFX" `
-    -Command $OpenSslPath `
-    -Arguments @("pkcs12", "-export", "-out", $pfxPath, "-inkey", $keyPath, "-in", $pemPath, "-passout", "pass:$PfxPassword")
-
-  Invoke-Checked `
-    -Description "exporting public test signing certificate" `
-    -Command $OpenSslPath `
-    -Arguments @("x509", "-in", $pemPath, "-outform", "DER", "-out", $PublicCertPath)
-
-  return $pfxPath
-}
-
 if (!(Test-Path -LiteralPath $MsiDirectory)) {
   throw "MSI directory does not exist: $MsiDirectory"
+}
+if (!(Test-Path -LiteralPath $PfxPath)) {
+  throw "PFX file does not exist: $PfxPath"
+}
+if (!(Test-Path -LiteralPath $PublicCertPath)) {
+  throw "public certificate file does not exist: $PublicCertPath"
 }
 
 Write-Output "finding Windows SDK signtool.exe"
@@ -173,45 +106,23 @@ if (!$signTool) {
 }
 Write-Output "using signtool at $($signTool.FullName)"
 
-Write-Output "finding Git OpenSSL"
-$openSsl = Find-OpenSsl
-if (!$openSsl) {
-  throw "could not find openssl.exe"
-}
-Write-Output "using OpenSSL at $($openSsl.FullName)"
-
 $msiFiles = @(Get-ChildItem -LiteralPath $MsiDirectory -Filter "*.msi" -File)
 if ($msiFiles.Count -lt 1) {
   throw "no MSI files found in $MsiDirectory"
 }
 Write-Output "found $($msiFiles.Count) MSI file(s) in $MsiDirectory"
 
-$tempDir = Join-Path ([System.IO.Path]::GetTempPath()) "melearner-test-signing-$([System.Guid]::NewGuid().ToString("N"))"
-$pfxPassword = [System.Guid]::NewGuid().ToString("N")
-$publicCertPath = Join-Path $MsiDirectory "melearner-windows-msi-test-signing.cer"
-
-New-Item -ItemType Directory -Path $tempDir | Out-Null
-
-$cert = $null
+$cert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($PublicCertPath)
 try {
-  $pfxPath = New-TestSigningCertificateFiles `
-    -OpenSslPath $openSsl.FullName `
-    -OutputDirectory $tempDir `
-    -CertificateSubject $Subject `
-    -CertificateValidDays $ValidDays `
-    -PfxPassword $pfxPassword `
-    -PublicCertPath $publicCertPath
-
-  $cert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($publicCertPath)
   Add-CertificateToStore -Certificate $cert -StoreName "Root"
   Add-CertificateToStore -Certificate $cert -StoreName "TrustedPublisher"
-  Write-Output "exported public test certificate to $publicCertPath"
+  Write-Output "trusted public test certificate $($cert.Thumbprint) for CI verification"
 
   foreach ($msi in $msiFiles) {
     Invoke-Checked `
       -Description "signing $($msi.FullName)" `
       -Command $signTool.FullName `
-      -Arguments @("sign", "/f", $pfxPath, "/p", $pfxPassword, "/fd", "SHA256", "/v", $msi.FullName)
+      -Arguments @("sign", "/f", $PfxPath, "/p", $PfxPassword, "/fd", "SHA256", "/v", $msi.FullName)
 
     Invoke-Checked `
       -Description "verifying $($msi.FullName)" `
@@ -221,10 +132,7 @@ try {
     Write-Output "signed $($msi.FullName) with $Subject ($($cert.Thumbprint))"
   }
 } finally {
-  Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
-  if ($cert) {
-    foreach ($storeName in @("Root", "TrustedPublisher")) {
-      Remove-CertificateFromStore -Thumbprint $cert.Thumbprint -StoreName $storeName
-    }
+  foreach ($storeName in @("Root", "TrustedPublisher")) {
+    Remove-CertificateFromStore -Thumbprint $cert.Thumbprint -StoreName $storeName
   }
 }
