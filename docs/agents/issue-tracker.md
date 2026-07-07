@@ -2,6 +2,8 @@
 
 Issues and PRDs for this repo live as GitHub issues in `WhiteHades/melearner`. Use the `gh` CLI for all operations.
 
+External PRs are not a triage request surface by default. Triage skills should process issues and PRDs, not pull requests, unless this file is deliberately updated.
+
 ## Conventions
 
 - Create an issue: `gh issue create --repo WhiteHades/melearner --title "..." --body "..."`. Use a heredoc for multi-line bodies.

@@ -4,7 +4,7 @@
 
 ### Issue tracker
 
-Issues and PRDs for this repo live in GitHub Issues for `WhiteHades/melearner`. See `docs/agents/issue-tracker.md`.
+Issues and PRDs for this repo live in GitHub Issues for `WhiteHades/melearner`; external PRs are not a triage request surface by default. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
