@@ -160,7 +160,7 @@ async function resolveStartupRouteBeforeHydration(
   queueStartupRoute(courses, await getStartupRouteWithTimeout(), applyStartupRoute)
 }
 
-export function AppBootstrap({
+export function useAppBootstrap({
   onHydrated,
   onStartupRoute,
 }: {
@@ -322,5 +322,4 @@ export function AppBootstrap({
       })
   }, [hydrateLibrary, onHydrated, onStartupRoute, setCourses, setHasHydrated])
 
-  return null
 }

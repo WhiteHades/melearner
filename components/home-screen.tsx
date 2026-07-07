@@ -19,7 +19,7 @@ import {
   RefreshCw,
   Search,
 } from "lucide-react"
-import { AppBootstrap } from "@/components/app-bootstrap"
+import { useAppBootstrap } from "@/components/app-bootstrap"
 import { BrandLogo } from "@/components/brand-logo"
 import { CourseViewerLayout } from "@/components/course-viewer/layout"
 import { CourseArtwork } from "@/components/course-artwork"
@@ -107,6 +107,8 @@ export function HomeScreen() {
   const handleStartupRoute = useCallback((route: StartupRoute | null) => {
     setStartupRouteOverride(route)
   }, [])
+
+  useAppBootstrap({ onHydrated: handleBootstrapHydrated, onStartupRoute: handleStartupRoute })
 
   const selectedCourse = useMemo(() => {
     return courses.find((course: Course) => course.id === effectiveCourseId) ?? null
@@ -205,7 +207,6 @@ export function HomeScreen() {
 
   return (
     <>
-      <AppBootstrap onHydrated={handleBootstrapHydrated} onStartupRoute={handleStartupRoute} />
       {content}
     </>
   )
