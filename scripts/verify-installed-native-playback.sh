@@ -36,6 +36,7 @@ mkdir -p "$(dirname "$frontend_log")" "$(dirname "$surface_log")"
 touch "$frontend_log" "$surface_log"
 frontend_start_lines="$(wc -l < "$frontend_log")"
 surface_start_lines="$(wc -l < "$surface_log")"
+media_tool_processes_before="$(pgrep -af '(^|/)(ffmpeg|ffprobe)( |$)' || true)"
 
 pkill -x melearner >/dev/null 2>&1 || true
 
@@ -97,6 +98,14 @@ if ! tail -n +"$((surface_start_lines + 1))" "$surface_log" | rg -q 'native gtk 
   exit 1
 fi
 
+media_tool_processes_after="$(pgrep -af '(^|/)(ffmpeg|ffprobe)( |$)' || true)"
+new_media_tool_processes="$(comm -13 <(printf '%s\n' "$media_tool_processes_before" | sort) <(printf '%s\n' "$media_tool_processes_after" | sort) | sed '/^$/d')"
+if [[ -n "$new_media_tool_processes" ]]; then
+  echo "normal native playback started ffmpeg/ffprobe, which is not allowed:" >&2
+  echo "$new_media_tool_processes" >&2
+  exit 1
+fi
+
 if command -v hyprctl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
   melearner_clients="$(hyprctl clients -j | jq -r '.[] | select((.class | test("melearner"; "i")) or (.title | test("^(melearner|melearner video|local course learner)$"; "i"))) | [.workspace.name, .class, .title] | @tsv')"
   melearner_count="$(wc -l <<<"$melearner_clients" | tr -d ' ')"
@@ -107,4 +116,4 @@ if command -v hyprctl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
   fi
 fi
 
-echo "native playback verified: course=$course_id lesson=$lesson_id frames=$frames surface=${width}x${height}"
+echo "native playback verified: course=$course_id lesson=$lesson_id frames=$frames surface=${width}x${height} ffmpeg=none"
