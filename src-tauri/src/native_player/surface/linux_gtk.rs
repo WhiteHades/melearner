@@ -1,4 +1,4 @@
-use super::{NativeSurfaceRect, RenderApiDiagnostics};
+use super::{NativeSurfaceRect, RenderApiDiagnostics, record_native_surface_runtime_log};
 use gtk::prelude::*;
 use libmpv2::Mpv;
 use libmpv2_sys as mpv_sys;
@@ -190,7 +190,7 @@ impl GtkInWindowSurface {
     ) -> Result<Self, String> {
         let gl_area = gtk::GLArea::new();
         gl_area.set_has_alpha(false);
-        gl_area.set_auto_render(false);
+        gl_area.set_auto_render(true);
         gl_area.set_hexpand(false);
         gl_area.set_vexpand(false);
         gl_area.set_no_show_all(true);
@@ -232,20 +232,20 @@ impl GtkInWindowSurface {
         if !self.gl_area.is_realized() {
             self.gl_area.realize();
         }
-        self.gl_area.queue_render();
+        queue_gl_area_render(&self.gl_area);
         Ok(())
     }
 
     fn move_to(&mut self, rect: NativeSurfaceRect) {
         apply_rect(&self.video_layer, &self.gl_area, rect, false);
-        self.gl_area.queue_render();
+        queue_gl_area_render(&self.gl_area);
     }
 
     fn set_visible(&self, visible: bool) {
         if visible {
             self.gl_area.show();
             self.video_layer.show();
-            self.gl_area.queue_render();
+            queue_gl_area_render(&self.gl_area);
         } else {
             self.gl_area.hide();
         }
@@ -273,6 +273,7 @@ struct GtkRenderState {
     mpv_client: Option<Mpv>,
     renderer: Option<GtkMpvRenderer>,
     diagnostics: RenderApiDiagnostics,
+    logged_first_frame: bool,
 }
 
 impl GtkRenderState {
@@ -282,6 +283,7 @@ impl GtkRenderState {
             mpv_client: None,
             renderer: None,
             diagnostics,
+            logged_first_frame: false,
         }
     }
 
@@ -312,7 +314,7 @@ impl GtkRenderState {
             }
         }
 
-        gl_area.queue_render();
+        queue_gl_area_render(gl_area);
     }
 
     fn render(&mut self, gl_area: &gtk::GLArea) {
@@ -333,6 +335,12 @@ impl GtkRenderState {
             Ok(()) => {
                 self.diagnostics.set_alive(true);
                 self.diagnostics.record_frame();
+                if !self.logged_first_frame {
+                    record_native_surface_runtime_log(
+                        "native gtk render-api submitted first frame",
+                    );
+                    self.logged_first_frame = true;
+                }
             }
             Err(err) => self.record_error(err),
         }
@@ -461,13 +469,18 @@ unsafe extern "C" fn gtk_mpv_update_callback(ctx: *mut c_void) {
         return;
     }
     let id = unsafe { *ctx.cast::<u64>() };
-    gtk::glib::MainContext::default().invoke(move || {
+    gtk::glib::idle_add_once(move || {
         GTK_SURFACES.with(|surfaces| {
             if let Some(surface) = surfaces.borrow().get(&id) {
-                surface.gl_area.queue_render();
+                queue_gl_area_render(&surface.gl_area);
             }
         });
     });
+}
+
+fn queue_gl_area_render(gl_area: &gtk::GLArea) {
+    gl_area.queue_render();
+    gl_area.queue_draw();
 }
 
 unsafe extern "C" fn gtk_get_proc_address(_ctx: *mut c_void, name: *const c_char) -> *mut c_void {
