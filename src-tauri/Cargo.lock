@@ -2570,6 +2570,7 @@ dependencies = [
  "tauri-plugin-log",
  "tauri-plugin-sql",
  "tokio",
+ "windows",
 ]
 
 [[package]]
