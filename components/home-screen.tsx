@@ -68,6 +68,15 @@ type BootstrappedLibrary = { courses: Course[]; libraryPath: string | null }
 const EMPTY_SEARCH_RESULTS: LibrarySearchResult[] = []
 const EMPTY_COMMAND_LESSONS: Array<{ course: Course; lesson: Lesson }> = []
 
+function scheduleHomeStateUpdate(work: () => void): void {
+  if (typeof window === "undefined") {
+    work()
+    return
+  }
+
+  window.setTimeout(work, 0)
+}
+
 function replaceStartupUrl(courseId: string, lessonId: string | null): void {
   if (typeof window === "undefined") return
 
@@ -105,7 +114,7 @@ export function HomeScreen() {
       coursesCount: library.courses.length,
       libraryPath: library.libraryPath,
     })
-    setBootstrappedLibrary(library)
+    scheduleHomeStateUpdate(() => setBootstrappedLibrary(library))
   }, [])
 
   const handleStartupRoute = useCallback((route: StartupRoute | null) => {
@@ -113,7 +122,7 @@ export function HomeScreen() {
       courseId: route?.courseId ?? null,
       lessonId: route?.lessonId ?? null,
     })
-    setStartupRouteOverride(route)
+    scheduleHomeStateUpdate(() => setStartupRouteOverride(route))
   }, [])
 
   useAppBootstrap({ onHydrated: handleBootstrapHydrated, onStartupRoute: handleStartupRoute })
