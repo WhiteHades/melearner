@@ -99,6 +99,8 @@ Build the AppImage:
 NO_STRIP=true pnpm tauri build --ci --bundles appimage
 ```
 
+The public release workflow builds the AppImage inside an Arch container, not directly on the Ubuntu runner, because Ubuntu 22.04 does not provide the native-player libmpv stack used by this app.
+
 Build the native Arch package after a clean no-bundle release binary exists:
 
 ```bash

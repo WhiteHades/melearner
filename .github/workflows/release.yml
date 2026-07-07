@@ -37,40 +37,21 @@ jobs:
         with:
           ref: ${{ inputs.tag }}
 
-      - name: install pnpm
-        run: npm install -g pnpm@11.10.0
-
-      - name: setup node
-        uses: actions/setup-node@v4
-        with:
-          node-version: lts/*
-          cache: pnpm
-
-      - name: install rust stable
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: install linux deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            libssl-dev
-
-      - name: rust cache
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: "./src-tauri -> target"
-
-      - name: install frontend deps
-        run: pnpm install --frozen-lockfile
-
       - name: build appimage
-        env:
-          NO_STRIP: "true"
-        run: pnpm tauri build --bundles appimage
+        run: |
+          docker run --rm \
+            -e RUNNER_UID="$(id -u)" \
+            -e RUNNER_GID="$(id -g)" \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            archlinux:base-devel bash -euo pipefail -c '
+            pacman -Syu --noconfirm
+            pacman -S --noconfirm cargo ffmpeg git gtk3 libayatana-appindicator libglvnd librsvg nodejs openssl patchelf pkgconf pnpm rust mpv webkit2gtk-4.1 xdg-utils
+            groupadd -g "$RUNNER_GID" runner || true
+            useradd -m -u "$RUNNER_UID" -g "$RUNNER_GID" builder
+            su builder -c "cd /workspace && pnpm install --frozen-lockfile"
+            su builder -c "cd /workspace && NO_STRIP=true pnpm tauri build --bundles appimage"
+          '
 
       - name: stage curated assets
         run: |
