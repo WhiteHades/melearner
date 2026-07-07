@@ -40,7 +40,7 @@ function Invoke-Native {
     [string[]]$Arguments
   )
 
-  Write-Output $Description
+  Write-Host $Description
   $previousErrorActionPreference = $ErrorActionPreference
   $ErrorActionPreference = "Continue"
   try {
@@ -50,7 +50,7 @@ function Invoke-Native {
     $ErrorActionPreference = $previousErrorActionPreference
   }
   if ($output) {
-    $output | ForEach-Object { Write-Output $_ }
+    $output | ForEach-Object { Write-Host $_ }
   }
 
   return [pscustomobject]@{
