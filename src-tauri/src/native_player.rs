@@ -17,6 +17,7 @@ use surface::NativeVideoSurface;
 use tauri::{AppHandle, Emitter, Manager};
 
 static PLAYER: OnceLock<Mutex<Option<NativePlayer>>> = OnceLock::new();
+static PENDING_BOUNDS: OnceLock<Mutex<Option<NativePlayerBounds>>> = OnceLock::new();
 static PLAYBACK_EVENT_RUN: OnceLock<Mutex<u64>> = OnceLock::new();
 static POSITION_EVENT_RUN: OnceLock<Mutex<u64>> = OnceLock::new();
 const EVENT_STATE: &str = "native-player://state";
@@ -29,6 +30,10 @@ const EVENT_ERROR: &str = "native-player://error";
 
 fn player_slot() -> &'static Mutex<Option<NativePlayer>> {
     PLAYER.get_or_init(|| Mutex::new(None))
+}
+
+fn pending_bounds_slot() -> &'static Mutex<Option<NativePlayerBounds>> {
+    PENDING_BOUNDS.get_or_init(|| Mutex::new(None))
 }
 
 fn position_event_slot() -> &'static Mutex<u64> {
@@ -903,6 +908,21 @@ fn with_existing_player<T>(
     }
 }
 
+fn remember_pending_bounds(bounds: NativePlayerBounds) -> Result<(), String> {
+    let mut guard = pending_bounds_slot()
+        .lock()
+        .map_err(|_| "native player bounds lock is poisoned".to_string())?;
+    *guard = Some(bounds);
+    Ok(())
+}
+
+fn current_pending_bounds() -> Result<Option<NativePlayerBounds>, String> {
+    pending_bounds_slot()
+        .lock()
+        .map(|guard| *guard)
+        .map_err(|_| "native player bounds lock is poisoned".to_string())
+}
+
 fn next_position_event_run() -> u64 {
     let mut guard = position_event_slot()
         .lock()
@@ -1087,7 +1107,13 @@ pub fn native_player_load(
     stop_playback_events();
     let result = canonical_local_file(&options.path, &options.allowed_roots).and_then(|path| {
         let subtitles = canonical_subtitle_files(&options.subtitles, &options.allowed_roots)?;
+        let pending_bounds = current_pending_bounds()?;
         with_player(|player| {
+            if player.surface.is_none() {
+                if let Some(bounds) = pending_bounds {
+                    player.set_bounds(&app, bounds)?;
+                }
+            }
             let event_client = player.playback_event_client()?;
             let state = player.load_visible(
                 path,
@@ -1248,7 +1274,12 @@ pub async fn native_player_set_bounds(
     if bounds.width <= 0 || bounds.height <= 0 || bounds.scale_factor <= 0.0 {
         return Err("native player bounds are invalid".to_string());
     }
-    with_player(|player| player.set_bounds(&app, bounds))
+    remember_pending_bounds(bounds)?;
+    let result = with_existing_player(|player| player.set_bounds(&app, bounds)).map(|_| ());
+    if let Err(err) = &result {
+        emit_native_error(&app, err);
+    }
+    result
 }
 
 #[tauri::command]
