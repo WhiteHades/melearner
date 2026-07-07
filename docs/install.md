@@ -31,7 +31,7 @@ Windows and macOS installers are not production release targets yet. The app's p
 
 Do not publish Windows MSI, NSIS, macOS DMG, or macOS app-bundle release artifacts until each platform can visibly play local media through the embedded native surface in one app window on a clean machine.
 
-Windows MSI test artifacts are available from the manually dispatched `windows msi downloader` workflow. These MSI artifacts are Authenticode-signed in CI with a per-run self-signed test certificate, then verified before upload. They prove the packaging and signing path, but they are still for end-to-end testing only, not supported production releases. Windows may still show an unknown-publisher or SmartScreen warning because the test certificate is not a trusted production code-signing certificate.
+Windows MSI test artifacts are available from the manually dispatched `windows msi downloader` workflow. These MSI artifacts are Authenticode-signed in CI with a per-run self-signed test certificate, then checked before upload. They prove the packaging and signing path, but they are still for end-to-end testing only, not supported production releases. Windows may still show an unknown-publisher or SmartScreen warning because the test certificate is not a trusted production code-signing certificate.
 
 1. Open the [Actions page](https://github.com/WhiteHades/melearner/actions/workflows/windows-msi.yml).
 2. Open the latest successful run for the commit you want to test.

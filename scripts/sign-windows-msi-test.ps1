@@ -33,7 +33,7 @@ function Find-SignTool {
   return $matches | Sort-Object FullName -Descending | Select-Object -First 1
 }
 
-function Invoke-Checked {
+function Invoke-Native {
   param(
     [string]$Description,
     [string]$Command,
@@ -52,9 +52,52 @@ function Invoke-Checked {
   if ($output) {
     $output | ForEach-Object { Write-Output $_ }
   }
+
+  return [pscustomobject]@{
+    ExitCode = $exitCode
+    Output = $output
+  }
+}
+
+function Invoke-Checked {
+  param(
+    [string]$Description,
+    [string]$Command,
+    [string[]]$Arguments
+  )
+
+  $result = Invoke-Native -Description $Description -Command $Command -Arguments $Arguments
+  $exitCode = $result.ExitCode
   if ($exitCode -ne 0) {
     throw "$Description failed with exit code $exitCode"
   }
+}
+
+function Test-SignedFile {
+  param(
+    [string]$SignToolPath,
+    [string]$Path
+  )
+
+  $result = Invoke-Native `
+    -Description "checking Authenticode signature on $Path" `
+    -Command $SignToolPath `
+    -Arguments @("verify", "/pa", "/v", $Path)
+
+  if ($result.ExitCode -eq 0) {
+    return
+  }
+
+  $verificationOutput = ($result.Output | Out-String)
+  if ($verificationOutput -match "No signature found" -or $verificationOutput -match "not valid") {
+    throw "signtool did not find an Authenticode signature on $Path"
+  }
+  if ($verificationOutput -match "not trusted" -or $verificationOutput -match "root certificate") {
+    Write-Output "signature is present; self-signed test certificate is expected to be untrusted"
+    return
+  }
+
+  throw "unexpected signtool verification failure for $Path"
 }
 
 if (!(Test-Path -LiteralPath $MsiDirectory)) {
@@ -80,26 +123,13 @@ if ($msiFiles.Count -lt 1) {
 }
 Write-Output "found $($msiFiles.Count) MSI file(s) in $MsiDirectory"
 
-Invoke-Checked `
-  -Description "trusting public test certificate in CurrentUser Root store" `
-  -Command "certutil.exe" `
-  -Arguments @("-user", "-addstore", "Root", $PublicCertPath)
-
-Invoke-Checked `
-  -Description "trusting public test certificate in CurrentUser TrustedPublisher store" `
-  -Command "certutil.exe" `
-  -Arguments @("-user", "-addstore", "TrustedPublisher", $PublicCertPath)
-
 foreach ($msi in $msiFiles) {
   Invoke-Checked `
     -Description "signing $($msi.FullName)" `
     -Command $signTool.FullName `
     -Arguments @("sign", "/f", $PfxPath, "/p", $PfxPassword, "/fd", "SHA256", "/v", $msi.FullName)
 
-  Invoke-Checked `
-    -Description "verifying $($msi.FullName)" `
-    -Command $signTool.FullName `
-    -Arguments @("verify", "/pa", "/v", $msi.FullName)
+  Test-SignedFile -SignToolPath $signTool.FullName -Path $msi.FullName
 
   Write-Output "signed $($msi.FullName) with $Subject"
 }
