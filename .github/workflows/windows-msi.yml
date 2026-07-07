@@ -67,6 +67,9 @@ jobs:
           "LIBRARY_PATH=$ucrtLib" >> $env:GITHUB_ENV
           "PKG_CONFIG_PATH=$ucrtLib\pkgconfig" >> $env:GITHUB_ENV
           "RUSTFLAGS=-L native=$ucrtLib" >> $env:GITHUB_ENV
+          "CARGO_PROFILE_RELEASE_OPT_LEVEL=1" >> $env:GITHUB_ENV
+          "CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16" >> $env:GITHUB_ENV
+          "CARGO_PROFILE_RELEASE_LTO=false" >> $env:GITHUB_ENV
 
       - name: rust cache
         uses: swatinem/rust-cache@v2
