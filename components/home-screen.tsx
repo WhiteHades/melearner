@@ -1,7 +1,6 @@
 "use client"
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react"
-import { flushSync } from "react-dom"
 import { useShallow } from "zustand/react/shallow"
 import { parseAsString, useQueryState } from "nuqs"
 import {
@@ -102,15 +101,11 @@ export function HomeScreen() {
   const effectiveLessonId = startupRouteOverride ? startupRouteOverride.lessonId : lessonId
 
   const handleBootstrapHydrated = useCallback((library: BootstrappedLibrary) => {
-    flushSync(() => {
-      setBootstrappedLibrary(library)
-    })
+    setBootstrappedLibrary(library)
   }, [])
 
   const handleStartupRoute = useCallback((route: StartupRoute | null) => {
-    flushSync(() => {
-      setStartupRouteOverride(route)
-    })
+    setStartupRouteOverride(route)
   }, [])
 
   const selectedCourse = useMemo(() => {
