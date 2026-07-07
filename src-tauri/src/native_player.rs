@@ -375,7 +375,7 @@ impl NativePlayer {
         match &mut self.surface {
             Some(surface) => surface.move_to(&parent, bounds)?,
             None => {
-                let surface = NativeVideoSurface::attach(app, &parent, bounds, &self.mpv)?;
+                let surface = NativeVideoSurface::attach(&parent, bounds, &self.mpv)?;
                 self.surface = Some(surface);
             }
         }
@@ -1651,7 +1651,7 @@ mod tests {
     }
 
     #[test]
-    fn surface_rect_uses_window_origin_and_scale() {
+    fn surface_rect_uses_local_bounds_and_scale() {
         let bounds = NativePlayerBounds {
             x: 12,
             y: 34,
@@ -1659,13 +1659,12 @@ mod tests {
             height: 360,
             scale_factor: 1.5,
         };
-        let origin = tauri::PhysicalPosition::new(100, 200);
 
         assert_eq!(
-            surface::surface_rect_for_bounds(origin, bounds).expect("surface rect"),
+            surface::surface_rect_for_local_bounds(bounds).expect("surface rect"),
             surface::NativeSurfaceRect {
-                x: 118,
-                y: 251,
+                x: 18,
+                y: 51,
                 width: 960,
                 height: 540,
             }
@@ -1673,20 +1672,10 @@ mod tests {
     }
 
     #[test]
-    fn native_surface_window_labels_are_unique() {
-        let first = surface::next_surface_window_label().expect("first surface label");
-        let second = surface::next_surface_window_label().expect("second surface label");
-
-        assert!(first.starts_with("native-player-surface"));
-        assert!(second.starts_with("native-player-surface"));
-        assert_ne!(first, second);
-    }
-
-    #[test]
     fn native_surface_backend_labels_render_api_path() {
-        let backend = surface::NativeSurfaceBackend::RenderApi("opengl");
+        let backend = surface::NativeSurfaceBackend::RenderApi("gtk-opengl");
 
-        assert_eq!(backend.label(), "render-api:opengl");
+        assert_eq!(backend.label(), "render-api:gtk-opengl");
         assert!(backend.uses_render_api());
     }
 

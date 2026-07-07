@@ -2,40 +2,18 @@ use super::NativePlayerBounds;
 #[cfg(target_os = "linux")]
 mod linux_gtk;
 
-use glutin::{
-    config::{ConfigTemplateBuilder, GlConfig},
-    context::{ContextAttributesBuilder, GlProfile, NotCurrentGlContext},
-    display::{Display, DisplayApiPreference, GlDisplay},
-    prelude::GlSurface,
-    surface::{SurfaceAttributesBuilder, WindowSurface},
-};
 use libmpv2::Mpv;
-use libmpv2::render::{OpenGLInitParams, RenderParam, RenderParamApiType};
-use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
 use std::{
-    ffi::{CString, c_void},
-    num::NonZeroU32,
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex, OnceLock,
+        Arc, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
-        mpsc,
     },
-    thread::{self, JoinHandle},
-    time::Duration,
 };
-use tauri::{AppHandle, PhysicalPosition, PhysicalSize, WebviewWindow, Window};
+use tauri::WebviewWindow;
 
-static SURFACE_WINDOW_RUN: OnceLock<Mutex<u64>> = OnceLock::new();
-const NATIVE_SURFACE_LABEL: &str = "native-player-surface";
 const SURFACE_BACKEND_ENV: &str = "MELEARNER_SURFACE_BACKEND";
 const NATIVE_SURFACE_LOG_ENV: &str = "MELEARNER_NATIVE_SURFACE_LOG";
-const RENDER_HANDLE_ATTEMPTS: usize = 20;
-const RENDER_HANDLE_RETRY_DELAY: Duration = Duration::from_millis(25);
-
-fn surface_window_slot() -> &'static Mutex<u64> {
-    SURFACE_WINDOW_RUN.get_or_init(|| Mutex::new(0))
-}
 
 fn native_surface_runtime_log_path() -> PathBuf {
     let configured = std::env::var(NATIVE_SURFACE_LOG_ENV).ok();
@@ -79,14 +57,6 @@ fn record_native_surface_runtime_log_at(path: &Path, message: &str) -> std::io::
         .append(true)
         .open(path)?;
     writeln!(file, "[{ts}] {message}")
-}
-
-pub(super) fn next_surface_window_label() -> Result<String, String> {
-    let mut guard = surface_window_slot()
-        .lock()
-        .map_err(|_| "native player surface label lock is poisoned".to_string())?;
-    *guard = guard.wrapping_add(1);
-    Ok(format!("{NATIVE_SURFACE_LABEL}-{}", *guard))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -170,16 +140,12 @@ enum NativeSurfaceAttachment {
     GtkInWindow {
         handle: linux_gtk::GtkInWindowSurfaceHandle,
     },
-    #[cfg_attr(target_os = "linux", allow(dead_code))]
-    RenderApi {
-        window: Window,
-        renderer: Option<RenderApiSurface>,
-    },
+    #[cfg(not(target_os = "linux"))]
+    Unsupported,
 }
 
 impl NativeVideoSurface {
     pub(super) fn attach(
-        _app: &AppHandle,
         parent: &WebviewWindow,
         bounds: NativePlayerBounds,
         mpv: &Mpv,
@@ -193,8 +159,10 @@ impl NativeVideoSurface {
                 }
 
                 #[cfg(not(target_os = "linux"))]
-                Self::attach_render_api(_app, parent, bounds)
-                    .and_then(|surface| Self::attach_surface_to_mpv(surface, mpv))
+                {
+                    let _ = (parent, bounds, mpv);
+                    Err(unsupported_platform_surface_error())
+                }
             }
         }
     }
@@ -219,69 +187,25 @@ impl NativeVideoSurface {
         })
     }
 
-    #[cfg_attr(target_os = "linux", allow(dead_code))]
-    fn attach_render_api(
-        app: &AppHandle,
-        parent: &WebviewWindow,
-        bounds: NativePlayerBounds,
-    ) -> Result<Self, String> {
-        reject_linux_overlay_surface_by_default()?;
-
-        let origin = parent
-            .inner_position()
-            .map_err(|err| format!("native player could not read host window position: {err}"))?;
-        let rect = surface_rect_for_bounds(origin, bounds)?;
-        let window = build_surface_window(app, parent, rect)?;
-
-        apply_surface_rect(&window, rect)?;
-        window
-            .show()
-            .map_err(|err| format!("native player could not show video surface: {err}"))?;
-
-        Ok(Self {
-            rect,
-            backend: NativeSurfaceBackend::RenderApi("opengl"),
-            attachment: NativeSurfaceAttachment::RenderApi {
-                window,
-                renderer: None,
-            },
-        })
-    }
-
     pub(super) fn move_to(
         &mut self,
-        parent: &WebviewWindow,
+        _parent: &WebviewWindow,
         bounds: NativePlayerBounds,
     ) -> Result<(), String> {
         #[cfg(target_os = "linux")]
-        if let NativeSurfaceAttachment::GtkInWindow { handle } = &self.attachment {
+        {
+            let NativeSurfaceAttachment::GtkInWindow { handle } = &self.attachment;
             let rect = surface_rect_for_local_bounds(bounds)?;
             handle.move_to(rect)?;
             self.rect = rect;
             return Ok(());
         }
 
-        let origin = parent
-            .inner_position()
-            .map_err(|err| format!("native player could not read host window position: {err}"))?;
-        let rect = surface_rect_for_bounds(origin, bounds)?;
-
-        match &self.attachment {
-            #[cfg(target_os = "linux")]
-            NativeSurfaceAttachment::GtkInWindow { .. } => {}
-            NativeSurfaceAttachment::RenderApi { window, .. } => {
-                apply_surface_rect(window, rect)?;
-            }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = bounds;
+            return Err(unsupported_platform_surface_error());
         }
-        self.rect = rect;
-
-        if let NativeSurfaceAttachment::RenderApi { renderer, .. } = &self.attachment {
-            if let Some(renderer) = renderer {
-                renderer.resize(rect)?;
-            }
-        }
-
-        Ok(())
     }
 
     fn attach_to_mpv(&mut self, mpv: &Mpv) -> Result<(), String> {
@@ -293,13 +217,10 @@ impl NativeVideoSurface {
                 })?;
                 handle.attach_to_mpv(mpv)
             }
-            NativeSurfaceAttachment::RenderApi { window, renderer } => {
-                mpv.set_property("vo", "libmpv").map_err(|err| {
-                    format!("libmpv could not enable render-api video output: {err}")
-                })?;
-                *renderer = Some(RenderApiSurface::start(window, self.rect, mpv)?);
-                record_native_surface_runtime_log("native render-api surface attached");
-                Ok(())
+            #[cfg(not(target_os = "linux"))]
+            NativeSurfaceAttachment::Unsupported => {
+                let _ = mpv;
+                Err(unsupported_platform_surface_error())
             }
         }
     }
@@ -308,16 +229,10 @@ impl NativeVideoSurface {
         match &self.attachment {
             #[cfg(target_os = "linux")]
             NativeSurfaceAttachment::GtkInWindow { handle } => handle.set_visible(visible),
-            NativeSurfaceAttachment::RenderApi { window, .. } => {
-                if visible {
-                    window
-                        .show()
-                        .map_err(|err| format!("native player could not show video surface: {err}"))
-                } else {
-                    window
-                        .hide()
-                        .map_err(|err| format!("native player could not hide video surface: {err}"))
-                }
+            #[cfg(not(target_os = "linux"))]
+            NativeSurfaceAttachment::Unsupported => {
+                let _ = visible;
+                Err(unsupported_platform_surface_error())
             }
         }
     }
@@ -326,11 +241,8 @@ impl NativeVideoSurface {
         match &self.attachment {
             #[cfg(target_os = "linux")]
             NativeSurfaceAttachment::GtkInWindow { handle } => handle.request_render(),
-            NativeSurfaceAttachment::RenderApi {
-                renderer: Some(renderer),
-                ..
-            } => renderer.request_render(),
-            NativeSurfaceAttachment::RenderApi { renderer: None, .. } => Ok(()),
+            #[cfg(not(target_os = "linux"))]
+            NativeSurfaceAttachment::Unsupported => Err(unsupported_platform_surface_error()),
         }
     }
 
@@ -346,11 +258,8 @@ impl NativeVideoSurface {
         match &self.attachment {
             #[cfg(target_os = "linux")]
             NativeSurfaceAttachment::GtkInWindow { handle } => handle.diagnostics(),
-            NativeSurfaceAttachment::RenderApi {
-                renderer: Some(renderer),
-                ..
-            } => renderer.diagnostics(),
-            _ => NativeSurfaceDiagnostics::default(),
+            #[cfg(not(target_os = "linux"))]
+            NativeSurfaceAttachment::Unsupported => NativeSurfaceDiagnostics::default(),
         }
     }
 }
@@ -360,100 +269,17 @@ impl Drop for NativeVideoSurface {
         match &mut self.attachment {
             #[cfg(target_os = "linux")]
             NativeSurfaceAttachment::GtkInWindow { .. } => {}
-            NativeSurfaceAttachment::RenderApi { window, renderer } => {
-                renderer.take();
-                let _ = window.close();
-            }
+            #[cfg(not(target_os = "linux"))]
+            NativeSurfaceAttachment::Unsupported => {}
         }
     }
-}
-
-#[cfg(target_os = "linux")]
-fn reject_linux_overlay_surface_by_default() -> Result<(), String> {
-    let message =
-        "Linux playback uses the in-window GTK render-api surface; separate native video windows are disabled".to_string();
-    record_native_surface_runtime_log(&message);
-    Err(message)
 }
 
 #[cfg(not(target_os = "linux"))]
-fn reject_linux_overlay_surface_by_default() -> Result<(), String> {
-    Ok(())
-}
-
-struct RenderApiSurface {
-    commands: mpsc::Sender<RenderApiCommand>,
-    thread: Option<JoinHandle<()>>,
-    diagnostics: RenderApiDiagnostics,
-}
-
-impl RenderApiSurface {
-    fn start(window: &Window, rect: NativeSurfaceRect, mpv: &Mpv) -> Result<Self, String> {
-        let handles = wait_for_render_api_handles(window)?;
-        let mpv_client = mpv
-            .create_client(None)
-            .map_err(|err| format!("libmpv could not create render-api client: {err}"))?;
-        let (commands, command_rx) = mpsc::channel();
-        let (init_tx, init_rx) = mpsc::channel();
-        let callback_tx = commands.clone();
-        let diagnostics = RenderApiDiagnostics::new();
-        let thread_diagnostics = diagnostics.clone();
-        let thread = thread::Builder::new()
-            .name("melearner-render-api".to_string())
-            .spawn(move || {
-                run_render_api_thread(
-                    handles,
-                    rect,
-                    mpv_client,
-                    command_rx,
-                    callback_tx,
-                    init_tx,
-                    thread_diagnostics,
-                );
-            })
-            .map_err(|err| format!("native render-api could not start render thread: {err}"))?;
-
-        match init_rx.recv() {
-            Ok(Ok(())) => Ok(Self {
-                commands,
-                thread: Some(thread),
-                diagnostics,
-            }),
-            Ok(Err(err)) => {
-                let _ = thread.join();
-                Err(err)
-            }
-            Err(_) => {
-                let _ = thread.join();
-                Err("native render-api render thread exited before initialization".to_string())
-            }
-        }
-    }
-
-    fn resize(&self, rect: NativeSurfaceRect) -> Result<(), String> {
-        self.commands
-            .send(RenderApiCommand::Resize(rect))
-            .map_err(|err| format!("native render-api could not send resize command: {err}"))
-    }
-
-    fn request_render(&self) -> Result<(), String> {
-        self.commands
-            .send(RenderApiCommand::Render)
-            .map_err(|err| format!("native render-api could not send render command: {err}"))
-    }
-
-    fn diagnostics(&self) -> NativeSurfaceDiagnostics {
-        self.diagnostics.snapshot()
-    }
-}
-
-impl Drop for RenderApiSurface {
-    fn drop(&mut self) {
-        let _ = self.commands.send(RenderApiCommand::Shutdown);
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
-    }
+fn unsupported_platform_surface_error() -> String {
+    let message = "native in-window render surface is not implemented for this platform; normal playback must not create a separate video window".to_string();
+    record_native_surface_runtime_log(&message);
+    message
 }
 
 #[derive(Clone)]
@@ -516,339 +342,9 @@ impl RenderApiDiagnostics {
     }
 }
 
-#[derive(Clone, Copy)]
-struct RenderApiRawHandles {
-    display: RawDisplayHandle,
-    window: RawWindowHandle,
-}
-
-unsafe impl Send for RenderApiRawHandles {}
-
-fn wait_for_render_api_handles(window: &Window) -> Result<RenderApiRawHandles, String> {
-    let mut last_error = "the underlying handle is not available".to_string();
-
-    for attempt in 0..RENDER_HANDLE_ATTEMPTS {
-        match (window.display_handle(), window.window_handle()) {
-            (Ok(display), Ok(window)) => {
-                return Ok(RenderApiRawHandles {
-                    display: display.as_raw(),
-                    window: window.as_raw(),
-                });
-            }
-            (display, window) => {
-                last_error = match (display.err(), window.err()) {
-                    (Some(display_err), Some(window_err)) => {
-                        format!(
-                            "display handle error: {display_err}; window handle error: {window_err}"
-                        )
-                    }
-                    (Some(display_err), None) => format!("display handle error: {display_err}"),
-                    (None, Some(window_err)) => format!("window handle error: {window_err}"),
-                    (None, None) => "the underlying handle is not available".to_string(),
-                };
-            }
-        }
-
-        if attempt + 1 < RENDER_HANDLE_ATTEMPTS {
-            thread::sleep(RENDER_HANDLE_RETRY_DELAY);
-        }
-    }
-
-    Err(format!(
-        "native render-api could not read window handles after waiting: {last_error}"
-    ))
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum RenderApiDisplayHandle {
-    X11(*const c_void),
-    Wayland(*const c_void),
-}
-
-enum RenderApiCommand {
-    Render,
-    Resize(NativeSurfaceRect),
-    Shutdown,
-}
-
-fn render_api_command_counts_frame(command: &RenderApiCommand) -> bool {
-    matches!(command, RenderApiCommand::Render)
-}
-
-fn run_render_api_thread(
-    handles: RenderApiRawHandles,
-    rect: NativeSurfaceRect,
-    mpv_client: Mpv,
-    command_rx: mpsc::Receiver<RenderApiCommand>,
-    callback_tx: mpsc::Sender<RenderApiCommand>,
-    init_tx: mpsc::Sender<Result<(), String>>,
-    diagnostics: RenderApiDiagnostics,
-) {
-    let mut renderer = match RenderApiRenderer::new(handles, rect, &mpv_client) {
-        Ok(renderer) => {
-            diagnostics.set_alive(true);
-            let _ = init_tx.send(Ok(()));
-            renderer
-        }
-        Err(err) => {
-            diagnostics.record_error(&err);
-            diagnostics.set_alive(false);
-            record_native_surface_runtime_log(&format!(
-                "native render-api render thread initialization failed: {err}"
-            ));
-            let _ = init_tx.send(Err(err));
-            return;
-        }
-    };
-
-    renderer.render_context.set_update_callback(move || {
-        let _ = callback_tx.send(RenderApiCommand::Render);
-    });
-
-    while let Ok(command) = command_rx.recv() {
-        let result = match command {
-            RenderApiCommand::Render => renderer.render(),
-            RenderApiCommand::Resize(rect) => renderer.resize(rect),
-            RenderApiCommand::Shutdown => break,
-        };
-
-        if let Err(err) = result {
-            log::error!("native render-api failed: {err}");
-            diagnostics.record_error(&err);
-            diagnostics.set_alive(false);
-            record_native_surface_runtime_log(&format!("native render-api failed: {err}"));
-            break;
-        } else if render_api_command_counts_frame(&command) {
-            diagnostics.record_frame(renderer.width as u32, renderer.height as u32, 0);
-        }
-    }
-
-    diagnostics.set_alive(false);
-}
-
-struct RenderApiRenderer<'a> {
-    render_context: libmpv2::render::RenderContext<'a>,
-    gl_surface: glutin::surface::Surface<WindowSurface>,
-    gl_context: glutin::context::PossiblyCurrentContext,
-    _display: Box<Display>,
-    width: i32,
-    height: i32,
-}
-
-impl<'a> RenderApiRenderer<'a> {
-    fn new(
-        handles: RenderApiRawHandles,
-        rect: NativeSurfaceRect,
-        mpv_client: &'a Mpv,
-    ) -> Result<Self, String> {
-        let width = nonzero_surface_dimension(rect.width, "width")?;
-        let height = nonzero_surface_dimension(rect.height, "height")?;
-        let display = Box::new(unsafe {
-            Display::new(handles.display, display_api_preference(handles.window))
-                .map_err(|err| format!("native render-api could not create GL display: {err}"))?
-        });
-        let template = ConfigTemplateBuilder::new()
-            .with_alpha_size(8)
-            .with_depth_size(0)
-            .prefer_hardware_accelerated(Some(true))
-            .compatible_with_native_window(handles.window)
-            .build();
-        let config = unsafe {
-            display
-                .find_configs(template)
-                .map_err(|err| format!("native render-api could not query GL configs: {err}"))?
-                .max_by_key(|config| (config.hardware_accelerated(), config.num_samples()))
-                .ok_or_else(|| "native render-api did not find a GL config".to_string())?
-        };
-        let surface_attributes =
-            SurfaceAttributesBuilder::<WindowSurface>::new().build(handles.window, width, height);
-        let gl_surface = unsafe {
-            display
-                .create_window_surface(&config, &surface_attributes)
-                .map_err(|err| format!("native render-api could not create GL surface: {err}"))?
-        };
-        let context_attributes = ContextAttributesBuilder::new()
-            .with_profile(GlProfile::Core)
-            .build(Some(handles.window));
-        let gl_context = unsafe {
-            display
-                .create_context(&config, &context_attributes)
-                .map_err(|err| format!("native render-api could not create GL context: {err}"))?
-        }
-        .make_current(&gl_surface)
-        .map_err(|err| format!("native render-api could not make GL context current: {err}"))?;
-        let display_ptr = display.as_ref() as *const Display as usize;
-        let mut render_params: Vec<RenderParam<usize>> = vec![
-            RenderParam::ApiType(RenderParamApiType::OpenGl),
-            RenderParam::InitParams(OpenGLInitParams {
-                get_proc_address: render_api_get_proc_address,
-                ctx: display_ptr,
-            }),
-        ];
-        if let Some(display_handle) = render_api_display_handle(handles.display) {
-            match display_handle {
-                RenderApiDisplayHandle::X11(display) => {
-                    render_params.push(RenderParam::X11Display(display));
-                }
-                RenderApiDisplayHandle::Wayland(display) => {
-                    render_params.push(RenderParam::WaylandDisplay(display));
-                }
-            }
-        }
-        let render_context = mpv_client
-            .create_render_context(render_params)
-            .map_err(|err| format!("libmpv could not create render-api context: {err}"))?;
-
-        Ok(Self {
-            render_context,
-            gl_surface,
-            gl_context,
-            _display: display,
-            width: width.get() as i32,
-            height: height.get() as i32,
-        })
-    }
-
-    fn resize(&mut self, rect: NativeSurfaceRect) -> Result<(), String> {
-        let width = nonzero_surface_dimension(rect.width, "width")?;
-        let height = nonzero_surface_dimension(rect.height, "height")?;
-        self.gl_surface.resize(&self.gl_context, width, height);
-        self.width = width.get() as i32;
-        self.height = height.get() as i32;
-        self.render()
-    }
-
-    fn render(&mut self) -> Result<(), String> {
-        self.render_context
-            .render::<usize>(0, self.width, self.height, true)
-            .map_err(|err| format!("libmpv render-api render failed: {err}"))?;
-        self.gl_surface
-            .swap_buffers(&self.gl_context)
-            .map_err(|err| format!("native render-api could not swap buffers: {err}"))?;
-        self.render_context.report_swap();
-        Ok(())
-    }
-}
-
-fn nonzero_surface_dimension(value: u32, label: &str) -> Result<NonZeroU32, String> {
-    NonZeroU32::new(value)
-        .ok_or_else(|| format!("native render-api surface {label} must be non-zero"))
-}
-
-fn render_api_get_proc_address(display_ptr: &usize, name: &str) -> *mut c_void {
-    let Ok(name) = CString::new(name) else {
-        return std::ptr::null_mut();
-    };
-    let display = unsafe { &*(*display_ptr as *const Display) };
-    display.get_proc_address(&name).cast_mut()
-}
-
-fn render_api_display_handle(display: RawDisplayHandle) -> Option<RenderApiDisplayHandle> {
-    match display {
-        RawDisplayHandle::Xlib(handle) => handle
-            .display
-            .map(|display| RenderApiDisplayHandle::X11(display.as_ptr().cast_const())),
-        RawDisplayHandle::Wayland(handle) => Some(RenderApiDisplayHandle::Wayland(
-            handle.display.as_ptr().cast_const(),
-        )),
-        _ => None,
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn display_api_preference(_window: RawWindowHandle) -> DisplayApiPreference {
-    DisplayApiPreference::Cgl
-}
-
-#[cfg(windows)]
-fn display_api_preference(window: RawWindowHandle) -> DisplayApiPreference {
-    DisplayApiPreference::Wgl(Some(window))
-}
-
-#[cfg(all(unix, not(target_os = "macos")))]
-fn display_api_preference(_window: RawWindowHandle) -> DisplayApiPreference {
-    DisplayApiPreference::Egl
-}
-
-fn apply_surface_rect(window: &Window, rect: NativeSurfaceRect) -> Result<(), String> {
-    window
-        .set_size(PhysicalSize::new(rect.width, rect.height))
-        .map_err(|err| format!("native player could not resize video surface: {err}"))?;
-    window
-        .set_position(PhysicalPosition::new(rect.x, rect.y))
-        .map_err(|err| format!("native player could not move video surface: {err}"))
-}
-
-fn build_surface_window(
-    app: &AppHandle,
-    parent: &WebviewWindow,
-    rect: NativeSurfaceRect,
-) -> Result<Window, String> {
-    let label = next_surface_window_label()?;
-    let builder = tauri::WindowBuilder::new(app, label)
-        .title("melearner")
-        .decorations(false)
-        .resizable(false)
-        .focused(false)
-        .focusable(false)
-        .visible(false)
-        .skip_taskbar(true)
-        .inner_size(rect.width as f64, rect.height as f64)
-        .position(rect.x as f64, rect.y as f64);
-
-    #[cfg(windows)]
-    let builder = builder.parent_raw(
-        parent
-            .hwnd()
-            .map_err(|err| format!("native player could not read host window handle: {err}"))?,
-    );
-
-    #[cfg(target_os = "macos")]
-    let builder = builder.parent_raw(
-        parent
-            .ns_window()
-            .map_err(|err| format!("native player could not read host window handle: {err}"))?,
-    );
-
-    #[cfg(any(
-        target_os = "linux",
-        target_os = "dragonfly",
-        target_os = "freebsd",
-        target_os = "netbsd",
-        target_os = "openbsd"
-    ))]
-    let builder = {
-        let gtk_window = parent
-            .gtk_window()
-            .map_err(|err| format!("native player could not read host window handle: {err}"))?;
-        builder.transient_for_raw(&gtk_window)
-    };
-
-    builder
-        .build()
-        .map_err(|err| format!("native player could not create video surface: {err}"))
-}
-
-pub(super) fn surface_rect_for_bounds(
-    origin: PhysicalPosition<i32>,
+pub(super) fn surface_rect_for_local_bounds(
     bounds: NativePlayerBounds,
 ) -> Result<NativeSurfaceRect, String> {
-    if bounds.width <= 0 || bounds.height <= 0 {
-        return Err("native player bounds are invalid".to_string());
-    }
-    if !bounds.scale_factor.is_finite() || bounds.scale_factor <= 0.0 {
-        return Err("native player scale factor is invalid".to_string());
-    }
-
-    Ok(NativeSurfaceRect {
-        x: checked_surface_i32(origin.x as f64 + bounds.x as f64 * bounds.scale_factor, "x")?,
-        y: checked_surface_i32(origin.y as f64 + bounds.y as f64 * bounds.scale_factor, "y")?,
-        width: checked_surface_u32(bounds.width as f64 * bounds.scale_factor, "width")?,
-        height: checked_surface_u32(bounds.height as f64 * bounds.scale_factor, "height")?,
-    })
-}
-
-fn surface_rect_for_local_bounds(bounds: NativePlayerBounds) -> Result<NativeSurfaceRect, String> {
     if bounds.width <= 0 || bounds.height <= 0 {
         return Err("native player bounds are invalid".to_string());
     }
@@ -883,57 +379,6 @@ fn checked_surface_u32(value: f64, label: &str) -> Result<u32, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use raw_window_handle::{WaylandDisplayHandle, XcbDisplayHandle, XlibDisplayHandle};
-    use std::ptr::NonNull;
-
-    fn display_ptr() -> NonNull<c_void> {
-        NonNull::new(1 as *mut c_void).expect("non-null display pointer")
-    }
-
-    #[test]
-    fn render_api_uses_platform_display_params_when_available() {
-        let xlib = display_ptr();
-        let wayland = display_ptr();
-
-        assert_eq!(
-            render_api_display_handle(RawDisplayHandle::Xlib(XlibDisplayHandle::new(
-                Some(xlib),
-                0,
-            ))),
-            Some(RenderApiDisplayHandle::X11(xlib.as_ptr().cast_const()))
-        );
-        assert_eq!(
-            render_api_display_handle(RawDisplayHandle::Wayland(WaylandDisplayHandle::new(
-                wayland,
-            ))),
-            Some(RenderApiDisplayHandle::Wayland(
-                wayland.as_ptr().cast_const()
-            ))
-        );
-        assert_eq!(
-            render_api_display_handle(RawDisplayHandle::Xcb(XcbDisplayHandle::new(
-                Some(display_ptr()),
-                0,
-            ))),
-            None
-        );
-    }
-
-    #[test]
-    fn render_diagnostics_count_only_render_callbacks_as_frames() {
-        assert!(render_api_command_counts_frame(&RenderApiCommand::Render));
-        assert!(!render_api_command_counts_frame(&RenderApiCommand::Resize(
-            NativeSurfaceRect {
-                x: 0,
-                y: 0,
-                width: 640,
-                height: 360,
-            }
-        )));
-        assert!(!render_api_command_counts_frame(
-            &RenderApiCommand::Shutdown
-        ));
-    }
 
     #[test]
     fn native_surface_runtime_log_uses_configured_or_home_path() {
