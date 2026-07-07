@@ -279,19 +279,25 @@ impl GtkInWindowSurface {
     }
 
     fn request_render(&self) -> Result<(), String> {
-        if !self.gl_area.is_realized() {
-            self.gl_area.realize();
-        }
-        {
-            let mut state = self.render_state.borrow_mut();
-            state.realize(&self.gl_area);
-        }
-        self.schedule_render();
+        self.render_now();
 
         match self.render_state.borrow().diagnostics.snapshot().last_error {
             Some(err) => Err(err),
             None => Ok(()),
         }
+    }
+
+    fn render_now(&self) {
+        if !self.gl_area.is_realized() {
+            self.gl_area.realize();
+        }
+        self.gl_area.size_allocate(&self.layer_allocation.borrow());
+        {
+            let mut state = self.render_state.borrow_mut();
+            state.realize(&self.gl_area);
+            state.render(&self.gl_area);
+        }
+        queue_gl_area_render(&self.gl_area);
     }
 
     fn schedule_render(&self) {
@@ -327,10 +333,6 @@ fn apply_rect(
 ) {
     let width = surface_length_to_i32(rect.width);
     let height = surface_length_to_i32(rect.height);
-    record_native_surface_runtime_log(&format!(
-        "native gtk render-api requested rect: x={}, y={}, width={}, height={}, add={add}",
-        rect.x, rect.y, width, height
-    ));
     *layer_allocation.borrow_mut() = gtk::Rectangle::new(rect.x, rect.y, width, height);
     gl_area.set_size_request(width, height);
     gl_area.size_allocate(&layer_allocation.borrow());
@@ -352,7 +354,6 @@ struct GtkRenderState {
     renderer: Option<GtkMpvRenderer>,
     diagnostics: RenderApiDiagnostics,
     logged_first_frame: bool,
-    logged_frame_size: Option<(i32, i32)>,
 }
 
 impl GtkRenderState {
@@ -363,7 +364,6 @@ impl GtkRenderState {
             renderer: None,
             diagnostics,
             logged_first_frame: false,
-            logged_frame_size: None,
         }
     }
 
@@ -410,12 +410,6 @@ impl GtkRenderState {
             self.realize(gl_area);
             return;
         };
-        if self.logged_frame_size != Some((width, height)) {
-            record_native_surface_runtime_log(&format!(
-                "native gtk render-api frame allocation: {width}x{height}"
-            ));
-            self.logged_frame_size = Some((width, height));
-        }
 
         match renderer.render(width, height) {
             Ok(update_flags) => {
