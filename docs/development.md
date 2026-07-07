@@ -165,6 +165,7 @@ Windows media notes:
 
 - WebView2 Runtime must be present or installed by the bundle mode.
 - libmpv and its required runtime libraries must be bundled deliberately.
+- For local Windows no-bundle verification from MSYS2 UCRT, build with `RUSTUP_TOOLCHAIN=stable-x86_64-pc-windows-gnu`, `CARGO_TARGET_DIR` on a drive with enough space, and `pnpm tauri build --no-bundle --ci --target x86_64-pc-windows-gnu`. Then run `pnpm stage:windows-runtime -- --app-bin "<path-to-melearner.exe>"` to copy only the resolved MSYS2 UCRT DLL dependencies beside the built executable before launching or running `pnpm verify:native-playback`.
 - FFmpeg is not part of ordinary playback. If thumbnail generation is supported without user-installed FFmpeg, bundle FFmpeg deliberately and handle licensing.
 
 ## Architecture Notes

@@ -34,6 +34,7 @@ Do not publish Windows MSI, NSIS, macOS DMG, or macOS app-bundle release artifac
 Maintainer verification from a checkout:
 
 ```bash
+pnpm stage:windows-runtime -- --app-bin "<installed executable>"
 pnpm verify:native-playback -- --app-bin "<installed executable>" --course-id "<course-id>" --lesson-id "<lesson-id>"
 ```
 

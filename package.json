@@ -14,6 +14,7 @@
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "tauri:build:linux": "NO_STRIP=true tauri build --bundles appimage",
+    "stage:windows-runtime": "node scripts/stage-windows-runtime-dlls.mjs",
     "install:arch:fast": "bash scripts/install-arch-fast.sh",
     "verify:native-playback": "node scripts/verify-native-playback.mjs",
     "web:build": "next build",
