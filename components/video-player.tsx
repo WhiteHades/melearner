@@ -116,6 +116,8 @@ function VideoPlayerComponent({
   const [visibleCurrentTime, setVisibleCurrentTime] = useState(lesson.lastPosition)
   const [error, setError] = useState<{ path: string; message: string } | null>(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
+  const [loadRequested, setLoadRequested] = useState(() => autoplay)
+  const autoplayNextLoadRef = useRef(autoplay)
   const [loadSnapshot] = useState(() => ({
     id: lesson.id,
     path: lesson.path,
@@ -131,6 +133,7 @@ function VideoPlayerComponent({
     duration: lesson.duration,
   }), [autoplay, lesson.duration, lesson.lastPosition, lesson.path])
   const state = nativeState.path === lesson.path ? nativeState : fallbackState
+  const isLoaded = nativeState.path === lesson.path
   const displayCurrentTime = state.duration > 0
     ? Math.min(Math.max(visibleCurrentTime, 0), state.duration)
     : Math.max(visibleCurrentTime, 0)
@@ -172,10 +175,12 @@ function VideoPlayerComponent({
   }, [])
 
   useEffect(() => {
-    if (!isPlayable || !isTauri()) return
+    if (!loadRequested || !isPlayable || !isTauri()) return
     let isActive = true
 
     void (async () => {
+      const shouldAutoplay = autoplayNextLoadRef.current || autoplay
+      autoplayNextLoadRef.current = false
       await updateBounds()
       const next = await loadNativePlayerFile({
         path: loadSnapshot.path,
@@ -186,7 +191,7 @@ function VideoPlayerComponent({
           language: subtitle.language,
         })),
         startTime: loadSnapshot.lastPosition || undefined,
-        autoplay,
+        autoplay: shouldAutoplay,
       })
 
       if (!isActive) return
@@ -201,7 +206,7 @@ function VideoPlayerComponent({
       isActive = false
       if (isTauri()) void destroyNativePlayer().catch(() => undefined)
     }
-  }, [autoplay, isPlayable, libraryRoot, loadSnapshot, updateBounds])
+  }, [autoplay, isPlayable, libraryRoot, loadRequested, loadSnapshot, updateBounds])
 
   useEffect(() => {
     isSeekingRef.current = false
@@ -409,11 +414,16 @@ function VideoPlayerComponent({
   }, [displayCurrentTime, state.duration])
 
   const togglePlayback = useCallback(() => {
+    if (!isLoaded) {
+      autoplayNextLoadRef.current = true
+      setLoadRequested(true)
+      return
+    }
     const nextPaused = !state.paused
     setNativeState((current) => ({ ...(current.path === lesson.path ? current : fallbackState), paused: nextPaused }))
     const action = nextPaused ? pauseNativePlayer : playNativePlayer
     void action().catch((reason) => setError({ path: lesson.path, message: String(reason) }))
-  }, [fallbackState, lesson.path, state.paused])
+  }, [fallbackState, isLoaded, lesson.path, state.paused])
 
   const changeSeek = useCallback((value: number[]) => {
     const currentTime = value[0] ?? 0
