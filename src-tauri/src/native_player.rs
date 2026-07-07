@@ -1141,7 +1141,9 @@ pub fn native_player_load(
 
 #[tauri::command]
 pub fn native_player_state(app: AppHandle) -> Result<NativePlayerState, String> {
-    finish_state_command(&app, with_player(|player| Ok(player.state())))
+    let result = with_existing_player(|player| Ok(player.state()))
+        .map(|state| state.unwrap_or_else(empty_state));
+    finish_state_command(&app, result)
 }
 
 #[tauri::command]
