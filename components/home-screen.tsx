@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react"
+import { flushSync } from "react-dom"
 import { useShallow } from "zustand/react/shallow"
 import { parseAsString, useQueryState } from "nuqs"
 import {
@@ -82,6 +83,18 @@ export function HomeScreen() {
   const courses = bootstrappedLibrary?.courses ?? storeCourses
   const hasHydrated = Boolean(bootstrappedLibrary) || storeHasHydrated
   const startupRoute = pendingStartupRoute
+
+  const handleBootstrapHydrated = useCallback((library: BootstrappedLibrary) => {
+    flushSync(() => {
+      setBootstrappedLibrary(library)
+    })
+  }, [])
+
+  const handleStartupRoute = useCallback((route: StartupRoute | null) => {
+    flushSync(() => {
+      setPendingStartupRoute(route)
+    })
+  }, [])
 
   const selectedCourse = useMemo(() => {
     return courses.find((course: Course) => course.id === courseId) ?? null
@@ -165,7 +178,7 @@ export function HomeScreen() {
 
   return (
     <>
-      <AppBootstrap onHydrated={setBootstrappedLibrary} onStartupRoute={setPendingStartupRoute} />
+      <AppBootstrap onHydrated={handleBootstrapHydrated} onStartupRoute={handleStartupRoute} />
       {content}
     </>
   )
