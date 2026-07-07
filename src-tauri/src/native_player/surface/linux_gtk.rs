@@ -1,4 +1,5 @@
 use super::{NativeSurfaceRect, RenderApiDiagnostics, record_native_surface_runtime_log};
+use gtk::OverlaySignals;
 use gtk::prelude::*;
 use libmpv2::Mpv;
 use libmpv2_sys as mpv_sys;
@@ -10,6 +11,7 @@ use std::{
     rc::Rc,
     sync::atomic::{AtomicU64, Ordering},
     sync::mpsc,
+    time::Duration,
 };
 use tauri::WebviewWindow;
 
@@ -140,7 +142,8 @@ fn run_on_gtk_thread<T: Send + 'static>(
 
 #[derive(Clone)]
 struct GtkOverlayHost {
-    video_layer: gtk::Fixed,
+    overlay: gtk::Overlay,
+    layer_allocation: Rc<RefCell<gtk::Rectangle>>,
 }
 
 fn ensure_host(parent: &WebviewWindow) -> Result<GtkOverlayHost, String> {
@@ -172,25 +175,28 @@ fn ensure_host(parent: &WebviewWindow) -> Result<GtkOverlayHost, String> {
 
         overlay.add(&content);
 
-        let video_layer = gtk::Fixed::new();
-        video_layer.set_hexpand(true);
-        video_layer.set_vexpand(true);
-        video_layer.set_no_show_all(true);
-        overlay.add_overlay(&video_layer);
-        overlay.set_overlay_pass_through(&video_layer, true);
+        let layer_allocation = Rc::new(RefCell::new(gtk::Rectangle::new(0, 0, 1, 1)));
+        let layer_allocation_for_signal = layer_allocation.clone();
+        overlay.connect_get_child_position(move |_overlay, _child| {
+            Some(layer_allocation_for_signal.borrow().clone())
+        });
 
         vbox.pack_start(&overlay, true, true, 0);
         overlay.show_all();
 
-        let new_host = GtkOverlayHost { video_layer };
+        let new_host = GtkOverlayHost {
+            overlay,
+            layer_allocation,
+        };
         *host.borrow_mut() = Some(new_host.clone());
         Ok(new_host)
     })
 }
 
 struct GtkInWindowSurface {
+    overlay: gtk::Overlay,
     gl_area: gtk::GLArea,
-    video_layer: gtk::Fixed,
+    layer_allocation: Rc<RefCell<gtk::Rectangle>>,
     render_state: Rc<RefCell<GtkRenderState>>,
 }
 
@@ -203,7 +209,9 @@ impl GtkInWindowSurface {
     ) -> Result<Self, String> {
         let gl_area = gtk::GLArea::new();
         gl_area.set_has_alpha(false);
-        gl_area.set_auto_render(true);
+        gl_area.set_auto_render(false);
+        gl_area.set_halign(gtk::Align::Start);
+        gl_area.set_valign(gtk::Align::Start);
         gl_area.set_hexpand(false);
         gl_area.set_vexpand(false);
         gl_area.set_no_show_all(true);
@@ -230,10 +238,11 @@ impl GtkInWindowSurface {
             });
         }
 
-        apply_rect(&host.video_layer, &gl_area, rect, true);
+        apply_rect(&host.overlay, &host.layer_allocation, &gl_area, rect, true);
         Ok(Self {
+            overlay: host.overlay,
             gl_area,
-            video_layer: host.video_layer,
+            layer_allocation: host.layer_allocation,
             render_state,
         })
     }
@@ -241,25 +250,29 @@ impl GtkInWindowSurface {
     fn attach_to_mpv(&mut self, mpv_client: Mpv) -> Result<(), String> {
         self.render_state.borrow_mut().attach_to_mpv(mpv_client);
         self.gl_area.show();
-        self.video_layer.show();
         if !self.gl_area.is_realized() {
             self.gl_area.realize();
         }
         self.render_state.borrow_mut().realize(&self.gl_area);
-        queue_gl_area_render(&self.gl_area);
+        self.schedule_render();
         Ok(())
     }
 
     fn move_to(&mut self, rect: NativeSurfaceRect) {
-        apply_rect(&self.video_layer, &self.gl_area, rect, false);
-        queue_gl_area_render(&self.gl_area);
+        apply_rect(
+            &self.overlay,
+            &self.layer_allocation,
+            &self.gl_area,
+            rect,
+            false,
+        );
+        self.schedule_render();
     }
 
     fn set_visible(&self, visible: bool) {
         if visible {
             self.gl_area.show();
-            self.video_layer.show();
-            queue_gl_area_render(&self.gl_area);
+            self.schedule_render();
         } else {
             self.gl_area.hide();
         }
@@ -272,31 +285,65 @@ impl GtkInWindowSurface {
         {
             let mut state = self.render_state.borrow_mut();
             state.realize(&self.gl_area);
-            state.render(&self.gl_area);
         }
-        queue_gl_area_render(&self.gl_area);
+        self.schedule_render();
 
         match self.render_state.borrow().diagnostics.snapshot().last_error {
             Some(err) => Err(err),
             None => Ok(()),
         }
     }
+
+    fn schedule_render(&self) {
+        self.gl_area.queue_resize();
+        let gl_area = self.gl_area.clone();
+        let layer_allocation = self.layer_allocation.clone();
+        let render_state = self.render_state.clone();
+        gtk::glib::timeout_add_local_once(Duration::from_millis(50), move || {
+            gl_area.size_allocate(&layer_allocation.borrow());
+            {
+                let mut state = render_state.borrow_mut();
+                state.realize(&gl_area);
+                state.render(&gl_area);
+            }
+            queue_gl_area_render(&gl_area);
+        });
+    }
 }
 
 impl Drop for GtkInWindowSurface {
     fn drop(&mut self) {
         self.render_state.borrow_mut().unrealize();
-        self.video_layer.remove(&self.gl_area);
+        self.overlay.remove(&self.gl_area);
     }
 }
 
-fn apply_rect(video_layer: &gtk::Fixed, gl_area: &gtk::GLArea, rect: NativeSurfaceRect, add: bool) {
-    gl_area.set_size_request(rect.width as i32, rect.height as i32);
+fn apply_rect(
+    overlay: &gtk::Overlay,
+    layer_allocation: &Rc<RefCell<gtk::Rectangle>>,
+    gl_area: &gtk::GLArea,
+    rect: NativeSurfaceRect,
+    add: bool,
+) {
+    let width = surface_length_to_i32(rect.width);
+    let height = surface_length_to_i32(rect.height);
+    record_native_surface_runtime_log(&format!(
+        "native gtk render-api requested rect: x={}, y={}, width={}, height={}, add={add}",
+        rect.x, rect.y, width, height
+    ));
+    *layer_allocation.borrow_mut() = gtk::Rectangle::new(rect.x, rect.y, width, height);
+    gl_area.set_size_request(width, height);
+    gl_area.size_allocate(&layer_allocation.borrow());
     if add {
-        video_layer.put(gl_area, rect.x, rect.y);
-    } else {
-        video_layer.move_(gl_area, rect.x, rect.y);
+        overlay.add_overlay(gl_area);
+        overlay.set_overlay_pass_through(gl_area, true);
     }
+    overlay.queue_resize();
+    gl_area.queue_resize();
+}
+
+fn surface_length_to_i32(value: u32) -> i32 {
+    i32::try_from(value).unwrap_or(i32::MAX)
 }
 
 struct GtkRenderState {
@@ -305,6 +352,7 @@ struct GtkRenderState {
     renderer: Option<GtkMpvRenderer>,
     diagnostics: RenderApiDiagnostics,
     logged_first_frame: bool,
+    logged_frame_size: Option<(i32, i32)>,
 }
 
 impl GtkRenderState {
@@ -315,6 +363,7 @@ impl GtkRenderState {
             renderer: None,
             diagnostics,
             logged_first_frame: false,
+            logged_frame_size: None,
         }
     }
 
@@ -361,15 +410,22 @@ impl GtkRenderState {
             self.realize(gl_area);
             return;
         };
+        if self.logged_frame_size != Some((width, height)) {
+            record_native_surface_runtime_log(&format!(
+                "native gtk render-api frame allocation: {width}x{height}"
+            ));
+            self.logged_frame_size = Some((width, height));
+        }
 
         match renderer.render(width, height) {
-            Ok(()) => {
+            Ok(update_flags) => {
                 self.diagnostics.set_alive(true);
-                self.diagnostics.record_frame();
+                self.diagnostics
+                    .record_frame(width as u32, height as u32, update_flags);
                 if !self.logged_first_frame {
-                    record_native_surface_runtime_log(
-                        "native gtk render-api submitted first frame",
-                    );
+                    record_native_surface_runtime_log(&format!(
+                        "native gtk render-api submitted first frame: {width}x{height}, update_flags={update_flags}"
+                    ));
                     self.logged_first_frame = true;
                 }
             }
@@ -444,10 +500,8 @@ impl GtkMpvRenderer {
         })
     }
 
-    fn render(&mut self, width: i32, height: i32) -> Result<(), String> {
-        unsafe {
-            let _ = mpv_sys::mpv_render_context_update(self.context);
-        }
+    fn render(&mut self, width: i32, height: i32) -> Result<u64, String> {
+        let update_flags = unsafe { mpv_sys::mpv_render_context_update(self.context) };
 
         let mut fbo = mpv_sys::mpv_opengl_fbo {
             fbo: 0,
@@ -481,7 +535,7 @@ impl GtkMpvRenderer {
         unsafe {
             mpv_sys::mpv_render_context_report_swap(self.context);
         }
-        Ok(())
+        Ok(update_flags)
     }
 }
 
@@ -503,7 +557,7 @@ unsafe extern "C" fn gtk_mpv_update_callback(ctx: *mut c_void) {
     gtk::glib::idle_add_once(move || {
         GTK_SURFACES.with(|surfaces| {
             if let Some(surface) = surfaces.borrow().get(&id) {
-                queue_gl_area_render(&surface.gl_area);
+                surface.schedule_render();
             }
         });
     });

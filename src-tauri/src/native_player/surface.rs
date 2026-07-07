@@ -130,6 +130,9 @@ pub(super) enum NativeSurfaceBackendPreference {
 pub(super) struct NativeSurfaceDiagnostics {
     pub(super) render_thread_alive: bool,
     pub(super) rendered_frames: u64,
+    pub(super) last_render_width: Option<u32>,
+    pub(super) last_render_height: Option<u32>,
+    pub(super) last_render_update_flags: u64,
     pub(super) last_error: Option<String>,
 }
 
@@ -557,6 +560,9 @@ impl Drop for RenderApiSurface {
 struct RenderApiDiagnostics {
     render_thread_alive: Arc<AtomicBool>,
     rendered_frames: Arc<AtomicU64>,
+    last_render_width: Arc<AtomicU64>,
+    last_render_height: Arc<AtomicU64>,
+    last_render_update_flags: Arc<AtomicU64>,
     last_error: Arc<Mutex<Option<String>>>,
 }
 
@@ -565,6 +571,9 @@ impl RenderApiDiagnostics {
         Self {
             render_thread_alive: Arc::new(AtomicBool::new(false)),
             rendered_frames: Arc::new(AtomicU64::new(0)),
+            last_render_width: Arc::new(AtomicU64::new(0)),
+            last_render_height: Arc::new(AtomicU64::new(0)),
+            last_render_update_flags: Arc::new(AtomicU64::new(0)),
             last_error: Arc::new(Mutex::new(None)),
         }
     }
@@ -573,8 +582,14 @@ impl RenderApiDiagnostics {
         self.render_thread_alive.store(alive, Ordering::SeqCst);
     }
 
-    fn record_frame(&self) {
+    fn record_frame(&self, width: u32, height: u32, update_flags: u64) {
         self.rendered_frames.fetch_add(1, Ordering::SeqCst);
+        self.last_render_width
+            .store(u64::from(width), Ordering::SeqCst);
+        self.last_render_height
+            .store(u64::from(height), Ordering::SeqCst);
+        self.last_render_update_flags
+            .store(update_flags, Ordering::SeqCst);
     }
 
     fn record_error(&self, err: &str) {
@@ -584,9 +599,18 @@ impl RenderApiDiagnostics {
     }
 
     fn snapshot(&self) -> NativeSurfaceDiagnostics {
+        let last_render_width = self.last_render_width.load(Ordering::SeqCst);
+        let last_render_height = self.last_render_height.load(Ordering::SeqCst);
         NativeSurfaceDiagnostics {
             render_thread_alive: self.render_thread_alive.load(Ordering::SeqCst),
             rendered_frames: self.rendered_frames.load(Ordering::SeqCst),
+            last_render_width: u32::try_from(last_render_width)
+                .ok()
+                .filter(|value| *value > 0),
+            last_render_height: u32::try_from(last_render_height)
+                .ok()
+                .filter(|value| *value > 0),
+            last_render_update_flags: self.last_render_update_flags.load(Ordering::SeqCst),
             last_error: self.last_error.lock().ok().and_then(|error| error.clone()),
         }
     }
@@ -695,7 +719,7 @@ fn run_render_api_thread(
             record_native_surface_runtime_log(&format!("native render-api failed: {err}"));
             break;
         } else if render_api_command_counts_frame(&command) {
-            diagnostics.record_frame();
+            diagnostics.record_frame(renderer.width as u32, renderer.height as u32, 0);
         }
     }
 
