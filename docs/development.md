@@ -144,6 +144,8 @@ See `docs/adr/0009-remove-stale-and-redundant-artifacts.md`.
 
 The release workflow is Linux-only while Windows and macOS lack true in-window native render hosts. Do not restore Windows MSI, NSIS, macOS DMG, or macOS app-bundle release jobs until the platform render host exists, libmpv dependencies are bundled deliberately, and packaged playback is verified on a clean machine.
 
+CI may still run macOS compile-readiness checks. Those checks prove that the Rust/Tauri/native-player code compiles against macOS and Homebrew `mpv`; they do not prove macOS playback is production-ready or allow macOS release artifacts.
+
 Before publishing a Windows or macOS installer, test on a clean machine:
 
 - Install and launch

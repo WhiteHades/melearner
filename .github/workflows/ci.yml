@@ -58,3 +58,41 @@ jobs:
             su builder -c "cd /workspace && cargo test --manifest-path src-tauri/Cargo.toml"
             su builder -c "cd /workspace && cargo check --manifest-path src-tauri/Cargo.toml"
           '
+
+  macos-compile:
+    name: macos compile readiness
+    runs-on: macos-14
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install pnpm
+        run: npm install -g pnpm@11.10.0
+
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: pnpm
+
+      - name: install rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: install macos native-player deps
+        run: brew install mpv
+
+      - name: rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      - name: build frontend assets
+        run: pnpm build
+
+      - name: cargo check
+        run: |
+          export LIBRARY_PATH="$(brew --prefix mpv)/lib:${LIBRARY_PATH:-}"
+          cargo check --manifest-path src-tauri/Cargo.toml
