@@ -109,14 +109,14 @@ function VideoPlayerComponent({
 }: VideoPlayerProps) {
   const surfaceRef = useRef<HTMLDivElement | null>(null)
   const lastSaveRef = useRef(0)
-  const boundsRafRef = useRef<number | null>(null)
+  const boundsTimerRef = useRef<number | null>(null)
   const positionRafRef = useRef<number | null>(null)
   const isSeekingRef = useRef(false)
   const [nativeState, setNativeState] = useState<NativePlayerState>(initialState)
   const [visibleCurrentTime, setVisibleCurrentTime] = useState(lesson.lastPosition)
   const [error, setError] = useState<{ path: string; message: string } | null>(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
-  const [loadRequested, setLoadRequested] = useState(() => autoplay)
+  const [loadRequested, setLoadRequested] = useState(true)
   const autoplayNextLoadRef = useRef(autoplay)
   const [loadSnapshot] = useState(() => ({
     id: lesson.id,
@@ -158,12 +158,12 @@ function VideoPlayerComponent({
   }, [measureBounds])
 
   const requestNativeSurfaceSync = useCallback(() => {
-    if (!isTauri() || boundsRafRef.current !== null) return
+    if (!isTauri() || boundsTimerRef.current !== null) return
 
-    boundsRafRef.current = window.requestAnimationFrame(() => {
-      boundsRafRef.current = null
+    boundsTimerRef.current = window.setTimeout(() => {
+      boundsTimerRef.current = null
       void updateBounds().catch((reason) => setError({ path: lesson.path, message: String(reason) }))
-    })
+    }, 0)
   }, [lesson.path, updateBounds])
 
   const syncWindowFullscreenState = useCallback(() => {
@@ -297,9 +297,9 @@ function VideoPlayerComponent({
 
     return () => {
       disposed = true
-      if (boundsRafRef.current !== null) {
-        window.cancelAnimationFrame(boundsRafRef.current)
-        boundsRafRef.current = null
+      if (boundsTimerRef.current !== null) {
+        window.clearTimeout(boundsTimerRef.current)
+        boundsTimerRef.current = null
       }
       observer.disconnect()
       visibilityObserver?.disconnect()
