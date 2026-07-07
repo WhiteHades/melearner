@@ -211,18 +211,6 @@ function childPathPattern(path: string): string {
   return `${escapeLikePattern(prefix)}%`
 }
 
-async function executeTransaction<T>(database: DatabaseConnection, work: () => Promise<T>): Promise<T> {
-  await database.execute("BEGIN IMMEDIATE")
-  try {
-    const result = await work()
-    await database.execute("COMMIT")
-    return result
-  } catch (error) {
-    await database.execute("ROLLBACK").catch(() => undefined)
-    throw error
-  }
-}
-
 async function serializeDatabaseWrite<T>(work: () => Promise<T>): Promise<T> {
   const result = databaseWriteQueue.then(work, work)
   databaseWriteQueue = result.then(() => undefined, () => undefined)
@@ -757,173 +745,171 @@ async function syncLibraryWithDatabase(database: DatabaseConnection, courses: Co
   )
   const resolvedLessonIds = resolvedLessons.map(({ lesson }) => lesson.id)
 
-  await executeTransaction(database, async () => {
-    await writeSetting(database, LIBRARY_PATH_SETTING, libraryPath)
-    const scanStamp = new Date().toISOString()
+  await writeSetting(database, LIBRARY_PATH_SETTING, libraryPath)
+  const scanStamp = new Date().toISOString()
 
-    for (const batch of chunk(hydratedCourses, batchSize(11))) {
-      await database.execute(
-        `INSERT INTO courses (
-          id,
-          identity_id,
-          name,
-          path,
-          fingerprint,
-          total_duration,
-          watched_duration,
-          last_accessed,
-          thumbnail_source_path,
-          last_scanned_at,
-          missing_since
-        ) VALUES ${createRowPlaceholders(batch.length, 11)}
-         ON CONFLICT(id) DO UPDATE SET
-           identity_id = excluded.identity_id,
-           name = excluded.name,
-           path = excluded.path,
-           fingerprint = excluded.fingerprint,
-           total_duration = excluded.total_duration,
-           watched_duration = excluded.watched_duration,
-           last_accessed = excluded.last_accessed,
-           thumbnail_source_path = excluded.thumbnail_source_path,
-           last_scanned_at = excluded.last_scanned_at,
-           missing_since = NULL`,
-        batch.flatMap((course) => {
-          const lessons = course.sections.flatMap((section) => section.lessons)
-          const thumbnailSourcePath = course.thumbnailSourcePath ?? lessons.find((lesson) => lesson.type === "video")?.path ?? null
+  for (const batch of chunk(hydratedCourses, batchSize(11))) {
+    await database.execute(
+      `INSERT INTO courses (
+        id,
+        identity_id,
+        name,
+        path,
+        fingerprint,
+        total_duration,
+        watched_duration,
+        last_accessed,
+        thumbnail_source_path,
+        last_scanned_at,
+        missing_since
+      ) VALUES ${createRowPlaceholders(batch.length, 11)}
+       ON CONFLICT(id) DO UPDATE SET
+         identity_id = excluded.identity_id,
+         name = excluded.name,
+         path = excluded.path,
+         fingerprint = excluded.fingerprint,
+         total_duration = excluded.total_duration,
+         watched_duration = excluded.watched_duration,
+         last_accessed = excluded.last_accessed,
+         thumbnail_source_path = excluded.thumbnail_source_path,
+         last_scanned_at = excluded.last_scanned_at,
+         missing_since = NULL`,
+      batch.flatMap((course) => {
+        const lessons = course.sections.flatMap((section) => section.lessons)
+        const thumbnailSourcePath = course.thumbnailSourcePath ?? lessons.find((lesson) => lesson.type === "video")?.path ?? null
 
-          return [
-            course.id,
-            course.identityId,
-            course.name,
-            course.path,
-            course.fingerprint,
-            course.totalDuration,
-            course.watchedDuration,
-            course.lastAccessed,
-            thumbnailSourcePath,
-            scanStamp,
-            null,
-          ]
-        })
-      )
-    }
-
-    for (const batch of chunk(resolvedSections, batchSize(5))) {
-      await database.execute(
-        `INSERT INTO sections (id, course_id, name, order_index, updated_at)
-         VALUES ${createRowPlaceholders(batch.length, 5)}
-         ON CONFLICT(course_id, name) DO UPDATE SET
-           id = excluded.id,
-           order_index = excluded.order_index,
-           updated_at = excluded.updated_at`,
-        batch.flatMap(({ course, section }) => [section.id, course.id, section.name, section.order, scanStamp])
-      )
-    }
-
-    for (const batch of chunk(resolvedLessons, batchSize(14))) {
-      await database.execute(
-        `INSERT INTO lessons (
-          id,
-          course_id,
-          section_id,
-          section_name,
-          name,
-          path,
-          relative_path,
-          type,
-          duration,
-          file_size,
-          watched_time,
-          completed,
-          order_index,
-          last_position,
-          updated_at
-        ) VALUES ${createRowPlaceholders(batch.length, 15)}
-        ON CONFLICT(id) DO UPDATE SET
-          course_id = excluded.course_id,
-          section_id = excluded.section_id,
-          section_name = excluded.section_name,
-          name = excluded.name,
-          path = excluded.path,
-          relative_path = excluded.relative_path,
-          type = excluded.type,
-          duration = excluded.duration,
-          file_size = excluded.file_size,
-          order_index = excluded.order_index,
-          updated_at = excluded.updated_at`,
-        batch.flatMap(({ course, section, lesson }) => [
-          lesson.id,
+        return [
           course.id,
-          section.id,
-          lesson.sectionName,
-          lesson.name,
-          lesson.path,
-          lesson.relativePath,
-          lesson.type,
-          lesson.duration,
-          lesson.fileSize,
-          lesson.watchedTime,
-          lesson.completed ? 1 : 0,
-          lesson.order,
-          lesson.lastPosition,
+          course.identityId,
+          course.name,
+          course.path,
+          course.fingerprint,
+          course.totalDuration,
+          course.watchedDuration,
+          course.lastAccessed,
+          thumbnailSourcePath,
           scanStamp,
-        ])
-      )
-    }
+          null,
+        ]
+      })
+    )
+  }
 
-    for (const batch of chunk(resolvedLessonIds, SQLITE_BATCH_SIZE)) {
-      await database.execute(
-        `DELETE FROM lesson_subtitles WHERE lesson_id IN (${createPlaceholders(batch.length)})`,
-        batch
-      )
-    }
-
-    for (const batch of chunk(resolvedSubtitles, batchSize(6))) {
-      await database.execute(
-        `INSERT INTO lesson_subtitles (id, lesson_id, path, language, label, order_index)
-         VALUES ${createRowPlaceholders(batch.length, 6)}
-         ON CONFLICT(lesson_id, path) DO UPDATE SET
-           language = excluded.language,
-           label = excluded.label,
-           order_index = excluded.order_index`,
-        batch.flatMap(({ lesson, subtitle, index }) => [
-          makeSubtitleId(lesson.id, index),
-          lesson.id,
-          subtitle.path,
-          subtitle.language,
-          subtitle.label,
-          index,
-        ])
-      )
-    }
-
-    for (const batch of chunk(resolvedCourseIds, SQLITE_BATCH_SIZE)) {
-      await database.execute(
-        `DELETE FROM lessons WHERE course_id IN (${createPlaceholders(batch.length)}) AND (updated_at IS NULL OR updated_at <> $${batch.length + 1})`,
-        [...batch, scanStamp]
-      )
-      await database.execute(
-        `DELETE FROM sections WHERE course_id IN (${createPlaceholders(batch.length)}) AND (updated_at IS NULL OR updated_at <> $${batch.length + 1})`,
-        [...batch, scanStamp]
-      )
-    }
-
-    const missingExclusion = resolvedCourseIds.length > 0
-      ? `AND id NOT IN (${resolvedCourseIds.map((_, index) => `$${index + 4}`).join(", ")})`
-      : ""
+  for (const batch of chunk(resolvedSections, batchSize(5))) {
     await database.execute(
-      `UPDATE courses
-       SET missing_since = COALESCE(missing_since, $3),
-           last_scanned_at = $3
-       WHERE (path = $1 OR path LIKE $2 ESCAPE '~')
-         ${missingExclusion}
-         AND (last_scanned_at IS NULL OR last_scanned_at <> $3)`,
-      [libraryPath, childPathPattern(libraryPath), scanStamp, ...resolvedCourseIds]
+      `INSERT INTO sections (id, course_id, name, order_index, updated_at)
+       VALUES ${createRowPlaceholders(batch.length, 5)}
+       ON CONFLICT(course_id, name) DO UPDATE SET
+         id = excluded.id,
+         order_index = excluded.order_index,
+         updated_at = excluded.updated_at`,
+      batch.flatMap(({ course, section }) => [section.id, course.id, section.name, section.order, scanStamp])
+    )
+  }
+
+  for (const batch of chunk(resolvedLessons, batchSize(14))) {
+    await database.execute(
+      `INSERT INTO lessons (
+        id,
+        course_id,
+        section_id,
+        section_name,
+        name,
+        path,
+        relative_path,
+        type,
+        duration,
+        file_size,
+        watched_time,
+        completed,
+        order_index,
+        last_position,
+        updated_at
+      ) VALUES ${createRowPlaceholders(batch.length, 15)}
+      ON CONFLICT(id) DO UPDATE SET
+        course_id = excluded.course_id,
+        section_id = excluded.section_id,
+        section_name = excluded.section_name,
+        name = excluded.name,
+        path = excluded.path,
+        relative_path = excluded.relative_path,
+        type = excluded.type,
+        duration = excluded.duration,
+        file_size = excluded.file_size,
+        order_index = excluded.order_index,
+        updated_at = excluded.updated_at`,
+      batch.flatMap(({ course, section, lesson }) => [
+        lesson.id,
+        course.id,
+        section.id,
+        lesson.sectionName,
+        lesson.name,
+        lesson.path,
+        lesson.relativePath,
+        lesson.type,
+        lesson.duration,
+        lesson.fileSize,
+        lesson.watchedTime,
+        lesson.completed ? 1 : 0,
+        lesson.order,
+        lesson.lastPosition,
+        scanStamp,
+      ])
+    )
+  }
+
+  for (const batch of chunk(resolvedLessonIds, SQLITE_BATCH_SIZE)) {
+    await database.execute(
+      `DELETE FROM lesson_subtitles WHERE lesson_id IN (${createPlaceholders(batch.length)})`,
+      batch
+    )
+  }
+
+  for (const batch of chunk(resolvedSubtitles, batchSize(6))) {
+    await database.execute(
+      `INSERT INTO lesson_subtitles (id, lesson_id, path, language, label, order_index)
+       VALUES ${createRowPlaceholders(batch.length, 6)}
+       ON CONFLICT(lesson_id, path) DO UPDATE SET
+         language = excluded.language,
+         label = excluded.label,
+         order_index = excluded.order_index`,
+      batch.flatMap(({ lesson, subtitle, index }) => [
+        makeSubtitleId(lesson.id, index),
+        lesson.id,
+        subtitle.path,
+        subtitle.language,
+        subtitle.label,
+        index,
+      ])
+    )
+  }
+
+  for (const batch of chunk(resolvedCourseIds, SQLITE_BATCH_SIZE)) {
+    await database.execute(
+      `DELETE FROM lessons WHERE course_id IN (${createPlaceholders(batch.length)}) AND (updated_at IS NULL OR updated_at <> $${batch.length + 1})`,
+      [...batch, scanStamp]
     )
     await database.execute(
-      `DELETE FROM lesson_subtitles WHERE lesson_id NOT IN (SELECT id FROM lessons)`
+      `DELETE FROM sections WHERE course_id IN (${createPlaceholders(batch.length)}) AND (updated_at IS NULL OR updated_at <> $${batch.length + 1})`,
+      [...batch, scanStamp]
     )
-  })
+  }
+
+  const missingExclusion = resolvedCourseIds.length > 0
+    ? `AND id NOT IN (${resolvedCourseIds.map((_, index) => `$${index + 4}`).join(", ")})`
+    : ""
+  await database.execute(
+    `UPDATE courses
+     SET missing_since = COALESCE(missing_since, $3),
+         last_scanned_at = $3
+     WHERE (path = $1 OR path LIKE $2 ESCAPE '~')
+       ${missingExclusion}
+       AND (last_scanned_at IS NULL OR last_scanned_at <> $3)`,
+    [libraryPath, childPathPattern(libraryPath), scanStamp, ...resolvedCourseIds]
+  )
+  await database.execute(
+    `DELETE FROM lesson_subtitles WHERE lesson_id NOT IN (SELECT id FROM lessons)`
+  )
 
   return { courses: hydratedCourses, warnings }
 }
@@ -950,34 +936,32 @@ export async function updateLessonProgress(
     const completedValue = completed ? 1 : 0
     const completionChanged = Boolean(previous.completed) !== completed
 
-    await executeTransaction(database, async () => {
-      await database.execute(
-        `UPDATE lessons SET watched_time = $1, last_position = $2, completed = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4`,
-        [watchedTime, lastPosition, completedValue, lessonId]
-      )
+    await database.execute(
+      `UPDATE lessons SET watched_time = $1, last_position = $2, completed = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4`,
+      [watchedTime, lastPosition, completedValue, lessonId]
+    )
 
-      if (watchedDelta > 0 || completionChanged) {
-        await database.execute(
-          `INSERT INTO lesson_activity (
-            id,
-            course_id,
-            lesson_id,
-            activity_date,
-            watched_seconds,
-            completed,
-            created_at
-          ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)`,
-          [
-            makeActivityId(lessonId),
-            previous.course_id,
-            lessonId,
-            todayKey(),
-            watchedDelta,
-            completionChanged && completed ? 1 : 0,
-          ]
-        )
-      }
-    })
+    if (watchedDelta > 0 || completionChanged) {
+      await database.execute(
+        `INSERT INTO lesson_activity (
+          id,
+          course_id,
+          lesson_id,
+          activity_date,
+          watched_seconds,
+          completed,
+          created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)`,
+        [
+          makeActivityId(lessonId),
+          previous.course_id,
+          lessonId,
+          todayKey(),
+          watchedDelta,
+          completionChanged && completed ? 1 : 0,
+        ]
+      )
+    }
   })
 }
 
