@@ -27,6 +27,8 @@ native video surface / libmpv render path
 
 The app must not keep a browser-media playback engine. The app must not use an mpv sidecar as the target architecture. Existing Tauri libmpv plugins may be studied, but the repo should own its native video engine integration instead of depending on an unproven plugin as the foundation.
 
+The production player must appear as one normal melearner app window. The native video surface must not show up to the compositor/window manager as a separate user-visible `melearner video` window or second app client. A separate Tauri window positioned over the WebView is acceptable only as a short-lived diagnostic prototype, not as the final playback surface.
+
 The first production native-player UI should keep complex controls in stable WebView bands around the native video surface rather than relying on fragile transparent DOM overlays directly on top of native video.
 
 ## Implementation state
@@ -45,7 +47,7 @@ The current implementation owns the native playback control path in `src-tauri/s
 - Fullscreen control uses the Tauri app window fullscreen state and then resyncs native-surface bounds; it must not use DOM fullscreen on the WebView placeholder element.
 - The native surface follows the WebView placeholder's viewport visibility. When the placeholder leaves the viewport, React tells Rust to hide the native surface so the separate video window cannot float over unrelated UI.
 
-`native_player_set_bounds` is part of the playback interface. It creates or moves a native Tauri window surface through the selected surface backend. The default backend creates a glutin OpenGL surface from the Tauri native window handle, starts a dedicated render thread, switches libmpv to `vo=libmpv`, and drives `mpv_render_context_render` into the surface backbuffer. Native player state exposes `surfaceRenderApi`; it becomes `true` for the default render-api backend after attachment. It also exposes `surfaceRenderThreadAlive`, `surfaceRenderedFrames`, and `surfaceRenderError` so verification can prove whether the render thread is alive, submitting frames, or failing after attachment. `MELEARNER_SURFACE_BACKEND=window-handle` is a diagnostic fallback that gives the platform window handle to libmpv with `wid`; on Linux this fallback still needs an X11/XCB handle.
+`native_player_set_bounds` is part of the playback interface. The current Linux implementation creates and moves a separate Tauri window surface through the selected surface backend; on Wayland/Hyprland that window is visible to the compositor as `melearner video`, which is a known non-final gap. The accepted production implementation must replace that overlay-window strategy with a true in-app native surface. The current default backend creates a glutin OpenGL surface from the Tauri native window handle, starts a dedicated render thread, switches libmpv to `vo=libmpv`, and drives `mpv_render_context_render` into the surface backbuffer. Native player state exposes `surfaceRenderApi`; it becomes `true` for the default render-api backend after attachment. It also exposes `surfaceRenderThreadAlive`, `surfaceRenderedFrames`, and `surfaceRenderError` so verification can prove whether the render thread is alive, submitting frames, or failing after attachment. `MELEARNER_SURFACE_BACKEND=window-handle` is a diagnostic fallback that gives the platform window handle to libmpv with `wid`; on Linux this fallback still needs an X11/XCB handle.
 
 Normal Linux startup must not force `GDK_BACKEND=x11`. Hyprland and other Wayland compositors should use GTK's compositor-native backend so the WebView backing surface resizes and repaints with the tiled window. X11 is allowed only through explicit diagnostics such as `MELEARNER_FORCE_GDK_X11=1` or the `MELEARNER_SURFACE_BACKEND=window-handle` fallback.
 
@@ -57,6 +59,7 @@ The current default surface is native, in-process, and render-api-first. A chang
 
 - Local filesystem paths only. Reject URLs, schemes, missing files, and files outside approved library roots.
 - Embedded libmpv in-process, not a bundled mpv sidecar controlled through IPC.
+- One user-visible app window. The video surface must not appear as a separate compositor/window-manager client.
 - Native playback is the normal path; FFmpeg remux/transcode must not be part of ordinary playback.
 - Support play/pause, absolute and relative seek, volume, mute, playback rate, fullscreen, subtitles, audio tracks, chapter data, and screenshots.
 - Emit typed state, track, chapter, file-loaded, end-file, and error events from Rust to the frontend.
