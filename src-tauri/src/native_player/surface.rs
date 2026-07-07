@@ -184,6 +184,18 @@ impl NativeVideoSurface {
                 {
                     Ok(surface) => Ok(surface),
                     Err(render_err) => {
+                        let display = parent.display_handle().map_err(|err| {
+                            format!(
+                                "native render-api surface failed ({render_err}); native player could not read host display for fallback: {err}"
+                            )
+                        })?;
+                        if !window_handle_fallback_supported(display.as_raw()) {
+                            let message = format!(
+                                "native render-api surface failed ({render_err}); window-handle fallback is not supported on this display backend"
+                            );
+                            record_native_surface_runtime_log(&message);
+                            return Err(message);
+                        }
                         log::warn!(
                             "native render-api surface failed; falling back to window-handle surface: {render_err}"
                         );
@@ -664,6 +676,14 @@ fn render_api_display_handle(display: RawDisplayHandle) -> Option<RenderApiDispl
     }
 }
 
+fn window_handle_fallback_supported(display: RawDisplayHandle) -> bool {
+    match display {
+        RawDisplayHandle::Xlib(_) | RawDisplayHandle::Xcb(_) => true,
+        RawDisplayHandle::Wayland(_) => false,
+        _ => cfg!(windows) || cfg!(target_os = "macos"),
+    }
+}
+
 #[cfg(target_os = "macos")]
 fn display_api_preference(_window: RawWindowHandle) -> DisplayApiPreference {
     DisplayApiPreference::Cgl
@@ -862,6 +882,22 @@ mod tests {
             ))),
             None
         );
+    }
+
+    #[test]
+    fn window_handle_fallback_is_not_supported_on_wayland() {
+        let xlib = display_ptr();
+        let wayland = display_ptr();
+
+        assert!(window_handle_fallback_supported(RawDisplayHandle::Xlib(
+            XlibDisplayHandle::new(Some(xlib), 0),
+        )));
+        assert!(window_handle_fallback_supported(RawDisplayHandle::Xcb(
+            XcbDisplayHandle::new(Some(display_ptr()), 0),
+        )));
+        assert!(!window_handle_fallback_supported(
+            RawDisplayHandle::Wayland(WaylandDisplayHandle::new(wayland),)
+        ));
     }
 
     #[test]
