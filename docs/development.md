@@ -125,6 +125,8 @@ During iterative local development, do not delete `.next`, `out`, `src-tauri/tar
 
 When `sccache` is installed, the script sets `RUSTC_WRAPPER=sccache` and defaults `CARGO_INCREMENTAL=0` so release compilation can be cached across clean local builds. Without `sccache`, it defaults `CARGO_INCREMENTAL=1` to reuse Cargo's local target directory during iterative laptop builds.
 
+CI keeps the Arch native-player Rust gate because Ubuntu 22.04's system libmpv is too old for the current native-player crate. That Arch container mounts a cached Cargo home and `src-tauri/target`, so repeated runs should reuse Rust downloads and compiled artifacts instead of doing a cold native-player build every time. Do not remove that cache wiring while the Linux native surface remains the only production playback target.
+
 Public Linux releases should publish only:
 
 - AppImage for portable Linux use

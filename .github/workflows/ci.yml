@@ -43,11 +43,24 @@ jobs:
       - name: build frontend assets
         run: pnpm build
 
+      - name: arch rust cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cache/arch-cargo
+            src-tauri/target
+          key: arch-rust-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            arch-rust-${{ runner.os }}-
+
       - name: arch native-player rust checks
         run: |
+          mkdir -p .cache/arch-cargo src-tauri/target
           docker run --rm \
+            -e CARGO_HOME=/cargo-home \
             -e RUNNER_UID="$(id -u)" \
             -e RUNNER_GID="$(id -g)" \
+            -v "$PWD/.cache/arch-cargo:/cargo-home" \
             -v "$PWD:/workspace" \
             -w /workspace \
             archlinux:base-devel bash -euo pipefail -c '
