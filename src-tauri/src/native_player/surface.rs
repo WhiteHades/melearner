@@ -19,6 +19,7 @@ use std::{
         mpsc,
     },
     thread::{self, JoinHandle},
+    time::Duration,
 };
 use tauri::{AppHandle, PhysicalPosition, PhysicalSize, WebviewWindow, Window};
 
@@ -26,6 +27,8 @@ static SURFACE_WINDOW_RUN: OnceLock<Mutex<u64>> = OnceLock::new();
 const NATIVE_SURFACE_LABEL: &str = "native-player-surface";
 const SURFACE_BACKEND_ENV: &str = "MELEARNER_SURFACE_BACKEND";
 const NATIVE_SURFACE_LOG_ENV: &str = "MELEARNER_NATIVE_SURFACE_LOG";
+const RENDER_HANDLE_ATTEMPTS: usize = 20;
+const RENDER_HANDLE_RETRY_DELAY: Duration = Duration::from_millis(25);
 
 fn surface_window_slot() -> &'static Mutex<u64> {
     SURFACE_WINDOW_RUN.get_or_init(|| Mutex::new(0))
@@ -363,16 +366,7 @@ struct RenderApiSurface {
 
 impl RenderApiSurface {
     fn start(window: &Window, rect: NativeSurfaceRect, mpv: &Mpv) -> Result<Self, String> {
-        let handles = RenderApiRawHandles {
-            display: window
-                .display_handle()
-                .map_err(|err| format!("native render-api could not read display handle: {err}"))?
-                .as_raw(),
-            window: window
-                .window_handle()
-                .map_err(|err| format!("native render-api could not read window handle: {err}"))?
-                .as_raw(),
-        };
+        let handles = wait_for_render_api_handles(window)?;
         let mpv_client = mpv
             .create_client(None)
             .map_err(|err| format!("libmpv could not create render-api client: {err}"))?;
@@ -479,6 +473,39 @@ struct RenderApiRawHandles {
 }
 
 unsafe impl Send for RenderApiRawHandles {}
+
+fn wait_for_render_api_handles(window: &Window) -> Result<RenderApiRawHandles, String> {
+    let mut last_error = "the underlying handle is not available".to_string();
+
+    for attempt in 0..RENDER_HANDLE_ATTEMPTS {
+        match (window.display_handle(), window.window_handle()) {
+            (Ok(display), Ok(window)) => {
+                return Ok(RenderApiRawHandles {
+                    display: display.as_raw(),
+                    window: window.as_raw(),
+                });
+            }
+            (display, window) => {
+                last_error = match (display.err(), window.err()) {
+                    (Some(display_err), Some(window_err)) => {
+                        format!("display handle error: {display_err}; window handle error: {window_err}")
+                    }
+                    (Some(display_err), None) => format!("display handle error: {display_err}"),
+                    (None, Some(window_err)) => format!("window handle error: {window_err}"),
+                    (None, None) => "the underlying handle is not available".to_string(),
+                };
+            }
+        }
+
+        if attempt + 1 < RENDER_HANDLE_ATTEMPTS {
+            thread::sleep(RENDER_HANDLE_RETRY_DELAY);
+        }
+    }
+
+    Err(format!(
+        "native render-api could not read window handles after waiting: {last_error}"
+    ))
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RenderApiDisplayHandle {
