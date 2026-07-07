@@ -472,6 +472,7 @@ function LibraryDashboard({
 
   useEffect(() => {
     if (!isTauri()) return
+    if (!hasHydrated) return
     const path = readAutoScanPath()
     if (!path) return
 
@@ -489,8 +490,7 @@ function LibraryDashboard({
         setError(`autoScan failed: ${detail}`)
       })
       .finally(() => setScanMode("idle"))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [hasHydrated, setScanMode])
 
   async function handleSelectFolder() {
     if (!isTauri()) {
