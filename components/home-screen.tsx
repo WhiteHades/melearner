@@ -39,6 +39,7 @@ import { Progress } from "@/components/ui/progress"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { hydrateCourseThumbnails } from "@/lib/course-thumbnails"
 import { frontendLog } from "@/lib/frontend-log"
 import {
   loadActivityDays,
@@ -318,6 +319,7 @@ function LibraryDashboard({
   const libraryPath = libraryPathOverride ?? storeLibraryPath
   const scanMode = useCourseStore((state) => state.scanMode)
   const setScanMode = useCourseStore((state) => state.setScanMode)
+  const setCourses = useCourseStore((state) => state.setCourses)
   const [error, setError] = useState<string | null>(null)
   const [warnings, setWarnings] = useState<string[]>([])
   const [cmdOpen, setCmdOpen] = useState(false)
@@ -337,6 +339,13 @@ function LibraryDashboard({
       .sort()
       .join("\x01")
   }, [markerSyncCourses])
+  const thumbnailSourceKey = useMemo(() => {
+    return loadedCourses
+      .filter((course) => !course.missingSince && course.thumbnailSourcePath)
+      .map((course) => `${course.id}\0${course.thumbnailSourcePath}`)
+      .sort()
+      .join("\x01")
+  }, [loadedCourses])
 
   const courseCards = useMemo(() => buildDashboardCourseCards(loadedCourses), [loadedCourses])
   const resumeCourseCards = useMemo(() => selectResumeCourseCards(courseCards), [courseCards])
@@ -390,6 +399,12 @@ function LibraryDashboard({
       cancelled = true
     }
   }, [hasHydrated])
+
+  useEffect(() => {
+    if (!hasHydrated || thumbnailSourceKey.length === 0) return
+    const sourceCourses = useCourseStore.getState().courses
+    void hydrateCourseThumbnails(sourceCourses, setCourses)
+  }, [hasHydrated, setCourses, thumbnailSourceKey])
 
   useEffect(() => {
     const query = searchKey

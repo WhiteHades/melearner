@@ -2,7 +2,6 @@
 
 import { useEffect } from "react"
 import { log } from "evlog/next/client"
-import { hydrateCourseThumbnails } from "@/lib/course-thumbnails"
 import { initDatabase, loadPersistedLibrary, syncLibrary } from "@/lib/database"
 import { indexCourses } from "@/lib/search"
 import { useCourseStore } from "@/lib/stores/course-store"
@@ -166,7 +165,6 @@ export function useAppBootstrap({
   onStartupRoute?: (route: StartupRoute | null) => void
 }) {
   const setHasHydrated = useCourseStore((state) => state.setHasHydrated)
-  const setCourses = useCourseStore((state) => state.setCourses)
   const hydrateLibrary = useCourseStore((state) => state.hydrateLibrary)
 
   useEffect(() => {
@@ -305,9 +303,6 @@ export function useAppBootstrap({
         void indexCourses(library.courses, library.libraryPath).catch((error) => {
           frontendLog("warn", "app.bootstrap.searchIndex.failed", { error: String(error) })
         })
-        void hydrateCourseThumbnails(library.courses, (courses) => {
-          setCourses(courses)
-        })
       })
     })()
       .catch((error) => {
@@ -317,6 +312,6 @@ export function useAppBootstrap({
         })
         setHasHydrated(true)
       })
-  }, [hydrateLibrary, onHydrated, onStartupRoute, setCourses, setHasHydrated])
+  }, [hydrateLibrary, onHydrated, onStartupRoute, setHasHydrated])
 
 }
