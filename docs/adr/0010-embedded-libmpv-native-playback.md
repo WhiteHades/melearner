@@ -80,6 +80,7 @@ The current default surface is native, in-process, and render-api-first. A chang
 
 Native playback is not accepted until these pass on packaged builds:
 
+- `pnpm verify:native-playback -- --app-bin <installed executable> --course-id <course-id> --lesson-id <lesson-id>` reports the platform render-api backend, nonzero rendered frames/dimensions, a platform first-frame native-surface log entry, and no new `ffmpeg`/`ffprobe` process.
 - MP4 H.264/AAC.
 - MKV H.264 with multiple audio tracks.
 - HEVC/10-bit file.

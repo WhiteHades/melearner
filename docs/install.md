@@ -31,6 +31,14 @@ Windows and macOS installers are not production release targets yet. The app's p
 
 Do not publish Windows MSI, NSIS, macOS DMG, or macOS app-bundle release artifacts until each platform can visibly play local media through the embedded native surface in one app window on a clean machine.
 
+Maintainer verification from a checkout:
+
+```bash
+pnpm verify:native-playback -- --app-bin "<installed executable>" --course-id "<course-id>" --lesson-id "<lesson-id>"
+```
+
+Windows must report `render-api:wgl-opengl`. macOS must report `render-api:appkit-opengl`. Passing compile-readiness CI is not enough to publish installers.
+
 FFmpeg is not part of ordinary playback. If Windows thumbnail generation is supported without user-installed FFmpeg, bundle FFmpeg deliberately and handle licensing.
 
 ## From Source
