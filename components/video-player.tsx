@@ -523,6 +523,10 @@ function VideoPlayerComponent({
     applyNativeState(() => selectNativePlayerChapter(id))
   }, [applyNativeState])
 
+  const stepFrame = useCallback(() => {
+    applyNativeState(stepNativePlayerFrame)
+  }, [applyNativeState])
+
   const toggleFullscreen = useCallback(() => {
     if (!surfaceRef.current || !isTauri()) return
     const appWindow = getCurrentWindow()
@@ -649,10 +653,7 @@ function VideoPlayerComponent({
               onChapterChange={changeChapter}
               disabled={!isLoaded}
             />
-            <PlayerIconButton label="Step frame" disabled={!isLoaded} onClick={() => {
-              if (!isLoaded) return
-              void stepNativePlayerFrame().catch((reason) => setError({ path: lesson.path, message: String(reason) }))
-            }}>
+            <PlayerIconButton label="Step frame" disabled={!isLoaded} onClick={stepFrame}>
               <SlidersHorizontal />
             </PlayerIconButton>
             <PlayerIconButton label="Screenshot" disabled={!isLoaded} onClick={() => {
