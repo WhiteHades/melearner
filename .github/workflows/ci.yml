@@ -38,7 +38,7 @@ jobs:
         run: node --test lib/*boundary.test.mjs lib/dashboard-selectors.test.mjs
 
       - name: node data tests
-        run: node --test --experimental-transform-types lib/course-identity.test.mjs lib/database-sqlite-fixture.test.mjs lib/stats.test.mjs
+        run: npm run test:parity
 
       - name: build frontend assets
         run: pnpm build

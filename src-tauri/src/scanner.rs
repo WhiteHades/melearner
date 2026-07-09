@@ -803,6 +803,7 @@ pub async fn get_file_info(path: String) -> Result<FileEntry, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::Deserialize;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -825,6 +826,157 @@ mod tests {
 
     fn cleanup(path: &Path) {
         let _ = fs::remove_dir_all(path);
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ScannerParityFixture {
+        files: Vec<ScannerParityFile>,
+        expected: ScannerParityExpected,
+        error_cases: Vec<ScannerParityError>,
+    }
+
+    #[derive(Deserialize)]
+    struct ScannerParityFile {
+        path: String,
+        contents: String,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ScannerParityExpected {
+        scan_type: String,
+        course_names: Vec<String>,
+        learning_paths: Vec<String>,
+        duplicate_fingerprint_courses: Vec<String>,
+        duplicate_marker_courses: Vec<String>,
+        warning_fragments: Vec<String>,
+        excluded_names: Vec<String>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ScannerParityError {
+        kind: String,
+        warning_prefix: String,
+    }
+
+    #[test]
+    fn scanner_matches_frozen_parity_fixture() {
+        let fixture: ScannerParityFixture =
+            serde_json::from_str(include_str!("../../fixtures/parity/scanner-v1.json"))
+                .expect("parse scanner parity fixture");
+        let root = temp_root("parity-fixture");
+
+        for file in &fixture.files {
+            let path = root.join(&file.path);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).expect("create parity fixture parent");
+            }
+            fs::write(path, file.contents.as_bytes()).expect("write parity fixture file");
+        }
+
+        let result = scan_library(&root.to_string_lossy());
+        assert_eq!(
+            format!("{:?}", result.scan_type).to_ascii_lowercase(),
+            fixture.expected.scan_type
+        );
+
+        let mut course_names = result
+            .courses
+            .iter()
+            .map(|course| course.name.to_string())
+            .collect::<Vec<_>>();
+        course_names.sort();
+        assert_eq!(course_names, fixture.expected.course_names);
+
+        let files = result
+            .courses
+            .iter()
+            .flat_map(|course| course.sections.iter())
+            .flat_map(|section| section.files.iter())
+            .collect::<Vec<_>>();
+        let relative_paths = files
+            .iter()
+            .map(|file| file.relative_path.to_string())
+            .collect::<Vec<_>>();
+        for expected in &fixture.expected.learning_paths {
+            assert!(
+                relative_paths.contains(expected),
+                "missing fixture path: {expected}"
+            );
+        }
+        assert!(
+            fixture
+                .expected
+                .learning_paths
+                .iter()
+                .any(|path| path.len() > 260),
+            "scanner fixture must retain a long path"
+        );
+        for excluded in &fixture.expected.excluded_names {
+            assert!(!files.iter().any(|file| file.name.as_ref() == excluded));
+        }
+        for fragment in &fixture.expected.warning_fragments {
+            assert!(
+                result
+                    .warnings
+                    .iter()
+                    .any(|warning| warning.contains(fragment))
+            );
+        }
+
+        let duplicate_fingerprints = fixture
+            .expected
+            .duplicate_fingerprint_courses
+            .iter()
+            .map(|name| {
+                result
+                    .courses
+                    .iter()
+                    .find(|course| course.name.as_ref() == name)
+                    .expect("duplicate fingerprint course")
+                    .fingerprint
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            duplicate_fingerprints
+                .windows(2)
+                .all(|pair| pair[0] == pair[1])
+        );
+
+        let duplicate_markers = fixture
+            .expected
+            .duplicate_marker_courses
+            .iter()
+            .map(|name| {
+                result
+                    .courses
+                    .iter()
+                    .find(|course| course.name.as_ref() == name)
+                    .expect("duplicate marker course")
+                    .marker_identity_id
+                    .as_deref()
+            })
+            .collect::<Vec<_>>();
+        assert!(duplicate_markers.windows(2).all(|pair| pair[0] == pair[1]));
+
+        for error in &fixture.error_cases {
+            let result = match error.kind.as_str() {
+                "missing" => scan_library(&root.join("missing").to_string_lossy()),
+                "file" => {
+                    let path = root.join("not-a-directory");
+                    fs::write(&path, b"fixture").expect("write non-directory fixture");
+                    scan_library(&path.to_string_lossy())
+                }
+                other => panic!("unknown scanner parity error kind: {other}"),
+            };
+            assert!(result.courses.is_empty());
+            assert!(result.warnings[0].starts_with(&error.warning_prefix));
+        }
+
+        cleanup(&root);
     }
 
     #[test]

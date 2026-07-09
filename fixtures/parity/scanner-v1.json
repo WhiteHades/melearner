@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "files": [
+    { "path": "Systems 日本語/.melearner-course.json", "contents": "{\"version\":1,\"identityId\":\"shared-marker\"}" },
+    { "path": "Systems 日本語/01 入門/01 welcome.mp4", "contents": "video" },
+    { "path": "Systems 日本語/01 入門/01 welcome.en.srt", "contents": "subtitle-en" },
+    { "path": "Systems 日本語/01 入門/01 welcome.ja.vtt", "contents": "subtitle-ja" },
+    { "path": "Systems 日本語/01 入門/02 audio.mp3", "contents": "audio" },
+    { "path": "Systems 日本語/02 Deep Storage/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/reference.md", "contents": "document" },
+    { "path": "Systems 日本語/02 Deep Storage/03 active.mkv", "contents": "partial-video" },
+    { "path": "Systems 日本語/02 Deep Storage/03 active.mkv.aria2", "contents": "sidecar" },
+    { "path": "Systems 日本語/.hidden/ignored.mp4", "contents": "hidden" },
+    { "path": "Duplicate A/.melearner-course.json", "contents": "{\"version\":1,\"identityId\":\"shared-marker\"}" },
+    { "path": "Duplicate A/01 Intro/01 same.mkv", "contents": "same" },
+    { "path": "Duplicate B/01 Intro/01 same.mkv", "contents": "same" },
+    { "path": "Duplicate B/01 Intro/01 same.en.srt", "contents": "subtitle" },
+    { "path": "Duplicate B/01 Intro/02 download.mp4.crdownload", "contents": "partial" }
+  ],
+  "expected": {
+    "scanType": "library",
+    "courseNames": ["Duplicate A", "Duplicate B", "Systems 日本語"],
+    "learningPaths": [
+      "01 Intro/01 same.mkv",
+      "01 入門/01 welcome.en.srt",
+      "01 入門/01 welcome.ja.vtt",
+      "01 入門/01 welcome.mp4",
+      "01 入門/02 audio.mp3",
+      "02 Deep Storage/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/reference.md"
+    ],
+    "duplicateFingerprintCourses": ["Duplicate A", "Duplicate B"],
+    "duplicateMarkerCourses": ["Duplicate A", "Systems 日本語"],
+    "warningFragments": ["active download sidecar", "incomplete download"],
+    "excludedNames": ["03 active.mkv", "ignored.mp4", "02 download.mp4.crdownload"]
+  },
+  "errorCases": [
+    { "kind": "missing", "warningPrefix": "path does not exist:" },
+    { "kind": "file", "warningPrefix": "not a directory:" }
+  ]
+}

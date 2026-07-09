@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "type-check": "tsc --noEmit --incremental false",
     "type-check:ts6": "tsc6 --noEmit --incremental false --stableTypeOrdering",
+    "test:parity": "node --test --experimental-transform-types lib/course-identity.test.mjs lib/database-sqlite-fixture.test.mjs lib/parity-fixtures.test.mjs lib/stats.test.mjs scripts/responsiveness-watchdog.test.mjs",
     "tauri:check": "cargo check --manifest-path src-tauri/Cargo.toml",
     "verify": "npm run type-check:ts6 && npm run type-check && npm run lint && npm run build && npm run tauri:check",
     "tauri": "tauri",
@@ -18,6 +19,7 @@
     "stage:windows-runtime": "node scripts/stage-windows-runtime-dlls.mjs",
     "install:arch:fast": "bash scripts/install-arch-fast.sh",
     "verify:native-playback": "node scripts/verify-native-playback.mjs",
+    "watchdog": "node scripts/responsiveness-watchdog.mjs",
     "web:build": "next build",
     "web:start": "next start"
   },

@@ -16,10 +16,25 @@ pnpm tauri:dev
 ```bash
 pnpm type-check
 rtk lint
+pnpm test:parity
 pnpm build
 rtk cargo test --manifest-path src-tauri/Cargo.toml
 rtk cargo check --manifest-path src-tauri/Cargo.toml
 ```
+
+`pnpm test:parity` applies migrations 1-16 to an in-memory SQLite database, loads the anonymized fixtures under `fixtures/parity/`, and checks the current Library, identity, Progress, notes, Learning activity, scanner, document, media, and failure contracts. Fixture data is deterministic and contains no paths or content from a personal Library.
+
+## Responsiveness Watchdog
+
+Run a watchdog-aware app command or automation adapter unattended with:
+
+```bash
+pnpm watchdog -- ./path/to/app --watchdog-mode
+```
+
+The supplied command exchanges JSON lines over stdin/stdout. It reports `ready`, acknowledges `command` and `resize` probes with `command-complete` and `resize-complete`, then exits cleanly after `shutdown`. Run `pnpm watchdog --help` for the protocol and deadline options.
+
+Each phase has a bounded deadline. On a hang, the watchdog first preserves app stdout/stderr, the process tree, and best-effort thread stacks, then terminates the complete app process group. Diagnostics default to a new system-temporary directory; pass `--artifact-dir <path>` before the command separator when CI needs a known upload path.
 
 ## Native Playback
 

@@ -1,0 +1,158 @@
+{
+  "version": 1,
+  "migrations": [
+    [1, "create_courses_table"],
+    [2, "create_lessons_table"],
+    [3, "create_notes_table"],
+    [4, "create_bookmarks_table"],
+    [5, "create_settings_table"],
+    [6, "create_indexes"],
+    [7, "drop_orphan_tables"],
+    [8, "create_notes_lessons_indexes"],
+    [9, "noop_migration_9"],
+    [10, "noop_migration_10"],
+    [11, "create_sections_subtitles_settings"],
+    [12, "add_structured_lesson_metadata"],
+    [13, "create_structured_metadata_indexes"],
+    [14, "backfill_sections_from_existing_lessons"],
+    [15, "add_durable_course_identity_fields"],
+    [16, "create_lesson_activity"]
+  ],
+  "database": {
+    "libraryPath": "/fixtures/library",
+    "courseSummaries": [
+      {
+        "id": "course-marker",
+        "identityId": "identity-marker",
+        "name": "Systems 日本語",
+        "fingerprint": "fp-marker",
+        "missingSince": null,
+        "progress": 50,
+        "watchedDuration": 320,
+        "lessonIds": ["lesson-video", "lesson-document"]
+      },
+      {
+        "id": "course-missing",
+        "identityId": "identity-missing",
+        "name": "Archived Course",
+        "fingerprint": "fp-shared",
+        "missingSince": "2026-07-08T09:30:00.000Z",
+        "progress": 100,
+        "watchedDuration": 300,
+        "lessonIds": ["lesson-missing-video"]
+      },
+      {
+        "id": "course-copy",
+        "identityId": "identity-copy",
+        "name": "Copied Course",
+        "fingerprint": "fp-shared",
+        "missingSince": "2026-07-08T09:30:00.000Z",
+        "progress": 0,
+        "watchedDuration": 0,
+        "lessonIds": ["lesson-copy-video"]
+      }
+    ],
+    "videoProgress": {
+      "watchedTime": 320,
+      "lastPosition": 318.5,
+      "completed": false
+    },
+    "subtitles": [
+      { "path": "/fixtures/library/Systems 日本語/01 入門/01 welcome.en.srt", "language": "en", "label": "English" },
+      { "path": "/fixtures/library/Systems 日本語/01 入門/01 welcome.ja.vtt", "language": "ja", "label": "日本語" }
+    ],
+    "notes": [
+      { "id": "note-video-1", "lessonId": "lesson-video", "timestamp": 42.5, "text": "Review the ownership diagram.", "createdAt": "2026-07-08T10:00:00.000Z" },
+      { "id": "note-video-2", "lessonId": "lesson-video", "timestamp": 318, "text": "復習: final example", "createdAt": "2026-07-09T10:00:00.000Z" }
+    ],
+    "activityDays": [
+      { "date": "2026-07-08", "watchedSeconds": 120, "lessonsTouched": 1, "completions": 0 },
+      { "date": "2026-07-09", "watchedSeconds": 200, "lessonsTouched": 2, "completions": 1 }
+    ]
+  },
+  "identity": {
+    "persisted": [
+      { "id": "course-marker", "identity_id": "identity-marker", "path": "/fixtures/library/Systems 日本語", "fingerprint": "fp-marker", "last_accessed": "2026-07-09T12:00:00.000Z" },
+      { "id": "course-missing", "identity_id": "identity-missing", "path": "/fixtures/library/Archived Course", "fingerprint": "fp-shared", "last_accessed": "2026-06-01T08:00:00.000Z" },
+      { "id": "course-copy", "identity_id": "identity-copy", "path": "/fixtures/library/Copied Course", "fingerprint": "fp-shared", "last_accessed": null }
+    ],
+    "markerMove": {
+      "scanned": { "id": "scan-moved", "identityId": "scan-moved", "markerIdentityId": "identity-marker", "name": "Systems Moved", "path": "/fixtures/moved/Systems Moved", "fingerprint": "fp-changed" },
+      "expectedId": "course-marker"
+    },
+    "ambiguousFingerprint": {
+      "scanned": { "id": "scan-copy", "identityId": "scan-copy", "markerIdentityId": null, "name": "Another Copy", "path": "/fixtures/moved/Another Copy", "fingerprint": "fp-shared" },
+      "expectedWarning": "multiple existing courses"
+    }
+  },
+  "scanContract": {
+    "input": {
+      "scan_type": "singlecourse",
+      "warnings": [],
+      "courses": [
+        {
+          "id": "scan-course",
+          "marker_identity_id": "identity-marker",
+          "name": "Systems 日本語",
+          "path": "/fixtures/library/Systems 日本語",
+          "fingerprint": "fp-marker",
+          "sections": [
+            {
+              "id": "scan-section",
+              "name": "01 入門",
+              "order": 0,
+              "files": [
+                { "id": "scan-video", "path": "/fixtures/library/Systems 日本語/01 入門/01 welcome.mp4", "relative_path": "01 入門/01 welcome.mp4", "name": "01 welcome.mp4", "file_type": "video", "size": 1048576 },
+                { "id": "scan-srt", "path": "/fixtures/library/Systems 日本語/01 入門/01 welcome.en.srt", "relative_path": "01 入門/01 welcome.en.srt", "name": "01 welcome.en.srt", "file_type": "subtitle", "size": 128 },
+                { "id": "scan-vtt", "path": "/fixtures/library/Systems 日本語/01 入門/01 welcome.ja.vtt", "relative_path": "01 入門/01 welcome.ja.vtt", "name": "01 welcome.ja.vtt", "file_type": "subtitle", "size": 128 },
+                { "id": "scan-audio", "path": "/fixtures/library/Systems 日本語/01 入門/02 audio.flac", "relative_path": "01 入門/02 audio.flac", "name": "02 audio.flac", "file_type": "audio", "size": 2048 },
+                { "id": "scan-document", "path": "/fixtures/library/Systems 日本語/01 入門/reference.pdf", "relative_path": "01 入門/reference.pdf", "name": "reference.pdf", "file_type": "document", "size": 4096 },
+                { "id": "scan-quiz", "path": "/fixtures/library/Systems 日本語/01 入門/final quiz.json", "relative_path": "01 入門/final quiz.json", "name": "final quiz.json", "file_type": "quiz", "size": 512 }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "expectedLessonTypes": ["video", "audio", "quiz", "document"],
+    "expectedVideoSubtitles": [
+      { "path": "/fixtures/library/Systems 日本語/01 入門/01 welcome.en.srt", "language": "en", "label": "en" },
+      { "path": "/fixtures/library/Systems 日本語/01 入門/01 welcome.ja.vtt", "language": "ja", "label": "ja" }
+    ]
+  },
+  "documents": [
+    { "extension": ".txt", "behavior": "native-text" },
+    { "extension": ".md", "behavior": "native-markdown" },
+    { "extension": ".html", "behavior": "sanitized-document" },
+    { "extension": ".docx", "behavior": "converted-document" },
+    { "extension": ".pdf", "behavior": "native-pdf" },
+    { "extension": ".doc", "behavior": "external-open" }
+  ],
+  "media": {
+    "playbackCases": [
+      { "id": "h264-aac-mp4", "container": "mp4", "video": "h264", "audio": "aac", "expected": "play" },
+      { "id": "h264-multi-audio-mkv", "container": "mkv", "video": "h264", "audioTracks": 2, "expected": "play-and-switch" },
+      { "id": "hevc-10bit", "container": "mkv", "video": "hevc-main10", "expected": "play-or-named-decode-error" },
+      { "id": "external-srt-vtt", "container": "mp4", "subtitles": ["srt", "vtt"], "expected": "register-select-render" },
+      { "id": "chapters", "container": "mkv", "chapters": 2, "expected": "ordered-selectable" }
+    ],
+    "pathCases": ["unicode", "spaces", "long", "moved", "missing"],
+    "typedFailures": [
+      { "code": "media_missing", "currentMessage": "cannot resolve media path:" },
+      { "code": "media_outside_root", "currentMessage": "media path is outside the approved library root" },
+      { "code": "media_corrupt", "currentMessage": "libmpv did not finish opening media tracks" },
+      { "code": "media_unsupported", "currentMessage": "libmpv could not load file:" },
+      { "code": "surface_detached", "currentMessage": "native video surface is not attached" }
+    ]
+  },
+  "uiFlows": [
+    "initial-library-load",
+    "scan-with-warning",
+    "search",
+    "course-navigation",
+    "lesson-progress-resume",
+    "notes-create-list-delete",
+    "document-open",
+    "media-error-recovery"
+  ]
+}
