@@ -95,19 +95,6 @@ impl GtkInWindowSurfaceHandle {
         })
     }
 
-    pub(super) fn request_render(&self) -> Result<(), String> {
-        let id = self.id;
-        run_on_gtk_thread(&self.parent, move |_parent| {
-            GTK_SURFACES.with(|surfaces| {
-                let surfaces = surfaces.borrow();
-                let surface = surfaces
-                    .get(&id)
-                    .ok_or_else(|| "gtk native video surface is missing".to_string())?;
-                surface.request_render()
-            })
-        })
-    }
-
     pub(super) fn diagnostics(&self) -> super::NativeSurfaceDiagnostics {
         self.diagnostics.snapshot()
     }
@@ -228,7 +215,7 @@ impl GtkInWindowSurface {
             let state = render_state.clone();
             gl_area.connect_render(move |area, _context| {
                 state.borrow_mut().render(area);
-                gtk::glib::Propagation::Proceed
+                gtk::glib::Propagation::Stop
             });
         }
         {
@@ -278,35 +265,13 @@ impl GtkInWindowSurface {
         }
     }
 
-    fn request_render(&self) -> Result<(), String> {
-        self.render_now();
-
-        match self.render_state.borrow().diagnostics.snapshot().last_error {
-            Some(err) => Err(err),
-            None => Ok(()),
-        }
-    }
-
-    fn render_now(&self) {
-        if !self.gl_area.is_realized() {
-            self.gl_area.realize();
-        }
-        self.gl_area.size_allocate(&self.layer_allocation.borrow());
-        {
-            let mut state = self.render_state.borrow_mut();
-            state.realize(&self.gl_area);
-            state.render(&self.gl_area);
-        }
-        queue_gl_area_render(&self.gl_area);
-    }
-
     fn schedule_render(&self) {
         self.gl_area.queue_resize();
         let gl_area = self.gl_area.clone();
         let layer_allocation = self.layer_allocation.clone();
         let render_state = self.render_state.clone();
         gtk::glib::timeout_add_local_once(Duration::from_millis(50), move || {
-            gl_area.size_allocate(&layer_allocation.borrow());
+            gl_area.size_allocate(&zero_origin_allocation(&layer_allocation.borrow()));
             {
                 let mut state = render_state.borrow_mut();
                 state.realize(&gl_area);
@@ -335,7 +300,6 @@ fn apply_rect(
     let height = surface_length_to_i32(rect.height);
     *layer_allocation.borrow_mut() = gtk::Rectangle::new(rect.x, rect.y, width, height);
     gl_area.set_size_request(width, height);
-    gl_area.size_allocate(&layer_allocation.borrow());
     if add {
         overlay.add_overlay(gl_area);
         overlay.set_overlay_pass_through(gl_area, true);
@@ -346,6 +310,10 @@ fn apply_rect(
 
 fn surface_length_to_i32(value: u32) -> i32 {
     i32::try_from(value).unwrap_or(i32::MAX)
+}
+
+fn zero_origin_allocation(rect: &gtk::Rectangle) -> gtk::Rectangle {
+    gtk::Rectangle::new(0, 0, rect.width(), rect.height())
 }
 
 struct GtkRenderState {

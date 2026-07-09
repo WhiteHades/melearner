@@ -100,19 +100,6 @@ impl MacosInWindowSurfaceHandle {
         })
     }
 
-    pub(super) fn request_render(&self) -> Result<(), String> {
-        let id = self.id;
-        run_on_macos_webview_thread(&self.parent, move |_webview| {
-            MACOS_SURFACES.with(|surfaces| {
-                let mut surfaces = surfaces.borrow_mut();
-                let surface = surfaces
-                    .get_mut(&id)
-                    .ok_or_else(|| "macos native video surface is missing".to_string())?;
-                surface.request_render()
-            })
-        })
-    }
-
     pub(super) fn diagnostics(&self) -> super::NativeSurfaceDiagnostics {
         self.diagnostics.snapshot()
     }
@@ -211,19 +198,6 @@ impl MacosInWindowSurface {
         if visible {
             self.schedule_render();
         }
-    }
-
-    fn request_render(&mut self) -> Result<(), String> {
-        self.render_now();
-        match self.render_state.diagnostics.snapshot().last_error {
-            Some(err) => Err(err),
-            None => Ok(()),
-        }
-    }
-
-    fn render_now(&mut self) {
-        self.render_state.realize(&self.parent, &self.view);
-        self.render_state.render(&self.parent, &self.view);
     }
 
     fn schedule_render(&self) {

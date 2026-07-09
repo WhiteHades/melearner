@@ -339,19 +339,6 @@ impl NativeVideoSurface {
         }
     }
 
-    pub(super) fn request_render(&self) -> Result<(), String> {
-        match &self.attachment {
-            #[cfg(target_os = "linux")]
-            NativeSurfaceAttachment::GtkInWindow { handle } => handle.request_render(),
-            #[cfg(target_os = "macos")]
-            NativeSurfaceAttachment::MacosInWindow { handle } => handle.request_render(),
-            #[cfg(target_os = "windows")]
-            NativeSurfaceAttachment::WindowsInWindow { handle } => handle.request_render(),
-            #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-            NativeSurfaceAttachment::Unsupported => Err(unsupported_platform_surface_error()),
-        }
-    }
-
     pub(super) fn backend_label(&self) -> String {
         self.backend.label()
     }

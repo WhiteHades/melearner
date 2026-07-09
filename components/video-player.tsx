@@ -68,6 +68,8 @@ interface VideoPlayerProps {
 
 const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
 const POSITION_SAVE_MS = 5000
+const NATIVE_RENDER_READY_TIMEOUT_MS = 10000
+const NATIVE_RENDER_READY_POLL_MS = 50
 
 function isEditableShortcutTarget(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) return false
@@ -101,6 +103,39 @@ const initialState: NativePlayerState = {
   selectedSubtitleTrackId: null,
   chapters: [],
   currentChapterId: null,
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms))
+}
+
+function hasReadyNativeRender(state: NativePlayerState) {
+  return (
+    state.surfaceAttached &&
+    state.surfaceRenderApi &&
+    state.surfaceRenderThreadAlive &&
+    state.surfaceRenderedFrames > 0 &&
+    state.surfaceRenderWidth !== null &&
+    state.surfaceRenderWidth > 0 &&
+    state.surfaceRenderHeight !== null &&
+    state.surfaceRenderHeight > 0 &&
+    state.surfaceRenderError === null
+  )
+}
+
+async function waitForReadyNativeRender(path: string, initial: NativePlayerState) {
+  if (!initial.surfaceRenderApi || hasReadyNativeRender(initial)) return initial
+
+  const deadline = performance.now() + NATIVE_RENDER_READY_TIMEOUT_MS
+  let next = initial
+  while (performance.now() < deadline) {
+    if (next.surfaceRenderError) throw new Error(next.surfaceRenderError)
+    await delay(NATIVE_RENDER_READY_POLL_MS)
+    next = await getNativePlayerState()
+    if (next.path === path && hasReadyNativeRender(next)) return next
+  }
+
+  throw new Error("native video surface did not render before timeout")
 }
 
 function VideoPlayerComponent({
@@ -192,7 +227,7 @@ function VideoPlayerComponent({
         autoplay: shouldAutoplay,
       })
       await updateBounds()
-      const next = await loadNativePlayerFile({
+      const loaded = await loadNativePlayerFile({
         path: loadSnapshot.path,
         allowedRoots: [libraryRoot],
         subtitles: loadSnapshot.subtitles.map((subtitle) => ({
@@ -203,6 +238,7 @@ function VideoPlayerComponent({
         startTime: loadSnapshot.lastPosition || undefined,
         autoplay: shouldAutoplay,
       })
+      const next = await waitForReadyNativeRender(loadSnapshot.path, loaded)
 
       if (!isActive) return
       frontendLog("info", "native.player.load.ready", {

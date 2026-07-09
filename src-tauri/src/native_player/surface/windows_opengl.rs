@@ -111,19 +111,6 @@ impl WindowsInWindowSurfaceHandle {
         })
     }
 
-    pub(super) fn request_render(&self) -> Result<(), String> {
-        let id = self.id;
-        run_on_windows_thread(&self.parent, move |_parent| {
-            WINDOWS_SURFACES.with(|surfaces| {
-                let mut surfaces = surfaces.borrow_mut();
-                let surface = surfaces
-                    .get_mut(&id)
-                    .ok_or_else(|| "windows native video surface is missing".to_string())?;
-                surface.request_render()
-            })
-        })
-    }
-
     pub(super) fn diagnostics(&self) -> super::NativeSurfaceDiagnostics {
         self.diagnostics.snapshot()
     }
@@ -261,22 +248,9 @@ impl WindowsInWindowSurface {
         }
     }
 
-    fn request_render(&mut self) -> Result<(), String> {
-        self.render_now();
-        match self.render_state.diagnostics.snapshot().last_error {
-            Some(err) => Err(err),
-            None => Ok(()),
-        }
-    }
-
     fn realize(&mut self) {
         self.render_state
             .realize(&self.parent, self.hdc, self.gl_context);
-    }
-
-    fn render_now(&mut self) {
-        self.render_state
-            .render(&self.parent, self.hdc, self.gl_context);
     }
 
     fn schedule_render(&self) {
