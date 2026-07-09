@@ -35,6 +35,8 @@ Current implementation state:
 - File-loaded, end-file, and libmpv playback errors come from a dedicated libmpv event client, not from optimistic load responses or position-duration guessing.
 - Native-player tests cover internal audio/subtitle/chapter extraction and external SRT/VTT subtitle registration.
 - Linux uses a GTK overlay inside the existing Tauri/WebKit window. The WebView remains the UI layer, while libmpv renders into a GTK `GLArea` positioned over the measured video placeholder. macOS uses an AppKit `NSOpenGLView` attached to the existing `WKWebView` and drives libmpv through the OpenGL render API. Windows uses a child `HWND` attached to the main Tauri window and a WGL context that drives libmpv through the OpenGL render API. If a platform path cannot attach, playback must fail clearly instead of opening a second compositor-visible app window. The old generic Tauri-window/OpenGL render path was removed because it created a second app window. macOS and Windows still need packaged clean-machine visual playback verification before they can be marked production-ready.
+- The desktop app uses Tauri single-instance protection. A second launcher click should focus the existing window instead of starting another process that hydrates the Library again or creates a competing native video surface.
+- The Linux GTK overlay owns GLArea placement through `connect_get_child_position`. Do not manually `size_allocate` the GLArea with the same overlay rectangle; that double-applies x/y placement and can create a separate-looking black video box offset from the Player while audio continues.
 - The native surface is hidden when its WebView placeholder leaves the viewport, then shown and moved again when the placeholder returns.
 - Packaged native-surface attach and render failures are written to `~/.melearner/native-surface.log` by default. Set `MELEARNER_NATIVE_SURFACE_LOG=/path/to/log` when running focused render diagnostics.
 - Packaged render verification can open a known lesson at launch with `--open-course <course-id> --open-lesson <lesson-id>`, or with `MELEARNER_OPEN_COURSE_ID` and `MELEARNER_OPEN_LESSON_ID`. The packaged app must keep the static Tauri `main` window from `tauri.conf.json`; the frontend hydrates the library first, then reads the startup route with a short timeout and applies the viewer route asynchronously. Startup routing must never block library hydration.
@@ -145,9 +147,9 @@ Before finishing iterative build or install work, remove package tarballs, packa
 
 See `docs/adr/0009-remove-stale-and-redundant-artifacts.md`.
 
-## Windows and macOS Release Gate
+## Windows and macOS Experimental Downloads
 
-The release workflow is Linux-only while Windows and macOS lack clean-machine packaged visual playback verification. Do not restore Windows MSI, NSIS, macOS DMG, or macOS app-bundle release jobs until the platform render host is verified on the target OS, libmpv dependencies are bundled deliberately, and packaged playback is verified on a clean machine.
+Windows and macOS downloads are experimental when available. Keep them available for testing and best-effort support, but mark them clearly as experimental until the platform render host is verified on the target OS, libmpv dependencies are bundled deliberately, and packaged playback is verified on a clean machine.
 
 CI may still run macOS and Windows compile-readiness checks. Those checks prove that the Rust/Tauri/native-player code compiles against the platform libraries used by the native render hosts; they do not prove playback is production-ready or allow Windows/macOS release artifacts. Windows compile readiness uses MSYS2 UCRT64 libmpv and the `x86_64-pc-windows-gnu` Rust target because Linux CI cannot prove Windows runtime behavior or Windows packaging.
 

@@ -6,6 +6,7 @@ mod scanner;
 const DATABASE_PATH_ENV: &str = "MELEARNER_DB_PATH";
 const FRONTEND_LOG_ENV: &str = "MELEARNER_FRONTEND_LOG";
 
+use tauri::Manager;
 use tauri_plugin_sql::{Builder as SqlBuilder, Migration, MigrationKind};
 
 fn get_migrations() -> Vec<Migration> {
@@ -297,6 +298,14 @@ pub fn run() {
         startup_initialization_script(startup_route.as_ref(), startup_auto_scan_path.as_deref());
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            let _ = write_startup_log("single-instance.activate");
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .manage(StartupRouteState(startup_route))
         .plugin(startup_route_plugin(startup_route_script))
         .plugin(tauri_plugin_fs::init())

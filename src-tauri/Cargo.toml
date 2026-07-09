@@ -24,6 +24,7 @@ log = "0.4"
 libc = "0.2"
 tauri = { version = "=2.11.5", features = ["protocol-asset", "unstable"] }
 tauri-plugin-log = "=2.8.0"
+tauri-plugin-single-instance = "=2.4.2"
 tauri-plugin-fs = { version = "=2.5.1", features = ["watch"] }
 tauri-plugin-dialog = "=2.7.1"
 tauri-plugin-sql = { version = "=2.4.0", features = ["sqlite"] }
