@@ -93,5 +93,5 @@ Rules:
 ## Open Decisions
 
 - Should missing courses stay visible in the main library long-term or move to a separate recovery/settings view?
-- Should the activity heatmap retention window stay fixed at 12 weeks or become configurable?
+- Keep the activity heatmap at the current 12-week window for now. Revisit configurability only if it improves the learning UI without adding settings complexity.
 - Should stats distinguish played time from position-derived progress if a future player records wall-clock playback time?
