@@ -253,6 +253,11 @@ impl WindowsInWindowSurface {
             .realize(&self.parent, self.hdc, self.gl_context);
     }
 
+    fn render_now(&mut self) {
+        self.render_state
+            .render(&self.parent, self.hdc, self.gl_context);
+    }
+
     fn schedule_render(&self) {
         let id = self.id;
         let parent = self.parent.clone();

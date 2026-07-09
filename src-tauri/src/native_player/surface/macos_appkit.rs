@@ -200,6 +200,11 @@ impl MacosInWindowSurface {
         }
     }
 
+    fn render_now(&mut self) {
+        self.render_state.realize(&self.parent, &self.view);
+        self.render_state.render(&self.parent, &self.view);
+    }
+
     fn schedule_render(&self) {
         let id = self.id;
         let parent = self.parent.clone();
