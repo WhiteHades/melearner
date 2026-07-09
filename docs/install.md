@@ -25,11 +25,11 @@ chmod +x melearner_<version>_amd64.AppImage
 ./melearner_<version>_amd64.AppImage
 ```
 
-## Windows and macOS
+## Experimental Windows and macOS
 
-Windows and macOS installers are not production release targets yet. The app's playback engine is embedded libmpv, and those platforms have source render hosts, but their packages still need clean-machine visual playback verification and deliberate libmpv dependency bundling before they can be advertised as supported.
+Windows and macOS downloads are experimental and may not work on every machine yet. The app's playback engine is embedded libmpv, and those platforms have source render hosts, but their packages still need clean-machine visual playback verification and deliberate libmpv dependency bundling before they can be advertised as production-ready.
 
-Do not publish Windows MSI, NSIS, macOS DMG, or macOS app-bundle release artifacts until each platform can visibly play local media through the embedded native surface in one app window on a clean machine.
+Keep experimental Windows and macOS downloads clearly labeled. Do not describe them as stable until each platform can visibly play local media through the embedded native surface in one app window on a clean machine.
 
 Windows MSI artifacts are available from the manually dispatched `windows msi downloader` workflow. These MSI artifacts are Authenticode-signed in CI, then checked before upload. If production code-signing secrets are configured, the workflow signs with that trusted certificate. Otherwise it falls back to a per-run self-signed test certificate. The fallback proves the packaging and signing path, but it is still for end-to-end testing only, not a supported production release. Windows may still show an unknown-publisher or SmartScreen warning when the artifact is signed by the fallback test certificate.
 

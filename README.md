@@ -42,6 +42,10 @@ chmod +x melearner_<version>_amd64.AppImage
 ./melearner_<version>_amd64.AppImage
 ```
 
+### Experimental Windows and macOS
+
+Windows and macOS downloads, when available, are experimental and may not work on every machine yet. They remain available for testing and are supported on a best-effort basis while native playback and packaging are verified.
+
 More install details: [docs/install.md](docs/install.md).
 
 ## First Run
