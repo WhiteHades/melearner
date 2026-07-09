@@ -7,9 +7,10 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "type-check": "tsc --noEmit",
+    "type-check": "tsc --noEmit --incremental false",
+    "type-check:ts6": "tsc6 --noEmit --incremental false --stableTypeOrdering",
     "tauri:check": "cargo check --manifest-path src-tauri/Cargo.toml",
-    "verify": "npm run type-check && npm run lint && npm run build && npm run tauri:check",
+    "verify": "npm run type-check:ts6 && npm run type-check && npm run lint && npm run build && npm run tauri:check",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
@@ -61,7 +62,8 @@
     "eslint": "^9.39.4",
     "eslint-config-next": "^16.2.10",
     "tailwindcss": "^4.3.2",
-    "typescript": "^6.0.3"
+    "typescript": "npm:@typescript/typescript6@6.0.2",
+    "typescript-7": "npm:typescript@7.0.2"
   },
   "packageManager": "pnpm@11.10.0+sha512.0b7f8b98060031904c017e3a41eb187a16d40eeb829b95c4f8cb03681761fc4ab53dd219115b9b447f4dce1a05a214764461e7d3703392a9f32f9511ce8c86c8"
 }
