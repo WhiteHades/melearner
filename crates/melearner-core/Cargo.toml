@@ -14,5 +14,6 @@ abi-test-hooks = []
 name = "melearner_core"
 crate-type = ["rlib", "staticlib"]
 
-[build-dependencies]
+[dev-dependencies]
 cbindgen = "=0.29.4"
+sha2 = "=0.10.9"
