@@ -7,4 +7,5 @@ out
 .env
 .env.local
 src-tauri/target
+crates/*/target
 src-tauri/melearn.db
