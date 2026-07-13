@@ -1,0 +1,18 @@
+language = "C"
+include_guard = "MELEARNER_CORE_H"
+autogen_warning = "/* Generated from crates/melearner-core. Do not edit by hand. */"
+documentation = true
+style = "both"
+usize_is_size_t = true
+
+[parse]
+parse_deps = false
+
+[export]
+item_types = ["constants", "typedefs", "opaque", "structs", "functions"]
+exclude = [
+  "ml_core_test_complete",
+  "ml_core_test_emit",
+  "ml_core_test_panic",
+  "ml_core_test_submit",
+]
