@@ -18,6 +18,7 @@ crate-type = ["rlib"]
 tauri-build = { version = "=2.6.3", features = [] }
 
 [dependencies]
+melearner-core = { path = "../crates/melearner-core" }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
