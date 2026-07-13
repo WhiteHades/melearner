@@ -9,6 +9,44 @@ permissions:
   contents: read
 
 jobs:
+  core-abi:
+    name: rust core abi
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: install zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: test standalone rust core
+        run: cargo test --locked --all-features --manifest-path crates/melearner-core/Cargo.toml
+
+      - name: reject desktop-shell dependencies
+        run: |
+          set -euo pipefail
+          dependencies="$(cargo tree --locked \
+            --manifest-path crates/melearner-core/Cargo.toml \
+            --all-features \
+            --target all \
+            --edges normal,build,dev \
+            --prefix none \
+            --format '{p}')"
+          printf '%s\n' "$dependencies"
+          offenders="$(printf '%s\n' "$dependencies" | grep -Ei '^(tauri|wry|webview|webkit)' || true)"
+          if [[ -n "$offenders" ]]; then
+            printf 'standalone core contains a Tauri/WebView/WebKit dependency:\n%s\n' "$offenders" >&2
+            exit 1
+          fi
+
+      - name: run zig abi smoke
+        run: scripts/test-core-abi.sh
+
   linux:
     name: linux checks
     runs-on: ubuntu-22.04
