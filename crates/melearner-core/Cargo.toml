@@ -1,0 +1,18 @@
+[package]
+name = "melearner-core"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96.0"
+license = "MIT"
+publish = false
+
+[features]
+default = []
+abi-test-hooks = []
+
+[lib]
+name = "melearner_core"
+crate-type = ["rlib", "staticlib"]
+
+[build-dependencies]
+cbindgen = "=0.29.4"
