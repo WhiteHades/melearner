@@ -2762,6 +2762,7 @@ dependencies = [
  "libmpv2",
  "libmpv2-sys",
  "log",
+ "melearner-core",
  "notify 6.1.1",
  "objc2",
  "objc2-app-kit",
@@ -2779,6 +2780,10 @@ dependencies = [
  "tokio",
  "windows",
 ]
+
+[[package]]
+name = "melearner-core"
+version = "0.1.0"
 
 [[package]]
 name = "memchr"
