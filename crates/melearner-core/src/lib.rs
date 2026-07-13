@@ -1,5 +1,7 @@
 #![allow(non_camel_case_types)]
 
+pub mod migrations;
+
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::ffi::c_void;
