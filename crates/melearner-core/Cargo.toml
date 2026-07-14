@@ -14,9 +14,11 @@ abi-test-hooks = []
 name = "melearner_core"
 crate-type = ["rlib", "staticlib"]
 
-[dev-dependencies]
-cbindgen = "=0.29.4"
+[dependencies]
 sha2 = "=0.10.9"
 sqlx = { version = "=0.8.6", default-features = false, features = ["migrate", "runtime-tokio", "sqlite"] }
+
+[dev-dependencies]
+cbindgen = "=0.29.4"
 tempfile = "=3.27.0"
 tokio = { version = "=1.52.3", features = ["rt"] }
