@@ -791,7 +791,11 @@ async fn validate_current_schema(connection: &mut SqliteConnection) -> Result<()
         .split(';')
         .map(str::trim)
         .filter(|statement| !statement.is_empty());
-    if stored_statements.iter().map(String::as_str).ne(expected_statements) {
+    if stored_statements
+        .iter()
+        .map(String::as_str)
+        .ne(expected_statements)
+    {
         return Err(LibraryError::Database(
             "database schema is not current".to_string(),
         ));
