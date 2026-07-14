@@ -248,30 +248,54 @@ fn run_worker(
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
     use std::num::{NonZeroU64, NonZeroUsize};
     use std::path::{Path, PathBuf};
     use std::sync::mpsc;
     use std::thread;
     use std::time::Duration;
 
+    use sqlx::sqlite::SqliteConnectOptions;
+    use sqlx::{Connection, SqliteConnection};
+
     use super::{DomainCoordinator, DomainError, DomainRequest, DomainResponse, SubmitError};
     use crate::library::LibraryError;
+    use crate::schema;
+
+    const CURRENT_SEED: &str = include_str!("../../../fixtures/parity/database-current.sql");
 
     fn request_id(value: u64) -> NonZeroU64 {
         NonZeroU64::new(value).expect("nonzero test request id")
     }
 
-    fn copied_fixture() -> (tempfile::TempDir, PathBuf) {
+    fn current_fixture() -> (tempfile::TempDir, PathBuf) {
         let temp = tempfile::tempdir().expect("create coordinator fixture tempdir");
-        let copied = temp.path().join("database-v16.sqlite");
-        fs::copy(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../../fixtures/parity/database-v16.sqlite"),
-            &copied,
-        )
-        .expect("copy v16 database fixture");
-        (temp, copied)
+        let path = temp.path().join("database-current.sqlite");
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("build coordinator fixture runtime")
+            .block_on(async {
+                let options = SqliteConnectOptions::new()
+                    .filename(&path)
+                    .create_if_missing(true)
+                    .foreign_keys(true)
+                    .busy_timeout(Duration::from_secs(10));
+                let mut connection = SqliteConnection::connect_with(&options)
+                    .await
+                    .expect("create current coordinator fixture");
+                sqlx::raw_sql(schema::SQL)
+                    .execute(&mut connection)
+                    .await
+                    .expect("create current coordinator schema");
+                sqlx::raw_sql(CURRENT_SEED)
+                    .execute(&mut connection)
+                    .await
+                    .expect("seed current coordinator fixture");
+                connection
+                    .close()
+                    .await
+                    .expect("close current coordinator fixture");
+            });
+        (temp, path)
     }
 
     fn coordinator(capacity: usize) -> DomainCoordinator {
@@ -287,7 +311,7 @@ mod tests {
 
     #[test]
     fn requests_run_in_fifo_order_with_caller_owned_ids() {
-        let (_temp, path) = copied_fixture();
+        let (_temp, path) = current_fixture();
         let coordinator = coordinator(4);
         coordinator
             .try_submit(
@@ -352,7 +376,7 @@ mod tests {
 
     #[test]
     fn replacement_advances_once_and_stales_later_fifo_pages() {
-        let (_temp, path) = copied_fixture();
+        let (_temp, path) = current_fixture();
         let coordinator = coordinator(4);
         coordinator
             .try_submit(
@@ -422,7 +446,7 @@ mod tests {
 
     #[test]
     fn failed_replacement_preserves_the_open_snapshot_and_revision() {
-        let (_temp, path) = copied_fixture();
+        let (_temp, path) = current_fixture();
         let missing = path.with_file_name("missing.sqlite");
         let coordinator = coordinator(5);
         coordinator
@@ -486,7 +510,7 @@ mod tests {
 
     #[test]
     fn lesson_pages_flow_through_the_revisioned_fifo() {
-        let (_temp, path) = copied_fixture();
+        let (_temp, path) = current_fixture();
         let coordinator = coordinator(4);
         coordinator
             .try_submit(
@@ -633,7 +657,7 @@ mod tests {
 
     #[test]
     fn drop_is_bounded_while_a_worker_operation_is_blocked() {
-        let (_temp, path) = copied_fixture();
+        let (_temp, path) = current_fixture();
         let coordinator = coordinator(2);
         coordinator
             .try_submit(
