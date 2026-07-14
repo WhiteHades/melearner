@@ -201,7 +201,7 @@ pub(crate) struct LibraryDatabase {
 
 impl LibraryDatabase {
     /// Opens an isolated, checkpointed database copy for read-only projection.
-    /// Live databases use the coordinator's migration-aware open path instead.
+    /// Production writable open and migration support is not implemented yet.
     pub(crate) async fn open_snapshot_read_only(
         path: &Path,
         revision: NonZeroU64,
