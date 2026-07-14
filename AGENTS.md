@@ -1,5 +1,10 @@
 # melearner Agent Guide
 
+## Native cutover policy
+
+- The fully native app uses one fresh current schema. Do not add backup, restore, or compatibility paths for databases or artifacts from previous melearner versions.
+- Delete deprecated versions, artifacts, features, functions, and fallback paths in the change that supersedes them. Do not retain legacy behavior as a fallback.
+
 ## Agent skills
 
 ### Issue tracker
