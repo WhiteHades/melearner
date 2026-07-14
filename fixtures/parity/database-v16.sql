@@ -1,22 +1,24 @@
 INSERT INTO courses (
   id, identity_id, name, path, fingerprint, total_duration, watched_duration,
-  last_accessed, thumbnail_source_path, last_scanned_at, missing_since
+  last_accessed, created_at, thumbnail_source_path, last_scanned_at, missing_since
 ) VALUES
   (
     'course-marker', 'identity-marker', 'Systems 日本語', '/fixtures/library/Systems 日本語',
     'fp-marker', 900, 320, '2026-07-09T12:00:00.000Z',
+    '2026-07-01T00:00:00.000Z',
     '/fixtures/library/Systems 日本語/01 入門/01 welcome.mp4',
     '2026-07-09T12:00:00.000Z', NULL
   ),
   (
     'course-missing', 'identity-missing', 'Archived Course', '/fixtures/library/Archived Course',
     'fp-shared', 300, 300, '2026-06-01T08:00:00.000Z',
+    '2026-07-01T00:00:00.000Z',
     '/fixtures/library/Archived Course/01 Intro/01 archived.mkv',
     '2026-07-09T12:00:00.000Z', '2026-07-08T09:30:00.000Z'
   ),
   (
     'course-copy', 'identity-copy', 'Copied Course', '/fixtures/library/Copied Course',
-    'fp-shared', 300, 0, NULL,
+    'fp-shared', 300, 0, NULL, '2026-07-01T00:00:00.000Z',
     '/fixtures/library/Copied Course/01 Intro/01 archived.mkv',
     '2026-07-09T12:00:00.000Z', '2026-07-08T09:30:00.000Z'
   );
