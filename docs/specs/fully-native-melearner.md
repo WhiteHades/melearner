@@ -10,12 +10,12 @@ melearner currently depends on a React/WebView/Tauri shell around an embedded li
 
 Rebuild the entire visible product with Native SDK `.native` views and a Zig Model/Msg/update loop. Retain the proven Rust domain and media logic as an in-process static library behind a versioned C ABI. Extend Native SDK with a true native-only host, a cross-platform external media surface, application-defined asynchronous effects, and Linux/Windows accessibility bridges. Preserve the current Library, Course, Lesson, Progress, notes, search, and Player workflows while redesigning their expression as a modern, minimal study instrument.
 
-The production app will be one Native SDK executable. Native SDK owns windows, layout, controls, focus, keyboard behavior, accessibility, animation, and deterministic automation. Rust owns SQLite, migrations, Library scanning, Course identity, search, Progress, Learning activity, notes, document conversion, embedded libmpv, and approved-root validation. All expensive or blocking Rust work is asynchronous from the UI's perspective.
+The production app will be one Native SDK executable. Native SDK owns windows, layout, controls, focus, keyboard behavior, accessibility, animation, and deterministic automation. Rust owns the current SQLite schema, Library scanning, Course identity, search, Progress, Learning activity, notes, document conversion, embedded libmpv, and approved-root validation. All expensive or blocking Rust work is asynchronous from the UI's perspective.
 
 ## User Stories
 
 1. As a learner, I want the app to launch into a responsive Library, so that I can resume studying without waiting on an unresponsive window.
-2. As a learner, I want my existing Library and Progress to appear after the native upgrade, so that the migration does not erase my history.
+2. As a learner, I want the native app to create a clean current Library database, so that obsolete storage formats do not constrain the new architecture.
 3. As a learner, I want renamed or moved Courses to retain their identity, so that Progress follows my local files.
 4. As a learner, I want temporarily missing Courses to remain visible with a clear state, so that I understand what happened without losing data.
 5. As a learner, I want to select or change my root folder through a native dialog, so that setup feels integrated with my operating system.
@@ -41,7 +41,7 @@ The production app will be one Native SDK executable. Native SDK owns windows, l
 25. As a learner, I want safe local HTML and DOCX content converted into native document blocks, so that common documents do not require a browser.
 26. As a learner, I want PDFs rendered natively with smooth page virtualization and zoom, so that document Courses remain first-class.
 27. As a learner, I want unsupported document formats to open in my default app with a clear explanation, so that the native app fails honestly.
-28. As a learner, I want timestamped notes to remain attached to Lessons, so that my study context survives the migration.
+28. As a learner, I want timestamped notes to remain attached to Lessons, so that my study context survives app restarts.
 29. As a learner, I want stats to summarize actual local Learning activity without looking like a generic analytics dashboard, so that the information supports study rather than administration.
 30. As a learner, I want light, dark, and cozy appearances with consistent hierarchy, so that the app fits my environment.
 31. As a learner, I want the interface to adapt from compact laptop windows to wide desktop windows, so that no important control is clipped or wastefully stretched.
@@ -61,7 +61,7 @@ The production app will be one Native SDK executable. Native SDK owns windows, l
 - The existing Rust logic is extracted into a `melearner_core` module built as both a static library and a Rust library. The Rust library remains the sole owner of domain rules and native media state.
 - The Zig/Rust seam is a versioned C ABI with opaque handles, fixed-width values, explicit byte ownership, panic barriers, bounded queues, cancellation, and a thread-safe empty-to-nonempty waker.
 - The UI never blocks on Rust. Requests return IDs immediately; ordered completion events enter the Model only on the Native SDK event-loop thread.
-- SQLite keeps one writer owner. Existing tables, migrations, marker files, Course identity behavior, Progress, Learning activity, and notes remain compatible.
+- SQLite keeps one writer owner. The native app creates one fresh current schema at a distinct native database path. It does not inspect, import, migrate, back up, restore, or reuse databases or artifacts from previous melearner versions.
 - Library, Lesson, search, activity, and document data are paged by stable revision. The Zig Model holds only visible pages and selected detail, not a duplicate canonical Library graph.
 - Native SDK gains a native-only host mode that does not compile, link, load, or stage WebKit, WebKitGTK, WebView2, or CEF.
 - Native SDK gains a generic external media-surface module on Linux, macOS, and Windows. The SDK owns the native child, layout, clipping, focus, visibility, scale, fullscreen relayout, and current graphics context.
@@ -87,7 +87,7 @@ The production app will be one Native SDK executable. Native SDK owns windows, l
 - Video thumbnails are generated in process through the media engine. The final package launches no FFmpeg or FFprobe helper process.
 - The supported media promise is the tested non-DRM libmpv corpus, not every possible codec variant. Missing, corrupt, encrypted, outside-root, unsupported, and detached-surface inputs return typed errors without hanging.
 - Linux ships AppImage and Arch artifacts, macOS ships signed/notarized DMG, and Windows ships signed MSI. Each stages and audits the complete libmpv/PDF runtime dependency closure.
-- Migration is staged: freeze fixtures, prove Native SDK prerequisites, extract the Rust core, ship read-only native slices internally, add mutations/documents, add Player parity, then package and delete the transitional shell.
+- Cutover is staged: freeze current-domain fixtures, prove Native SDK prerequisites, extract the Rust core, ship read-only native slices internally, add mutations/documents, add Player parity, then package and delete the transitional shell.
 - There is no shipped dual-stack fallback. Tauri remains the production line only until native package gates pass; final cutover deletes it rather than hiding it behind a flag.
 - During the transition, TypeScript 7 is the primary command-line checker while TypeScript 6 remains available under its compatibility package for Next.js and ESLint's programmatic API.
 
@@ -95,7 +95,7 @@ The production app will be one Native SDK executable. Native SDK owns windows, l
 
 - Tests assert observable module behavior through the highest available seam. Source-text boundary tests are used only for architectural constraints that currently lack a runnable scheduler seam.
 - Native SDK framework tests cover native-only host selection, unsupported WebView declarations, external-surface lifecycle, fake external effects, record/replay ordering, and Linux/Windows accessibility semantics.
-- Rust core tests cover every database migration, transaction, scan rule, Course identity ambiguity, marker behavior, search revision, Progress update, note operation, approved-root check, document conversion, and media metadata extraction.
+- Rust core tests cover the current schema, every transaction, scan rule, Course identity ambiguity, marker behavior, search revision, Progress update, note operation, approved-root check, document conversion, and media metadata extraction.
 - C ABI tests cover create/destroy cycles, stale handles, null and malformed input, UTF-8 validation, ownership/release, cancellation, queue pressure, panic containment, event order, and concurrent wake behavior.
 - A deterministic scheduler test forces the former Player/platform-main-thread lock ordering and proves the UI executor remains able to service surface work.
 - Headless native UI tests drive the real Model/Msg/update loop with fake Rust effects. They cover loading, empty, warning, error, stale-result, keyboard, focus, reduced-motion, and compact/wide layout states.
@@ -107,8 +107,8 @@ The production app will be one Native SDK executable. Native SDK owns windows, l
 - Visual review checks the design at compact laptop, standard desktop, and ultrawide sizes in light, dark, and cozy modes. It verifies hierarchy, line length, hit targets, optical alignment, image outlines, and motion behavior.
 - Accessibility gates combine semantic snapshots, full keyboard traversal, focus restoration, contrast checks, reduced-motion checks, and installed-package VoiceOver, NVDA, and Orca smoke tests.
 - Package tests inspect binary imports and runtime process trees to prove no WebView/browser runtime or helper process remains.
-- Database migration tests always operate on copied fixtures and verify rollback/backups before applying new schema versions.
-- Existing native Player, startup-route, packaging, database, scanner, identity, stats, and boundary tests remain the transitional oracle until equivalent native-core/full-loop gates replace them.
+- Fresh-schema tests create isolated empty databases and verify the exact current tables, constraints, and foreign keys without migration, backup, restore, or rollback paths.
+- Existing native Player, startup-route, packaging, scanner, identity, stats, and boundary tests remain the transitional oracle until equivalent native-core/full-loop gates replace them.
 
 ## Out of Scope
 
@@ -117,7 +117,7 @@ The production app will be one Native SDK executable. Native SDK owns windows, l
 - A browser or WebView fallback for documents or UI.
 - An external mpv process, FFmpeg playback helper, or second compositor-visible Player window.
 - Rewriting proven Rust domain rules in Zig.
-- Replacing OpenGL with Metal, Vulkan, or another renderer during the migration.
+- Replacing OpenGL with Metal, Vulkan, or another renderer during the cutover.
 - Redesigning the product's navigation or feature set before behavioral parity.
 - Shipping Linux, macOS, or Windows support based only on compile-time checks.
 
