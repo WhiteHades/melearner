@@ -92,6 +92,24 @@ fn fresh_schema_is_strict_and_unversioned() {
         .execute(&mut connection)
         .await
         .expect("insert current section");
+        sqlx::query(
+            "INSERT INTO courses
+             (id, identity_id, name, path, fingerprint, last_scanned_at)
+             VALUES (
+                'other-course', 'other-identity', 'Other course',
+                '/library/other-course', 'other-fingerprint', 'now'
+             )",
+        )
+        .execute(&mut connection)
+        .await
+        .expect("insert other current course");
+        sqlx::query(
+            "INSERT INTO sections (id, course_id, name)
+             VALUES ('other-section', 'other-course', 'Other section')",
+        )
+        .execute(&mut connection)
+        .await
+        .expect("insert other current section");
         assert!(
             sqlx::query(
                 "INSERT INTO lessons
@@ -99,6 +117,19 @@ fn fresh_schema_is_strict_and_unversioned() {
                  VALUES (
                     'wrong-section', 'course', 'missing', 'Lesson',
                     '/library/course/lesson.mp4', 'lesson.mp4', 'video'
+                 )",
+            )
+            .execute(&mut connection)
+            .await
+            .is_err()
+        );
+        assert!(
+            sqlx::query(
+                "INSERT INTO lessons
+                 (id, course_id, section_id, name, path, relative_path, type)
+                 VALUES (
+                    'wrong-course-section', 'course', 'other-section', 'Lesson',
+                    '/library/course/wrong-section.mp4', 'wrong-section.mp4', 'video'
                  )",
             )
             .execute(&mut connection)
@@ -121,6 +152,16 @@ fn fresh_schema_is_strict_and_unversioned() {
                 .execute(&mut connection)
                 .await
                 .is_err()
+        );
+        assert!(
+            sqlx::query(
+                "INSERT INTO lesson_activity
+                 (id, course_id, lesson_id, activity_date)
+                 VALUES ('wrong-course-activity', 'other-course', 'lesson', '2026-07-14')",
+            )
+            .execute(&mut connection)
+            .await
+            .is_err()
         );
 
         let foreign_keys = sqlx::query("PRAGMA foreign_keys")
