@@ -19,6 +19,7 @@ CREATE TABLE sections (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(course_id, name),
+    UNIQUE(course_id, id),
     FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE
 );
 
@@ -37,8 +38,9 @@ CREATE TABLE lessons (
     last_position REAL NOT NULL DEFAULT 0 CHECK(last_position >= 0),
     file_size INTEGER NOT NULL DEFAULT 0 CHECK(file_size >= 0),
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(course_id, id),
     FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE,
-    FOREIGN KEY (section_id) REFERENCES sections(id) ON DELETE CASCADE
+    FOREIGN KEY (course_id, section_id) REFERENCES sections(course_id, id) ON DELETE CASCADE
 );
 
 CREATE TABLE notes (
@@ -77,7 +79,7 @@ CREATE TABLE lesson_activity (
     completed INTEGER NOT NULL DEFAULT 0 CHECK(completed IN (0, 1)),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE,
-    FOREIGN KEY (lesson_id) REFERENCES lessons(id) ON DELETE CASCADE
+    FOREIGN KEY (course_id, lesson_id) REFERENCES lessons(course_id, id) ON DELETE CASCADE
 );
 
 CREATE INDEX idx_lessons_course ON lessons(course_id);
