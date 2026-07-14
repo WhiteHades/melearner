@@ -2,7 +2,7 @@
 
 import { useEffect } from "react"
 import { log } from "evlog/next/client"
-import { initDatabase, loadPersistedLibrary, syncLibrary } from "@/lib/database"
+import { initDatabase, loadPersistedLibrary } from "@/lib/database"
 import { indexCourses } from "@/lib/search"
 import { useCourseStore } from "@/lib/stores/course-store"
 import { getStartupRoute, isTauri, type StartupRoute } from "@/lib/tauri"
@@ -22,47 +22,8 @@ declare global {
   }
 }
 
-type LegacyCourseStore = {
-  state?: {
-    courses?: unknown
-    libraryPath?: unknown
-  }
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null
-}
-
-function isLegacyCourseArray(value: unknown): value is Course[] {
-  return Array.isArray(value) && value.every((course) => (
-    isRecord(course) &&
-    typeof course.id === "string" &&
-    typeof course.name === "string" &&
-    typeof course.path === "string" &&
-    Array.isArray(course.sections)
-  ))
-}
-
-function readLegacyLibrary(): { courses: Course[]; libraryPath: string } | null {
-  if (typeof window === "undefined") return null
-
-  const raw = window.localStorage.getItem("melearner-storage")
-  if (!raw) return null
-
-  const parsed = JSON.parse(raw) as LegacyCourseStore
-  const courses = parsed.state?.courses
-  const libraryPath = parsed.state?.libraryPath
-
-  if (!isLegacyCourseArray(courses) || typeof libraryPath !== "string" || libraryPath.length === 0) {
-    return null
-  }
-
-  return { courses, libraryPath }
-}
-
-function removeLegacyLibrary(): void {
-  if (typeof window === "undefined") return
-  window.localStorage.removeItem("melearner-storage")
 }
 
 function schedulePostHydrationWork(work: () => void): void {
@@ -247,43 +208,8 @@ export function useAppBootstrap({
       await initDatabase()
       frontendLog("info", "app.bootstrap.dbInit.done", { ms: Math.round(t()) })
 
-      let library: Awaited<ReturnType<typeof loadPersistedLibrary>> | null = null
-
-      try {
-        const legacy = readLegacyLibrary()
-        if (legacy) {
-          frontendLog("info", "app.bootstrap.legacyStorageFound", {
-            coursesCount: legacy.courses.length,
-            libraryPath: legacy.libraryPath,
-          })
-          if (!isTauri()) {
-            library = {
-              courses: legacy.courses,
-              libraryPath: legacy.libraryPath,
-            }
-          } else {
-            await syncLibrary(legacy.courses, legacy.libraryPath)
-            removeLegacyLibrary()
-            frontendLog("info", "app.bootstrap.legacyStorageMigrated", {
-              coursesCount: legacy.courses.length,
-            })
-            library = await loadPersistedLibrary()
-          }
-        }
-        if (!library) removeLegacyLibrary()
-      } catch (error) {
-        frontendLog("error", "app.bootstrap.legacyStorageCleanup.failed", { error: String(error) })
-        try {
-          removeLegacyLibrary()
-        } catch {
-          // Old builds stored full libraries in localStorage. Cleanup is best-effort only.
-        }
-      }
-
-      if (!library) {
-        frontendLog("info", "app.bootstrap.libraryLoad.start", { ms: Math.round(t()) })
-        library = await loadPersistedLibrary()
-      }
+      frontendLog("info", "app.bootstrap.libraryLoad.start", { ms: Math.round(t()) })
+      const library = await loadPersistedLibrary()
       hydrateLibrary(library.courses, library.libraryPath)
       await resolveStartupRouteBeforeHydration(library.courses, (route) => {
         onStartupRoute?.(route)
