@@ -1,10 +1,10 @@
 # Native SDK overhaul for melearner
 
-Research date: 2026-07-10. Scope: the Native SDK documentation and source under `/home/efaz/Codes/native`, the current melearner UI and Rust/Tauri implementation, ADRs 0008-0010, and release workflows. This is an architecture and migration decision; no application or Native SDK source changes were applied.
+Research date: 2026-07-10. Scope: the Native SDK documentation and source under `/home/efaz/Codes/native`, the current melearner UI and Rust/Tauri implementation, ADRs 0008-0010, and release workflows. This is an architecture and cutover decision; no application or Native SDK source changes were applied.
 
 ## Conclusion
 
-Proceed with the Native SDK UI and retained Rust core architecture, but do not begin by rewriting screens. The final product should be one Native SDK executable with all UI authored in `.native` markup and Zig, linked to an in-process Rust `staticlib` through a versioned C ABI. Rust remains the sole owner of SQLite, migrations, scanning, course identity, search, progress, notes, document decoding, and embedded libmpv. There is no Tauri, React, Node runtime, browser engine, WebView, or helper process in the shipped app. Bundled dynamic libraries such as libmpv and a PDF renderer are in-process dependencies, not sidecars.
+Proceed with the Native SDK UI and retained Rust core architecture, but do not begin by rewriting screens. The final product should be one Native SDK executable with all UI authored in `.native` markup and Zig, linked to an in-process Rust `staticlib` through a versioned C ABI. Rust remains the sole owner of the current SQLite schema, scanning, course identity, search, progress, notes, document decoding, and embedded libmpv. There is no Tauri, React, Node runtime, browser engine, WebView, or helper process in the shipped app. Bundled dynamic libraries such as libmpv and a PDF renderer are in-process dependencies, not sidecars.
 
 This is a conditional go because the current Native SDK cannot yet host the product as specified. Four upstream capabilities are release blockers:
 
@@ -13,7 +13,7 @@ This is a conditional go because the current Native SDK cannot yet host the prod
 3. An app-defined asynchronous effect source that participates in the SDK's fake executor and session record/replay machinery.
 4. OS accessibility bridges for canvas widgets on Linux and Windows, equivalent in purpose to the existing macOS bridge.
 
-The first engineering milestone is therefore an upstream foundation spike, not a melearner screen. It must render a libmpv test pattern inside one Native SDK window on Linux, macOS, and Windows, with no WebView dependency in the binary. If that milestone fails, stop the migration. Do not work around it with a second window, pixel copies through `gpu_surface`, a private overlay unknown to the SDK, or a player sidecar.
+The first engineering milestone is therefore an upstream foundation spike, not a melearner screen. It must render a libmpv test pattern inside one Native SDK window on Linux, macOS, and Windows, with no WebView dependency in the binary. If that milestone fails, stop the overhaul. Do not work around it with a second window, pixel copies through `gpu_surface`, a private overlay unknown to the SDK, or a player sidecar.
 
 ## Decision boundaries
 
@@ -29,7 +29,7 @@ Native SDK executable (Zig)
              | versioned C ABI, in process
              v
 melearner_core static library (Rust)
-  SQLite connection, migrations, transactions
+  SQLite connection, current schema, transactions
   Library scans, durable course identity, marker files
   search index, progress, activity, notes
   document parsing and PDF page rendering
@@ -47,7 +47,7 @@ The boundary has these non-negotiable rules:
 - Only the Native SDK event-loop thread mutates the Zig `Model`.
 - Rust callbacks may only enqueue an event and invoke the registered thread-safe waker. They must not call `update`, render UI, or retain Zig memory.
 - Paths remain local and must resolve beneath an approved root before Rust reads or plays them. URLs and schemes remain rejected, preserving ADR 0010.
-- The existing SQLite database and `.melearner-course.json` identity markers are user data and must be reused, not re-imported into a parallel store.
+- The native app creates one fresh current database at a distinct path and never inspects, imports, migrates, backs up, restores, or reuses a previous melearner database. Current `.melearner-course.json` marker IDs remain Course identity inputs.
 
 ADR 0010 remains authoritative for embedded libmpv, one compositor-visible app window, local-file validation, playback controls, and the packaged codec matrix. This report supersedes only its React/Tauri transport and WebView layout statements. ADR 0008 remains authoritative for conservative course and lesson identity. ADR 0009 requires the old frontend, Tauri shell, superseded packaging, and generated leftovers to be deleted in the cutover change once the replacement is verified.[13][14][15]
 
@@ -68,7 +68,7 @@ It is not yet a complete fit for media, strict binary composition, document view
 | OS accessibility | Semantic widget snapshots exist cross-platform, but `update_widget_accessibility_fn` is wired only by the macOS platform source. Linux and Windows expose labels for native controls but do not bridge the canvas widget tree to AT-SPI/UI Automation.[7][8] | Linux and Windows canvas accessibility are release blockers, not post-launch polish. |
 | Documents | Native SDK provides text/Markdown primitives and image decoding, but no PDF, DOCX, or general document surface was found.[2][7] | Build a melearner native document adapter. Never hide a WebView behind the document screen. |
 | Native-only binary | The public positioning says native UI has no browser or WebView in the binary.[2][6] The current desktop build still selects a `system` web engine: macOS links WebKit, Linux links `webkitgtk-6.0`, and Windows compiles `webview2_host.cpp`, even when `AppInfo.has_web_content` is false.[11] | Add a true `.none`/native-only host path and verify binary imports. Runtime non-use is insufficient. |
-| Packaging | macOS packaging creates an `.app`. Linux and Windows packaging currently creates structured artifact directories, not an AppImage/Flatpak/MSI installer. Desktop platform builds require a matching host OS.[6][11] | Keep packaging application-owned initially and build in a native OS CI matrix. Upstream installer support is useful but not a migration blocker. |
+| Packaging | macOS packaging creates an `.app`. Linux and Windows packaging currently creates structured artifact directories, not an AppImage/Flatpak/MSI installer. Desktop platform builds require a matching host OS.[6][11] | Keep packaging application-owned initially and build in a native OS CI matrix. Upstream installer support is useful but not a cutover blocker. |
 
 The Native SDK is pre-1.0 and its APIs still move.[6] Pin the exact source revision used by melearner. Do not build the application against an unpinned branch.
 
@@ -103,7 +103,7 @@ Add a declarative canvas widget, provisionally `<external-surface kind="media" .
 
 The first implementation should retain the already proven OpenGL libmpv render-api shape from `src-tauri/src/native_player/surface/`: GTK `GLArea`, AppKit `NSOpenGLView`, and child HWND/WGL.[13] Native SDK must own those host contexts because its Linux host is GTK4 while the current Tauri surface uses GTK3; passing a GTK3 widget into the GTK4 tree is not viable. Rust should own `mpv_render_context` and expose attach/render/detach functions, while the SDK owns the context and calls Rust's render function from the platform draw callback.
 
-Metal or Vulkan can replace OpenGL later, but that is not part of this migration. A speculative renderer rewrite would combine two high-risk changes and discard the current cross-platform evidence.
+Metal or Vulkan can replace OpenGL later, but that is not part of this cutover. A speculative renderer rewrite would combine two high-risk changes and discard the current cross-platform evidence.
 
 ### 3. External asynchronous effects
 
@@ -142,7 +142,7 @@ The core should contain these modules:
 
 | Module | Responsibility |
 | --- | --- |
-| `db` | Open the existing database path, apply migrations 1-16 and future migrations transactionally, enforce foreign keys/WAL/busy timeout, and serialize writes. |
+| `db` | Create or reopen only the distinct current database path, install the exact current schema on first creation, enforce foreign keys/WAL/busy timeout, and serialize writes. |
 | `library` | Load paged Library snapshots and aggregate stats; coordinate scans and transactional reconciliation. |
 | `identity` | Preserve ADR 0008 matching order, ambiguity warnings, relative lesson paths, fingerprints, missing courses, and automatic marker files. |
 | `scanner` | Preserve supported extensions, ignored/partial-file behavior, natural ordering, warnings, and approved-root canonicalization. |
@@ -267,13 +267,13 @@ All document reads use the same approved-root validation as playback. HTML never
 
 Generate video thumbnails in process through libmpv's screenshot/render path. Do not launch `ffmpeg` or `ffprobe` helpers in the final package. ADR 0010 permits FFmpeg for optional processing, but the stronger final no-sidecar decision removes helper processes from this architecture.
 
-## Migration plan and gates
+## Cutover plan and gates
 
 ### Stage 0: freeze behavior and fixtures
 
 Record the existing contract before changing ownership:
 
-1. Copy an anonymized migrated SQLite fixture covering migrations 1-16, progress, notes, activity, missing courses, marker identity, fingerprint matches, and ambiguous matches.
+1. Keep one deterministic fresh current-schema seed covering progress, notes, activity, missing Courses, marker identity, fingerprint matches, and ambiguous matches.
 2. Keep the existing scanner fixture set, including partial downloads, ignored folders, Unicode names, long paths, subtitles, duplicate markers, and duplicate fingerprints.
 3. Keep ADR 0010's codec corpus and installed-package verification scripts as the playback oracle.
 4. Capture automation-level flows for initial Library load, scan, search, course navigation, progress resume, notes, document open, and error recovery.
@@ -297,9 +297,9 @@ Gate: all four upstream blockers pass on packaged builds. Failure stops the over
 
 ### Stage 2: extract and stabilize `melearner_core`
 
-Move database migrations, database operations, scanner, identity, marker writing, search, progress/activity, notes, document adapters, and player control behind a safe Rust API and the versioned C ABI. Keep current table and marker formats. Add Rust tests for every ambiguity and migration case, C ABI ownership tests, panic tests, queue-pressure tests, and a Zig smoke client.
+Move current-schema database operations, scanner, identity, marker writing, search, progress/activity, notes, document adapters, and Player control behind a safe Rust interface and the versioned C ABI. Keep current marker behavior. Add Rust tests for the exact current schema, fresh creation, restart opening, every identity ambiguity, C ABI ownership, panic containment, queue pressure, and a Zig smoke client.
 
-Gate: the core opens a copy of an existing database without data loss, produces identical scan/identity/search results for fixtures, and passes sanitizer/ABI tests. No UI is needed for this gate.
+Gate: the core creates and reopens its distinct current database, never touches a sibling previous database, produces the expected scan/identity/search results for current fixtures, and passes sanitizer/ABI tests. No UI is needed for this gate.
 
 ### Stage 3: build a read-only Native SDK vertical slice
 
@@ -311,7 +311,7 @@ Gate: a 100,000-lesson fixture remains responsive through virtual lists; stale r
 
 Add scan selection, progress/activity, stats, course access, notes, automatic marker writes, text/Markdown/HTML/DOCX normalization, PDF tiling, and external-open fallback. Keep every write in Rust transactions.
 
-Gate: the database fixture remains compatible, identity behavior exactly matches ADR 0008, stats match current outputs, and direct document formats pass installed-package smoke tests without network or WebView use.
+Gate: the current-schema fixture remains valid, identity behavior exactly matches ADR 0008, stats match current outputs, and direct document formats pass installed-package smoke tests without network or WebView use.
 
 ### Stage 5: embedded playback
 
@@ -321,11 +321,11 @@ Gate: every ADR 0010 packaged visual test passes on Linux, macOS, and Windows. D
 
 ### Stage 6: package, cut over, and delete
 
-Replace release workflows with the Native SDK/Cargo build matrix and package the in-process runtime libraries. Back up the user database before the first native build applies any new migration. After all installed-package gates pass, remove Next.js, React, shadcn, Tauri, frontend assets, JavaScript bridges, Node scripts that no longer apply, old release jobs, and obsolete generated artifacts in the same cutover change.
+Replace release workflows with the Native SDK/Cargo build matrix and package the in-process runtime libraries. The native package uses only its distinct current database path and leaves previous database files untouched. After all installed-package gates pass, remove Next.js, React, shadcn, Tauri, frontend assets, JavaScript bridges, Node scripts that no longer apply, old release jobs, and obsolete generated artifacts in the same cutover change.
 
 Gate: source and binary scans find no Tauri, WebView, WebKit, WebView2, CEF, React, or browser-runtime path; all user-visible flows pass; the old shell is absent rather than dormant behind a flag.
 
-There is no shipped dual-stack fallback. Until Stage 6, the existing Tauri release remains the production line while the native app is an unreleased build target. After Stage 6, rollback is a release rollback using the pre-migration database backup, not runtime compatibility code.
+There is no shipped dual-stack fallback. Until Stage 6, the existing Tauri release remains the production line while the native app is an unreleased build target. The native app has no database rollback, restore, import, or compatibility path.
 
 ## Codec and playback acceptance matrix
 
@@ -365,7 +365,7 @@ Use four tiers with different evidence. Do not ask one screenshot mechanism to p
 
 ### Rust core tests
 
-- migration from every supported schema fixture;
+- fresh creation and restart opening of the exact current schema;
 - scan, identity, marker, search, progress, stats, notes, and approved-root tests;
 - C ABI create/destroy, ownership, cancellation, invalid UTF-8, stale handle, panic, and backpressure tests;
 - document parser and 512x512 PDF tile tests;
@@ -403,11 +403,11 @@ Deterministic canvas screenshots deliberately exclude real video pixels. Codec d
 | Risk | Mitigation and stop condition |
 | --- | --- |
 | Upstream scope expands into an SDK fork | Land generic capabilities with SDK tests before melearner depends on them. Stop if native-only host or media surface cannot be accepted upstream. |
-| OpenGL is deprecated on macOS | Retain it only as the migration's proven libmpv path; isolate behind the surface ABI so a Metal path can replace it later. Do not combine that replacement with the UI cutover. |
+| OpenGL is deprecated on macOS | Retain it only as the cutover's proven libmpv path; isolate behind the surface ABI so a Metal path can replace it later. Do not combine that replacement with the UI cutover. |
 | Zig/Rust memory or thread bugs | Opaque handles, explicit byte ownership, event release, panic barriers, one model thread, sanitizers, and ABI stress tests. |
 | Event queue floods during playback or scans | Coalesce nonterminal progress/position, preserve terminal events, reject new work with typed busy status, and expose overflow diagnostics. |
 | Large libraries exceed fixed SDK budgets | Rust-owned pagination, virtual lists, bounded model pages, stable IDs, and 100,000-lesson load tests. |
-| Existing progress is corrupted | Reuse the current database, apply migrations transactionally, test fixture copies, back up before new migration, and preserve ADR 0008 matching exactly. |
+| Native Progress is corrupted | Keep one Rust writer, use strict constraints and transactions, test the current seed plus restart behavior, and preserve ADR 0008 matching exactly. |
 | Linux GTK generation mismatch | SDK owns GTK4 widgets and GL context. Rust receives only the renderer callback seam, not a GTK3 widget. |
 | PDF/document work becomes a browser substitute | Use a finite native document AST and PDF tiles. Unsupported fidelity is disclosed with external-open; no active HTML execution. |
 | Packages work only on developer machines | Build/install on clean OS images, stage dependency closures, audit imports/rpaths, and require visual playback before release. |
@@ -430,7 +430,7 @@ The overhaul may cut over only when all of these are true:
 
 1. Packaged canvas-only binaries have no WebView/browser dependency or runtime module on all three OSes.
 2. One in-window Native SDK media surface visibly renders libmpv on all three OSes and survives resize, hide/show, fullscreen, and destroy.
-3. The Rust static library opens existing databases and matches all scan, identity, search, progress, stats, and notes fixtures.
+3. The Rust static library creates and reopens only its distinct current database and matches all scan, identity, search, Progress, stats, and notes fixtures.
 4. Linux, macOS, and Windows installed packages pass the ADR 0010 codec and failure corpus with one user-visible window and no helper process.
 5. Headless tests, fake core tests, record/replay, live automation, and screen-reader checks all pass.
 6. Document behavior has an accepted native implementation or an explicitly approved reduced scope; no WebView exception exists.
