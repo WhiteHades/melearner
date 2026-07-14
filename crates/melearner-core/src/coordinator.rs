@@ -11,9 +11,6 @@ use crate::library::{CoursePage, LessonPage, LibraryDatabase, LibraryError};
 
 #[derive(Debug)]
 pub(crate) enum DomainRequest {
-    OpenSnapshot {
-        path: PathBuf,
-    },
     CoursePage {
         expected_revision: u64,
         offset: u64,
@@ -27,17 +24,11 @@ pub(crate) enum DomainRequest {
         limit: u32,
     },
     #[cfg(test)]
-    LongQuery {
-        entered: mpsc::Sender<()>,
-    },
+    LongQuery { entered: mpsc::Sender<()> },
 }
 
 #[derive(Debug)]
 pub(crate) enum DomainResponse {
-    LibraryOpened {
-        revision: u64,
-        library_path: Option<String>,
-    },
     CoursePage(CoursePage),
     LessonPage(LessonPage),
 }
@@ -45,8 +36,6 @@ pub(crate) enum DomainResponse {
 #[derive(Debug)]
 pub(crate) enum DomainError {
     Library(LibraryError),
-    LibraryNotOpen,
-    RevisionExhausted,
 }
 
 impl From<LibraryError> for DomainError {
@@ -61,6 +50,16 @@ pub(crate) struct DomainOutcome {
     pub(crate) result: Result<DomainResponse, DomainError>,
 }
 
+#[derive(Debug)]
+pub(crate) enum DomainEvent {
+    Ready {
+        revision: u64,
+        library_path: Option<String>,
+    },
+    Completed(DomainOutcome),
+    Fatal(DomainError),
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SubmitError {
     Full,
@@ -72,28 +71,34 @@ struct DomainCommand {
     request: DomainRequest,
 }
 
-pub(crate) struct DomainCoordinator {
+pub(crate) struct DomainWorker {
     command_sender: Option<SyncSender<DomainCommand>>,
-    outcome_receiver: Option<Receiver<DomainOutcome>>,
+    event_receiver: Option<Receiver<DomainEvent>>,
     stopping: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
 }
 
-impl DomainCoordinator {
-    pub(crate) fn start(capacity: NonZeroUsize) -> io::Result<Self> {
+impl DomainWorker {
+    pub(crate) fn start(data_dir: PathBuf, capacity: NonZeroUsize) -> io::Result<Self> {
         let runtime = tokio::runtime::Builder::new_current_thread().build()?;
         let (command_sender, command_receiver) = mpsc::sync_channel(capacity.get());
-        let (outcome_sender, outcome_receiver) = mpsc::sync_channel(capacity.get());
+        let (event_sender, event_receiver) = mpsc::sync_channel(capacity.get());
         let stopping = Arc::new(AtomicBool::new(false));
         let worker_stopping = Arc::clone(&stopping);
         let worker = thread::Builder::new()
             .name("melearner-domain".to_string())
             .spawn(move || {
-                run_worker(runtime, command_receiver, outcome_sender, worker_stopping);
+                run_worker(
+                    runtime,
+                    data_dir,
+                    command_receiver,
+                    event_sender,
+                    worker_stopping,
+                );
             })?;
         Ok(Self {
             command_sender: Some(command_sender),
-            outcome_receiver: Some(outcome_receiver),
+            event_receiver: Some(event_receiver),
             stopping,
             worker: Some(worker),
         })
@@ -115,22 +120,19 @@ impl DomainCoordinator {
         }
     }
 
-    pub(crate) fn recv_timeout(
-        &self,
-        timeout: Duration,
-    ) -> Result<DomainOutcome, RecvTimeoutError> {
-        self.outcome_receiver
+    pub(crate) fn recv_timeout(&self, timeout: Duration) -> Result<DomainEvent, RecvTimeoutError> {
+        self.event_receiver
             .as_ref()
             .ok_or(RecvTimeoutError::Disconnected)?
             .recv_timeout(timeout)
     }
 }
 
-impl Drop for DomainCoordinator {
+impl Drop for DomainWorker {
     fn drop(&mut self) {
         self.stopping.store(true, Ordering::Release);
         self.command_sender.take();
-        self.outcome_receiver.take();
+        self.event_receiver.take();
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
@@ -138,112 +140,93 @@ impl Drop for DomainCoordinator {
 }
 
 struct DomainState {
-    library: Option<LibraryDatabase>,
-    revision: u64,
-    stopping: Arc<AtomicBool>,
+    library: LibraryDatabase,
 }
 
 impl DomainState {
-    fn new(stopping: Arc<AtomicBool>) -> Self {
-        Self {
-            library: None,
-            revision: 0,
-            stopping,
-        }
+    async fn open(data_dir: PathBuf, stopping: Arc<AtomicBool>) -> Result<Self, DomainError> {
+        let revision = NonZeroU64::new(1).expect("initial Library revision is nonzero");
+        let library = LibraryDatabase::open_current(&data_dir, revision, stopping).await?;
+        Ok(Self { library })
     }
 
     async fn execute(&mut self, request: DomainRequest) -> Result<DomainResponse, DomainError> {
         match request {
-            DomainRequest::OpenSnapshot { path } => self.open_snapshot(path).await,
             DomainRequest::CoursePage {
                 expected_revision,
                 offset,
                 limit,
-            } => {
-                let library = self.library.as_mut().ok_or(DomainError::LibraryNotOpen)?;
-                Ok(DomainResponse::CoursePage(
-                    library
-                        .course_page(expected_revision, offset, limit)
-                        .await?,
-                ))
-            }
+            } => Ok(DomainResponse::CoursePage(
+                self.library
+                    .course_page(expected_revision, offset, limit)
+                    .await?,
+            )),
             DomainRequest::LessonPage {
                 expected_revision,
                 course_id,
                 section_id,
                 offset,
                 limit,
-            } => {
-                let library = self.library.as_mut().ok_or(DomainError::LibraryNotOpen)?;
-                Ok(DomainResponse::LessonPage(
-                    library
-                        .lesson_page(
-                            expected_revision,
-                            &course_id,
-                            section_id.as_deref(),
-                            offset,
-                            limit,
-                        )
-                        .await?,
-                ))
-            }
+            } => Ok(DomainResponse::LessonPage(
+                self.library
+                    .lesson_page(
+                        expected_revision,
+                        &course_id,
+                        section_id.as_deref(),
+                        offset,
+                        limit,
+                    )
+                    .await?,
+            )),
             #[cfg(test)]
             DomainRequest::LongQuery { entered } => {
-                let library = self.library.as_mut().ok_or(DomainError::LibraryNotOpen)?;
-                library.run_until_interrupted(entered).await?;
-                Err(DomainError::LibraryNotOpen)
+                self.library.run_until_interrupted(entered).await?;
+                unreachable!("interruptible query returned without shutdown")
             }
         }
-    }
-
-    async fn open_snapshot(&mut self, path: PathBuf) -> Result<DomainResponse, DomainError> {
-        let revision = self
-            .revision
-            .checked_add(1)
-            .and_then(NonZeroU64::new)
-            .ok_or(DomainError::RevisionExhausted)?;
-        let candidate = LibraryDatabase::open_snapshot_read_only_interruptible(
-            &path,
-            revision,
-            Arc::clone(&self.stopping),
-        )
-        .await?;
-        let library_path = candidate.library_path().map(str::to_owned);
-        let previous = self.library.replace(candidate);
-        self.revision = revision.get();
-        drop(previous);
-        Ok(DomainResponse::LibraryOpened {
-            revision: revision.get(),
-            library_path,
-        })
     }
 }
 
 fn run_worker(
     runtime: tokio::runtime::Runtime,
+    data_dir: PathBuf,
     command_receiver: Receiver<DomainCommand>,
-    outcome_sender: SyncSender<DomainOutcome>,
+    event_sender: SyncSender<DomainEvent>,
     stopping: Arc<AtomicBool>,
 ) {
-    let mut state = DomainState::new(Arc::clone(&stopping));
+    let mut state = match runtime.block_on(DomainState::open(data_dir, Arc::clone(&stopping))) {
+        Ok(state) => state,
+        Err(error) => {
+            let _ = event_sender.send(DomainEvent::Fatal(error));
+            return;
+        }
+    };
+    if event_sender
+        .send(DomainEvent::Ready {
+            revision: state.library.revision(),
+            library_path: state.library.library_path().map(str::to_owned),
+        })
+        .is_err()
+    {
+        let _ = runtime.block_on(state.library.close());
+        return;
+    }
     while let Ok(command) = command_receiver.recv() {
         if stopping.load(Ordering::Acquire) {
             break;
         }
         let result = runtime.block_on(state.execute(command.request));
-        if outcome_sender
-            .send(DomainOutcome {
+        if event_sender
+            .send(DomainEvent::Completed(DomainOutcome {
                 request_id: command.request_id,
                 result,
-            })
+            }))
             .is_err()
         {
             break;
         }
     }
-    if let Some(library) = state.library.take() {
-        let _ = runtime.block_on(library.close());
-    }
+    let _ = runtime.block_on(state.library.close());
 }
 
 #[cfg(test)]
@@ -257,9 +240,11 @@ mod tests {
     use sqlx::sqlite::SqliteConnectOptions;
     use sqlx::{Connection, SqliteConnection};
 
-    use super::{DomainCoordinator, DomainError, DomainRequest, DomainResponse, SubmitError};
-    use crate::library::LibraryError;
-    use crate::schema;
+    use super::{
+        DomainError, DomainEvent, DomainOutcome, DomainRequest, DomainResponse, DomainWorker,
+        SubmitError,
+    };
+    use crate::library::{LibraryError, NATIVE_DATABASE_FILENAME};
 
     const CURRENT_SEED: &str = include_str!("../../../fixtures/parity/database-current.sql");
 
@@ -267,428 +252,315 @@ mod tests {
         NonZeroU64::new(value).expect("nonzero test request id")
     }
 
-    fn current_fixture() -> (tempfile::TempDir, PathBuf) {
-        let temp = tempfile::tempdir().expect("create coordinator fixture tempdir");
-        let path = temp.path().join("database-current.sqlite");
+    fn start(data_dir: &Path, capacity: usize) -> DomainWorker {
+        DomainWorker::start(
+            data_dir.to_path_buf(),
+            NonZeroUsize::new(capacity).expect("nonzero test capacity"),
+        )
+        .expect("start native core")
+    }
+
+    fn receive_ready(core: &DomainWorker) -> (u64, Option<String>) {
+        match core
+            .recv_timeout(Duration::from_secs(2))
+            .expect("receive core ready event")
+        {
+            DomainEvent::Ready {
+                revision,
+                library_path,
+            } => (revision, library_path),
+            other => panic!("expected core ready event, received {other:?}"),
+        }
+    }
+
+    fn native_database_path(data_dir: &Path) -> PathBuf {
+        data_dir.join(NATIVE_DATABASE_FILENAME)
+    }
+
+    fn seed_current_database(path: &Path) {
         tokio::runtime::Builder::new_current_thread()
             .build()
-            .expect("build coordinator fixture runtime")
+            .expect("build seed runtime")
             .block_on(async {
                 let options = SqliteConnectOptions::new()
-                    .filename(&path)
-                    .create_if_missing(true)
+                    .filename(path)
                     .foreign_keys(true)
                     .busy_timeout(Duration::from_secs(10));
                 let mut connection = SqliteConnection::connect_with(&options)
                     .await
-                    .expect("create current coordinator fixture");
-                sqlx::raw_sql(schema::SQL)
-                    .execute(&mut connection)
-                    .await
-                    .expect("create current coordinator schema");
+                    .expect("open current native database for seeding");
                 sqlx::raw_sql(CURRENT_SEED)
                     .execute(&mut connection)
                     .await
-                    .expect("seed current coordinator fixture");
+                    .expect("seed current native database");
                 connection
                     .close()
                     .await
-                    .expect("close current coordinator fixture");
+                    .expect("close seeded native database");
             });
-        (temp, path)
     }
 
-    fn coordinator(capacity: usize) -> DomainCoordinator {
-        DomainCoordinator::start(NonZeroUsize::new(capacity).expect("nonzero test capacity"))
-            .expect("start domain coordinator")
-    }
-
-    fn assert_no_sidecars(path: &Path) {
-        for suffix in ["-wal", "-shm", "-journal"] {
-            assert!(!PathBuf::from(format!("{}{suffix}", path.display())).exists());
-        }
-    }
-
-    #[test]
-    fn requests_run_in_fifo_order_with_caller_owned_ids() {
-        let (_temp, path) = current_fixture();
-        let coordinator = coordinator(4);
-        coordinator
-            .try_submit(
-                request_id(11),
-                DomainRequest::CoursePage {
-                    expected_revision: 1,
-                    offset: 0,
-                    limit: 1,
-                },
-            )
-            .expect("submit page before open");
-        coordinator
-            .try_submit(
-                request_id(12),
-                DomainRequest::OpenSnapshot { path: path.clone() },
-            )
-            .expect("submit snapshot open");
-        coordinator
-            .try_submit(
-                request_id(13),
-                DomainRequest::CoursePage {
-                    expected_revision: 1,
-                    offset: 0,
-                    limit: 1,
-                },
-            )
-            .expect("submit page after open");
-
-        let before_open = coordinator
-            .recv_timeout(Duration::from_secs(2))
-            .expect("receive page-before-open outcome");
-        assert_eq!(before_open.request_id, request_id(11));
-        assert!(matches!(
-            before_open.result,
-            Err(DomainError::LibraryNotOpen)
-        ));
-
-        let opened = coordinator
-            .recv_timeout(Duration::from_secs(2))
-            .expect("receive open outcome");
-        assert_eq!(opened.request_id, request_id(12));
-        assert!(matches!(
-            opened.result,
-            Ok(DomainResponse::LibraryOpened {
-                revision: 1,
-                library_path: Some(ref library_path)
-            }) if library_path == "/fixtures/library"
-        ));
-
-        let page = coordinator
-            .recv_timeout(Duration::from_secs(2))
-            .expect("receive page-after-open outcome");
-        assert_eq!(page.request_id, request_id(13));
-        assert!(matches!(
-            page.result,
-            Ok(DomainResponse::CoursePage(ref page))
-                if page.revision == 1 && page.total == 3 && page.rows.len() == 1
-        ));
-        drop(coordinator);
-        assert_no_sidecars(&path);
+    fn current_tables(path: &Path) -> Vec<String> {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("build table inspection runtime")
+            .block_on(async {
+                let options = SqliteConnectOptions::new().filename(path).read_only(true);
+                let mut connection = SqliteConnection::connect_with(&options)
+                    .await
+                    .expect("open native database for table inspection");
+                let tables = sqlx::query_scalar::<_, String>(
+                    "SELECT name
+                     FROM sqlite_schema
+                     WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+                     ORDER BY name",
+                )
+                .fetch_all(&mut connection)
+                .await
+                .expect("read native database tables");
+                connection
+                    .close()
+                    .await
+                    .expect("close inspected native database");
+                tables
+            })
     }
 
     #[test]
-    fn replacement_advances_once_and_stales_later_fifo_pages() {
-        let (_temp, path) = current_fixture();
-        let coordinator = coordinator(4);
-        coordinator
-            .try_submit(
-                request_id(21),
-                DomainRequest::OpenSnapshot { path: path.clone() },
-            )
-            .expect("submit first open");
-        coordinator
-            .try_submit(
-                request_id(22),
-                DomainRequest::CoursePage {
-                    expected_revision: 1,
-                    offset: 0,
-                    limit: 1,
-                },
-            )
-            .expect("submit page before replacement");
-        coordinator
-            .try_submit(
-                request_id(23),
-                DomainRequest::OpenSnapshot { path: path.clone() },
-            )
-            .expect("submit replacement open");
-        coordinator
-            .try_submit(
-                request_id(24),
-                DomainRequest::CoursePage {
-                    expected_revision: 1,
-                    offset: 0,
-                    limit: 1,
-                },
-            )
-            .expect("submit stale page");
+    fn fresh_native_core_uses_only_its_current_database() {
+        let data_dir = tempfile::tempdir().expect("create native data directory");
+        let previous_database = data_dir.path().join("melearner.db");
+        std::fs::write(&previous_database, b"previous database sentinel")
+            .expect("write previous database sentinel");
 
-        let first = coordinator
-            .recv_timeout(Duration::from_secs(2))
-            .expect("receive first open");
+        let core = start(data_dir.path(), 4);
+        assert_eq!(receive_ready(&core), (1, None));
+        core.try_submit(
+            request_id(1),
+            DomainRequest::CoursePage {
+                expected_revision: 1,
+                offset: 0,
+                limit: 20,
+            },
+        )
+        .expect("submit empty Library page");
         assert!(matches!(
-            first.result,
-            Ok(DomainResponse::LibraryOpened { revision: 1, .. })
+            core.recv_timeout(Duration::from_secs(2))
+                .expect("receive empty Library page"),
+            DomainEvent::Completed(DomainOutcome {
+                request_id: outcome_request_id,
+                result: Ok(DomainResponse::CoursePage(page)),
+            }) if outcome_request_id == request_id(1)
+                && page.revision == 1
+                && page.total == 0
+                && page.rows.is_empty()
         ));
-        let before_replacement = coordinator
-            .recv_timeout(Duration::from_secs(2))
-            .expect("receive page before replacement");
+        drop(core);
+
+        let native_database = native_database_path(data_dir.path());
+        assert!(native_database.is_file());
+        assert_eq!(
+            current_tables(&native_database),
+            [
+                "app_settings",
+                "courses",
+                "lesson_activity",
+                "lesson_subtitles",
+                "lessons",
+                "notes",
+                "sections",
+            ]
+        );
+        assert_eq!(
+            std::fs::read(previous_database).expect("read previous database sentinel"),
+            b"previous database sentinel"
+        );
+    }
+
+    #[test]
+    fn restart_reopens_the_same_current_database() {
+        let data_dir = tempfile::tempdir().expect("create native data directory");
+        let core = start(data_dir.path(), 4);
+        assert_eq!(receive_ready(&core), (1, None));
+        drop(core);
+        seed_current_database(&native_database_path(data_dir.path()));
+
+        let restarted = start(data_dir.path(), 4);
+        assert_eq!(
+            receive_ready(&restarted),
+            (1, Some("/fixtures/library".to_string()))
+        );
+        restarted
+            .try_submit(
+                request_id(2),
+                DomainRequest::CoursePage {
+                    expected_revision: 1,
+                    offset: 0,
+                    limit: 20,
+                },
+            )
+            .expect("submit restarted Library page");
         assert!(matches!(
-            before_replacement.result,
-            Ok(DomainResponse::CoursePage(ref page)) if page.revision == 1
-        ));
-        let second = coordinator
-            .recv_timeout(Duration::from_secs(2))
-            .expect("receive replacement open");
-        assert!(matches!(
-            second.result,
-            Ok(DomainResponse::LibraryOpened { revision: 2, .. })
-        ));
-        let stale = coordinator
-            .recv_timeout(Duration::from_secs(2))
-            .expect("receive stale page");
-        assert!(matches!(
-            stale.result,
-            Err(DomainError::Library(LibraryError::StaleRevision {
-                expected: 1,
-                actual: 2
-            }))
+            restarted
+                .recv_timeout(Duration::from_secs(2))
+                .expect("receive restarted Library page"),
+            DomainEvent::Completed(DomainOutcome {
+                request_id: outcome_request_id,
+                result: Ok(DomainResponse::CoursePage(page)),
+            }) if outcome_request_id == request_id(2)
+                && page.revision == 1
+                && page.total == 3
+                && page.rows.len() == 3
         ));
     }
 
     #[test]
-    fn failed_replacement_preserves_the_open_snapshot_and_revision() {
-        let (_temp, path) = current_fixture();
-        let missing = path.with_file_name("missing.sqlite");
-        let coordinator = coordinator(5);
-        coordinator
-            .try_submit(
-                request_id(31),
-                DomainRequest::OpenSnapshot { path: path.clone() },
-            )
-            .expect("submit first open");
-        coordinator
-            .try_submit(
-                request_id(32),
-                DomainRequest::OpenSnapshot { path: missing },
-            )
-            .expect("submit failed replacement");
-        coordinator
-            .try_submit(
-                request_id(33),
-                DomainRequest::CoursePage {
-                    expected_revision: 1,
-                    offset: 0,
-                    limit: 1,
-                },
-            )
-            .expect("submit page after failed replacement");
-        coordinator
-            .try_submit(
-                request_id(34),
-                DomainRequest::OpenSnapshot { path: path.clone() },
-            )
-            .expect("submit successful replacement");
+    fn noncurrent_native_database_fails_without_repair() {
+        let data_dir = tempfile::tempdir().expect("create native data directory");
+        let database_path = native_database_path(data_dir.path());
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("build obsolete database runtime")
+            .block_on(async {
+                let options = SqliteConnectOptions::new()
+                    .filename(&database_path)
+                    .create_if_missing(true);
+                let mut connection = SqliteConnection::connect_with(&options)
+                    .await
+                    .expect("create noncurrent native database");
+                sqlx::query("CREATE TABLE obsolete_data (value TEXT NOT NULL)")
+                    .execute(&mut connection)
+                    .await
+                    .expect("create obsolete table");
+                connection
+                    .close()
+                    .await
+                    .expect("close noncurrent native database");
+            });
 
+        let core = start(data_dir.path(), 1);
         assert!(matches!(
-            coordinator
-                .recv_timeout(Duration::from_secs(2))
-                .expect("receive first open")
-                .result,
-            Ok(DomainResponse::LibraryOpened { revision: 1, .. })
+            core.recv_timeout(Duration::from_secs(2))
+                .expect("receive fatal startup event"),
+            DomainEvent::Fatal(DomainError::Library(LibraryError::Database(message)))
+                if message == "database schema is not current"
         ));
-        assert!(matches!(
-            coordinator
-                .recv_timeout(Duration::from_secs(2))
-                .expect("receive failed replacement")
-                .result,
-            Err(DomainError::Library(LibraryError::Database(_)))
-        ));
-        assert!(matches!(
-            coordinator
-                .recv_timeout(Duration::from_secs(2))
-                .expect("receive preserved page")
-                .result,
-            Ok(DomainResponse::CoursePage(ref page)) if page.revision == 1
-        ));
-        assert!(matches!(
-            coordinator
-                .recv_timeout(Duration::from_secs(2))
-                .expect("receive successful replacement")
-                .result,
-            Ok(DomainResponse::LibraryOpened { revision: 2, .. })
-        ));
+        drop(core);
+        assert_eq!(current_tables(&database_path), ["obsolete_data"]);
     }
 
     #[test]
-    fn lesson_pages_flow_through_the_revisioned_fifo() {
-        let (_temp, path) = current_fixture();
-        let coordinator = coordinator(4);
-        coordinator
-            .try_submit(
-                request_id(41),
-                DomainRequest::OpenSnapshot { path: path.clone() },
-            )
-            .expect("submit first open");
-        coordinator
-            .try_submit(
-                request_id(42),
-                DomainRequest::LessonPage {
-                    expected_revision: 1,
-                    course_id: "course-marker".to_string(),
-                    section_id: Some("section-marker-deep".to_string()),
-                    offset: 0,
-                    limit: 10,
-                },
-            )
-            .expect("submit lesson page");
-        coordinator
-            .try_submit(
-                request_id(43),
-                DomainRequest::OpenSnapshot { path: path.clone() },
-            )
-            .expect("submit replacement open");
-        coordinator
-            .try_submit(
-                request_id(44),
-                DomainRequest::LessonPage {
-                    expected_revision: 1,
-                    course_id: "course-marker".to_string(),
-                    section_id: None,
-                    offset: 0,
-                    limit: 1,
-                },
-            )
-            .expect("submit stale lesson page");
+    fn requests_complete_in_fifo_order_and_reject_stale_pages() {
+        let data_dir = tempfile::tempdir().expect("create native data directory");
+        let core = start(data_dir.path(), 4);
+        assert_eq!(receive_ready(&core), (1, None));
+
+        core.try_submit(
+            request_id(11),
+            DomainRequest::CoursePage {
+                expected_revision: 2,
+                offset: 0,
+                limit: 20,
+            },
+        )
+        .expect("submit stale page");
+        core.try_submit(
+            request_id(12),
+            DomainRequest::CoursePage {
+                expected_revision: 1,
+                offset: 0,
+                limit: 20,
+            },
+        )
+        .expect("submit current page");
 
         assert!(matches!(
-            coordinator
-                .recv_timeout(Duration::from_secs(2))
-                .expect("receive first open")
-                .result,
-            Ok(DomainResponse::LibraryOpened { revision: 1, .. })
-        ));
-        let page = coordinator
-            .recv_timeout(Duration::from_secs(2))
-            .expect("receive lesson page");
-        assert_eq!(page.request_id, request_id(42));
-        assert!(matches!(
-            page.result,
-            Ok(DomainResponse::LessonPage(ref page))
-                if page.revision == 1
-                    && page.course_id == "course-marker"
-                    && page.section_id.as_deref() == Some("section-marker-deep")
-                    && page.total == 1
-                    && page.rows.len() == 1
-                    && page.rows[0].id == "lesson-document"
+            core.recv_timeout(Duration::from_secs(2))
+                .expect("receive stale page"),
+            DomainEvent::Completed(DomainOutcome {
+                request_id: outcome_request_id,
+                result: Err(DomainError::Library(LibraryError::StaleRevision {
+                    expected: 2,
+                    actual: 1,
+                })),
+            }) if outcome_request_id == request_id(11)
         ));
         assert!(matches!(
-            coordinator
-                .recv_timeout(Duration::from_secs(2))
-                .expect("receive replacement open")
-                .result,
-            Ok(DomainResponse::LibraryOpened { revision: 2, .. })
+            core.recv_timeout(Duration::from_secs(2))
+                .expect("receive current page"),
+            DomainEvent::Completed(DomainOutcome {
+                request_id: outcome_request_id,
+                result: Ok(DomainResponse::CoursePage(page)),
+            }) if outcome_request_id == request_id(12) && page.revision == 1
         ));
-        let stale = coordinator
-            .recv_timeout(Duration::from_secs(2))
-            .expect("receive stale lesson page");
-        assert_eq!(stale.request_id, request_id(44));
-        assert!(matches!(
-            stale.result,
-            Err(DomainError::Library(LibraryError::StaleRevision {
-                expected: 1,
-                actual: 2
-            }))
-        ));
-        drop(coordinator);
-        assert_no_sidecars(&path);
     }
 
     #[test]
     fn bounded_submission_reports_full_and_drop_unblocks_the_worker() {
-        let coordinator = coordinator(1);
-        coordinator
-            .try_submit(
-                request_id(41),
-                DomainRequest::CoursePage {
-                    expected_revision: 1,
-                    offset: 0,
-                    limit: 1,
-                },
-            )
-            .expect("submit first result");
+        let data_dir = tempfile::tempdir().expect("create native data directory");
+        let core = start(data_dir.path(), 1);
+        assert_eq!(receive_ready(&core), (1, None));
 
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        let mut next_request_id = 42;
-        for accepted in 0..2 {
-            loop {
-                let result = coordinator.try_submit(
-                    request_id(next_request_id),
-                    DomainRequest::CoursePage {
-                        expected_revision: 1,
-                        offset: 0,
-                        limit: 1,
-                    },
-                );
-                next_request_id += 1;
-                match result {
-                    Ok(()) => break,
-                    Err(SubmitError::Full) => {
-                        assert!(
-                            std::time::Instant::now() < deadline,
-                            "worker did not open command slot {accepted}"
-                        );
-                        thread::yield_now();
-                    }
-                    Err(SubmitError::Closed) => panic!("coordinator closed during submission"),
-                }
-            }
-        }
-        assert_eq!(
-            coordinator.try_submit(
-                request_id(next_request_id),
+        core.try_submit(
+            request_id(21),
+            DomainRequest::CoursePage {
+                expected_revision: 1,
+                offset: 0,
+                limit: 1,
+            },
+        )
+        .expect("submit first request");
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        let mut next_id = 22;
+        loop {
+            match core.try_submit(
+                request_id(next_id),
                 DomainRequest::CoursePage {
                     expected_revision: 1,
                     offset: 0,
                     limit: 1,
                 },
-            ),
-            Err(SubmitError::Full),
-            "third queued command proves the worker is blocked on the full outcome queue"
-        );
+            ) {
+                Ok(()) => next_id += 1,
+                Err(SubmitError::Full) => break,
+                Err(SubmitError::Closed) => panic!("native core closed during submission"),
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "bounded command queue never filled"
+            );
+            thread::yield_now();
+        }
 
         let (dropped, dropped_receiver) = mpsc::channel();
         thread::spawn(move || {
-            drop(coordinator);
+            drop(core);
             let _ = dropped.send(());
         });
         dropped_receiver
             .recv_timeout(Duration::from_secs(2))
-            .expect("coordinator drop must not hang under backpressure");
+            .expect("native core drop must unblock backpressure");
     }
 
     #[test]
-    fn drop_is_bounded_while_a_worker_operation_is_blocked() {
-        let (_temp, path) = current_fixture();
-        let coordinator = coordinator(2);
-        coordinator
-            .try_submit(
-                request_id(51),
-                DomainRequest::OpenSnapshot { path: path.clone() },
-            )
-            .expect("submit snapshot open");
-        assert!(matches!(
-            coordinator
-                .recv_timeout(Duration::from_secs(2))
-                .expect("receive snapshot open")
-                .result,
-            Ok(DomainResponse::LibraryOpened { revision: 1, .. })
-        ));
-
+    fn drop_interrupts_an_active_database_operation() {
+        let data_dir = tempfile::tempdir().expect("create native data directory");
+        let core = start(data_dir.path(), 2);
+        assert_eq!(receive_ready(&core), (1, None));
         let (entered, entered_receiver) = mpsc::channel();
-        coordinator
-            .try_submit(request_id(52), DomainRequest::LongQuery { entered })
-            .expect("submit blocked operation");
+        core.try_submit(request_id(31), DomainRequest::LongQuery { entered })
+            .expect("submit long database operation");
         entered_receiver
             .recv_timeout(Duration::from_secs(2))
-            .expect("worker must enter blocked operation");
+            .expect("database operation must start");
 
         let (dropped, dropped_receiver) = mpsc::channel();
         thread::spawn(move || {
-            drop(coordinator);
+            drop(core);
             let _ = dropped.send(());
         });
         dropped_receiver
             .recv_timeout(Duration::from_secs(1))
-            .expect("coordinator drop must not wait for blocked worker I/O");
-        assert_no_sidecars(&path);
+            .expect("native core drop must interrupt database work");
     }
 }
