@@ -17,3 +17,6 @@ crate-type = ["rlib", "staticlib"]
 [dev-dependencies]
 cbindgen = "=0.29.4"
 sha2 = "=0.10.9"
+sqlx = { version = "=0.8.6", default-features = false, features = ["migrate", "runtime-tokio", "sqlite"] }
+tempfile = "=3.27.0"
+tokio = { version = "=1.52.3", features = ["rt"] }
