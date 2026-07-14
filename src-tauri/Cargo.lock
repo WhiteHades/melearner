@@ -2838,7 +2838,8 @@ name = "melearner-core"
 version = "0.1.0"
 dependencies = [
  "icu_collator",
- "sha2",
+ "serde",
+ "serde_json",
  "sqlx",
  "tokio",
 ]
