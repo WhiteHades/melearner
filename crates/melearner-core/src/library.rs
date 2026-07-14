@@ -9,10 +9,13 @@ use std::time::Duration;
 
 use icu_collator::preferences::CollationNumericOrdering;
 use icu_collator::{CollatorBorrowed, CollatorPreferences};
-use sqlx::sqlite::{SqliteConnectOptions, SqliteRow};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteRow, SqliteSynchronous};
 use sqlx::{Connection, QueryBuilder, Row, Sqlite, SqliteConnection};
 
+use crate::schema;
+
 const SQLITE_PROGRESS_INTERVAL: i32 = 1_000;
+pub(crate) const NATIVE_DATABASE_FILENAME: &str = "melearner-native.sqlite3";
 pub(crate) const MAX_COURSE_PAGE_SIZE: u32 = 200;
 static NATURAL_COLLATOR: LazyLock<CollatorBorrowed<'static>> = LazyLock::new(|| {
     let mut preferences = CollatorPreferences::default();
@@ -175,31 +178,37 @@ pub(crate) struct LibraryDatabase {
 }
 
 impl LibraryDatabase {
-    /// Opens an isolated, checkpointed current database for read-only projection.
-    /// Production writable open is not implemented yet.
-    pub(crate) async fn open_snapshot_read_only(
-        path: &Path,
-        revision: NonZeroU64,
-    ) -> Result<Self, LibraryError> {
-        Self::open_snapshot_read_only_interruptible(
-            path,
-            revision,
-            Arc::new(AtomicBool::new(false)),
-        )
-        .await
-    }
-
-    pub(crate) async fn open_snapshot_read_only_interruptible(
-        path: &Path,
+    pub(crate) async fn open_current(
+        data_dir: &Path,
         revision: NonZeroU64,
         stopping: Arc<AtomicBool>,
     ) -> Result<Self, LibraryError> {
+        std::fs::create_dir_all(data_dir)
+            .map_err(|error| LibraryError::Database(error.to_string()))?;
+        let path = data_dir.join(NATIVE_DATABASE_FILENAME);
+        let create_schema = !path
+            .try_exists()
+            .map_err(|error| LibraryError::Database(error.to_string()))?;
+        Self::open_database(&path, revision, stopping, create_schema).await
+    }
+
+    #[cfg(test)]
+    async fn open_test_database(path: &Path, revision: NonZeroU64) -> Result<Self, LibraryError> {
+        Self::open_database(path, revision, Arc::new(AtomicBool::new(false)), false).await
+    }
+
+    async fn open_database(
+        path: &Path,
+        revision: NonZeroU64,
+        stopping: Arc<AtomicBool>,
+        create_schema: bool,
+    ) -> Result<Self, LibraryError> {
         let options = SqliteConnectOptions::new()
             .filename(path)
-            .create_if_missing(false)
-            .read_only(true)
-            .immutable(true)
+            .create_if_missing(create_schema)
             .foreign_keys(true)
+            .journal_mode(SqliteJournalMode::Wal)
+            .synchronous(SqliteSynchronous::Normal)
             .collation("MELEARNER_NATURAL", natural_cmp)
             .busy_timeout(Duration::from_secs(10));
         let mut connection = SqliteConnection::connect_with(&options).await?;
@@ -210,6 +219,26 @@ impl LibraryDatabase {
                 !stopping.load(AtomicOrdering::Acquire)
             });
 
+        if create_schema {
+            let schema_result = async {
+                let mut transaction = connection.begin().await?;
+                sqlx::raw_sql(schema::SQL)
+                    .execute(&mut *transaction)
+                    .await?;
+                transaction.commit().await
+            }
+            .await;
+            if let Err(error) = schema_result {
+                let _ = connection.close().await;
+                let _ = std::fs::remove_file(path);
+                return Err(error.into());
+            }
+        }
+
+        if let Err(error) = validate_current_schema(&mut connection).await {
+            let _ = connection.close().await;
+            return Err(error);
+        }
         let library_path = match load_library_path(&mut connection).await {
             Ok(value) => value,
             Err(error) => {
@@ -470,7 +499,7 @@ impl LibraryDatabase {
         let mut rows = Vec::with_capacity(page_keys.len());
         for lesson in &page_keys {
             let record = record_by_id.remove(&lesson.id).ok_or_else(|| {
-                LibraryError::Database("lesson changed inside immutable snapshot".to_string())
+                LibraryError::Database("lesson changed while loading its page".to_string())
             })?;
             rows.push(lesson_summary(record, lesson)?);
         }
@@ -749,6 +778,42 @@ fn course_page_sql(rooted: bool) -> String {
     )
 }
 
+async fn validate_current_schema(connection: &mut SqliteConnection) -> Result<(), LibraryError> {
+    let stored_statements = sqlx::query_scalar::<_, String>(
+        "SELECT sql
+         FROM sqlite_schema
+         WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'
+         ORDER BY rowid",
+    )
+    .fetch_all(&mut *connection)
+    .await?;
+    let expected_statements = schema::SQL
+        .split(';')
+        .map(str::trim)
+        .filter(|statement| !statement.is_empty());
+    if stored_statements.iter().map(String::as_str).ne(expected_statements) {
+        return Err(LibraryError::Database(
+            "database schema is not current".to_string(),
+        ));
+    }
+
+    let foreign_keys = sqlx::query_scalar::<_, i64>("PRAGMA foreign_keys")
+        .fetch_one(&mut *connection)
+        .await?;
+    let journal_mode = sqlx::query_scalar::<_, String>("PRAGMA journal_mode")
+        .fetch_one(&mut *connection)
+        .await?;
+    let busy_timeout = sqlx::query_scalar::<_, i64>("PRAGMA busy_timeout")
+        .fetch_one(connection)
+        .await?;
+    if foreign_keys != 1 || journal_mode != "wal" || busy_timeout != 10_000 {
+        return Err(LibraryError::Database(
+            "database connection is not current".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 async fn load_library_path(
     connection: &mut SqliteConnection,
 ) -> Result<Option<String>, LibraryError> {
@@ -867,7 +932,6 @@ fn natural_cmp(left: &str, right: &str) -> Ordering {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
     use std::future::Future;
     use std::num::NonZeroU64;
     use std::path::{Path, PathBuf};
@@ -948,18 +1012,11 @@ mod tests {
             .expect("close mutable fixture copy");
     }
 
-    fn assert_no_sidecars(path: &Path) {
-        for suffix in ["-wal", "-shm", "-journal"] {
-            assert!(!PathBuf::from(format!("{}{suffix}", path.display())).exists());
-        }
-    }
-
     #[test]
     fn course_pages_match_the_current_library() {
         block_on(async {
             let (_temp, path) = current_fixture().await;
-            let original = fs::read(&path).expect("read original fixture copy");
-            let mut library = LibraryDatabase::open_snapshot_read_only(&path, revision(7))
+            let mut library = LibraryDatabase::open_test_database(&path, revision(7))
                 .await
                 .expect("open current library");
             let revision = library.revision();
@@ -1037,9 +1094,6 @@ mod tests {
             assert_eq!(exhausted.total, 3);
             assert!(exhausted.rows.is_empty());
             library.close().await.expect("close current library");
-
-            assert_eq!(fs::read(&path).expect("reread fixture copy"), original);
-            assert_no_sidecars(&path);
         });
     }
 
@@ -1047,7 +1101,7 @@ mod tests {
     fn course_pages_reject_invalid_bounds_and_stale_revisions() {
         block_on(async {
             let (_temp, path) = current_fixture().await;
-            let mut library = LibraryDatabase::open_snapshot_read_only(&path, revision(11))
+            let mut library = LibraryDatabase::open_test_database(&path, revision(11))
                 .await
                 .expect("open current library");
             let revision = library.revision();
@@ -1081,7 +1135,6 @@ mod tests {
                 Err(LibraryError::InvalidOffset { .. })
             ));
             library.close().await.expect("close invalid-page library");
-            assert_no_sidecars(&path);
         });
     }
 
@@ -1100,8 +1153,7 @@ mod tests {
                    ('wildcard-decoy', 'wildcard-decoy', 'Same', '/fixtures/weirdXX~/C', 'wildcard-decoy', 'now', '2026-07-14T00:00:00.000Z')",
             )
             .await;
-            let before = fs::read(&path).expect("read escaped-root fixture");
-            let mut library = LibraryDatabase::open_snapshot_read_only(&path, revision(19))
+            let mut library = LibraryDatabase::open_test_database(&path, revision(19))
                 .await
                 .expect("open escaped-root fixture");
             let page = library
@@ -1117,11 +1169,6 @@ mod tests {
                 ["tie-a", "tie-b"]
             );
             library.close().await.expect("close escaped-root library");
-            assert_eq!(
-                fs::read(&path).expect("reread escaped-root fixture"),
-                before
-            );
-            assert_no_sidecars(&path);
 
             let (_all_temp, all_path) = current_fixture().await;
             mutate_fixture(
@@ -1129,7 +1176,7 @@ mod tests {
                 "DELETE FROM app_settings WHERE key = 'libraryPath'",
             )
             .await;
-            let mut all_library = LibraryDatabase::open_snapshot_read_only(&all_path, revision(20))
+            let mut all_library = LibraryDatabase::open_test_database(&all_path, revision(20))
                 .await
                 .expect("open fixture without a library root");
             assert_eq!(all_library.library_path(), None);
@@ -1147,23 +1194,22 @@ mod tests {
                 ["course-marker", "course-missing", "course-copy"]
             );
             all_library.close().await.expect("close unfiltered library");
-            assert_no_sidecars(&all_path);
         });
     }
 
     #[test]
-    fn replacement_snapshots_reject_the_previous_revision() {
+    fn reopened_databases_reject_the_previous_revision() {
         block_on(async {
             let (_temp, path) = current_fixture().await;
-            let first = LibraryDatabase::open_snapshot_read_only(&path, revision(41))
+            let first = LibraryDatabase::open_test_database(&path, revision(41))
                 .await
-                .expect("open first snapshot");
+                .expect("open first database handle");
             assert_eq!(first.revision(), 41);
-            first.close().await.expect("close first snapshot");
+            first.close().await.expect("close first database handle");
 
-            let mut replacement = LibraryDatabase::open_snapshot_read_only(&path, revision(42))
+            let mut replacement = LibraryDatabase::open_test_database(&path, revision(42))
                 .await
-                .expect("open replacement snapshot");
+                .expect("reopen current database");
             assert!(matches!(
                 replacement.course_page(41, 0, 1).await,
                 Err(LibraryError::StaleRevision {
@@ -1179,11 +1225,7 @@ mod tests {
                     .revision,
                 42
             );
-            replacement
-                .close()
-                .await
-                .expect("close replacement snapshot");
-            assert_no_sidecars(&path);
+            replacement.close().await.expect("close reopened database");
         });
     }
 
@@ -1192,7 +1234,7 @@ mod tests {
         block_on(async {
             let (_temp, path) = current_fixture().await;
             mutate_fixture(&path, "DELETE FROM app_settings WHERE key = 'libraryPath'").await;
-            let mut library = LibraryDatabase::open_snapshot_read_only(&path, revision(51))
+            let mut library = LibraryDatabase::open_test_database(&path, revision(51))
                 .await
                 .expect("open fixture without saved root");
             assert_eq!(library.library_path(), None);
@@ -1204,8 +1246,7 @@ mod tests {
                     .total,
                 3
             );
-            library.close().await.expect("close unrooted snapshot");
-            assert_no_sidecars(&path);
+            library.close().await.expect("close unrooted database");
         });
     }
 
@@ -1218,7 +1259,7 @@ mod tests {
                 "UPDATE courses SET thumbnail_source_path = NULL WHERE id = 'course-marker'",
             )
             .await;
-            let mut library = LibraryDatabase::open_snapshot_read_only(&path, revision(61))
+            let mut library = LibraryDatabase::open_test_database(&path, revision(61))
                 .await
                 .expect("open fixture without stored thumbnail");
             let page = library
@@ -1229,8 +1270,7 @@ mod tests {
                 page.rows[0].thumbnail_source_path.as_deref(),
                 Some("/fixtures/library/Systems 日本語/01 入門/01 welcome.mp4")
             );
-            library.close().await.expect("close thumbnail snapshot");
-            assert_no_sidecars(&path);
+            library.close().await.expect("close thumbnail database");
         });
     }
 
@@ -1256,7 +1296,7 @@ mod tests {
                    ('windows-decoy', 'windows-decoy', 'Windows decoy', 'C:/Course', 'windows-decoy', 'now')",
             )
             .await;
-            let mut windows = LibraryDatabase::open_snapshot_read_only(&windows_path, revision(71))
+            let mut windows = LibraryDatabase::open_test_database(&windows_path, revision(71))
                 .await
                 .expect("open Windows-root fixture");
             let windows_page = windows
@@ -1265,8 +1305,7 @@ mod tests {
                 .expect("load Windows-root page");
             assert_eq!(windows_page.total, 1);
             assert_eq!(windows_page.rows[0].id, "windows-child");
-            windows.close().await.expect("close Windows-root snapshot");
-            assert_no_sidecars(&windows_path);
+            windows.close().await.expect("close Windows-root database");
 
             let (_posix_temp, posix_path) = current_fixture().await;
             mutate_fixture(
@@ -1277,7 +1316,7 @@ mod tests {
                    ('case-decoy', 'case-decoy', 'Case decoy', '/fixtures/Library/Case decoy', 'case-decoy', 'now')",
             )
             .await;
-            let mut posix = LibraryDatabase::open_snapshot_read_only(&posix_path, revision(72))
+            let mut posix = LibraryDatabase::open_test_database(&posix_path, revision(72))
                 .await
                 .expect("open POSIX-root fixture");
             let posix_page = posix
@@ -1286,8 +1325,7 @@ mod tests {
                 .expect("load POSIX-root page");
             assert_eq!(posix_page.total, 3);
             assert!(posix_page.rows.iter().all(|row| row.id != "case-decoy"));
-            posix.close().await.expect("close POSIX-root snapshot");
-            assert_no_sidecars(&posix_path);
+            posix.close().await.expect("close POSIX-root database");
         });
     }
 
@@ -1304,7 +1342,7 @@ mod tests {
                    ('exact-root', 'exact-root', 'Exact root', '/fixtures/library/', 'exact-root', 'now')",
             )
             .await;
-            let mut library = LibraryDatabase::open_snapshot_read_only(&path, revision(76))
+            let mut library = LibraryDatabase::open_test_database(&path, revision(76))
                 .await
                 .expect("open trailing-root fixture");
             let page = library
@@ -1319,8 +1357,7 @@ mod tests {
                     .count(),
                 1
             );
-            library.close().await.expect("close trailing-root snapshot");
-            assert_no_sidecars(&path);
+            library.close().await.expect("close trailing-root database");
         });
     }
 
@@ -1347,7 +1384,7 @@ mod tests {
                    ('lesson-2', 'natural-course', 'section-2', '1 Video', '/natural/Course/2 Intro/video.mp4', '2 Intro/video.mp4', 'video', 0)",
             )
             .await;
-            let mut library = LibraryDatabase::open_snapshot_read_only(&path, revision(91))
+            let mut library = LibraryDatabase::open_test_database(&path, revision(91))
                 .await
                 .expect("open natural-order fixture");
             let page = library
@@ -1359,8 +1396,7 @@ mod tests {
                 page.rows[0].thumbnail_source_path.as_deref(),
                 Some("/natural/Course/2 Intro/video.mp4")
             );
-            library.close().await.expect("close natural-order snapshot");
-            assert_no_sidecars(&path);
+            library.close().await.expect("close natural-order database");
         });
     }
 
@@ -1368,7 +1404,7 @@ mod tests {
     fn rooted_course_plan_uses_the_path_index_and_one_lesson_window() {
         block_on(async {
             let (_temp, path) = current_fixture().await;
-            let mut library = LibraryDatabase::open_snapshot_read_only(&path, revision(101))
+            let mut library = LibraryDatabase::open_test_database(&path, revision(101))
                 .await
                 .expect("open query-plan fixture");
             let page_sql = course_page_sql(true);
@@ -1405,8 +1441,7 @@ mod tests {
                 details.iter().all(|detail| detail != "SCAN courses"),
                 "{details:#?}"
             );
-            library.close().await.expect("close query-plan snapshot");
-            assert_no_sidecars(&path);
+            library.close().await.expect("close query-plan database");
         });
     }
 
@@ -1414,8 +1449,7 @@ mod tests {
     fn lesson_pages_match_the_current_course() {
         block_on(async {
             let (_temp, path) = current_fixture().await;
-            let original = fs::read(&path).expect("read original fixture copy");
-            let mut library = LibraryDatabase::open_snapshot_read_only(&path, revision(111))
+            let mut library = LibraryDatabase::open_test_database(&path, revision(111))
                 .await
                 .expect("open lesson-page fixture");
 
@@ -1502,8 +1536,6 @@ mod tests {
             assert!(missing.rows.is_empty());
 
             library.close().await.expect("close lesson-page fixture");
-            assert_eq!(fs::read(&path).expect("reread fixture copy"), original);
-            assert_no_sidecars(&path);
         });
     }
 
@@ -1511,7 +1543,7 @@ mod tests {
     fn lesson_pages_reject_invalid_bounds_and_stale_revisions() {
         block_on(async {
             let (_temp, path) = current_fixture().await;
-            let mut library = LibraryDatabase::open_snapshot_read_only(&path, revision(121))
+            let mut library = LibraryDatabase::open_test_database(&path, revision(121))
                 .await
                 .expect("open invalid lesson-page fixture");
 
@@ -1543,7 +1575,6 @@ mod tests {
                 .close()
                 .await
                 .expect("close invalid lesson-page fixture");
-            assert_no_sidecars(&path);
         });
     }
 
@@ -1578,8 +1609,7 @@ mod tests {
                    ('natural-subtitle', 'natural-two', '/fixtures/library/Natural lessons/two.srt', 'en', 'English', 0)",
             )
             .await;
-            let before = fs::read(&path).expect("read natural lesson fixture");
-            let mut library = LibraryDatabase::open_snapshot_read_only(&path, revision(131))
+            let mut library = LibraryDatabase::open_test_database(&path, revision(131))
                 .await
                 .expect("open natural lesson fixture");
 
@@ -1621,11 +1651,6 @@ mod tests {
             assert!(outside.rows.is_empty());
 
             library.close().await.expect("close natural lesson fixture");
-            assert_eq!(
-                fs::read(&path).expect("reread natural lesson fixture"),
-                before
-            );
-            assert_no_sidecars(&path);
         });
     }
     #[test]
@@ -1660,7 +1685,7 @@ mod tests {
                    ('unicode-z-lesson', 'unicode-course', 'unicode-z', 'Only', '/fixtures/library/Unicode course/z.mp4', 'z/z.mp4', 'video', 0)",
             )
             .await;
-            let mut library = LibraryDatabase::open_snapshot_read_only(&path, revision(136))
+            let mut library = LibraryDatabase::open_test_database(&path, revision(136))
                 .await
                 .expect("open Unicode lesson fixture");
             let page = library
@@ -1692,7 +1717,6 @@ mod tests {
             );
 
             library.close().await.expect("close Unicode lesson fixture");
-            assert_no_sidecars(&path);
         });
     }
 
@@ -1728,7 +1752,7 @@ mod tests {
                  FROM numbers",
             )
             .await;
-            let mut library = LibraryDatabase::open_snapshot_read_only(&path, revision(138))
+            let mut library = LibraryDatabase::open_test_database(&path, revision(138))
                 .await
                 .expect("open 100,000-lesson fixture");
 
@@ -1764,7 +1788,6 @@ mod tests {
             assert_eq!(library.lesson_order_index_builds, 1);
 
             library.close().await.expect("close 100,000-lesson fixture");
-            assert_no_sidecars(&path);
         });
     }
 }
