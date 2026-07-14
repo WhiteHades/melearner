@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use icu_collator::preferences::CollationNumericOrdering;
 use icu_collator::{CollatorBorrowed, CollatorPreferences};
+use serde::Serialize;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteRow, SqliteSynchronous};
 use sqlx::{Connection, QueryBuilder, Row, Sqlite, SqliteConnection};
 
@@ -59,7 +60,8 @@ impl From<sqlx::Error> for LibraryError {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct CourseSummary {
     pub(crate) id: String,
     pub(crate) identity_id: String,
@@ -80,7 +82,8 @@ pub(crate) struct CourseSummary {
     pub(crate) leading_lesson_kind: Option<String>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct CoursePage {
     pub(crate) revision: u64,
     pub(crate) offset: u64,
@@ -88,14 +91,16 @@ pub(crate) struct CoursePage {
     pub(crate) rows: Vec<CourseSummary>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct SubtitleSummary {
     pub(crate) path: String,
     pub(crate) language: String,
     pub(crate) label: String,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct LessonSummary {
     pub(crate) id: String,
     pub(crate) course_id: String,
@@ -114,7 +119,8 @@ pub(crate) struct LessonSummary {
     pub(crate) subtitles: Vec<SubtitleSummary>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct LessonPage {
     pub(crate) revision: u64,
     pub(crate) course_id: String,
@@ -259,10 +265,6 @@ impl LibraryDatabase {
 
     pub(crate) fn revision(&self) -> u64 {
         self.revision
-    }
-
-    pub(crate) fn library_path(&self) -> Option<&str> {
-        self.library_path.as_deref()
     }
 
     pub(crate) async fn close(self) -> Result<(), LibraryError> {
@@ -1025,7 +1027,7 @@ mod tests {
                 .expect("open current library");
             let revision = library.revision();
             assert_ne!(revision, 0);
-            assert_eq!(library.library_path(), Some("/fixtures/library"));
+            assert_eq!(library.library_path.as_deref(), Some("/fixtures/library"));
 
             let first = library
                 .course_page(revision, 0, 2)
@@ -1183,7 +1185,7 @@ mod tests {
             let mut all_library = LibraryDatabase::open_test_database(&all_path, revision(20))
                 .await
                 .expect("open fixture without a library root");
-            assert_eq!(all_library.library_path(), None);
+            assert_eq!(all_library.library_path.as_deref(), None);
             let all_page = all_library
                 .course_page(all_library.revision(), 0, 10)
                 .await
@@ -1241,7 +1243,7 @@ mod tests {
             let mut library = LibraryDatabase::open_test_database(&path, revision(51))
                 .await
                 .expect("open fixture without saved root");
-            assert_eq!(library.library_path(), None);
+            assert_eq!(library.library_path.as_deref(), None);
             assert_eq!(
                 library
                     .course_page(51, 0, 10)
