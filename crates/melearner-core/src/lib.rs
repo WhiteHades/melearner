@@ -1,5 +1,8 @@
 #![allow(non_camel_case_types)]
 
+// The next #17 phase wires this private projection into the coordinator ABI.
+#[allow(dead_code)]
+mod library;
 pub mod migrations;
 
 use std::cell::RefCell;
