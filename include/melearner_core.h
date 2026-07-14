@@ -9,7 +9,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#define ML_ABI_VERSION 1
+#define ML_ABI_VERSION 2
 
 #define ML_MAX_EVENT_QUEUE_CAPACITY 65536
 
@@ -19,12 +19,14 @@ typedef struct ml_core_t ml_core_t;
 
 typedef uint32_t ml_status_t;
 
-typedef struct ml_config_v1 {
+typedef struct ml_config_v2 {
   uint32_t struct_size;
   uint32_t abi_version;
   uint32_t event_queue_capacity;
   uint32_t max_event_payload_bytes;
-} ml_config_v1;
+  const uint8_t *state_dir;
+  size_t state_dir_len;
+} ml_config_v2;
 
 typedef void (*ml_wake_fn)(void *context);
 
@@ -50,6 +52,28 @@ typedef struct ml_event_v1 {
   size_t payload_len;
 } ml_event_v1;
 
+typedef struct ml_library_course_page_request_v1 {
+  uint32_t struct_size;
+  uint32_t abi_version;
+  uint64_t expected_revision;
+  uint64_t offset;
+  uint32_t limit;
+  uint32_t reserved;
+} ml_library_course_page_request_v1;
+
+typedef struct ml_library_lesson_page_request_v1 {
+  uint32_t struct_size;
+  uint32_t abi_version;
+  uint64_t expected_revision;
+  uint64_t offset;
+  uint32_t limit;
+  uint32_t reserved;
+  const uint8_t *course_id;
+  size_t course_id_len;
+  const uint8_t *section_id;
+  size_t section_id_len;
+} ml_library_lesson_page_request_v1;
+
 #define ML_STATUS_OK 0
 
 #define ML_STATUS_INVALID_ARGUMENT 1
@@ -70,11 +94,17 @@ typedef struct ml_event_v1 {
 
 #define ML_STATUS_NOT_FOUND 9
 
+#define ML_STATUS_STALE 10
+
 #define ML_EVENT_CORE_READY 1
 
 #define ML_EVENT_REQUEST_CANCELLED 2
 
 #define ML_EVENT_FATAL 3
+
+#define ML_EVENT_LIBRARY_COURSE_PAGE 4
+
+#define ML_EVENT_LIBRARY_LESSON_PAGE 5
 
 uint32_t ml_abi_version(void);
 
@@ -83,10 +113,11 @@ uint32_t ml_abi_version(void);
  *
  * # Safety
  *
- * `config` must point to a readable `ml_config_v1`. `out_core` must point to
+ * `config` must point to a readable `ml_config_v2`. Its state-directory bytes
+ * must remain readable for this call. `out_core` must point to
  * writable storage for one handle. Both pointers are borrowed only for this call.
  */
-ml_status_t ml_core_create(const struct ml_config_v1 *config, struct ml_core_t **out_core);
+ml_status_t ml_core_create(const struct ml_config_v2 *config, struct ml_core_t **out_core);
 
 /**
  * Destroys a core. Null, stale, and already-destroyed handles are ignored.
@@ -149,5 +180,33 @@ void ml_core_release_event(struct ml_core_t *core, struct ml_event_v1 *event);
  * Cancels an active asynchronous request.
  */
 ml_status_t ml_core_cancel(struct ml_core_t *core, uint64_t request_id);
+
+/**
+ * Submits one asynchronous Library course-page request.
+ *
+ * # Safety
+ *
+ * `request` must point to a readable `ml_library_course_page_request_v1`, and
+ * `out_request_id` must point to writable `u64` storage. Both pointers are
+ * borrowed only for this call.
+ */
+ml_status_t ml_library_course_page_v1(struct ml_core_t *core,
+                                      const struct ml_library_course_page_request_v1 *request,
+                                      uint64_t *out_request_id);
+
+/**
+ * Submits one asynchronous Library lesson-page request.
+ *
+ * A null `section_id` with zero length selects all Sections in the Course.
+ *
+ * # Safety
+ *
+ * `request` must point to a readable `ml_library_lesson_page_request_v1`.
+ * Its ID byte ranges must remain readable for this call. `out_request_id`
+ * must point to writable `u64` storage. All inputs are copied before return.
+ */
+ml_status_t ml_library_lesson_page_v1(struct ml_core_t *core,
+                                      const struct ml_library_lesson_page_request_v1 *request,
+                                      uint64_t *out_request_id);
 
 #endif  /* MELEARNER_CORE_H */
