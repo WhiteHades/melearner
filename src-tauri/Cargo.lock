@@ -2784,6 +2784,10 @@ dependencies = [
 [[package]]
 name = "melearner-core"
 version = "0.1.0"
+dependencies = [
+ "sha2",
+ "sqlx",
+]
 
 [[package]]
 name = "memchr"
