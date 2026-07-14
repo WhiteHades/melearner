@@ -539,6 +539,52 @@ fn every_shipped_migration_prefix_preserves_supported_data() {
 }
 
 #[test]
+fn failed_migration_rolls_back_schema_and_data() {
+    block_on(async {
+        let temp = tempfile::tempdir().expect("create failed migration tempdir");
+        let copied = temp.path().join("database-v16.sqlite");
+        fs::copy(checked_fixture(), &copied).expect("copy v16 database fixture");
+        let before = logical_snapshot(&copied).await;
+
+        let mut migrations = fixture_migrator().migrations.into_owned();
+        migrations.push(Migration::new(
+            17,
+            "deliberately_failing_migration".into(),
+            MigrationType::Simple,
+            "UPDATE courses SET name = 'corrupted' WHERE id = 'course-marker';
+             CREATE TABLE failed_migration_sentinel (value TEXT NOT NULL);
+             INSERT INTO deliberately_missing_table (value) VALUES ('fail');"
+                .into(),
+            false,
+        ));
+        let failing_migrator = Migrator {
+            migrations: Cow::Owned(migrations),
+            ignore_missing: false,
+            locking: true,
+            no_tx: false,
+        };
+
+        let mut connection = connect(&copied, false).await;
+        let error = failing_migrator
+            .run(&mut connection)
+            .await
+            .expect_err("deliberate migration must fail");
+        assert!(error.to_string().contains("deliberately_missing_table"));
+        sqlx::raw_sql("PRAGMA wal_checkpoint(TRUNCATE)")
+            .execute(&mut connection)
+            .await
+            .expect("checkpoint failed migration database");
+        connection
+            .close()
+            .await
+            .expect("close failed migration database");
+
+        assert_eq!(logical_snapshot(&copied).await, before);
+        assert_no_sidecars(&copied);
+    });
+}
+
+#[test]
 fn checked_database_v16_matches_fresh_logical_fixture() {
     block_on(async {
         let checked = checked_fixture();
