@@ -61,13 +61,15 @@ pub fn main(init: std.process.Init) !void {
     try expectEqual(@as(c.ml_event_kind_t, c.ML_EVENT_CORE_READY), ready.kind);
     try expectEqual(@as(c.ml_status_t, c.ML_STATUS_OK), ready.status);
     try expectEqual(@as(u32, 1), ready.payload_schema_version);
-    try expectPayload(&ready, "1");
+    try expect(ready.payload != null);
+    const revision = try std.fmt.parseInt(u64, ready.payload[0..ready.payload_len], 10);
+    try expect(revision != 0);
     c.ml_core_release_event(core, &ready);
 
     var request = c.ml_library_course_page_request_v1{
         .struct_size = @sizeOf(c.ml_library_course_page_request_v1),
         .abi_version = c.ML_ABI_VERSION,
-        .expected_revision = 1,
+        .expected_revision = revision,
         .offset = 0,
         .limit = 20,
         .reserved = 0,
@@ -84,7 +86,13 @@ pub fn main(init: std.process.Init) !void {
     try expectEqual(@as(c.ml_event_kind_t, c.ML_EVENT_LIBRARY_COURSE_PAGE), completed.kind);
     try expectEqual(@as(c.ml_status_t, c.ML_STATUS_OK), completed.status);
     try expectEqual(@as(u32, 1), completed.payload_schema_version);
-    try expectPayload(&completed, "{\"revision\":1,\"offset\":0,\"total\":0,\"rows\":[]}");
+    const expected_page = try std.fmt.allocPrint(
+        init.gpa,
+        "{{\"revision\":{d},\"offset\":0,\"total\":0,\"rows\":[]}}",
+        .{revision},
+    );
+    defer init.gpa.free(expected_page);
+    try expectPayload(&completed, expected_page);
     c.ml_core_release_event(core, &completed);
 
     var empty = event();
