@@ -5,6 +5,7 @@ mod coordinator;
 #[allow(dead_code)]
 mod library;
 pub mod migrations;
+pub mod schema;
 
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
