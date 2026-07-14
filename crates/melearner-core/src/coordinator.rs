@@ -1,11 +1,11 @@
 use std::io;
 use std::num::{NonZeroU64, NonZeroUsize};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TrySendError};
+use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
 
 use crate::library::{CoursePage, LessonPage, LibraryDatabase, LibraryError};
 
@@ -25,6 +25,8 @@ pub(crate) enum DomainRequest {
     },
     #[cfg(test)]
     LongQuery { entered: mpsc::Sender<()> },
+    #[cfg(test)]
+    Panic,
 }
 
 #[derive(Debug)]
@@ -36,6 +38,7 @@ pub(crate) enum DomainResponse {
 #[derive(Debug)]
 pub(crate) enum DomainError {
     Library(LibraryError),
+    WorkerPanicked,
 }
 
 impl From<LibraryError> for DomainError {
@@ -52,10 +55,7 @@ pub(crate) struct DomainOutcome {
 
 #[derive(Debug)]
 pub(crate) enum DomainEvent {
-    Ready {
-        revision: u64,
-        library_path: Option<String>,
-    },
+    Ready { revision: u64 },
     Completed(DomainOutcome),
     Fatal(DomainError),
 }
@@ -66,6 +66,8 @@ pub(crate) enum SubmitError {
     Closed,
 }
 
+pub(crate) type DomainEventSink = Arc<dyn Fn(DomainEvent) -> bool + Send + Sync>;
+
 struct DomainCommand {
     request_id: NonZeroU64,
     request: DomainRequest,
@@ -73,32 +75,40 @@ struct DomainCommand {
 
 pub(crate) struct DomainWorker {
     command_sender: Option<SyncSender<DomainCommand>>,
-    event_receiver: Option<Receiver<DomainEvent>>,
     stopping: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
 }
 
 impl DomainWorker {
-    pub(crate) fn start(data_dir: PathBuf, capacity: NonZeroUsize) -> io::Result<Self> {
+    pub(crate) fn start(
+        data_dir: PathBuf,
+        capacity: NonZeroUsize,
+        event_sink: DomainEventSink,
+    ) -> io::Result<Self> {
         let runtime = tokio::runtime::Builder::new_current_thread().build()?;
         let (command_sender, command_receiver) = mpsc::sync_channel(capacity.get());
-        let (event_sender, event_receiver) = mpsc::sync_channel(capacity.get());
         let stopping = Arc::new(AtomicBool::new(false));
         let worker_stopping = Arc::clone(&stopping);
+        let panic_sink = Arc::clone(&event_sink);
         let worker = thread::Builder::new()
             .name("melearner-domain".to_string())
             .spawn(move || {
-                run_worker(
-                    runtime,
-                    data_dir,
-                    command_receiver,
-                    event_sender,
-                    worker_stopping,
-                );
+                if catch_unwind(AssertUnwindSafe(|| {
+                    run_worker(
+                        runtime,
+                        data_dir,
+                        command_receiver,
+                        event_sink,
+                        worker_stopping,
+                    );
+                }))
+                .is_err()
+                {
+                    panic_sink(DomainEvent::Fatal(DomainError::WorkerPanicked));
+                }
             })?;
         Ok(Self {
             command_sender: Some(command_sender),
-            event_receiver: Some(event_receiver),
             stopping,
             worker: Some(worker),
         })
@@ -119,21 +129,15 @@ impl DomainWorker {
             Err(TrySendError::Disconnected(_)) => Err(SubmitError::Closed),
         }
     }
-
-    pub(crate) fn recv_timeout(&self, timeout: Duration) -> Result<DomainEvent, RecvTimeoutError> {
-        self.event_receiver
-            .as_ref()
-            .ok_or(RecvTimeoutError::Disconnected)?
-            .recv_timeout(timeout)
-    }
 }
 
 impl Drop for DomainWorker {
     fn drop(&mut self) {
         self.stopping.store(true, Ordering::Release);
         self.command_sender.take();
-        self.event_receiver.take();
-        if let Some(worker) = self.worker.take() {
+        if let Some(worker) = self.worker.take()
+            && worker.thread().id() != thread::current().id()
+        {
             let _ = worker.join();
         }
     }
@@ -183,6 +187,8 @@ impl DomainState {
                 self.library.run_until_interrupted(entered).await?;
                 unreachable!("interruptible query returned without shutdown")
             }
+            #[cfg(test)]
+            DomainRequest::Panic => panic!("forced domain worker panic"),
         }
     }
 }
@@ -191,23 +197,19 @@ fn run_worker(
     runtime: tokio::runtime::Runtime,
     data_dir: PathBuf,
     command_receiver: Receiver<DomainCommand>,
-    event_sender: SyncSender<DomainEvent>,
+    event_sink: DomainEventSink,
     stopping: Arc<AtomicBool>,
 ) {
     let mut state = match runtime.block_on(DomainState::open(data_dir, Arc::clone(&stopping))) {
         Ok(state) => state,
         Err(error) => {
-            let _ = event_sender.send(DomainEvent::Fatal(error));
+            event_sink(DomainEvent::Fatal(error));
             return;
         }
     };
-    if event_sender
-        .send(DomainEvent::Ready {
-            revision: state.library.revision(),
-            library_path: state.library.library_path().map(str::to_owned),
-        })
-        .is_err()
-    {
+    if !event_sink(DomainEvent::Ready {
+        revision: state.library.revision(),
+    }) {
         let _ = runtime.block_on(state.library.close());
         return;
     }
@@ -216,13 +218,10 @@ fn run_worker(
             break;
         }
         let result = runtime.block_on(state.execute(command.request));
-        if event_sender
-            .send(DomainEvent::Completed(DomainOutcome {
-                request_id: command.request_id,
-                result,
-            }))
-            .is_err()
-        {
+        if !event_sink(DomainEvent::Completed(DomainOutcome {
+            request_id: command.request_id,
+            result,
+        })) {
             break;
         }
     }
@@ -233,7 +232,7 @@ fn run_worker(
 mod tests {
     use std::num::{NonZeroU64, NonZeroUsize};
     use std::path::{Path, PathBuf};
-    use std::sync::mpsc;
+    use std::sync::{Arc, mpsc};
     use std::thread;
     use std::time::Duration;
 
@@ -241,8 +240,8 @@ mod tests {
     use sqlx::{Connection, SqliteConnection};
 
     use super::{
-        DomainError, DomainEvent, DomainOutcome, DomainRequest, DomainResponse, DomainWorker,
-        SubmitError,
+        DomainError, DomainEvent, DomainEventSink, DomainOutcome, DomainRequest, DomainResponse,
+        DomainWorker, SubmitError,
     };
     use crate::library::{LibraryError, NATIVE_DATABASE_FILENAME};
 
@@ -252,23 +251,46 @@ mod tests {
         NonZeroU64::new(value).expect("nonzero test request id")
     }
 
-    fn start(data_dir: &Path, capacity: usize) -> DomainWorker {
-        DomainWorker::start(
-            data_dir.to_path_buf(),
-            NonZeroUsize::new(capacity).expect("nonzero test capacity"),
-        )
-        .expect("start native core")
+    struct WorkerHarness {
+        worker: DomainWorker,
+        event_receiver: mpsc::Receiver<DomainEvent>,
     }
 
-    fn receive_ready(core: &DomainWorker) -> (u64, Option<String>) {
+    impl WorkerHarness {
+        fn try_submit(
+            &self,
+            request_id: NonZeroU64,
+            request: DomainRequest,
+        ) -> Result<(), SubmitError> {
+            self.worker.try_submit(request_id, request)
+        }
+
+        fn recv_timeout(&self, timeout: Duration) -> Result<DomainEvent, mpsc::RecvTimeoutError> {
+            self.event_receiver.recv_timeout(timeout)
+        }
+    }
+
+    fn start(data_dir: &Path, capacity: usize) -> WorkerHarness {
+        let (event_sender, event_receiver) = mpsc::channel();
+        let event_sink: DomainEventSink = Arc::new(move |event| event_sender.send(event).is_ok());
+        let worker = DomainWorker::start(
+            data_dir.to_path_buf(),
+            NonZeroUsize::new(capacity).expect("nonzero test capacity"),
+            event_sink,
+        )
+        .expect("start native core");
+        WorkerHarness {
+            worker,
+            event_receiver,
+        }
+    }
+
+    fn receive_ready(core: &WorkerHarness) -> u64 {
         match core
             .recv_timeout(Duration::from_secs(2))
             .expect("receive core ready event")
         {
-            DomainEvent::Ready {
-                revision,
-                library_path,
-            } => (revision, library_path),
+            DomainEvent::Ready { revision } => revision,
             other => panic!("expected core ready event, received {other:?}"),
         }
     }
@@ -334,7 +356,7 @@ mod tests {
             .expect("write previous database sentinel");
 
         let core = start(data_dir.path(), 4);
-        assert_eq!(receive_ready(&core), (1, None));
+        assert_eq!(receive_ready(&core), 1);
         core.try_submit(
             request_id(1),
             DomainRequest::CoursePage {
@@ -381,15 +403,12 @@ mod tests {
     fn restart_reopens_the_same_current_database() {
         let data_dir = tempfile::tempdir().expect("create native data directory");
         let core = start(data_dir.path(), 4);
-        assert_eq!(receive_ready(&core), (1, None));
+        assert_eq!(receive_ready(&core), 1);
         drop(core);
         seed_current_database(&native_database_path(data_dir.path()));
 
         let restarted = start(data_dir.path(), 4);
-        assert_eq!(
-            receive_ready(&restarted),
-            (1, Some("/fixtures/library".to_string()))
-        );
+        assert_eq!(receive_ready(&restarted), 1);
         restarted
             .try_submit(
                 request_id(2),
@@ -453,7 +472,7 @@ mod tests {
     fn requests_complete_in_fifo_order_and_reject_stale_pages() {
         let data_dir = tempfile::tempdir().expect("create native data directory");
         let core = start(data_dir.path(), 4);
-        assert_eq!(receive_ready(&core), (1, None));
+        assert_eq!(receive_ready(&core), 1);
 
         core.try_submit(
             request_id(11),
@@ -499,7 +518,7 @@ mod tests {
     fn bounded_submission_reports_full_and_drop_unblocks_the_worker() {
         let data_dir = tempfile::tempdir().expect("create native data directory");
         let core = start(data_dir.path(), 1);
-        assert_eq!(receive_ready(&core), (1, None));
+        assert_eq!(receive_ready(&core), 1);
 
         core.try_submit(
             request_id(21),
@@ -546,7 +565,7 @@ mod tests {
     fn drop_interrupts_an_active_database_operation() {
         let data_dir = tempfile::tempdir().expect("create native data directory");
         let core = start(data_dir.path(), 2);
-        assert_eq!(receive_ready(&core), (1, None));
+        assert_eq!(receive_ready(&core), 1);
         let (entered, entered_receiver) = mpsc::channel();
         core.try_submit(request_id(31), DomainRequest::LongQuery { entered })
             .expect("submit long database operation");
@@ -562,5 +581,35 @@ mod tests {
         dropped_receiver
             .recv_timeout(Duration::from_secs(1))
             .expect("native core drop must interrupt database work");
+    }
+
+    #[test]
+    fn worker_panic_becomes_one_fatal_event() {
+        let data_dir = tempfile::tempdir().expect("create native data directory");
+        let core = start(data_dir.path(), 2);
+        assert_eq!(receive_ready(&core), 1);
+        core.try_submit(request_id(41), DomainRequest::Panic)
+            .expect("submit panicking request");
+
+        assert!(matches!(
+            core.recv_timeout(Duration::from_secs(2))
+                .expect("receive worker fatal event"),
+            DomainEvent::Fatal(DomainError::WorkerPanicked)
+        ));
+        assert!(matches!(
+            core.recv_timeout(Duration::from_millis(20)),
+            Err(mpsc::RecvTimeoutError::Timeout | mpsc::RecvTimeoutError::Disconnected)
+        ));
+        assert_eq!(
+            core.try_submit(
+                request_id(42),
+                DomainRequest::CoursePage {
+                    expected_revision: 1,
+                    offset: 0,
+                    limit: 1,
+                },
+            ),
+            Err(SubmitError::Closed)
+        );
     }
 }
