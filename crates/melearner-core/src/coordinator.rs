@@ -7,7 +7,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TrySendError
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use crate::library::{CoursePage, LibraryDatabase, LibraryError};
+use crate::library::{CoursePage, LessonPage, LibraryDatabase, LibraryError};
 
 #[derive(Debug)]
 pub(crate) enum DomainRequest {
@@ -16,6 +16,13 @@ pub(crate) enum DomainRequest {
     },
     CoursePage {
         expected_revision: u64,
+        offset: u64,
+        limit: u32,
+    },
+    LessonPage {
+        expected_revision: u64,
+        course_id: String,
+        section_id: Option<String>,
         offset: u64,
         limit: u32,
     },
@@ -32,6 +39,7 @@ pub(crate) enum DomainResponse {
         library_path: Option<String>,
     },
     CoursePage(CoursePage),
+    LessonPage(LessonPage),
 }
 
 #[derive(Debug)]
@@ -156,6 +164,26 @@ impl DomainState {
                 Ok(DomainResponse::CoursePage(
                     library
                         .course_page(expected_revision, offset, limit)
+                        .await?,
+                ))
+            }
+            DomainRequest::LessonPage {
+                expected_revision,
+                course_id,
+                section_id,
+                offset,
+                limit,
+            } => {
+                let library = self.library.as_mut().ok_or(DomainError::LibraryNotOpen)?;
+                Ok(DomainResponse::LessonPage(
+                    library
+                        .lesson_page(
+                            expected_revision,
+                            &course_id,
+                            section_id.as_deref(),
+                            offset,
+                            limit,
+                        )
                         .await?,
                 ))
             }
@@ -454,6 +482,90 @@ mod tests {
                 .result,
             Ok(DomainResponse::LibraryOpened { revision: 2, .. })
         ));
+    }
+
+    #[test]
+    fn lesson_pages_flow_through_the_revisioned_fifo() {
+        let (_temp, path) = copied_fixture();
+        let coordinator = coordinator(4);
+        coordinator
+            .try_submit(
+                request_id(41),
+                DomainRequest::OpenSnapshot { path: path.clone() },
+            )
+            .expect("submit first open");
+        coordinator
+            .try_submit(
+                request_id(42),
+                DomainRequest::LessonPage {
+                    expected_revision: 1,
+                    course_id: "course-marker".to_string(),
+                    section_id: Some("section-marker-deep".to_string()),
+                    offset: 0,
+                    limit: 10,
+                },
+            )
+            .expect("submit lesson page");
+        coordinator
+            .try_submit(
+                request_id(43),
+                DomainRequest::OpenSnapshot { path: path.clone() },
+            )
+            .expect("submit replacement open");
+        coordinator
+            .try_submit(
+                request_id(44),
+                DomainRequest::LessonPage {
+                    expected_revision: 1,
+                    course_id: "course-marker".to_string(),
+                    section_id: None,
+                    offset: 0,
+                    limit: 1,
+                },
+            )
+            .expect("submit stale lesson page");
+
+        assert!(matches!(
+            coordinator
+                .recv_timeout(Duration::from_secs(2))
+                .expect("receive first open")
+                .result,
+            Ok(DomainResponse::LibraryOpened { revision: 1, .. })
+        ));
+        let page = coordinator
+            .recv_timeout(Duration::from_secs(2))
+            .expect("receive lesson page");
+        assert_eq!(page.request_id, request_id(42));
+        assert!(matches!(
+            page.result,
+            Ok(DomainResponse::LessonPage(ref page))
+                if page.revision == 1
+                    && page.course_id == "course-marker"
+                    && page.section_id.as_deref() == Some("section-marker-deep")
+                    && page.total == 1
+                    && page.rows.len() == 1
+                    && page.rows[0].id == "lesson-document"
+        ));
+        assert!(matches!(
+            coordinator
+                .recv_timeout(Duration::from_secs(2))
+                .expect("receive replacement open")
+                .result,
+            Ok(DomainResponse::LibraryOpened { revision: 2, .. })
+        ));
+        let stale = coordinator
+            .recv_timeout(Duration::from_secs(2))
+            .expect("receive stale lesson page");
+        assert_eq!(stale.request_id, request_id(44));
+        assert!(matches!(
+            stale.result,
+            Err(DomainError::Library(LibraryError::StaleRevision {
+                expected: 1,
+                actual: 2
+            }))
+        ));
+        drop(coordinator);
+        assert_no_sidecars(&path);
     }
 
     #[test]
