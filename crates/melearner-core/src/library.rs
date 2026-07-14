@@ -9,13 +9,9 @@ use std::time::Duration;
 
 use icu_collator::preferences::CollationNumericOrdering;
 use icu_collator::{CollatorBorrowed, CollatorPreferences};
-use sha2::{Digest, Sha384};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteRow};
 use sqlx::{Connection, QueryBuilder, Row, Sqlite, SqliteConnection};
 
-use crate::migrations::{MIGRATIONS, MigrationDefinition};
-
-const SUPPORTED_MIGRATION_VERSION: i64 = 16;
 const SQLITE_PROGRESS_INTERVAL: i32 = 1_000;
 pub(crate) const MAX_COURSE_PAGE_SIZE: u32 = 200;
 static NATURAL_COLLATOR: LazyLock<CollatorBorrowed<'static>> = LazyLock::new(|| {
@@ -28,9 +24,6 @@ static NATURAL_COLLATOR: LazyLock<CollatorBorrowed<'static>> = LazyLock::new(|| 
 #[derive(Debug)]
 pub(crate) enum LibraryError {
     Database(String),
-    MigrationRequired { current: i64, supported: i64 },
-    DatabaseTooNew { current: i64, supported: i64 },
-    InvalidMigrationLedger,
     InvalidPageSize { limit: u32 },
     InvalidOffset { offset: u64 },
     StaleRevision { expected: u64, actual: u64 },
@@ -39,21 +32,6 @@ impl std::fmt::Display for LibraryError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Database(message) => formatter.write_str(message),
-            Self::MigrationRequired { current, supported } => {
-                write!(
-                    formatter,
-                    "database migration {current} requires {supported}"
-                )
-            }
-            Self::DatabaseTooNew { current, supported } => {
-                write!(
-                    formatter,
-                    "database migration {current} exceeds {supported}"
-                )
-            }
-            Self::InvalidMigrationLedger => {
-                formatter.write_str("invalid database migration ledger")
-            }
             Self::InvalidPageSize { limit } => {
                 write!(formatter, "invalid page size {limit}")
             }
@@ -84,10 +62,8 @@ pub(crate) struct CourseSummary {
     pub(crate) identity_id: String,
     pub(crate) name: String,
     pub(crate) path: String,
-    pub(crate) fingerprint: Option<String>,
+    pub(crate) fingerprint: String,
     pub(crate) missing_since: Option<String>,
-    pub(crate) stored_total_duration: i64,
-    pub(crate) stored_watched_duration: i64,
     pub(crate) last_accessed: Option<String>,
     pub(crate) thumbnail_source_path: Option<String>,
     pub(crate) section_count: u64,
@@ -120,11 +96,11 @@ pub(crate) struct SubtitleSummary {
 pub(crate) struct LessonSummary {
     pub(crate) id: String,
     pub(crate) course_id: String,
-    pub(crate) section_id: Option<String>,
+    pub(crate) section_id: String,
     pub(crate) section_name: String,
     pub(crate) name: String,
     pub(crate) path: String,
-    pub(crate) relative_path: Option<String>,
+    pub(crate) relative_path: String,
     pub(crate) kind: String,
     pub(crate) duration: i64,
     pub(crate) file_size: i64,
@@ -165,7 +141,7 @@ struct IndexedLesson {
 struct PendingSection {
     id: String,
     name: String,
-    order: Option<i64>,
+    order: i64,
     lessons: Vec<PendingLesson>,
 }
 
@@ -177,10 +153,9 @@ struct PendingLesson {
 
 struct UnresolvedLesson {
     id: String,
-    section_id: Option<String>,
-    section_name: String,
+    section_id: String,
     name: String,
-    order: Option<i64>,
+    order: i64,
 }
 
 struct LessonPageKey {
@@ -200,8 +175,8 @@ pub(crate) struct LibraryDatabase {
 }
 
 impl LibraryDatabase {
-    /// Opens an isolated, checkpointed database copy for read-only projection.
-    /// Production writable open and migration support is not implemented yet.
+    /// Opens an isolated, checkpointed current database for read-only projection.
+    /// Production writable open is not implemented yet.
     pub(crate) async fn open_snapshot_read_only(
         path: &Path,
         revision: NonZeroU64,
@@ -234,11 +209,6 @@ impl LibraryDatabase {
             .set_progress_handler(SQLITE_PROGRESS_INTERVAL, move || {
                 !stopping.load(AtomicOrdering::Acquire)
             });
-
-        if let Err(error) = verify_migration_ledger(&mut connection).await {
-            let _ = connection.close().await;
-            return Err(error);
-        }
 
         let library_path = match load_library_path(&mut connection).await {
             Ok(value) => value,
@@ -483,11 +453,7 @@ impl LibraryDatabase {
         let mut transaction = self.connection.begin().await?;
         let mut details = QueryBuilder::<Sqlite>::new(
             "SELECT id, course_id, name, path, relative_path, type,
-                    COALESCE(duration, 0) AS duration,
-                    COALESCE(file_size, 0) AS file_size,
-                    COALESCE(completed, 0) AS completed,
-                    COALESCE(watched_time, 0) AS watched_time,
-                    COALESCE(last_position, 0) AS last_position
+                    duration, file_size, completed, watched_time, last_position
              FROM lessons
              WHERE id IN (",
         );
@@ -510,9 +476,7 @@ impl LibraryDatabase {
         }
 
         let mut subtitles = QueryBuilder::<Sqlite>::new(
-            "SELECT lesson_id, path,
-                    COALESCE(language, 'default') AS language,
-                    COALESCE(label, language, 'default') AS label
+            "SELECT lesson_id, path, language, label
              FROM lesson_subtitles INDEXED BY idx_lesson_subtitles_lesson
              WHERE lesson_id IN (",
         );
@@ -573,27 +537,18 @@ async fn load_lesson_order_index(
     .collect::<Result<Vec<_>, LibraryError>>()?;
     sections.sort_by(|left, right| {
         left.order
-            .unwrap_or(0)
-            .cmp(&right.order.unwrap_or(0))
+            .cmp(&right.order)
             .then_with(|| NATURAL_COLLATOR.compare(&left.name, &right.name))
+            .then_with(|| left.id.cmp(&right.id))
     });
-    for (position, section) in sections.iter_mut().enumerate() {
-        if section.order.is_none() {
-            section.order =
-                Some(i64::try_from(position).map_err(|_| {
-                    LibraryError::Database("section count exceeds i64".to_string())
-                })?);
-        }
-    }
 
-    let mut section_by_key = HashMap::with_capacity(sections.len().saturating_mul(2));
+    let mut section_by_id = HashMap::with_capacity(sections.len());
     for (index, section) in sections.iter().enumerate() {
-        section_by_key.insert(section.id.clone(), index);
-        section_by_key.insert(section.name.clone(), index);
+        section_by_id.insert(section.id.clone(), index);
     }
 
     let mut lessons = sqlx::query(
-        "SELECT id, section_id, section_name, name, order_index
+        "SELECT id, section_id, name, order_index
          FROM lessons INDEXED BY idx_lessons_course
          WHERE course_id = ?1",
     )
@@ -605,9 +560,6 @@ async fn load_lesson_order_index(
         Ok(UnresolvedLesson {
             id: row.try_get("id")?,
             section_id: row.try_get("section_id")?,
-            section_name: row
-                .try_get::<Option<String>, _>("section_name")?
-                .unwrap_or_else(|| "Course".to_string()),
             name: row.try_get("name")?,
             order: row.try_get("order_index")?,
         })
@@ -615,48 +567,25 @@ async fn load_lesson_order_index(
     .collect::<Result<Vec<_>, LibraryError>>()?;
     lessons.sort_by(|left, right| {
         left.order
-            .unwrap_or(0)
-            .cmp(&right.order.unwrap_or(0))
+            .cmp(&right.order)
             .then_with(|| NATURAL_COLLATOR.compare(&left.name, &right.name))
+            .then_with(|| left.id.cmp(&right.id))
     });
 
     for lesson in lessons {
-        let section_index = lesson
-            .section_id
-            .as_ref()
-            .filter(|section_id| !section_id.is_empty())
-            .and_then(|section_id| section_by_key.get(section_id).copied())
-            .or_else(|| section_by_key.get(&lesson.section_name).copied());
-        let section_index = if let Some(section_index) = section_index {
-            section_index
-        } else {
-            let section_index = sections.len();
-            let order = i64::try_from(section_index)
-                .map_err(|_| LibraryError::Database("section count exceeds i64".to_string()))?;
-            let id = format!("{course_id}:section:{section_index}");
-            sections.push(PendingSection {
-                id: id.clone(),
-                name: lesson.section_name.clone(),
-                order: Some(order),
-                lessons: Vec::new(),
-            });
-            section_by_key.insert(id, section_index);
-            section_by_key.insert(lesson.section_name.clone(), section_index);
-            section_index
-        };
+        let section_index = section_by_id
+            .get(&lesson.section_id)
+            .copied()
+            .ok_or_else(|| {
+                LibraryError::Database("lesson references a missing section".to_string())
+            })?;
         let section = sections
             .get_mut(section_index)
             .ok_or_else(|| LibraryError::Database("invalid resolved lesson section".to_string()))?;
-        let order = if let Some(order) = lesson.order {
-            order
-        } else {
-            i64::try_from(section.lessons.len())
-                .map_err(|_| LibraryError::Database("lesson count exceeds i64".to_string()))?
-        };
         section.lessons.push(PendingLesson {
             id: lesson.id,
             name: lesson.name,
-            order,
+            order: lesson.order,
         });
     }
 
@@ -665,13 +594,14 @@ async fn load_lesson_order_index(
             left.order
                 .cmp(&right.order)
                 .then_with(|| NATURAL_COLLATOR.compare(&left.name, &right.name))
+                .then_with(|| left.id.cmp(&right.id))
         });
     }
     sections.sort_by(|left, right| {
         left.order
-            .unwrap_or(0)
-            .cmp(&right.order.unwrap_or(0))
+            .cmp(&right.order)
             .then_with(|| NATURAL_COLLATOR.compare(&left.name, &right.name))
+            .then_with(|| left.id.cmp(&right.id))
     });
 
     let lesson_count = sections.iter().map(|section| section.lessons.len()).sum();
@@ -734,7 +664,7 @@ fn course_page_sql(rooted: bool) -> String {
                  SELECT sections.course_id, sections.name,
                         ROW_NUMBER() OVER (
                             PARTITION BY sections.course_id
-                            ORDER BY COALESCE(sections.order_index, 0),
+                            ORDER BY sections.order_index,
                                      sections.name COLLATE MELEARNER_NATURAL,
                                      sections.id
                         ) AS position
@@ -753,16 +683,16 @@ fn course_page_sql(rooted: bool) -> String {
                  SELECT lessons.course_id, lessons.type, lessons.path,
                         ROW_NUMBER() OVER (
                             PARTITION BY lessons.course_id
-                            ORDER BY COALESCE(sections.order_index, 2147483647),
-                                     COALESCE(sections.name, lessons.section_name, '')
-                                         COLLATE MELEARNER_NATURAL,
-                                     COALESCE(lessons.order_index, 0),
+                            ORDER BY sections.order_index,
+                                     sections.name COLLATE MELEARNER_NATURAL,
+                                     lessons.order_index,
                                      lessons.name COLLATE MELEARNER_NATURAL,
                                      lessons.id
                         ) AS position
                  FROM paged_courses
                  CROSS JOIN lessons INDEXED BY idx_lessons_course
-                 LEFT JOIN sections ON sections.id = lessons.section_id
+                 INNER JOIN sections ON sections.id = lessons.section_id
+                                    AND sections.course_id = lessons.course_id
                  WHERE lessons.course_id = paged_courses.id
              ),
              first_video_position AS (
@@ -775,22 +705,20 @@ fn course_page_sql(rooted: bool) -> String {
                  SELECT lessons.course_id,
                         COUNT(*) AS lesson_count,
                         SUM(CASE WHEN completed != 0 THEN 1 ELSE 0 END) AS completed_lesson_count,
-                        SUM(COALESCE(duration, 0)) AS lesson_total_duration,
-                        SUM(COALESCE(watched_time, 0)) AS lesson_watched_duration,
-                        SUM(COALESCE(file_size, 0)) AS lesson_bytes
+                        SUM(duration) AS lesson_total_duration,
+                        SUM(watched_time) AS lesson_watched_duration,
+                        SUM(file_size) AS lesson_bytes
                  FROM paged_courses
                  CROSS JOIN lessons INDEXED BY idx_lessons_course
                  WHERE lessons.course_id = paged_courses.id
                  GROUP BY lessons.course_id
              )
              SELECT paged_courses.id,
-                    COALESCE(paged_courses.identity_id, paged_courses.id) AS identity_id,
+                    paged_courses.identity_id,
                     paged_courses.name,
                     paged_courses.path,
                     paged_courses.fingerprint,
                     paged_courses.missing_since,
-                    COALESCE(paged_courses.total_duration, 0) AS stored_total_duration,
-                    COALESCE(paged_courses.watched_duration, 0) AS stored_watched_duration,
                     paged_courses.last_accessed,
                     COALESCE(paged_courses.thumbnail_source_path, first_video.path)
                         AS thumbnail_source_path,
@@ -824,70 +752,11 @@ fn course_page_sql(rooted: bool) -> String {
 async fn load_library_path(
     connection: &mut SqliteConnection,
 ) -> Result<Option<String>, LibraryError> {
-    let stored = sqlx::query_scalar::<_, Option<String>>(
-        "SELECT value FROM app_settings WHERE key = 'libraryPath'",
+    Ok(
+        sqlx::query_scalar::<_, String>("SELECT value FROM app_settings WHERE key = 'libraryPath'")
+            .fetch_optional(&mut *connection)
+            .await?,
     )
-    .fetch_optional(&mut *connection)
-    .await?
-    .flatten();
-    if stored.is_some() {
-        return Ok(stored);
-    }
-
-    let course_paths = sqlx::query_scalar::<_, String>("SELECT path FROM courses ORDER BY id")
-        .fetch_all(&mut *connection)
-        .await?;
-    Ok(infer_library_path(&course_paths))
-}
-
-async fn verify_migration_ledger(connection: &mut SqliteConnection) -> Result<(), LibraryError> {
-    let rows = sqlx::query(
-        "SELECT version, description, success, checksum
-         FROM _sqlx_migrations
-         ORDER BY version",
-    )
-    .fetch_all(&mut *connection)
-    .await?;
-    let current = rows
-        .last()
-        .map(|row| row.get::<i64, _>("version"))
-        .unwrap_or(0);
-    if current < SUPPORTED_MIGRATION_VERSION {
-        return Err(LibraryError::MigrationRequired {
-            current,
-            supported: SUPPORTED_MIGRATION_VERSION,
-        });
-    }
-    if current > SUPPORTED_MIGRATION_VERSION {
-        return Err(LibraryError::DatabaseTooNew {
-            current,
-            supported: SUPPORTED_MIGRATION_VERSION,
-        });
-    }
-    if rows.len() != supported_migrations().count()
-        || supported_migrations()
-            .last()
-            .map(|migration| migration.version)
-            != Some(SUPPORTED_MIGRATION_VERSION)
-    {
-        return Err(LibraryError::InvalidMigrationLedger);
-    }
-    for (row, migration) in rows.iter().zip(supported_migrations()) {
-        if row.get::<i64, _>("version") != migration.version
-            || row.get::<String, _>("description") != migration.description
-            || !row.get::<bool, _>("success")
-            || row.get::<Vec<u8>, _>("checksum") != Sha384::digest(migration.sql).to_vec()
-        {
-            return Err(LibraryError::InvalidMigrationLedger);
-        }
-    }
-    Ok(())
-}
-
-fn supported_migrations() -> impl Iterator<Item = &'static MigrationDefinition> {
-    MIGRATIONS
-        .iter()
-        .filter(|migration| migration.version <= SUPPORTED_MIGRATION_VERSION)
 }
 
 fn course_summary(row: SqliteRow) -> Result<CourseSummary, LibraryError> {
@@ -909,8 +778,6 @@ fn course_summary(row: SqliteRow) -> Result<CourseSummary, LibraryError> {
         path: row.try_get("path")?,
         fingerprint: row.try_get("fingerprint")?,
         missing_since: row.try_get("missing_since")?,
-        stored_total_duration: row.try_get("stored_total_duration")?,
-        stored_watched_duration: row.try_get("stored_watched_duration")?,
         last_accessed: row.try_get("last_accessed")?,
         thumbnail_source_path: row.try_get("thumbnail_source_path")?,
         section_count,
@@ -929,7 +796,7 @@ fn lesson_summary(row: SqliteRow, indexed: &LessonPageKey) -> Result<LessonSumma
     Ok(LessonSummary {
         id: row.try_get("id")?,
         course_id: row.try_get("course_id")?,
-        section_id: Some(indexed.section_id.clone()),
+        section_id: indexed.section_id.clone(),
         section_name: indexed.section_name.clone(),
         name: row.try_get("name")?,
         path: row.try_get("path")?,
@@ -947,46 +814,6 @@ fn lesson_summary(row: SqliteRow, indexed: &LessonPageKey) -> Result<LessonSumma
 
 fn nonnegative_count(value: i64) -> Result<u64, LibraryError> {
     u64::try_from(value).map_err(|_| LibraryError::Database("negative aggregate count".to_string()))
-}
-
-fn infer_library_path(paths: &[String]) -> Option<String> {
-    if paths.is_empty() {
-        return None;
-    }
-    if paths.len() == 1 {
-        return Some(paths[0].clone());
-    }
-
-    let separator = path_separator(&paths[0]);
-    let split_paths = paths
-        .iter()
-        .map(|path| {
-            trim_trailing_separators(path)
-                .split(separator)
-                .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>();
-    let shortest = split_paths.iter().map(Vec::len).min()?;
-    let mut common = Vec::new();
-    for index in 0..shortest.saturating_sub(1) {
-        let component = split_paths[0][index];
-        if split_paths.iter().all(|parts| parts[index] == component) {
-            common.push(component);
-        } else {
-            break;
-        }
-    }
-    if common.is_empty() {
-        return None;
-    }
-    if common.len() == 1 && common[0].is_empty() {
-        return Some(separator.to_string());
-    }
-    let mut inferred = common.join(&separator.to_string());
-    if inferred.len() == 2 && has_windows_drive_prefix(&inferred) {
-        inferred.push(separator);
-    }
-    Some(inferred)
 }
 
 fn child_path_prefix(path: &str) -> String {
@@ -1053,6 +880,10 @@ mod tests {
     use sqlx::sqlite::SqliteConnectOptions;
     use sqlx::{Connection, Row, SqliteConnection};
 
+    use crate::schema;
+
+    const CURRENT_SEED: &str = include_str!("../../../fixtures/parity/database-current.sql");
+
     fn block_on<T>(future: impl Future<Output = T>) -> T {
         tokio::runtime::Builder::new_current_thread()
             .build()
@@ -1064,16 +895,34 @@ mod tests {
         NonZeroU64::new(value).expect("nonzero test revision")
     }
 
-    fn copied_fixture() -> (tempfile::TempDir, PathBuf) {
+    async fn current_fixture() -> (tempfile::TempDir, PathBuf) {
         let temp = tempfile::tempdir().expect("create library fixture tempdir");
-        let copied = temp.path().join("database-v16.sqlite");
-        fs::copy(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../../fixtures/parity/database-v16.sqlite"),
-            &copied,
-        )
-        .expect("copy v16 database fixture");
-        (temp, copied)
+        let path = temp.path().join("database-current.sqlite");
+        let options = SqliteConnectOptions::new()
+            .filename(&path)
+            .create_if_missing(true)
+            .foreign_keys(true)
+            .busy_timeout(Duration::from_secs(10));
+        let mut connection = SqliteConnection::connect_with(&options)
+            .await
+            .expect("create current database fixture");
+        sqlx::raw_sql(schema::SQL)
+            .execute(&mut connection)
+            .await
+            .expect("create current fixture schema");
+        sqlx::raw_sql(CURRENT_SEED)
+            .execute(&mut connection)
+            .await
+            .expect("seed current database fixture");
+        sqlx::raw_sql("PRAGMA wal_checkpoint(TRUNCATE)")
+            .execute(&mut connection)
+            .await
+            .expect("checkpoint current database fixture");
+        connection
+            .close()
+            .await
+            .expect("close current database fixture");
+        (temp, path)
     }
 
     async fn mutate_fixture(path: &Path, sql: &str) {
@@ -1106,13 +955,13 @@ mod tests {
     }
 
     #[test]
-    fn course_pages_match_the_frozen_v16_library() {
+    fn course_pages_match_the_current_library() {
         block_on(async {
-            let (_temp, path) = copied_fixture();
+            let (_temp, path) = current_fixture().await;
             let original = fs::read(&path).expect("read original fixture copy");
             let mut library = LibraryDatabase::open_snapshot_read_only(&path, revision(7))
                 .await
-                .expect("open copied v16 library");
+                .expect("open current library");
             let revision = library.revision();
             assert_ne!(revision, 0);
             assert_eq!(library.library_path(), Some("/fixtures/library"));
@@ -1138,10 +987,8 @@ mod tests {
             assert_eq!(marker.identity_id, "identity-marker");
             assert_eq!(marker.name, "Systems 日本語");
             assert_eq!(marker.path, "/fixtures/library/Systems 日本語");
-            assert_eq!(marker.fingerprint.as_deref(), Some("fp-marker"));
+            assert_eq!(marker.fingerprint, "fp-marker");
             assert_eq!(marker.missing_since, None);
-            assert_eq!(marker.stored_total_duration, 900);
-            assert_eq!(marker.stored_watched_duration, 320);
             assert_eq!(
                 marker.last_accessed.as_deref(),
                 Some("2026-07-09T12:00:00.000Z")
@@ -1189,7 +1036,7 @@ mod tests {
                 .expect("load exhausted course page");
             assert_eq!(exhausted.total, 3);
             assert!(exhausted.rows.is_empty());
-            library.close().await.expect("close copied v16 library");
+            library.close().await.expect("close current library");
 
             assert_eq!(fs::read(&path).expect("reread fixture copy"), original);
             assert_no_sidecars(&path);
@@ -1199,10 +1046,10 @@ mod tests {
     #[test]
     fn course_pages_reject_invalid_bounds_and_stale_revisions() {
         block_on(async {
-            let (_temp, path) = copied_fixture();
+            let (_temp, path) = current_fixture().await;
             let mut library = LibraryDatabase::open_snapshot_read_only(&path, revision(11))
                 .await
-                .expect("open copied v16 library");
+                .expect("open current library");
             let revision = library.revision();
 
             assert!(matches!(
@@ -1239,71 +1086,18 @@ mod tests {
     }
 
     #[test]
-    fn current_open_rejects_incompatible_migration_ledgers_without_writing() {
-        block_on(async {
-            let (_v15_temp, v15) = copied_fixture();
-            mutate_fixture(&v15, "DELETE FROM _sqlx_migrations WHERE version = 16").await;
-            let v15_before = fs::read(&v15).expect("read v15 fixture");
-            assert!(matches!(
-                LibraryDatabase::open_snapshot_read_only(&v15, revision(1)).await,
-                Err(LibraryError::MigrationRequired {
-                    current: 15,
-                    supported: 16
-                })
-            ));
-            assert_eq!(fs::read(&v15).expect("reread v15 fixture"), v15_before);
-            assert_no_sidecars(&v15);
-
-            let (_v17_temp, v17) = copied_fixture();
-            mutate_fixture(
-                &v17,
-                "INSERT INTO _sqlx_migrations
-                 (version, description, installed_on, success, checksum, execution_time)
-                 VALUES (17, 'future', '2026-07-14 00:00:00', 1, X'00', 0)",
-            )
-            .await;
-            let v17_before = fs::read(&v17).expect("read v17 fixture");
-            assert!(matches!(
-                LibraryDatabase::open_snapshot_read_only(&v17, revision(1)).await,
-                Err(LibraryError::DatabaseTooNew {
-                    current: 17,
-                    supported: 16
-                })
-            ));
-            assert_eq!(fs::read(&v17).expect("reread v17 fixture"), v17_before);
-            assert_no_sidecars(&v17);
-
-            let (_changed_temp, changed) = copied_fixture();
-            mutate_fixture(
-                &changed,
-                "UPDATE _sqlx_migrations SET checksum = X'00' WHERE version = 16",
-            )
-            .await;
-            let changed_before = fs::read(&changed).expect("read changed-ledger fixture");
-            assert!(matches!(
-                LibraryDatabase::open_snapshot_read_only(&changed, revision(1)).await,
-                Err(LibraryError::InvalidMigrationLedger)
-            ));
-            assert_eq!(
-                fs::read(&changed).expect("reread changed-ledger fixture"),
-                changed_before
-            );
-            assert_no_sidecars(&changed);
-        });
-    }
-
-    #[test]
     fn course_pages_escape_library_roots_and_use_an_id_tiebreaker() {
         block_on(async {
-            let (_temp, path) = copied_fixture();
+            let (_temp, path) = current_fixture().await;
             mutate_fixture(
                 &path,
                 "UPDATE app_settings SET value = '/fixtures/weird%_~' WHERE key = 'libraryPath';
-                 INSERT INTO courses (id, name, path, last_accessed)
+                 INSERT INTO courses
+                   (id, identity_id, name, path, fingerprint, last_scanned_at, last_accessed)
                  VALUES
-                   ('tie-b', 'Same', '/fixtures/weird%_~/B', '2026-07-14T00:00:00.000Z'),
-                   ('tie-a', 'Same', '/fixtures/weird%_~', '2026-07-14T00:00:00.000Z'),
-                   ('wildcard-decoy', 'Same', '/fixtures/weirdXX~/C', '2026-07-14T00:00:00.000Z')",
+                   ('tie-b', 'tie-b', 'Same', '/fixtures/weird%_~/B', 'tie-b', 'now', '2026-07-14T00:00:00.000Z'),
+                   ('tie-a', 'tie-a', 'Same', '/fixtures/weird%_~', 'tie-a', 'now', '2026-07-14T00:00:00.000Z'),
+                   ('wildcard-decoy', 'wildcard-decoy', 'Same', '/fixtures/weirdXX~/C', 'wildcard-decoy', 'now', '2026-07-14T00:00:00.000Z')",
             )
             .await;
             let before = fs::read(&path).expect("read escaped-root fixture");
@@ -1329,16 +1123,16 @@ mod tests {
             );
             assert_no_sidecars(&path);
 
-            let (_all_temp, all_path) = copied_fixture();
+            let (_all_temp, all_path) = current_fixture().await;
             mutate_fixture(
                 &all_path,
-                "UPDATE app_settings SET value = NULL WHERE key = 'libraryPath'",
+                "DELETE FROM app_settings WHERE key = 'libraryPath'",
             )
             .await;
             let mut all_library = LibraryDatabase::open_snapshot_read_only(&all_path, revision(20))
                 .await
                 .expect("open fixture without a library root");
-            assert_eq!(all_library.library_path(), Some("/fixtures/library"));
+            assert_eq!(all_library.library_path(), None);
             let all_page = all_library
                 .course_page(all_library.revision(), 0, 10)
                 .await
@@ -1360,7 +1154,7 @@ mod tests {
     #[test]
     fn replacement_snapshots_reject_the_previous_revision() {
         block_on(async {
-            let (_temp, path) = copied_fixture();
+            let (_temp, path) = current_fixture().await;
             let first = LibraryDatabase::open_snapshot_read_only(&path, revision(41))
                 .await
                 .expect("open first snapshot");
@@ -1394,23 +1188,23 @@ mod tests {
     }
 
     #[test]
-    fn missing_library_setting_infers_the_legacy_root() {
+    fn missing_library_setting_does_not_infer_a_root() {
         block_on(async {
-            let (_temp, path) = copied_fixture();
+            let (_temp, path) = current_fixture().await;
             mutate_fixture(&path, "DELETE FROM app_settings WHERE key = 'libraryPath'").await;
             let mut library = LibraryDatabase::open_snapshot_read_only(&path, revision(51))
                 .await
                 .expect("open fixture without saved root");
-            assert_eq!(library.library_path(), Some("/fixtures/library"));
+            assert_eq!(library.library_path(), None);
             assert_eq!(
                 library
                     .course_page(51, 0, 10)
                     .await
-                    .expect("load inferred-root page")
+                    .expect("load unrooted page")
                     .total,
                 3
             );
-            library.close().await.expect("close inferred-root snapshot");
+            library.close().await.expect("close unrooted snapshot");
             assert_no_sidecars(&path);
         });
     }
@@ -1418,7 +1212,7 @@ mod tests {
     #[test]
     fn missing_stored_thumbnail_uses_the_first_video_lesson() {
         block_on(async {
-            let (_temp, path) = copied_fixture();
+            let (_temp, path) = current_fixture().await;
             mutate_fixture(
                 &path,
                 "UPDATE courses SET thumbnail_source_path = NULL WHERE id = 'course-marker'",
@@ -1450,15 +1244,16 @@ mod tests {
         );
 
         block_on(async {
-            let (_windows_temp, windows_path) = copied_fixture();
+            let (_windows_temp, windows_path) = current_fixture().await;
             mutate_fixture(
                 &windows_path,
                 "DELETE FROM courses;
                  UPDATE app_settings SET value = 'C:\\' WHERE key = 'libraryPath';
-                 INSERT INTO courses (id, name, path)
+                 INSERT INTO courses
+                   (id, identity_id, name, path, fingerprint, last_scanned_at)
                  VALUES
-                   ('windows-child', 'Windows child', 'C:\\Course'),
-                   ('windows-decoy', 'Windows decoy', 'C:/Course')",
+                   ('windows-child', 'windows-child', 'Windows child', 'C:\\Course', 'windows-child', 'now'),
+                   ('windows-decoy', 'windows-decoy', 'Windows decoy', 'C:/Course', 'windows-decoy', 'now')",
             )
             .await;
             let mut windows = LibraryDatabase::open_snapshot_read_only(&windows_path, revision(71))
@@ -1473,11 +1268,13 @@ mod tests {
             windows.close().await.expect("close Windows-root snapshot");
             assert_no_sidecars(&windows_path);
 
-            let (_posix_temp, posix_path) = copied_fixture();
+            let (_posix_temp, posix_path) = current_fixture().await;
             mutate_fixture(
                 &posix_path,
-                "INSERT INTO courses (id, name, path)
-                 VALUES ('case-decoy', 'Case decoy', '/fixtures/Library/Case decoy')",
+                "INSERT INTO courses
+                   (id, identity_id, name, path, fingerprint, last_scanned_at)
+                 VALUES
+                   ('case-decoy', 'case-decoy', 'Case decoy', '/fixtures/Library/Case decoy', 'case-decoy', 'now')",
             )
             .await;
             let mut posix = LibraryDatabase::open_snapshot_read_only(&posix_path, revision(72))
@@ -1497,12 +1294,14 @@ mod tests {
     #[test]
     fn trailing_separator_roots_do_not_duplicate_the_exact_root() {
         block_on(async {
-            let (_temp, path) = copied_fixture();
+            let (_temp, path) = current_fixture().await;
             mutate_fixture(
                 &path,
                 "UPDATE app_settings SET value = '/fixtures/library/' WHERE key = 'libraryPath';
-                 INSERT INTO courses (id, name, path)
-                 VALUES ('exact-root', 'Exact root', '/fixtures/library/')",
+                 INSERT INTO courses
+                   (id, identity_id, name, path, fingerprint, last_scanned_at)
+                 VALUES
+                   ('exact-root', 'exact-root', 'Exact root', '/fixtures/library/', 'exact-root', 'now')",
             )
             .await;
             let mut library = LibraryDatabase::open_snapshot_read_only(&path, revision(76))
@@ -1526,55 +1325,26 @@ mod tests {
     }
 
     #[test]
-    fn missing_windows_setting_infers_an_absolute_drive_root() {
-        block_on(async {
-            let (_temp, path) = copied_fixture();
-            mutate_fixture(
-                &path,
-                "DELETE FROM courses;
-                 DELETE FROM app_settings WHERE key = 'libraryPath';
-                 INSERT INTO courses (id, name, path)
-                 VALUES
-                   ('drive-a', 'Drive A', 'C:\\A'),
-                   ('drive-b', 'Drive B', 'C:\\B')",
-            )
-            .await;
-            let mut library = LibraryDatabase::open_snapshot_read_only(&path, revision(81))
-                .await
-                .expect("open fixture without Windows root setting");
-            assert_eq!(library.library_path(), Some(r"C:\"));
-            assert_eq!(
-                library
-                    .course_page(81, 0, 10)
-                    .await
-                    .expect("load inferred Windows-root page")
-                    .total,
-                2
-            );
-            library.close().await.expect("close Windows-root snapshot");
-            assert_no_sidecars(&path);
-        });
-    }
-
-    #[test]
     fn thumbnail_fallback_uses_natural_section_order() {
         block_on(async {
-            let (_temp, path) = copied_fixture();
+            let (_temp, path) = current_fixture().await;
             mutate_fixture(
                 &path,
                 "DELETE FROM courses;
                  UPDATE app_settings SET value = '/natural' WHERE key = 'libraryPath';
-                 INSERT INTO courses (id, name, path)
-                 VALUES ('natural-course', 'Natural course', '/natural/Course');
+                 INSERT INTO courses
+                   (id, identity_id, name, path, fingerprint, last_scanned_at)
+                 VALUES
+                   ('natural-course', 'natural-course', 'Natural course', '/natural/Course', 'natural-course', 'now');
                  INSERT INTO sections (id, course_id, name, order_index)
                  VALUES
                    ('section-10', 'natural-course', '10 Advanced', 0),
                    ('section-2', 'natural-course', '2 Intro', 0);
                  INSERT INTO lessons
-                   (id, course_id, section_id, section_name, name, path, type, order_index)
+                   (id, course_id, section_id, name, path, relative_path, type, order_index)
                  VALUES
-                   ('lesson-10', 'natural-course', 'section-10', '10 Advanced', '1 Video', '/natural/Course/10 Advanced/video.mp4', 'video', 0),
-                   ('lesson-2', 'natural-course', 'section-2', '2 Intro', '1 Video', '/natural/Course/2 Intro/video.mp4', 'video', 0)",
+                   ('lesson-10', 'natural-course', 'section-10', '1 Video', '/natural/Course/10 Advanced/video.mp4', '10 Advanced/video.mp4', 'video', 0),
+                   ('lesson-2', 'natural-course', 'section-2', '1 Video', '/natural/Course/2 Intro/video.mp4', '2 Intro/video.mp4', 'video', 0)",
             )
             .await;
             let mut library = LibraryDatabase::open_snapshot_read_only(&path, revision(91))
@@ -1597,7 +1367,7 @@ mod tests {
     #[test]
     fn rooted_course_plan_uses_the_path_index_and_one_lesson_window() {
         block_on(async {
-            let (_temp, path) = copied_fixture();
+            let (_temp, path) = current_fixture().await;
             let mut library = LibraryDatabase::open_snapshot_read_only(&path, revision(101))
                 .await
                 .expect("open query-plan fixture");
@@ -1641,9 +1411,9 @@ mod tests {
     }
 
     #[test]
-    fn lesson_pages_match_the_frozen_v16_course() {
+    fn lesson_pages_match_the_current_course() {
         block_on(async {
-            let (_temp, path) = copied_fixture();
+            let (_temp, path) = current_fixture().await;
             let original = fs::read(&path).expect("read original fixture copy");
             let mut library = LibraryDatabase::open_snapshot_read_only(&path, revision(111))
                 .await
@@ -1670,17 +1440,14 @@ mod tests {
             let video = &first.rows[0];
             assert_eq!(video.id, "lesson-video");
             assert_eq!(video.course_id, "course-marker");
-            assert_eq!(video.section_id.as_deref(), Some("section-marker-intro"));
+            assert_eq!(video.section_id, "section-marker-intro");
             assert_eq!(video.section_name, "01 入門");
             assert_eq!(video.name, "01 welcome");
             assert_eq!(
                 video.path,
                 "/fixtures/library/Systems 日本語/01 入門/01 welcome.mp4"
             );
-            assert_eq!(
-                video.relative_path.as_deref(),
-                Some("01 入門/01 welcome.mp4")
-            );
+            assert_eq!(video.relative_path, "01 入門/01 welcome.mp4");
             assert_eq!(video.kind, "video");
             assert_eq!(video.duration, 600);
             assert_eq!(video.file_size, 1_048_576);
@@ -1743,7 +1510,7 @@ mod tests {
     #[test]
     fn lesson_pages_reject_invalid_bounds_and_stale_revisions() {
         block_on(async {
-            let (_temp, path) = copied_fixture();
+            let (_temp, path) = current_fixture().await;
             let mut library = LibraryDatabase::open_snapshot_read_only(&path, revision(121))
                 .await
                 .expect("open invalid lesson-page fixture");
@@ -1781,33 +1548,34 @@ mod tests {
     }
 
     #[test]
-    fn lesson_pages_preserve_resolved_section_and_natural_order() {
+    fn lesson_pages_follow_current_sections_and_natural_order() {
         block_on(async {
-            let (_temp, path) = copied_fixture();
+            let (_temp, path) = current_fixture().await;
             mutate_fixture(
                 &path,
-                "INSERT INTO courses (id, name, path)
+                "INSERT INTO courses
+                   (id, identity_id, name, path, fingerprint, last_scanned_at)
                  VALUES
-                   ('natural-lessons', 'Natural lessons', '/fixtures/library/Natural lessons'),
-                   ('outside-course', 'Outside course', '/outside/Outside course');
+                   ('natural-lessons', 'natural-lessons', 'Natural lessons', '/fixtures/library/Natural lessons', 'natural-lessons', 'now'),
+                   ('outside-course', 'outside-course', 'Outside course', '/outside/Outside course', 'outside-course', 'now');
                  INSERT INTO sections (id, course_id, name, order_index)
                  VALUES
                    ('natural-10', 'natural-lessons', '10 Advanced', 0),
-                   ('natural-2', 'natural-lessons', '2 Intro', 0);
+                   ('natural-2', 'natural-lessons', '2 Intro', 0),
+                   ('outside-section', 'outside-course', 'Course', 0);
                  INSERT INTO lessons
-                   (id, course_id, section_id, section_name, name, path, type, order_index)
+                   (id, course_id, section_id, name, path, relative_path, type, order_index)
                  VALUES
-                   ('natural-fallback', 'natural-lessons', 'stale-section', '2 Intro', '1 Fallback', '/fixtures/library/Natural lessons/fallback.mp4', 'video', 0),
-                   ('natural-two', 'natural-lessons', 'natural-2', '2 Intro', '2 Topic', '/fixtures/library/Natural lessons/two.mp4', 'video', 0),
-                   ('natural-ten', 'natural-lessons', 'natural-2', '2 Intro', '10 Topic', '/fixtures/library/Natural lessons/ten.mp4', 'video', 0),
-                   ('natural-tie-b', 'natural-lessons', 'natural-2', '2 Intro', '20 Topic', '/fixtures/library/Natural lessons/tie-b.mp4', 'video', 0),
-                   ('natural-tie-a', 'natural-lessons', 'natural-2', '2 Intro', '20 Topic', '/fixtures/library/Natural lessons/tie-a.mp4', 'video', 0),
-                   ('natural-advanced', 'natural-lessons', 'natural-10', '10 Advanced', '0 Global', '/fixtures/library/Natural lessons/advanced.mp4', 'video', -100),
-                   ('outside-lesson', 'outside-course', NULL, 'Course', 'Outside', '/outside/Outside course/outside.mp4', 'video', 0);
+                   ('natural-two', 'natural-lessons', 'natural-2', '2 Topic', '/fixtures/library/Natural lessons/two.mp4', '2 Intro/two.mp4', 'video', 0),
+                   ('natural-ten', 'natural-lessons', 'natural-2', '10 Topic', '/fixtures/library/Natural lessons/ten.mp4', '2 Intro/ten.mp4', 'video', 0),
+                   ('natural-tie-b', 'natural-lessons', 'natural-2', '20 Topic', '/fixtures/library/Natural lessons/tie-b.mp4', '2 Intro/tie-b.mp4', 'video', 0),
+                   ('natural-tie-a', 'natural-lessons', 'natural-2', '20 Topic', '/fixtures/library/Natural lessons/tie-a.mp4', '2 Intro/tie-a.mp4', 'video', 0),
+                   ('natural-advanced', 'natural-lessons', 'natural-10', '0 Global', '/fixtures/library/Natural lessons/advanced.mp4', '10 Advanced/advanced.mp4', 'video', -100),
+                   ('outside-lesson', 'outside-course', 'outside-section', 'Outside', '/outside/Outside course/outside.mp4', 'outside.mp4', 'video', 0);
                  INSERT INTO lesson_subtitles
                    (id, lesson_id, path, language, label, order_index)
                  VALUES
-                   ('natural-default-subtitle', 'natural-fallback', '/fixtures/library/Natural lessons/fallback.srt', NULL, NULL, 0)",
+                   ('natural-subtitle', 'natural-two', '/fixtures/library/Natural lessons/two.srt', 'en', 'English', 0)",
             )
             .await;
             let before = fs::read(&path).expect("read natural lesson fixture");
@@ -1819,32 +1587,31 @@ mod tests {
                 .lesson_page(131, "natural-lessons", None, 0, 10)
                 .await
                 .expect("load naturally ordered lesson page");
-            assert_eq!(page.total, 6);
+            assert_eq!(page.total, 5);
             assert_eq!(
                 page.rows
                     .iter()
                     .map(|lesson| lesson.id.as_str())
                     .collect::<Vec<_>>(),
                 [
-                    "natural-fallback",
                     "natural-two",
                     "natural-ten",
-                    "natural-tie-b",
                     "natural-tie-a",
+                    "natural-tie-b",
                     "natural-advanced",
                 ]
             );
-            assert_eq!(page.rows[0].section_id.as_deref(), Some("natural-2"));
+            assert_eq!(page.rows[0].section_id, "natural-2");
             assert_eq!(page.rows[0].section_name, "2 Intro");
-            assert_eq!(page.rows[0].subtitles[0].language, "default");
-            assert_eq!(page.rows[0].subtitles[0].label, "default");
+            assert_eq!(page.rows[0].subtitles[0].language, "en");
+            assert_eq!(page.rows[0].subtitles[0].label, "English");
 
             let section = library
                 .lesson_page(131, "natural-lessons", Some("natural-2"), 0, 10)
                 .await
                 .expect("load resolved section lesson page");
-            assert_eq!(section.total, 5);
-            assert_eq!(section.rows[0].id, "natural-fallback");
+            assert_eq!(section.total, 4);
+            assert_eq!(section.rows[0].id, "natural-two");
 
             let outside = library
                 .lesson_page(131, "outside-course", None, 0, 10)
@@ -1862,34 +1629,35 @@ mod tests {
         });
     }
     #[test]
-    fn lesson_order_matches_unicode_and_nullable_projection_rules() {
+    fn lesson_order_matches_unicode_and_current_ordering_rules() {
         assert!(natural_cmp("ä", "z").is_lt());
         assert!(natural_cmp("a", "A").is_lt());
         assert!(natural_cmp("file2", "file02").is_eq());
         assert!(natural_cmp("file02", "file10").is_lt());
 
         block_on(async {
-            let (_temp, path) = copied_fixture();
+            let (_temp, path) = current_fixture().await;
             mutate_fixture(
                 &path,
-                "INSERT INTO courses (id, name, path)
-                 VALUES ('unicode-course', 'Unicode course', '/fixtures/library/Unicode course');
+                "INSERT INTO courses
+                   (id, identity_id, name, path, fingerprint, last_scanned_at)
+                 VALUES
+                   ('unicode-course', 'unicode-course', 'Unicode course', '/fixtures/library/Unicode course', 'unicode-course', 'now');
                  INSERT INTO sections (id, course_id, name, order_index)
                  VALUES
                    ('unicode-lower', 'unicode-course', 'a', 0),
                    ('unicode-upper', 'unicode-course', 'A', 0),
-                   ('unicode-umlaut', 'unicode-course', 'ä', NULL),
+                   ('unicode-umlaut', 'unicode-course', 'ä', 0),
                    ('unicode-z', 'unicode-course', 'z', 5);
                  INSERT INTO lessons
-                   (id, course_id, section_id, section_name, name, path, type, order_index)
+                   (id, course_id, section_id, name, path, relative_path, type, order_index)
                  VALUES
-                   ('unicode-lower-a', 'unicode-course', '', 'a', 'a', '/fixtures/library/Unicode course/lower-a.mp4', 'video', NULL),
-                   ('unicode-lower-umlaut', 'unicode-course', 'unicode-lower', 'a', 'ä', '/fixtures/library/Unicode course/lower-umlaut.mp4', 'video', NULL),
-                   ('unicode-lower-z', 'unicode-course', 'unicode-lower', 'a', 'z', '/fixtures/library/Unicode course/lower-z.mp4', 'video', 5),
-                   ('unicode-upper-lesson', 'unicode-course', 'unicode-upper', 'A', 'Only', '/fixtures/library/Unicode course/upper.mp4', 'video', 0),
-                   ('unicode-umlaut-lesson', 'unicode-course', 'unicode-umlaut', 'ä', 'Only', '/fixtures/library/Unicode course/umlaut.mp4', 'video', 0),
-                   ('unicode-synthetic-lesson', 'unicode-course', NULL, 'Synthetic', 'Only', '/fixtures/library/Unicode course/synthetic.mp4', 'video', 0),
-                   ('unicode-z-lesson', 'unicode-course', 'unicode-z', 'z', 'Only', '/fixtures/library/Unicode course/z.mp4', 'video', 0)",
+                   ('unicode-lower-a', 'unicode-course', 'unicode-lower', 'a', '/fixtures/library/Unicode course/lower-a.mp4', 'a/lower-a.mp4', 'video', 0),
+                   ('unicode-lower-umlaut', 'unicode-course', 'unicode-lower', 'ä', '/fixtures/library/Unicode course/lower-umlaut.mp4', 'a/lower-umlaut.mp4', 'video', 1),
+                   ('unicode-lower-z', 'unicode-course', 'unicode-lower', 'z', '/fixtures/library/Unicode course/lower-z.mp4', 'a/lower-z.mp4', 'video', 5),
+                   ('unicode-upper-lesson', 'unicode-course', 'unicode-upper', 'Only', '/fixtures/library/Unicode course/upper.mp4', 'A/upper.mp4', 'video', 0),
+                   ('unicode-umlaut-lesson', 'unicode-course', 'unicode-umlaut', 'Only', '/fixtures/library/Unicode course/umlaut.mp4', 'ä/umlaut.mp4', 'video', 0),
+                   ('unicode-z-lesson', 'unicode-course', 'unicode-z', 'Only', '/fixtures/library/Unicode course/z.mp4', 'z/z.mp4', 'video', 0)",
             )
             .await;
             let mut library = LibraryDatabase::open_snapshot_read_only(&path, revision(136))
@@ -1911,7 +1679,6 @@ mod tests {
                     "unicode-lower-z",
                     "unicode-upper-lesson",
                     "unicode-umlaut-lesson",
-                    "unicode-synthetic-lesson",
                     "unicode-z-lesson",
                 ]
             );
@@ -1924,23 +1691,6 @@ mod tests {
                 [0, 1, 5]
             );
 
-            let synthetic = library
-                .lesson_page(
-                    136,
-                    "unicode-course",
-                    Some("unicode-course:section:4"),
-                    0,
-                    10,
-                )
-                .await
-                .expect("load synthetic section page");
-            assert_eq!(synthetic.total, 1);
-            assert_eq!(synthetic.rows[0].id, "unicode-synthetic-lesson");
-            assert_eq!(
-                synthetic.rows[0].section_id.as_deref(),
-                Some("unicode-course:section:4")
-            );
-
             library.close().await.expect("close Unicode lesson fixture");
             assert_no_sidecars(&path);
         });
@@ -1949,11 +1699,15 @@ mod tests {
     #[test]
     fn large_lesson_pages_build_one_revision_scoped_order_index() {
         block_on(async {
-            let (_temp, path) = copied_fixture();
+            let (_temp, path) = current_fixture().await;
             mutate_fixture(
                 &path,
-                "INSERT INTO courses (id, name, path)
-                 VALUES ('bulk-course', 'Bulk course', '/fixtures/library/Bulk course');
+                "INSERT INTO courses
+                   (id, identity_id, name, path, fingerprint, last_scanned_at)
+                 VALUES
+                   ('bulk-course', 'bulk-identity', 'Bulk course',
+                    '/fixtures/library/Bulk course', 'bulk-fingerprint',
+                    '2026-07-09T12:00:00.000Z');
                  INSERT INTO sections (id, course_id, name, order_index)
                  VALUES ('bulk-section', 'bulk-course', 'Course', 0);
                  WITH RECURSIVE numbers(value) AS (
@@ -1962,13 +1716,13 @@ mod tests {
                      SELECT value + 1 FROM numbers WHERE value < 99999
                  )
                  INSERT INTO lessons
-                   (id, course_id, section_id, section_name, name, path, type, order_index)
+                   (id, course_id, section_id, name, path, relative_path, type, order_index)
                  SELECT printf('bulk-%06d', value),
                         'bulk-course',
                         'bulk-section',
-                        'Course',
                         printf('Lesson %d', value),
                         printf('/fixtures/library/Bulk course/%06d.mp4', value),
+                        printf('%06d.mp4', value),
                         'video',
                         0
                  FROM numbers",
