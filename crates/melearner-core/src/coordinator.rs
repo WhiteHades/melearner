@@ -456,6 +456,7 @@ mod tests {
                     .await
                     .expect("close noncurrent native database");
             });
+        let original_database = std::fs::read(&database_path).expect("read noncurrent database");
 
         let core = start(data_dir.path(), 1);
         assert!(matches!(
@@ -465,7 +466,61 @@ mod tests {
                 if message == "database schema is not current"
         ));
         drop(core);
+        assert!(
+            std::fs::read(&database_path).expect("reread noncurrent database") == original_database,
+            "noncurrent database bytes changed during rejection"
+        );
+        for suffix in ["-wal", "-shm", "-journal"] {
+            assert!(
+                !data_dir
+                    .path()
+                    .join(format!("{NATIVE_DATABASE_FILENAME}{suffix}"))
+                    .exists()
+            );
+        }
         assert_eq!(current_tables(&database_path), ["obsolete_data"]);
+    }
+
+    #[test]
+    fn same_state_directory_rejects_a_second_live_core() {
+        let data_dir = tempfile::tempdir().expect("create native data directory");
+        let first = start(data_dir.path(), 4);
+        assert_eq!(receive_ready(&first), 1);
+
+        let second = start(data_dir.path(), 4);
+        assert!(matches!(
+            second
+                .recv_timeout(Duration::from_secs(2))
+                .expect("receive ownership failure"),
+            DomainEvent::Fatal(DomainError::Library(LibraryError::Database(message)))
+                if message == "native database is already open"
+        ));
+        drop(second);
+        assert!(native_database_path(data_dir.path()).is_file());
+
+        first
+            .try_submit(
+                request_id(3),
+                DomainRequest::CoursePage {
+                    expected_revision: 1,
+                    offset: 0,
+                    limit: 20,
+                },
+            )
+            .expect("submit page to first core");
+        assert!(matches!(
+            first
+                .recv_timeout(Duration::from_secs(2))
+                .expect("receive page from first core"),
+            DomainEvent::Completed(DomainOutcome {
+                request_id: outcome_request_id,
+                result: Ok(DomainResponse::CoursePage(page)),
+            }) if outcome_request_id == request_id(3) && page.revision == 1
+        ));
+        drop(first);
+
+        let reopened = start(data_dir.path(), 4);
+        assert_eq!(receive_ready(&reopened), 1);
     }
 
     #[test]
