@@ -174,7 +174,7 @@ The ABI is intentionally narrow and C-shaped. Generate `include/melearner_core.h
 
 ```c
 uint32_t ml_abi_version(void);
-ml_status_t ml_core_create(const ml_config_v1 *, ml_core_t **out_core);
+ml_status_t ml_core_create(const ml_config_v2 *, ml_core_t **out_core);
 void ml_core_destroy(ml_core_t *core);
 ml_status_t ml_core_set_waker(ml_core_t *, ml_wake_fn, void *context);
 ml_status_t ml_core_poll_event(ml_core_t *, ml_event_v1 *out_event);
@@ -182,7 +182,7 @@ void ml_core_release_event(ml_core_t *, ml_event_v1 *event);
 ml_status_t ml_core_cancel(ml_core_t *, uint64_t request_id);
 ```
 
-`ml_config_v1`, `ml_event_v1`, and every future public struct begin with `struct_size` and `abi_version`. Public integers use fixed widths. Booleans are `uint8_t`. Strings and arbitrary bytes use `{const uint8_t *ptr; size_t len;}` and are UTF-8 where declared. Rust enums never cross the boundary directly.
+`ml_config_v2`, `ml_event_v1`, and every future public struct begin with `struct_size` and `abi_version`. Public integers use fixed widths. Booleans are `uint8_t`. Strings and arbitrary bytes use `{const uint8_t *ptr; size_t len;}` and are UTF-8 where declared. Rust enums never cross the boundary directly.
 
 `ml_event_v1` contains a monotonically increasing sequence, request ID, event kind, status, payload schema version, payload pointer, and payload length. Domain payloads use versioned UTF-8 JSON initially because Zig has a maintained parser and these responses are low-frequency, paged data. Video frames and raw audio never use JSON or the event queue. The event remains Rust-owned until `ml_core_release_event`; Zig must copy only the fields it retains in `Model`.
 
@@ -212,7 +212,7 @@ Do not expose one stringly `invoke` function. Export typed asynchronous request 
 | Player | load, play, pause, seek, volume, mute, rate, select audio/subtitle/chapter, frame step, screenshot, destroy |
 | Surface | attach render target, render current frame, set visibility, detach, query diagnostics |
 
-High-level examples are `ml_library_scan_v1`, `ml_search_query_v1`, `ml_progress_put_v1`, `ml_notes_save_v1`, and `ml_player_load_v1`. Names and structs are version-suffixed when their shape changes. Additive event kinds and JSON fields are allowed within ABI v1; incompatible ownership or struct changes require ABI v2.
+High-level examples are `ml_library_scan_v1`, `ml_search_query_v1`, `ml_progress_put_v1`, `ml_notes_save_v1`, and `ml_player_load_v1`. Names and structs are version-suffixed when their shape changes. Additive event kinds and JSON fields are allowed within the current ABI generation; incompatible ownership or struct changes require a new ABI generation and replacement structs.
 
 ### Media render seam
 
