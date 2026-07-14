@@ -1,5 +1,6 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::fs::{File, OpenOptions};
 use std::num::NonZeroU64;
 use std::ops::Range;
 use std::path::Path;
@@ -17,6 +18,7 @@ use crate::schema;
 
 const SQLITE_PROGRESS_INTERVAL: i32 = 1_000;
 pub(crate) const NATIVE_DATABASE_FILENAME: &str = "melearner-native.sqlite3";
+const NATIVE_DATABASE_LOCK_FILENAME: &str = "melearner-native.lock";
 pub(crate) const MAX_COURSE_PAGE_SIZE: u32 = 200;
 static NATURAL_COLLATOR: LazyLock<CollatorBorrowed<'static>> = LazyLock::new(|| {
     let mut preferences = CollatorPreferences::default();
@@ -57,6 +59,32 @@ impl std::error::Error for LibraryError {}
 impl From<sqlx::Error> for LibraryError {
     fn from(error: sqlx::Error) -> Self {
         Self::Database(error.to_string())
+    }
+}
+
+fn acquire_database_ownership(data_dir: &Path) -> Result<File, LibraryError> {
+    let lock_path = data_dir.join(NATIVE_DATABASE_LOCK_FILENAME);
+    let ownership = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)
+        .map_err(|error| {
+            LibraryError::Database(format!(
+                "cannot open native database lock {}: {error}",
+                lock_path.display()
+            ))
+        })?;
+    match ownership.try_lock() {
+        Ok(()) => Ok(ownership),
+        Err(std::fs::TryLockError::WouldBlock) => Err(LibraryError::Database(
+            "native database is already open".to_string(),
+        )),
+        Err(std::fs::TryLockError::Error(error)) => Err(LibraryError::Database(format!(
+            "cannot lock native database {}: {error}",
+            lock_path.display()
+        ))),
     }
 }
 
@@ -181,6 +209,7 @@ pub(crate) struct LibraryDatabase {
     lesson_order_indexes: HashMap<String, LessonOrderIndex>,
     #[cfg(test)]
     lesson_order_index_builds: usize,
+    _ownership: File,
 }
 
 impl LibraryDatabase {
@@ -191,16 +220,28 @@ impl LibraryDatabase {
     ) -> Result<Self, LibraryError> {
         std::fs::create_dir_all(data_dir)
             .map_err(|error| LibraryError::Database(error.to_string()))?;
+        let ownership = acquire_database_ownership(data_dir)?;
         let path = data_dir.join(NATIVE_DATABASE_FILENAME);
         let create_schema = !path
             .try_exists()
             .map_err(|error| LibraryError::Database(error.to_string()))?;
-        Self::open_database(&path, revision, stopping, create_schema).await
+        Self::open_database(&path, revision, stopping, create_schema, ownership).await
     }
 
     #[cfg(test)]
     async fn open_test_database(path: &Path, revision: NonZeroU64) -> Result<Self, LibraryError> {
-        Self::open_database(path, revision, Arc::new(AtomicBool::new(false)), false).await
+        let data_dir = path.parent().ok_or_else(|| {
+            LibraryError::Database("database path has no parent directory".to_string())
+        })?;
+        let ownership = acquire_database_ownership(data_dir)?;
+        Self::open_database(
+            path,
+            revision,
+            Arc::new(AtomicBool::new(false)),
+            false,
+            ownership,
+        )
+        .await
     }
 
     async fn open_database(
@@ -208,7 +249,11 @@ impl LibraryDatabase {
         revision: NonZeroU64,
         stopping: Arc<AtomicBool>,
         create_schema: bool,
+        ownership: File,
     ) -> Result<Self, LibraryError> {
+        if !create_schema {
+            validate_existing_database(path).await?;
+        }
         let options = SqliteConnectOptions::new()
             .filename(path)
             .create_if_missing(create_schema)
@@ -241,7 +286,11 @@ impl LibraryDatabase {
             }
         }
 
-        if let Err(error) = validate_current_schema(&mut connection).await {
+        if let Err(error) = validate_schema_statements(&mut connection).await {
+            let _ = connection.close().await;
+            return Err(error);
+        }
+        if let Err(error) = validate_current_connection(&mut connection).await {
             let _ = connection.close().await;
             return Err(error);
         }
@@ -260,6 +309,7 @@ impl LibraryDatabase {
             lesson_order_indexes: HashMap::new(),
             #[cfg(test)]
             lesson_order_index_builds: 0,
+            _ownership: ownership,
         })
     }
 
@@ -780,7 +830,17 @@ fn course_page_sql(rooted: bool) -> String {
     )
 }
 
-async fn validate_current_schema(connection: &mut SqliteConnection) -> Result<(), LibraryError> {
+async fn validate_existing_database(path: &Path) -> Result<(), LibraryError> {
+    let options = SqliteConnectOptions::new().filename(path).read_only(true);
+    let mut connection = SqliteConnection::connect_with(&options).await?;
+    let validation = validate_schema_statements(&mut connection).await;
+    let close = connection.close().await;
+    validation?;
+    close?;
+    Ok(())
+}
+
+async fn validate_schema_statements(connection: &mut SqliteConnection) -> Result<(), LibraryError> {
     let stored_statements = sqlx::query_scalar::<_, String>(
         "SELECT sql
          FROM sqlite_schema
@@ -803,6 +863,12 @@ async fn validate_current_schema(connection: &mut SqliteConnection) -> Result<()
         ));
     }
 
+    Ok(())
+}
+
+async fn validate_current_connection(
+    connection: &mut SqliteConnection,
+) -> Result<(), LibraryError> {
     let foreign_keys = sqlx::query_scalar::<_, i64>("PRAGMA foreign_keys")
         .fetch_one(&mut *connection)
         .await?;
