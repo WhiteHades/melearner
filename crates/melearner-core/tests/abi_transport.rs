@@ -144,7 +144,9 @@ fn borrowed_input_is_copied_and_outstanding_events_apply_backpressure() {
     assert_eq!(cancelled.request_id, second_request);
     assert_eq!(cancelled.kind, ML_EVENT_REQUEST_CANCELLED);
     assert_eq!(cancelled.status, ML_STATUS_CANCELLED);
+    assert_eq!(cancelled.payload_schema_version, 0);
     assert!(cancelled.payload.is_null());
+    assert_eq!(cancelled.payload_len, 0);
     unsafe { ml_core_release_event(core, &mut cancelled) };
 
     assert_eq!(ml_core_cancel(core, third_request), ML_STATUS_OK);
