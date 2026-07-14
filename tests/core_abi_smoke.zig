@@ -1,10 +1,22 @@
+const std = @import("std");
+
 const c = @cImport({
     @cInclude("melearner_core.h");
 });
 
+const max_poll_attempts = 2_000;
+
 comptime {
-    if (c.ML_ABI_VERSION != 1) @compileError("unexpected core ABI version");
-    if (@sizeOf(c.ml_config_v1) != 16) @compileError("ml_config_v1 layout drift");
+    if (c.ML_ABI_VERSION != 2) @compileError("unexpected core ABI version");
+    if (@sizeOf(c.ml_config_v2) != 16 + @sizeOf(usize) * 2) {
+        @compileError("ml_config_v2 layout drift");
+    }
+    if (@offsetOf(c.ml_config_v2, "state_dir") != 16) {
+        @compileError("ml_config_v2 state directory offset drift");
+    }
+    if (@sizeOf(c.ml_library_course_page_request_v1) != 32) {
+        @compileError("course page request layout drift");
+    }
     if (@sizeOf(c.ml_core_limits_v1) != 16) @compileError("ml_core_limits_v1 layout drift");
     if (@offsetOf(c.ml_event_v1, "sequence") != 8) @compileError("ml_event_v1 sequence offset drift");
     if (@offsetOf(c.ml_event_v1, "payload") != 40) @compileError("ml_event_v1 payload offset drift");
@@ -13,17 +25,25 @@ comptime {
     }
 }
 
-pub fn main() !void {
-    var config = c.ml_config_v1{
-        .struct_size = @sizeOf(c.ml_config_v1),
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const state_dir = try temporaryStateDirectory(init);
+    defer init.gpa.free(state_dir);
+    defer std.Io.Dir.cwd().deleteTree(io, state_dir) catch {};
+
+    var config = c.ml_config_v2{
+        .struct_size = @sizeOf(c.ml_config_v2),
         .abi_version = c.ML_ABI_VERSION,
         .event_queue_capacity = 4,
-        .max_event_payload_bytes = 1024,
+        .max_event_payload_bytes = 4096,
+        .state_dir = state_dir.ptr,
+        .state_dir_len = state_dir.len,
     };
     var core: ?*c.ml_core_t = null;
     try expectEqual(@as(c.ml_status_t, c.ML_STATUS_OK), c.ml_core_create(&config, &core));
     try expect(core != null);
     defer c.ml_core_destroy(core);
+    try expectEqual(@as(u32, c.ML_ABI_VERSION), c.ml_abi_version());
     try expectEqual(@as(c.ml_status_t, c.ML_STATUS_OK), c.ml_core_set_waker(core, null, null));
 
     var limits = c.ml_core_limits_v1{
@@ -34,9 +54,76 @@ pub fn main() !void {
     };
     try expectEqual(@as(c.ml_status_t, c.ML_STATUS_OK), c.ml_core_get_limits_v1(core, &limits));
     try expectEqual(@as(u32, 4), limits.event_queue_capacity);
-    try expectEqual(@as(u32, 1024), limits.max_event_payload_bytes);
+    try expectEqual(@as(u32, 4096), limits.max_event_payload_bytes);
 
-    var event = c.ml_event_v1{
+    var ready = try pollEvent(io, core);
+    try expect(ready.sequence > 0);
+    try expectEqual(@as(c.ml_event_kind_t, c.ML_EVENT_CORE_READY), ready.kind);
+    try expectEqual(@as(c.ml_status_t, c.ML_STATUS_OK), ready.status);
+    try expectEqual(@as(u32, 1), ready.payload_schema_version);
+    try expectPayload(&ready, "1");
+    c.ml_core_release_event(core, &ready);
+
+    var request = c.ml_library_course_page_request_v1{
+        .struct_size = @sizeOf(c.ml_library_course_page_request_v1),
+        .abi_version = c.ML_ABI_VERSION,
+        .expected_revision = 1,
+        .offset = 0,
+        .limit = 20,
+        .reserved = 0,
+    };
+    var request_id: u64 = 0;
+    try expectEqual(
+        @as(c.ml_status_t, c.ML_STATUS_OK),
+        c.ml_library_course_page_v1(core, &request, &request_id),
+    );
+    try expect(request_id != 0);
+
+    var completed = try pollEvent(io, core);
+    try expectEqual(request_id, completed.request_id);
+    try expectEqual(@as(c.ml_event_kind_t, c.ML_EVENT_LIBRARY_COURSE_PAGE), completed.kind);
+    try expectEqual(@as(c.ml_status_t, c.ML_STATUS_OK), completed.status);
+    try expectEqual(@as(u32, 1), completed.payload_schema_version);
+    try expectPayload(&completed, "{\"revision\":1,\"offset\":0,\"total\":0,\"rows\":[]}");
+    c.ml_core_release_event(core, &completed);
+
+    var empty = event();
+    try expectEqual(@as(c.ml_status_t, c.ML_STATUS_EMPTY), c.ml_core_poll_event(core, &empty));
+}
+
+fn temporaryStateDirectory(init: std.process.Init) ![]u8 {
+    var random_bytes: [16]u8 = undefined;
+    std.Io.random(init.io, &random_bytes);
+    const suffix = std.fmt.bytesToHex(random_bytes, .lower);
+    const temporary_root = init.environ_map.get("TMPDIR") orelse "/tmp";
+    const state_dir = try std.fmt.allocPrint(
+        init.gpa,
+        "{s}/melearner-core-abi-{s}",
+        .{ temporary_root, suffix },
+    );
+    errdefer init.gpa.free(state_dir);
+    try std.Io.Dir.cwd().createDir(init.io, state_dir, .default_dir);
+    return state_dir;
+}
+
+fn pollEvent(io: std.Io, core: ?*c.ml_core_t) !c.ml_event_v1 {
+    for (0..max_poll_attempts) |_| {
+        var next = event();
+        switch (c.ml_core_poll_event(core, &next)) {
+            c.ML_STATUS_OK => return next,
+            c.ML_STATUS_EMPTY => try std.Io.sleep(
+                io,
+                std.Io.Duration.fromMilliseconds(1),
+                .awake,
+            ),
+            else => return error.CoreAbiSmokeFailed,
+        }
+    }
+    return error.CoreAbiSmokeTimedOut;
+}
+
+fn event() c.ml_event_v1 {
+    return .{
         .struct_size = @sizeOf(c.ml_event_v1),
         .abi_version = c.ML_ABI_VERSION,
         .sequence = 0,
@@ -48,16 +135,12 @@ pub fn main() !void {
         .payload = null,
         .payload_len = 0,
     };
-    try expectEqual(@as(c.ml_status_t, c.ML_STATUS_OK), c.ml_core_poll_event(core, &event));
-    try expect(event.sequence > 0);
-    try expectEqual(@as(c.ml_event_kind_t, c.ML_EVENT_CORE_READY), event.kind);
-    try expect(event.payload != null);
-    try expectEqual(@as(usize, 1), event.payload_len);
-    try expectEqual(@as(u8, '1'), event.payload[0]);
+}
 
-    c.ml_core_release_event(core, &event);
-    try expectEqual(@as(u64, 0), event.sequence);
-    try expectEqual(@as(c.ml_status_t, c.ML_STATUS_EMPTY), c.ml_core_poll_event(core, &event));
+fn expectPayload(event_value: *const c.ml_event_v1, expected: []const u8) !void {
+    try expect(event_value.payload != null);
+    try expectEqual(expected.len, event_value.payload_len);
+    try expect(std.mem.eql(u8, expected, event_value.payload[0..event_value.payload_len]));
 }
 
 fn expect(condition: bool) !void {
