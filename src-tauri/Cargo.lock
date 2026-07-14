@@ -2808,7 +2808,6 @@ dependencies = [
  "dashmap",
  "fff-search",
  "gtk",
- "jwalk",
  "libc",
  "libloading 0.8.9",
  "libmpv2",
@@ -2838,6 +2837,8 @@ name = "melearner-core"
 version = "0.1.0"
 dependencies = [
  "icu_collator",
+ "jwalk",
+ "seahash",
  "serde",
  "serde_json",
  "sqlx",
