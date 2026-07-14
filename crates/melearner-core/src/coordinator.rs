@@ -82,6 +82,7 @@ pub(crate) struct DomainWorker {
 impl DomainWorker {
     pub(crate) fn start(
         data_dir: PathBuf,
+        revision: NonZeroU64,
         capacity: NonZeroUsize,
         event_sink: DomainEventSink,
     ) -> io::Result<Self> {
@@ -97,6 +98,7 @@ impl DomainWorker {
                     run_worker(
                         runtime,
                         data_dir,
+                        revision,
                         command_receiver,
                         event_sink,
                         worker_stopping,
@@ -148,8 +150,11 @@ struct DomainState {
 }
 
 impl DomainState {
-    async fn open(data_dir: PathBuf, stopping: Arc<AtomicBool>) -> Result<Self, DomainError> {
-        let revision = NonZeroU64::new(1).expect("initial Library revision is nonzero");
+    async fn open(
+        data_dir: PathBuf,
+        revision: NonZeroU64,
+        stopping: Arc<AtomicBool>,
+    ) -> Result<Self, DomainError> {
         let library = LibraryDatabase::open_current(&data_dir, revision, stopping).await?;
         Ok(Self { library })
     }
@@ -196,17 +201,19 @@ impl DomainState {
 fn run_worker(
     runtime: tokio::runtime::Runtime,
     data_dir: PathBuf,
+    revision: NonZeroU64,
     command_receiver: Receiver<DomainCommand>,
     event_sink: DomainEventSink,
     stopping: Arc<AtomicBool>,
 ) {
-    let mut state = match runtime.block_on(DomainState::open(data_dir, Arc::clone(&stopping))) {
-        Ok(state) => state,
-        Err(error) => {
-            event_sink(DomainEvent::Fatal(error));
-            return;
-        }
-    };
+    let mut state =
+        match runtime.block_on(DomainState::open(data_dir, revision, Arc::clone(&stopping))) {
+            Ok(state) => state,
+            Err(error) => {
+                event_sink(DomainEvent::Fatal(error));
+                return;
+            }
+        };
     if !event_sink(DomainEvent::Ready {
         revision: state.library.revision(),
     }) {
@@ -275,6 +282,7 @@ mod tests {
         let event_sink: DomainEventSink = Arc::new(move |event| event_sender.send(event).is_ok());
         let worker = DomainWorker::start(
             data_dir.to_path_buf(),
+            NonZeroU64::new(1).expect("nonzero test revision"),
             NonZeroUsize::new(capacity).expect("nonzero test capacity"),
             event_sink,
         )
