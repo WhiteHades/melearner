@@ -15,6 +15,7 @@ name = "melearner_core"
 crate-type = ["rlib", "staticlib"]
 
 [dependencies]
+icu_collator = "=2.2.1"
 sha2 = "=0.10.9"
 sqlx = { version = "=0.8.6", default-features = false, features = ["migrate", "runtime-tokio", "sqlite"] }
 tokio = { version = "=1.52.3", features = ["rt"] }
