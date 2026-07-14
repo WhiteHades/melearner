@@ -22,7 +22,7 @@ rtk cargo test --manifest-path src-tauri/Cargo.toml
 rtk cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
-`pnpm test:parity` applies migrations 1-16 to an in-memory SQLite database, loads the anonymized fixtures under `fixtures/parity/`, and checks the current Library, identity, Progress, notes, Learning activity, scanner, document, media, and failure contracts. Fixture data is deterministic and contains no paths or content from a personal Library.
+`pnpm test:parity` loads the anonymized current-domain fixtures under `fixtures/parity/` and checks the current Library, identity, Progress, notes, Learning activity, scanner, document, media, and failure contracts. Fixture data is deterministic and contains no paths or content from a personal Library.
 
 ## Responsiveness Watchdog
 
