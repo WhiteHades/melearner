@@ -1,19 +1,29 @@
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::num::NonZeroU64;
+use std::ops::Range;
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
+use icu_collator::preferences::CollationNumericOrdering;
+use icu_collator::{CollatorBorrowed, CollatorPreferences};
 use sha2::{Digest, Sha384};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteRow};
-use sqlx::{Connection, Row, SqliteConnection};
+use sqlx::{Connection, QueryBuilder, Row, Sqlite, SqliteConnection};
 
 use crate::migrations::{MIGRATIONS, MigrationDefinition};
 
 const SUPPORTED_MIGRATION_VERSION: i64 = 16;
 const SQLITE_PROGRESS_INTERVAL: i32 = 1_000;
 pub(crate) const MAX_COURSE_PAGE_SIZE: u32 = 200;
+static NATURAL_COLLATOR: LazyLock<CollatorBorrowed<'static>> = LazyLock::new(|| {
+    let mut preferences = CollatorPreferences::default();
+    preferences.numeric_ordering = Some(CollationNumericOrdering::True);
+    CollatorBorrowed::try_new(preferences, Default::default())
+        .expect("compiled ICU data supports natural collation")
+});
 
 #[derive(Debug)]
 pub(crate) enum LibraryError {
@@ -45,10 +55,10 @@ impl std::fmt::Display for LibraryError {
                 formatter.write_str("invalid database migration ledger")
             }
             Self::InvalidPageSize { limit } => {
-                write!(formatter, "invalid course page size {limit}")
+                write!(formatter, "invalid page size {limit}")
             }
             Self::InvalidOffset { offset } => {
-                write!(formatter, "invalid course page offset {offset}")
+                write!(formatter, "invalid page offset {offset}")
             }
             Self::StaleRevision { expected, actual } => {
                 write!(
@@ -99,10 +109,94 @@ pub(crate) struct CoursePage {
     pub(crate) rows: Vec<CourseSummary>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SubtitleSummary {
+    pub(crate) path: String,
+    pub(crate) language: String,
+    pub(crate) label: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct LessonSummary {
+    pub(crate) id: String,
+    pub(crate) course_id: String,
+    pub(crate) section_id: Option<String>,
+    pub(crate) section_name: String,
+    pub(crate) name: String,
+    pub(crate) path: String,
+    pub(crate) relative_path: Option<String>,
+    pub(crate) kind: String,
+    pub(crate) duration: i64,
+    pub(crate) file_size: i64,
+    pub(crate) completed: bool,
+    pub(crate) watched_time: i64,
+    pub(crate) last_position: f64,
+    pub(crate) order: i64,
+    pub(crate) subtitles: Vec<SubtitleSummary>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct LessonPage {
+    pub(crate) revision: u64,
+    pub(crate) course_id: String,
+    pub(crate) section_id: Option<String>,
+    pub(crate) offset: u64,
+    pub(crate) total: u64,
+    pub(crate) rows: Vec<LessonSummary>,
+}
+
+struct LessonOrderIndex {
+    sections: Vec<IndexedSection>,
+    lessons: Vec<IndexedLesson>,
+    section_ranges: HashMap<String, Range<usize>>,
+}
+
+struct IndexedSection {
+    id: String,
+    name: String,
+}
+
+struct IndexedLesson {
+    id: String,
+    section_index: usize,
+    order: i64,
+}
+
+struct PendingSection {
+    id: String,
+    name: String,
+    order: Option<i64>,
+    lessons: Vec<PendingLesson>,
+}
+
+struct PendingLesson {
+    id: String,
+    name: String,
+    order: i64,
+}
+
+struct UnresolvedLesson {
+    id: String,
+    section_id: Option<String>,
+    section_name: String,
+    name: String,
+    order: Option<i64>,
+}
+
+struct LessonPageKey {
+    id: String,
+    section_id: String,
+    section_name: String,
+    order: i64,
+}
+
 pub(crate) struct LibraryDatabase {
     connection: SqliteConnection,
     revision: u64,
     library_path: Option<String>,
+    lesson_order_indexes: HashMap<String, LessonOrderIndex>,
+    #[cfg(test)]
+    lesson_order_index_builds: usize,
 }
 
 impl LibraryDatabase {
@@ -158,6 +252,9 @@ impl LibraryDatabase {
             connection,
             revision: revision.get(),
             library_path,
+            lesson_order_indexes: HashMap::new(),
+            #[cfg(test)]
+            lesson_order_index_builds: 0,
         })
     }
 
@@ -269,6 +366,339 @@ impl LibraryDatabase {
             rows,
         })
     }
+
+    pub(crate) async fn lesson_page(
+        &mut self,
+        expected_revision: u64,
+        course_id: &str,
+        section_id: Option<&str>,
+        offset: u64,
+        limit: u32,
+    ) -> Result<LessonPage, LibraryError> {
+        if expected_revision != self.revision {
+            return Err(LibraryError::StaleRevision {
+                expected: expected_revision,
+                actual: self.revision,
+            });
+        }
+        if !(1..=MAX_COURSE_PAGE_SIZE).contains(&limit) {
+            return Err(LibraryError::InvalidPageSize { limit });
+        }
+        i64::try_from(offset).map_err(|_| LibraryError::InvalidOffset { offset })?;
+        let page_offset =
+            usize::try_from(offset).map_err(|_| LibraryError::InvalidOffset { offset })?;
+        let library_path = self
+            .library_path
+            .as_deref()
+            .filter(|library_path| !library_path.is_empty());
+        let path_range = library_path.map(child_path_range);
+        let course_is_visible: bool = if let (Some(library_path), Some((prefix, upper_bound))) =
+            (library_path, path_range.as_ref())
+        {
+            sqlx::query_scalar(
+                "SELECT EXISTS(
+                     SELECT 1
+                     FROM courses
+                     WHERE id = ?1
+                       AND (path = ?2 OR (path > ?3 AND path < ?4))
+                 )",
+            )
+            .bind(course_id)
+            .bind(library_path)
+            .bind(prefix)
+            .bind(upper_bound)
+            .fetch_one(&mut self.connection)
+            .await?
+        } else {
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM courses WHERE id = ?1)")
+                .bind(course_id)
+                .fetch_one(&mut self.connection)
+                .await?
+        };
+
+        if !course_is_visible {
+            return Ok(LessonPage {
+                revision: self.revision,
+                course_id: course_id.to_string(),
+                section_id: section_id.map(str::to_string),
+                offset,
+                total: 0,
+                rows: Vec::new(),
+            });
+        }
+
+        if !self.lesson_order_indexes.contains_key(course_id) {
+            let index = load_lesson_order_index(&mut self.connection, course_id).await?;
+            self.lesson_order_indexes
+                .insert(course_id.to_string(), index);
+            #[cfg(test)]
+            {
+                self.lesson_order_index_builds += 1;
+            }
+        }
+        let (total, page_keys) = {
+            let index = self
+                .lesson_order_indexes
+                .get(course_id)
+                .ok_or_else(|| LibraryError::Database("missing lesson order index".to_string()))?;
+            let range = section_id
+                .and_then(|section_id| index.section_ranges.get(section_id).cloned())
+                .unwrap_or_else(|| {
+                    if section_id.is_some() {
+                        0..0
+                    } else {
+                        0..index.lessons.len()
+                    }
+                });
+            let total = u64::try_from(range.len())
+                .map_err(|_| LibraryError::Database("lesson count exceeds u64".to_string()))?;
+            let start = range.start + page_offset.min(range.len());
+            let end = start.saturating_add(limit as usize).min(range.end);
+            let mut page_keys = Vec::with_capacity(end - start);
+            for lesson in &index.lessons[start..end] {
+                let section = index.sections.get(lesson.section_index).ok_or_else(|| {
+                    LibraryError::Database("invalid lesson order index".to_string())
+                })?;
+                page_keys.push(LessonPageKey {
+                    id: lesson.id.clone(),
+                    section_id: section.id.clone(),
+                    section_name: section.name.clone(),
+                    order: lesson.order,
+                });
+            }
+            (total, page_keys)
+        };
+
+        if page_keys.is_empty() {
+            return Ok(LessonPage {
+                revision: self.revision,
+                course_id: course_id.to_string(),
+                section_id: section_id.map(str::to_string),
+                offset,
+                total,
+                rows: Vec::new(),
+            });
+        }
+
+        let mut transaction = self.connection.begin().await?;
+        let mut details = QueryBuilder::<Sqlite>::new(
+            "SELECT id, course_id, name, path, relative_path, type,
+                    COALESCE(duration, 0) AS duration,
+                    COALESCE(file_size, 0) AS file_size,
+                    COALESCE(completed, 0) AS completed,
+                    COALESCE(watched_time, 0) AS watched_time,
+                    COALESCE(last_position, 0) AS last_position
+             FROM lessons
+             WHERE id IN (",
+        );
+        let mut separated = details.separated(", ");
+        for lesson in &page_keys {
+            separated.push_bind(&lesson.id);
+        }
+        separated.push_unseparated(")");
+        let mut record_by_id = HashMap::with_capacity(page_keys.len());
+        for record in details.build().fetch_all(&mut *transaction).await? {
+            let id = record.try_get::<String, _>("id")?;
+            record_by_id.insert(id, record);
+        }
+        let mut rows = Vec::with_capacity(page_keys.len());
+        for lesson in &page_keys {
+            let record = record_by_id.remove(&lesson.id).ok_or_else(|| {
+                LibraryError::Database("lesson changed inside immutable snapshot".to_string())
+            })?;
+            rows.push(lesson_summary(record, lesson)?);
+        }
+
+        let mut subtitles = QueryBuilder::<Sqlite>::new(
+            "SELECT lesson_id, path,
+                    COALESCE(language, 'default') AS language,
+                    COALESCE(label, language, 'default') AS label
+             FROM lesson_subtitles INDEXED BY idx_lesson_subtitles_lesson
+             WHERE lesson_id IN (",
+        );
+        let mut separated = subtitles.separated(", ");
+        for lesson in &rows {
+            separated.push_bind(&lesson.id);
+        }
+        separated.push_unseparated(") ORDER BY order_index ASC");
+        let row_by_id = rows
+            .iter()
+            .enumerate()
+            .map(|(index, lesson)| (lesson.id.clone(), index))
+            .collect::<HashMap<_, _>>();
+        for record in subtitles.build().fetch_all(&mut *transaction).await? {
+            let lesson_id = record.try_get::<String, _>("lesson_id")?;
+            if let Some(index) = row_by_id.get(&lesson_id) {
+                rows[*index].subtitles.push(SubtitleSummary {
+                    path: record.try_get("path")?,
+                    language: record.try_get("language")?,
+                    label: record.try_get("label")?,
+                });
+            }
+        }
+        transaction.commit().await?;
+
+        Ok(LessonPage {
+            revision: self.revision,
+            course_id: course_id.to_string(),
+            section_id: section_id.map(str::to_string),
+            offset,
+            total,
+            rows,
+        })
+    }
+}
+
+async fn load_lesson_order_index(
+    connection: &mut SqliteConnection,
+    course_id: &str,
+) -> Result<LessonOrderIndex, LibraryError> {
+    let mut sections = sqlx::query(
+        "SELECT id, name, order_index
+         FROM sections INDEXED BY idx_sections_course
+         WHERE course_id = ?1",
+    )
+    .bind(course_id)
+    .fetch_all(&mut *connection)
+    .await?
+    .into_iter()
+    .map(|row| {
+        Ok(PendingSection {
+            id: row.try_get("id")?,
+            name: row.try_get("name")?,
+            order: row.try_get("order_index")?,
+            lessons: Vec::new(),
+        })
+    })
+    .collect::<Result<Vec<_>, LibraryError>>()?;
+    sections.sort_by(|left, right| {
+        left.order
+            .unwrap_or(0)
+            .cmp(&right.order.unwrap_or(0))
+            .then_with(|| NATURAL_COLLATOR.compare(&left.name, &right.name))
+    });
+    for (position, section) in sections.iter_mut().enumerate() {
+        if section.order.is_none() {
+            section.order =
+                Some(i64::try_from(position).map_err(|_| {
+                    LibraryError::Database("section count exceeds i64".to_string())
+                })?);
+        }
+    }
+
+    let mut section_by_key = HashMap::with_capacity(sections.len().saturating_mul(2));
+    for (index, section) in sections.iter().enumerate() {
+        section_by_key.insert(section.id.clone(), index);
+        section_by_key.insert(section.name.clone(), index);
+    }
+
+    let mut lessons = sqlx::query(
+        "SELECT id, section_id, section_name, name, order_index
+         FROM lessons INDEXED BY idx_lessons_course
+         WHERE course_id = ?1",
+    )
+    .bind(course_id)
+    .fetch_all(&mut *connection)
+    .await?
+    .into_iter()
+    .map(|row| {
+        Ok(UnresolvedLesson {
+            id: row.try_get("id")?,
+            section_id: row.try_get("section_id")?,
+            section_name: row
+                .try_get::<Option<String>, _>("section_name")?
+                .unwrap_or_else(|| "Course".to_string()),
+            name: row.try_get("name")?,
+            order: row.try_get("order_index")?,
+        })
+    })
+    .collect::<Result<Vec<_>, LibraryError>>()?;
+    lessons.sort_by(|left, right| {
+        left.order
+            .unwrap_or(0)
+            .cmp(&right.order.unwrap_or(0))
+            .then_with(|| NATURAL_COLLATOR.compare(&left.name, &right.name))
+    });
+
+    for lesson in lessons {
+        let section_index = lesson
+            .section_id
+            .as_ref()
+            .filter(|section_id| !section_id.is_empty())
+            .and_then(|section_id| section_by_key.get(section_id).copied())
+            .or_else(|| section_by_key.get(&lesson.section_name).copied());
+        let section_index = if let Some(section_index) = section_index {
+            section_index
+        } else {
+            let section_index = sections.len();
+            let order = i64::try_from(section_index)
+                .map_err(|_| LibraryError::Database("section count exceeds i64".to_string()))?;
+            let id = format!("{course_id}:section:{section_index}");
+            sections.push(PendingSection {
+                id: id.clone(),
+                name: lesson.section_name.clone(),
+                order: Some(order),
+                lessons: Vec::new(),
+            });
+            section_by_key.insert(id, section_index);
+            section_by_key.insert(lesson.section_name.clone(), section_index);
+            section_index
+        };
+        let section = sections
+            .get_mut(section_index)
+            .ok_or_else(|| LibraryError::Database("invalid resolved lesson section".to_string()))?;
+        let order = if let Some(order) = lesson.order {
+            order
+        } else {
+            i64::try_from(section.lessons.len())
+                .map_err(|_| LibraryError::Database("lesson count exceeds i64".to_string()))?
+        };
+        section.lessons.push(PendingLesson {
+            id: lesson.id,
+            name: lesson.name,
+            order,
+        });
+    }
+
+    for section in &mut sections {
+        section.lessons.sort_by(|left, right| {
+            left.order
+                .cmp(&right.order)
+                .then_with(|| NATURAL_COLLATOR.compare(&left.name, &right.name))
+        });
+    }
+    sections.sort_by(|left, right| {
+        left.order
+            .unwrap_or(0)
+            .cmp(&right.order.unwrap_or(0))
+            .then_with(|| NATURAL_COLLATOR.compare(&left.name, &right.name))
+    });
+
+    let lesson_count = sections.iter().map(|section| section.lessons.len()).sum();
+    let mut indexed_sections = Vec::with_capacity(sections.len());
+    let mut indexed_lessons = Vec::with_capacity(lesson_count);
+    let mut section_ranges = HashMap::with_capacity(sections.len());
+    for section in sections {
+        let section_index = indexed_sections.len();
+        let start = indexed_lessons.len();
+        indexed_lessons.extend(section.lessons.into_iter().map(|lesson| IndexedLesson {
+            id: lesson.id,
+            section_index,
+            order: lesson.order,
+        }));
+        let end = indexed_lessons.len();
+        section_ranges.insert(section.id.clone(), start..end);
+        indexed_sections.push(IndexedSection {
+            id: section.id,
+            name: section.name,
+        });
+    }
+
+    Ok(LessonOrderIndex {
+        sections: indexed_sections,
+        lessons: indexed_lessons,
+        section_ranges,
+    })
 }
 
 fn course_page_sql(rooted: bool) -> String {
@@ -495,6 +925,26 @@ fn course_summary(row: SqliteRow) -> Result<CourseSummary, LibraryError> {
     })
 }
 
+fn lesson_summary(row: SqliteRow, indexed: &LessonPageKey) -> Result<LessonSummary, LibraryError> {
+    Ok(LessonSummary {
+        id: row.try_get("id")?,
+        course_id: row.try_get("course_id")?,
+        section_id: Some(indexed.section_id.clone()),
+        section_name: indexed.section_name.clone(),
+        name: row.try_get("name")?,
+        path: row.try_get("path")?,
+        relative_path: row.try_get("relative_path")?,
+        kind: row.try_get("type")?,
+        duration: row.try_get("duration")?,
+        file_size: row.try_get("file_size")?,
+        completed: row.try_get("completed")?,
+        watched_time: row.try_get("watched_time")?,
+        last_position: row.try_get("last_position")?,
+        order: indexed.order,
+        subtitles: Vec::new(),
+    })
+}
+
 fn nonnegative_count(value: i64) -> Result<u64, LibraryError> {
     u64::try_from(value).map_err(|_| LibraryError::Database("negative aggregate count".to_string()))
 }
@@ -585,53 +1035,7 @@ fn has_windows_drive_prefix(path: &str) -> bool {
 }
 
 fn natural_cmp(left: &str, right: &str) -> Ordering {
-    let left_bytes = left.as_bytes();
-    let right_bytes = right.as_bytes();
-    let mut left_index = 0;
-    let mut right_index = 0;
-
-    while left_index < left_bytes.len() && right_index < right_bytes.len() {
-        if left_bytes[left_index].is_ascii_digit() && right_bytes[right_index].is_ascii_digit() {
-            let left_start = left_index;
-            let right_start = right_index;
-            while left_index < left_bytes.len() && left_bytes[left_index].is_ascii_digit() {
-                left_index += 1;
-            }
-            while right_index < right_bytes.len() && right_bytes[right_index].is_ascii_digit() {
-                right_index += 1;
-            }
-            let left_number = left[left_start..left_index].trim_start_matches('0');
-            let right_number = right[right_start..right_index].trim_start_matches('0');
-            let left_number = if left_number.is_empty() {
-                "0"
-            } else {
-                left_number
-            };
-            let right_number = if right_number.is_empty() {
-                "0"
-            } else {
-                right_number
-            };
-            let number_order = left_number
-                .len()
-                .cmp(&right_number.len())
-                .then_with(|| left_number.cmp(right_number));
-            if number_order != Ordering::Equal {
-                return number_order;
-            }
-            continue;
-        }
-
-        let left_character = left_bytes[left_index].to_ascii_lowercase();
-        let right_character = right_bytes[right_index].to_ascii_lowercase();
-        if left_character != right_character {
-            return left_character.cmp(&right_character);
-        }
-        left_index += 1;
-        right_index += 1;
-    }
-
-    left_bytes.len().cmp(&right_bytes.len())
+    NATURAL_COLLATOR.compare(left, right)
 }
 
 #[cfg(test)]
@@ -644,7 +1048,7 @@ mod tests {
 
     use super::{
         LibraryDatabase, LibraryError, MAX_COURSE_PAGE_SIZE, child_path_prefix, child_path_range,
-        course_page_sql,
+        course_page_sql, natural_cmp,
     };
     use sqlx::sqlite::SqliteConnectOptions;
     use sqlx::{Connection, Row, SqliteConnection};
@@ -1232,6 +1636,380 @@ mod tests {
                 "{details:#?}"
             );
             library.close().await.expect("close query-plan snapshot");
+            assert_no_sidecars(&path);
+        });
+    }
+
+    #[test]
+    fn lesson_pages_match_the_frozen_v16_course() {
+        block_on(async {
+            let (_temp, path) = copied_fixture();
+            let original = fs::read(&path).expect("read original fixture copy");
+            let mut library = LibraryDatabase::open_snapshot_read_only(&path, revision(111))
+                .await
+                .expect("open lesson-page fixture");
+
+            let first = library
+                .lesson_page(111, "course-marker", None, 0, 1)
+                .await
+                .expect("load first lesson page");
+            assert_eq!(first.revision, 111);
+            assert_eq!(first.course_id, "course-marker");
+            assert_eq!(first.section_id, None);
+            assert_eq!(first.offset, 0);
+            assert_eq!(first.total, 2);
+            assert_eq!(first.rows.len(), 1);
+            assert_eq!(
+                first,
+                library
+                    .lesson_page(111, "course-marker", None, 0, 1)
+                    .await
+                    .expect("repeat first lesson page")
+            );
+
+            let video = &first.rows[0];
+            assert_eq!(video.id, "lesson-video");
+            assert_eq!(video.course_id, "course-marker");
+            assert_eq!(video.section_id.as_deref(), Some("section-marker-intro"));
+            assert_eq!(video.section_name, "01 入門");
+            assert_eq!(video.name, "01 welcome");
+            assert_eq!(
+                video.path,
+                "/fixtures/library/Systems 日本語/01 入門/01 welcome.mp4"
+            );
+            assert_eq!(
+                video.relative_path.as_deref(),
+                Some("01 入門/01 welcome.mp4")
+            );
+            assert_eq!(video.kind, "video");
+            assert_eq!(video.duration, 600);
+            assert_eq!(video.file_size, 1_048_576);
+            assert!(!video.completed);
+            assert_eq!(video.watched_time, 320);
+            assert_eq!(video.last_position, 318.5);
+            assert_eq!(video.order, 0);
+            assert_eq!(video.subtitles.len(), 2);
+            assert_eq!(video.subtitles[0].language, "en");
+            assert_eq!(video.subtitles[0].label, "English");
+            assert_eq!(video.subtitles[1].language, "ja");
+            assert_eq!(video.subtitles[1].label, "日本語");
+
+            let second = library
+                .lesson_page(111, "course-marker", None, 1, 1)
+                .await
+                .expect("load second lesson page");
+            assert_eq!(second.total, 2);
+            assert_eq!(second.rows.len(), 1);
+            assert_eq!(second.rows[0].id, "lesson-document");
+            assert_eq!(second.rows[0].kind, "document");
+            assert!(second.rows[0].completed);
+            assert!(second.rows[0].subtitles.is_empty());
+
+            let section = library
+                .lesson_page(111, "course-marker", Some("section-marker-deep"), 0, 10)
+                .await
+                .expect("load section lesson page");
+            assert_eq!(section.section_id.as_deref(), Some("section-marker-deep"));
+            assert_eq!(section.total, 1);
+            assert_eq!(section.rows[0].id, "lesson-document");
+
+            let exhausted = library
+                .lesson_page(111, "course-marker", None, 2, 10)
+                .await
+                .expect("load exhausted lesson page");
+            assert_eq!(exhausted.total, 2);
+            assert!(exhausted.rows.is_empty());
+
+            let missing_section = library
+                .lesson_page(111, "course-marker", Some("missing-section"), 0, 10)
+                .await
+                .expect("load missing-section lesson page");
+            assert_eq!(missing_section.total, 0);
+            assert!(missing_section.rows.is_empty());
+
+            let missing = library
+                .lesson_page(111, "missing-course", None, 0, 10)
+                .await
+                .expect("load missing-course lesson page");
+            assert_eq!(missing.total, 0);
+            assert!(missing.rows.is_empty());
+
+            library.close().await.expect("close lesson-page fixture");
+            assert_eq!(fs::read(&path).expect("reread fixture copy"), original);
+            assert_no_sidecars(&path);
+        });
+    }
+
+    #[test]
+    fn lesson_pages_reject_invalid_bounds_and_stale_revisions() {
+        block_on(async {
+            let (_temp, path) = copied_fixture();
+            let mut library = LibraryDatabase::open_snapshot_read_only(&path, revision(121))
+                .await
+                .expect("open invalid lesson-page fixture");
+
+            assert!(matches!(
+                library.lesson_page(122, "course-marker", None, 0, 1).await,
+                Err(LibraryError::StaleRevision {
+                    expected: 122,
+                    actual: 121
+                })
+            ));
+            assert!(matches!(
+                library.lesson_page(121, "course-marker", None, 0, 0).await,
+                Err(LibraryError::InvalidPageSize { limit: 0 })
+            ));
+            assert!(matches!(
+                library
+                    .lesson_page(121, "course-marker", None, 0, 201)
+                    .await,
+                Err(LibraryError::InvalidPageSize { limit: 201 })
+            ));
+            assert!(matches!(
+                library
+                    .lesson_page(121, "course-marker", None, i64::MAX as u64 + 1, 1)
+                    .await,
+                Err(LibraryError::InvalidOffset { .. })
+            ));
+
+            library
+                .close()
+                .await
+                .expect("close invalid lesson-page fixture");
+            assert_no_sidecars(&path);
+        });
+    }
+
+    #[test]
+    fn lesson_pages_preserve_resolved_section_and_natural_order() {
+        block_on(async {
+            let (_temp, path) = copied_fixture();
+            mutate_fixture(
+                &path,
+                "INSERT INTO courses (id, name, path)
+                 VALUES
+                   ('natural-lessons', 'Natural lessons', '/fixtures/library/Natural lessons'),
+                   ('outside-course', 'Outside course', '/outside/Outside course');
+                 INSERT INTO sections (id, course_id, name, order_index)
+                 VALUES
+                   ('natural-10', 'natural-lessons', '10 Advanced', 0),
+                   ('natural-2', 'natural-lessons', '2 Intro', 0);
+                 INSERT INTO lessons
+                   (id, course_id, section_id, section_name, name, path, type, order_index)
+                 VALUES
+                   ('natural-fallback', 'natural-lessons', 'stale-section', '2 Intro', '1 Fallback', '/fixtures/library/Natural lessons/fallback.mp4', 'video', 0),
+                   ('natural-two', 'natural-lessons', 'natural-2', '2 Intro', '2 Topic', '/fixtures/library/Natural lessons/two.mp4', 'video', 0),
+                   ('natural-ten', 'natural-lessons', 'natural-2', '2 Intro', '10 Topic', '/fixtures/library/Natural lessons/ten.mp4', 'video', 0),
+                   ('natural-tie-b', 'natural-lessons', 'natural-2', '2 Intro', '20 Topic', '/fixtures/library/Natural lessons/tie-b.mp4', 'video', 0),
+                   ('natural-tie-a', 'natural-lessons', 'natural-2', '2 Intro', '20 Topic', '/fixtures/library/Natural lessons/tie-a.mp4', 'video', 0),
+                   ('natural-advanced', 'natural-lessons', 'natural-10', '10 Advanced', '0 Global', '/fixtures/library/Natural lessons/advanced.mp4', 'video', -100),
+                   ('outside-lesson', 'outside-course', NULL, 'Course', 'Outside', '/outside/Outside course/outside.mp4', 'video', 0);
+                 INSERT INTO lesson_subtitles
+                   (id, lesson_id, path, language, label, order_index)
+                 VALUES
+                   ('natural-default-subtitle', 'natural-fallback', '/fixtures/library/Natural lessons/fallback.srt', NULL, NULL, 0)",
+            )
+            .await;
+            let before = fs::read(&path).expect("read natural lesson fixture");
+            let mut library = LibraryDatabase::open_snapshot_read_only(&path, revision(131))
+                .await
+                .expect("open natural lesson fixture");
+
+            let page = library
+                .lesson_page(131, "natural-lessons", None, 0, 10)
+                .await
+                .expect("load naturally ordered lesson page");
+            assert_eq!(page.total, 6);
+            assert_eq!(
+                page.rows
+                    .iter()
+                    .map(|lesson| lesson.id.as_str())
+                    .collect::<Vec<_>>(),
+                [
+                    "natural-fallback",
+                    "natural-two",
+                    "natural-ten",
+                    "natural-tie-b",
+                    "natural-tie-a",
+                    "natural-advanced",
+                ]
+            );
+            assert_eq!(page.rows[0].section_id.as_deref(), Some("natural-2"));
+            assert_eq!(page.rows[0].section_name, "2 Intro");
+            assert_eq!(page.rows[0].subtitles[0].language, "default");
+            assert_eq!(page.rows[0].subtitles[0].label, "default");
+
+            let section = library
+                .lesson_page(131, "natural-lessons", Some("natural-2"), 0, 10)
+                .await
+                .expect("load resolved section lesson page");
+            assert_eq!(section.total, 5);
+            assert_eq!(section.rows[0].id, "natural-fallback");
+
+            let outside = library
+                .lesson_page(131, "outside-course", None, 0, 10)
+                .await
+                .expect("load outside-root lesson page");
+            assert_eq!(outside.total, 0);
+            assert!(outside.rows.is_empty());
+
+            library.close().await.expect("close natural lesson fixture");
+            assert_eq!(
+                fs::read(&path).expect("reread natural lesson fixture"),
+                before
+            );
+            assert_no_sidecars(&path);
+        });
+    }
+    #[test]
+    fn lesson_order_matches_unicode_and_nullable_projection_rules() {
+        assert!(natural_cmp("ä", "z").is_lt());
+        assert!(natural_cmp("a", "A").is_lt());
+        assert!(natural_cmp("file2", "file02").is_eq());
+        assert!(natural_cmp("file02", "file10").is_lt());
+
+        block_on(async {
+            let (_temp, path) = copied_fixture();
+            mutate_fixture(
+                &path,
+                "INSERT INTO courses (id, name, path)
+                 VALUES ('unicode-course', 'Unicode course', '/fixtures/library/Unicode course');
+                 INSERT INTO sections (id, course_id, name, order_index)
+                 VALUES
+                   ('unicode-lower', 'unicode-course', 'a', 0),
+                   ('unicode-upper', 'unicode-course', 'A', 0),
+                   ('unicode-umlaut', 'unicode-course', 'ä', NULL),
+                   ('unicode-z', 'unicode-course', 'z', 5);
+                 INSERT INTO lessons
+                   (id, course_id, section_id, section_name, name, path, type, order_index)
+                 VALUES
+                   ('unicode-lower-a', 'unicode-course', '', 'a', 'a', '/fixtures/library/Unicode course/lower-a.mp4', 'video', NULL),
+                   ('unicode-lower-umlaut', 'unicode-course', 'unicode-lower', 'a', 'ä', '/fixtures/library/Unicode course/lower-umlaut.mp4', 'video', NULL),
+                   ('unicode-lower-z', 'unicode-course', 'unicode-lower', 'a', 'z', '/fixtures/library/Unicode course/lower-z.mp4', 'video', 5),
+                   ('unicode-upper-lesson', 'unicode-course', 'unicode-upper', 'A', 'Only', '/fixtures/library/Unicode course/upper.mp4', 'video', 0),
+                   ('unicode-umlaut-lesson', 'unicode-course', 'unicode-umlaut', 'ä', 'Only', '/fixtures/library/Unicode course/umlaut.mp4', 'video', 0),
+                   ('unicode-synthetic-lesson', 'unicode-course', NULL, 'Synthetic', 'Only', '/fixtures/library/Unicode course/synthetic.mp4', 'video', 0),
+                   ('unicode-z-lesson', 'unicode-course', 'unicode-z', 'z', 'Only', '/fixtures/library/Unicode course/z.mp4', 'video', 0)",
+            )
+            .await;
+            let mut library = LibraryDatabase::open_snapshot_read_only(&path, revision(136))
+                .await
+                .expect("open Unicode lesson fixture");
+            let page = library
+                .lesson_page(136, "unicode-course", None, 0, 10)
+                .await
+                .expect("load Unicode lesson page");
+
+            assert_eq!(
+                page.rows
+                    .iter()
+                    .map(|lesson| lesson.id.as_str())
+                    .collect::<Vec<_>>(),
+                [
+                    "unicode-lower-a",
+                    "unicode-lower-umlaut",
+                    "unicode-lower-z",
+                    "unicode-upper-lesson",
+                    "unicode-umlaut-lesson",
+                    "unicode-synthetic-lesson",
+                    "unicode-z-lesson",
+                ]
+            );
+            assert_eq!(
+                page.rows
+                    .iter()
+                    .take(3)
+                    .map(|lesson| lesson.order)
+                    .collect::<Vec<_>>(),
+                [0, 1, 5]
+            );
+
+            let synthetic = library
+                .lesson_page(
+                    136,
+                    "unicode-course",
+                    Some("unicode-course:section:4"),
+                    0,
+                    10,
+                )
+                .await
+                .expect("load synthetic section page");
+            assert_eq!(synthetic.total, 1);
+            assert_eq!(synthetic.rows[0].id, "unicode-synthetic-lesson");
+            assert_eq!(
+                synthetic.rows[0].section_id.as_deref(),
+                Some("unicode-course:section:4")
+            );
+
+            library.close().await.expect("close Unicode lesson fixture");
+            assert_no_sidecars(&path);
+        });
+    }
+
+    #[test]
+    fn large_lesson_pages_build_one_revision_scoped_order_index() {
+        block_on(async {
+            let (_temp, path) = copied_fixture();
+            mutate_fixture(
+                &path,
+                "INSERT INTO courses (id, name, path)
+                 VALUES ('bulk-course', 'Bulk course', '/fixtures/library/Bulk course');
+                 INSERT INTO sections (id, course_id, name, order_index)
+                 VALUES ('bulk-section', 'bulk-course', 'Course', 0);
+                 WITH RECURSIVE numbers(value) AS (
+                     VALUES (0)
+                     UNION ALL
+                     SELECT value + 1 FROM numbers WHERE value < 99999
+                 )
+                 INSERT INTO lessons
+                   (id, course_id, section_id, section_name, name, path, type, order_index)
+                 SELECT printf('bulk-%06d', value),
+                        'bulk-course',
+                        'bulk-section',
+                        'Course',
+                        printf('Lesson %d', value),
+                        printf('/fixtures/library/Bulk course/%06d.mp4', value),
+                        'video',
+                        0
+                 FROM numbers",
+            )
+            .await;
+            let mut library = LibraryDatabase::open_snapshot_read_only(&path, revision(138))
+                .await
+                .expect("open 100,000-lesson fixture");
+
+            let deep = library
+                .lesson_page(138, "bulk-course", None, 99_998, 2)
+                .await
+                .expect("load deep lesson page");
+            assert_eq!(deep.total, 100_000);
+            assert_eq!(
+                deep.rows
+                    .iter()
+                    .map(|lesson| lesson.id.as_str())
+                    .collect::<Vec<_>>(),
+                ["bulk-099998", "bulk-099999"]
+            );
+            assert_eq!(library.lesson_order_index_builds, 1);
+            assert_eq!(
+                library
+                    .lesson_order_indexes
+                    .get("bulk-course")
+                    .expect("cached bulk lesson order")
+                    .lessons
+                    .len(),
+                100_000
+            );
+
+            let section = library
+                .lesson_page(138, "bulk-course", Some("bulk-section"), 0, 2)
+                .await
+                .expect("load cached section page");
+            assert_eq!(section.total, 100_000);
+            assert_eq!(section.rows[0].id, "bulk-000000");
+            assert_eq!(library.lesson_order_index_builds, 1);
+
+            library.close().await.expect("close 100,000-lesson fixture");
             assert_no_sidecars(&path);
         });
     }
