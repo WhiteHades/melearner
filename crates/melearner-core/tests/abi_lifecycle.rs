@@ -1,6 +1,7 @@
 use std::mem::{align_of, offset_of, size_of};
 use std::path::Path;
 use std::ptr;
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use melearner_core::*;
@@ -72,6 +73,20 @@ fn poll_until_event_into(core: *mut ml_core_t, next: &mut ml_event_v1) {
             status => panic!("event did not arrive: status {status}"),
         }
     }
+}
+
+fn ready_revision(ready: &ml_event_v1) -> u64 {
+    assert_eq!(ready.kind, ML_EVENT_CORE_READY);
+    assert_eq!(ready.status, ML_STATUS_OK);
+    assert_eq!(ready.payload_schema_version, 1);
+    assert!(!ready.payload.is_null());
+    let payload = unsafe { std::slice::from_raw_parts(ready.payload, ready.payload_len) };
+    let revision = std::str::from_utf8(payload)
+        .expect("ready revision is UTF-8")
+        .parse()
+        .expect("ready revision is an integer");
+    assert_ne!(revision, 0);
+    revision
 }
 
 #[test]
@@ -266,11 +281,7 @@ fn public_abi_creates_polls_releases_and_rejects_stale_handles() {
     assert_eq!(ready.status, ML_STATUS_OK);
     assert_eq!(ready.payload_schema_version, 1);
     assert!(!ready.payload.is_null());
-    assert_eq!(ready.payload_len, 1);
-    assert_eq!(
-        unsafe { std::slice::from_raw_parts(ready.payload, 1) },
-        b"1"
-    );
+    ready_revision(&ready);
 
     unsafe { ml_core_release_event(core, &mut ready) };
     assert_eq!(ready.struct_size, size_of::<ml_event_v1>() as u32);
@@ -522,4 +533,37 @@ fn lifecycle_handles_are_unique_across_destroy_cycles() {
         unsafe { ml_core_destroy(core) };
         previous = core;
     }
+}
+
+#[test]
+fn immediate_destroy_releases_the_database_for_reopen() {
+    let data_dir = tempfile::tempdir().expect("create ABI state directory");
+    let mut core = ptr::null_mut();
+    assert_eq!(
+        unsafe { ml_core_create(&config(data_dir.path()), &mut core) },
+        ML_STATUS_OK
+    );
+
+    let core_address = core.addr();
+    let (destroyed_sender, destroyed_receiver) = mpsc::channel();
+    let destroyer = std::thread::spawn(move || {
+        unsafe { ml_core_destroy(ptr::without_provenance_mut(core_address)) };
+        destroyed_sender
+            .send(())
+            .expect("report completed core destruction");
+    });
+    destroyed_receiver
+        .recv_timeout(Duration::from_secs(2))
+        .expect("core destruction completes promptly");
+    destroyer.join().expect("core destruction does not panic");
+
+    let mut replacement = ptr::null_mut();
+    assert_eq!(
+        unsafe { ml_core_create(&config(data_dir.path()), &mut replacement) },
+        ML_STATUS_OK
+    );
+    let mut ready = poll_until_event(replacement);
+    ready_revision(&ready);
+    unsafe { ml_core_release_event(replacement, &mut ready) };
+    unsafe { ml_core_destroy(replacement) };
 }
