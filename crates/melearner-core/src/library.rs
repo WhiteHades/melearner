@@ -1,6 +1,8 @@
 use std::cmp::Ordering;
 use std::num::NonZeroU64;
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::time::Duration;
 
 use sha2::{Digest, Sha384};
@@ -10,6 +12,7 @@ use sqlx::{Connection, Row, SqliteConnection};
 use crate::migrations::{MIGRATIONS, MigrationDefinition};
 
 const SUPPORTED_MIGRATION_VERSION: i64 = 16;
+const SQLITE_PROGRESS_INTERVAL: i32 = 1_000;
 pub(crate) const MAX_COURSE_PAGE_SIZE: u32 = 200;
 
 #[derive(Debug)]
@@ -109,6 +112,19 @@ impl LibraryDatabase {
         path: &Path,
         revision: NonZeroU64,
     ) -> Result<Self, LibraryError> {
+        Self::open_snapshot_read_only_interruptible(
+            path,
+            revision,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .await
+    }
+
+    pub(crate) async fn open_snapshot_read_only_interruptible(
+        path: &Path,
+        revision: NonZeroU64,
+        stopping: Arc<AtomicBool>,
+    ) -> Result<Self, LibraryError> {
         let options = SqliteConnectOptions::new()
             .filename(path)
             .create_if_missing(false)
@@ -118,6 +134,12 @@ impl LibraryDatabase {
             .collation("MELEARNER_NATURAL", natural_cmp)
             .busy_timeout(Duration::from_secs(10));
         let mut connection = SqliteConnection::connect_with(&options).await?;
+        connection
+            .lock_handle()
+            .await?
+            .set_progress_handler(SQLITE_PROGRESS_INTERVAL, move || {
+                !stopping.load(AtomicOrdering::Acquire)
+            });
 
         if let Err(error) = verify_migration_ledger(&mut connection).await {
             let _ = connection.close().await;
@@ -149,6 +171,25 @@ impl LibraryDatabase {
 
     pub(crate) async fn close(self) -> Result<(), LibraryError> {
         self.connection.close().await?;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn run_until_interrupted(
+        &mut self,
+        entered: std::sync::mpsc::Sender<()>,
+    ) -> Result<(), LibraryError> {
+        let _ = entered.send(());
+        sqlx::query_scalar::<_, i64>(
+            "WITH RECURSIVE numbers(value) AS (
+                 VALUES (0)
+                 UNION ALL
+                 SELECT value + 1 FROM numbers WHERE value < 1000000000
+             )
+             SELECT MAX(value) FROM numbers",
+        )
+        .fetch_one(&mut self.connection)
+        .await?;
         Ok(())
     }
 
