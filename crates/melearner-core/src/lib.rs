@@ -1,8 +1,6 @@
 #![allow(non_camel_case_types)]
 
-#[allow(dead_code)]
 mod coordinator;
-#[allow(dead_code)]
 mod library;
 pub mod migrations;
 pub mod schema;
@@ -10,13 +8,22 @@ pub mod schema;
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::ffi::c_void;
+use std::io::{self, Write};
 use std::mem::size_of;
+use std::num::{NonZeroU64, NonZeroUsize};
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::path::PathBuf;
 use std::ptr;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, Weak};
 
-pub const ML_ABI_VERSION: u32 = 1;
+use coordinator::{
+    DomainError, DomainEvent, DomainEventSink, DomainRequest, DomainResponse, DomainWorker,
+    SubmitError,
+};
+use library::LibraryError;
+
+pub const ML_ABI_VERSION: u32 = 2;
 pub const ML_MAX_EVENT_QUEUE_CAPACITY: u32 = 65_536;
 pub const ML_MAX_EVENT_PAYLOAD_BYTES: u32 = 16 * 1024 * 1024;
 
@@ -31,21 +38,52 @@ pub const ML_STATUS_PANIC: ml_status_t = 6;
 pub const ML_STATUS_CANCELLED: ml_status_t = 7;
 pub const ML_STATUS_FAILED: ml_status_t = 8;
 pub const ML_STATUS_NOT_FOUND: ml_status_t = 9;
+pub const ML_STATUS_STALE: ml_status_t = 10;
 
 pub type ml_event_kind_t = u32;
 pub const ML_EVENT_CORE_READY: ml_event_kind_t = 1;
 pub const ML_EVENT_REQUEST_CANCELLED: ml_event_kind_t = 2;
 pub const ML_EVENT_FATAL: ml_event_kind_t = 3;
+pub const ML_EVENT_LIBRARY_COURSE_PAGE: ml_event_kind_t = 4;
+pub const ML_EVENT_LIBRARY_LESSON_PAGE: ml_event_kind_t = 5;
 
 pub type ml_wake_fn = Option<unsafe extern "C" fn(context: *mut c_void)>;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct ml_config_v1 {
+pub struct ml_config_v2 {
     pub struct_size: u32,
     pub abi_version: u32,
     pub event_queue_capacity: u32,
     pub max_event_payload_bytes: u32,
+    pub state_dir: *const u8,
+    pub state_dir_len: usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ml_library_course_page_request_v1 {
+    pub struct_size: u32,
+    pub abi_version: u32,
+    pub expected_revision: u64,
+    pub offset: u64,
+    pub limit: u32,
+    pub reserved: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ml_library_lesson_page_request_v1 {
+    pub struct_size: u32,
+    pub abi_version: u32,
+    pub expected_revision: u64,
+    pub offset: u64,
+    pub limit: u32,
+    pub reserved: u32,
+    pub course_id: *const u8,
+    pub course_id_len: usize,
+    pub section_id: *const u8,
+    pub section_id_len: usize,
 }
 
 #[repr(C)]
@@ -212,9 +250,14 @@ impl Drop for WakeCall {
     }
 }
 
-struct PendingRequest {
+enum PendingRequest {
+    Domain {
+        event_kind: ml_event_kind_t,
+    },
     #[cfg(feature = "abi-test-hooks")]
-    payload: Vec<u8>,
+    Test {
+        payload: Vec<u8>,
+    },
 }
 
 struct CoreState {
@@ -223,8 +266,8 @@ struct CoreState {
     queued: VecDeque<OwnedEvent>,
     in_flight: HashMap<u64, OwnedEvent>,
     pending_requests: HashMap<u64, PendingRequest>,
-    #[cfg(feature = "abi-test-hooks")]
     next_request_id: u64,
+    starting: bool,
     failed: bool,
     fatal_pending: bool,
     fatal_emitted: bool,
@@ -233,15 +276,15 @@ struct CoreState {
 }
 
 impl CoreState {
-    fn new(config: &ml_config_v1) -> Self {
+    fn new(config: &ml_config_v2) -> Self {
         Self {
             event_queue_capacity: config.event_queue_capacity as usize,
             max_event_payload_bytes: config.max_event_payload_bytes as usize,
             queued: VecDeque::with_capacity(config.event_queue_capacity as usize),
             in_flight: HashMap::new(),
             pending_requests: HashMap::new(),
-            #[cfg(feature = "abi-test-hooks")]
             next_request_id: 1,
+            starting: true,
             failed: false,
             fatal_pending: false,
             fatal_emitted: false,
@@ -251,10 +294,17 @@ impl CoreState {
     }
 
     fn outstanding(&self) -> usize {
-        self.queued.len() + self.in_flight.len() + self.pending_requests.len()
+        self.queued.len()
+            + self.in_flight.len()
+            + self.pending_requests.len()
+            + usize::from(self.starting)
     }
 
+    #[cfg(feature = "abi-test-hooks")]
     fn enqueue_unreserved(&mut self, event: OwnedEvent) -> Result<Option<WakeCall>, ml_status_t> {
+        if self.starting {
+            return Err(ML_STATUS_BUSY);
+        }
         if event.payload.len() > self.max_event_payload_bytes {
             return Err(ML_STATUS_INVALID_ARGUMENT);
         }
@@ -288,20 +338,29 @@ impl CoreState {
         if payload.len() > self.max_event_payload_bytes {
             return Err(ML_STATUS_INVALID_ARGUMENT);
         }
-        if self.outstanding() >= self.event_queue_capacity {
+        if self.starting || self.outstanding() >= self.event_queue_capacity {
             return Err(ML_STATUS_BUSY);
         }
         let request_id = self.next_request_id();
         self.pending_requests.insert(
             request_id,
-            PendingRequest {
+            PendingRequest::Test {
                 payload: payload.to_vec(),
             },
         );
         Ok(request_id)
     }
 
-    #[cfg(feature = "abi-test-hooks")]
+    fn reserve_domain_request(&mut self, event_kind: ml_event_kind_t) -> Result<u64, ml_status_t> {
+        if self.starting || self.outstanding() >= self.event_queue_capacity {
+            return Err(ML_STATUS_BUSY);
+        }
+        let request_id = self.next_request_id();
+        self.pending_requests
+            .insert(request_id, PendingRequest::Domain { event_kind });
+        Ok(request_id)
+    }
+
     fn next_request_id(&mut self) -> u64 {
         loop {
             let request_id = self.next_request_id;
@@ -326,15 +385,29 @@ impl CoreState {
             b"0".to_vec(),
         ))
     }
+
+    fn fail(&mut self) -> Option<WakeCall> {
+        if self.destroyed || self.failed {
+            return None;
+        }
+        self.starting = false;
+        self.failed = true;
+        self.pending_requests.clear();
+        if !self.fatal_emitted {
+            self.fatal_pending = true;
+        }
+        self.materialize_fatal()
+    }
 }
 
-struct Core {
-    state: Mutex<CoreState>,
+struct NativeCore {
+    state: Arc<Mutex<CoreState>>,
+    domain: Mutex<Option<DomainWorker>>,
 }
 
 struct Registry {
     next_handle: usize,
-    cores: HashMap<usize, Arc<Core>>,
+    cores: HashMap<usize, Arc<NativeCore>>,
 }
 
 impl Registry {
@@ -345,7 +418,7 @@ impl Registry {
         }
     }
 
-    fn insert(&mut self, core: Arc<Core>) -> usize {
+    fn insert(&mut self, core: Arc<NativeCore>) -> usize {
         loop {
             let handle = self.next_handle;
             self.next_handle = self.next_handle.wrapping_add(1).max(1);
@@ -407,7 +480,7 @@ fn handle_id(core: *mut ml_core_t) -> Option<usize> {
     (id != 0).then_some(id)
 }
 
-fn resolve_core(core: *mut ml_core_t) -> Option<Arc<Core>> {
+fn resolve_core(core: *mut ml_core_t) -> Option<Arc<NativeCore>> {
     let handle = handle_id(core)?;
     lock(registry()).cores.get(&handle).cloned()
 }
@@ -442,23 +515,233 @@ fn ffi_core_status(
     }
 }
 
-fn mark_core_failed(core: &Arc<Core>) {
-    let wake = catch_unwind(AssertUnwindSafe(|| {
+unsafe fn submit_domain_request(
+    core: *mut ml_core_t,
+    event_kind: ml_event_kind_t,
+    request: DomainRequest,
+    out_request_id: *mut u64,
+) -> ml_status_t {
+    let Some(core) = resolve_core(core) else {
+        return ML_STATUS_INVALID_HANDLE;
+    };
+    match catch_unwind(AssertUnwindSafe(|| {
         let mut state = lock(&core.state);
-        if state.destroyed || state.failed {
-            return None;
+        if state.destroyed {
+            return (ML_STATUS_INVALID_HANDLE, None);
         }
-        state.failed = true;
-        state.pending_requests.clear();
-        if !state.fatal_emitted {
-            state.fatal_pending = true;
+        if state.failed {
+            return (ML_STATUS_FAILED, None);
         }
-        state.materialize_fatal()
-    }))
-    .ok()
-    .flatten();
+        let request_id = match state.reserve_domain_request(event_kind) {
+            Ok(request_id) => request_id,
+            Err(status) => return (status, None),
+        };
+        let domain = lock(&core.domain);
+        let submitted = match domain.as_ref() {
+            Some(domain) => domain.try_submit(
+                NonZeroU64::new(request_id).expect("generated request ID is nonzero"),
+                request,
+            ),
+            None => Err(SubmitError::Closed),
+        };
+        match submitted {
+            Ok(()) => {
+                unsafe { *out_request_id = request_id };
+                (ML_STATUS_OK, None)
+            }
+            Err(SubmitError::Full) => {
+                state.pending_requests.remove(&request_id);
+                (ML_STATUS_BUSY, None)
+            }
+            Err(SubmitError::Closed) => {
+                state.pending_requests.remove(&request_id);
+                (ML_STATUS_FAILED, state.fail())
+            }
+        }
+    })) {
+        Ok((status, wake)) => {
+            if let Some(wake) = wake {
+                wake.invoke();
+            }
+            status
+        }
+        Err(_) => {
+            mark_core_failed(&core);
+            ML_STATUS_PANIC
+        }
+    }
+}
+
+fn mark_core_failed(core: &Arc<NativeCore>) {
+    let wake = catch_unwind(AssertUnwindSafe(|| lock(&core.state).fail()))
+        .ok()
+        .flatten();
     if let Some(wake) = wake {
         wake.invoke();
+    }
+}
+
+fn publish_domain_event(state: &Weak<Mutex<CoreState>>, event: DomainEvent) -> bool {
+    let event = match event {
+        DomainEvent::Completed(outcome) => return publish_domain_completion(state, outcome),
+        event => event,
+    };
+    let Some(state) = state.upgrade() else {
+        return false;
+    };
+    let wake = {
+        let mut state = lock(&state);
+        if state.destroyed {
+            return false;
+        }
+        match event {
+            DomainEvent::Ready { revision } => {
+                if !state.starting || state.failed {
+                    return false;
+                }
+                state.starting = false;
+                state.push_event(OwnedEvent::new(
+                    0,
+                    ML_EVENT_CORE_READY,
+                    ML_STATUS_OK,
+                    1,
+                    revision.to_string().into_bytes(),
+                ))
+            }
+            DomainEvent::Fatal(error) => {
+                drop(error);
+                state.fail()
+            }
+            DomainEvent::Completed(_) => unreachable!("completion handled before startup event"),
+        }
+    };
+    if let Some(wake) = wake {
+        wake.invoke();
+    }
+    true
+}
+
+fn publish_domain_completion(
+    state: &Weak<Mutex<CoreState>>,
+    outcome: coordinator::DomainOutcome,
+) -> bool {
+    let Some(state) = state.upgrade() else {
+        return false;
+    };
+    let max_payload_bytes = lock(&state).max_event_payload_bytes;
+    let (status, payload_schema_version, payload) =
+        encode_domain_result(outcome.result, max_payload_bytes);
+    let action = {
+        let mut state = lock(&state);
+        if state.destroyed || state.failed {
+            return false;
+        }
+        let Some(PendingRequest::Domain { event_kind }) =
+            state.pending_requests.get(&outcome.request_id.get())
+        else {
+            return true;
+        };
+        let event_kind = *event_kind;
+        debug_assert!(payload.len() <= state.max_event_payload_bytes);
+        let event = OwnedEvent::new(
+            outcome.request_id.get(),
+            event_kind,
+            status,
+            payload_schema_version,
+            payload,
+        );
+        state.complete_reserved(outcome.request_id.get(), event)
+    };
+    action.finish();
+    true
+}
+
+fn encode_domain_result(
+    result: Result<DomainResponse, DomainError>,
+    max_payload_bytes: usize,
+) -> (ml_status_t, u32, Vec<u8>) {
+    match result {
+        Ok(DomainResponse::CoursePage(page)) => encode_json(ML_STATUS_OK, &page, max_payload_bytes),
+        Ok(DomainResponse::LessonPage(page)) => encode_json(ML_STATUS_OK, &page, max_payload_bytes),
+        Err(DomainError::Library(LibraryError::InvalidPageSize { limit })) => encode_json(
+            ML_STATUS_INVALID_ARGUMENT,
+            &serde_json::json!({
+                "error": "invalidPageSize",
+                "limit": limit,
+            }),
+            max_payload_bytes,
+        ),
+        Err(DomainError::Library(LibraryError::InvalidOffset { offset })) => encode_json(
+            ML_STATUS_INVALID_ARGUMENT,
+            &serde_json::json!({
+                "error": "invalidOffset",
+                "offset": offset,
+            }),
+            max_payload_bytes,
+        ),
+        Err(DomainError::Library(LibraryError::StaleRevision { expected, actual })) => encode_json(
+            ML_STATUS_STALE,
+            &serde_json::json!({
+                "error": "staleRevision",
+                "expected": expected,
+                "actual": actual,
+            }),
+            max_payload_bytes,
+        ),
+        Err(DomainError::Library(LibraryError::Database(_))) => encode_json(
+            ML_STATUS_FAILED,
+            &serde_json::json!({"error": "database"}),
+            max_payload_bytes,
+        ),
+        Err(DomainError::WorkerPanicked) => encode_json(
+            ML_STATUS_FAILED,
+            &serde_json::json!({"error": "workerPanicked"}),
+            max_payload_bytes,
+        ),
+    }
+}
+
+fn encode_json(
+    status: ml_status_t,
+    value: &impl serde::Serialize,
+    max_payload_bytes: usize,
+) -> (ml_status_t, u32, Vec<u8>) {
+    let mut writer = LimitedWriter::new(max_payload_bytes);
+    match serde_json::to_writer(&mut writer, value) {
+        Ok(()) => (status, 1, writer.into_inner()),
+        Err(_) => (ML_STATUS_FAILED, 0, Vec::new()),
+    }
+}
+
+struct LimitedWriter {
+    bytes: Vec<u8>,
+    limit: usize,
+}
+
+impl LimitedWriter {
+    fn new(limit: usize) -> Self {
+        Self {
+            bytes: Vec::new(),
+            limit,
+        }
+    }
+
+    fn into_inner(self) -> Vec<u8> {
+        self.bytes
+    }
+}
+
+impl Write for LimitedWriter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if bytes.len() > self.limit.saturating_sub(self.bytes.len()) {
+            return Err(io::Error::other("event payload limit exceeded"));
+        }
+        self.bytes.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
     }
 }
 
@@ -472,8 +755,8 @@ fn next_event_sequence() -> u64 {
     }
 }
 
-fn valid_config(config: &ml_config_v1) -> ml_status_t {
-    if config.struct_size < size_of::<ml_config_v1>() as u32 || config.abi_version != ML_ABI_VERSION
+fn valid_config(config: &ml_config_v2) -> ml_status_t {
+    if config.struct_size < size_of::<ml_config_v2>() as u32 || config.abi_version != ML_ABI_VERSION
     {
         return ML_STATUS_ABI_MISMATCH;
     }
@@ -481,10 +764,32 @@ fn valid_config(config: &ml_config_v1) -> ml_status_t {
         || config.event_queue_capacity > ML_MAX_EVENT_QUEUE_CAPACITY
         || config.max_event_payload_bytes == 0
         || config.max_event_payload_bytes > ML_MAX_EVENT_PAYLOAD_BYTES
+        || config.state_dir.is_null()
+        || config.state_dir_len == 0
+        || config.state_dir_len > ML_MAX_EVENT_PAYLOAD_BYTES as usize
     {
         return ML_STATUS_INVALID_ARGUMENT;
     }
     ML_STATUS_OK
+}
+
+unsafe fn copy_state_dir(config: &ml_config_v2) -> Result<PathBuf, ml_status_t> {
+    let bytes = unsafe { std::slice::from_raw_parts(config.state_dir, config.state_dir_len) };
+    let value = std::str::from_utf8(bytes).map_err(|_| ML_STATUS_INVALID_ARGUMENT)?;
+    if value.is_empty() || value.contains('\0') {
+        return Err(ML_STATUS_INVALID_ARGUMENT);
+    }
+    Ok(PathBuf::from(value))
+}
+
+unsafe fn copy_required_string(value: *const u8, len: usize) -> Result<String, ml_status_t> {
+    if value.is_null() || len == 0 || len > ML_MAX_EVENT_PAYLOAD_BYTES as usize {
+        return Err(ML_STATUS_INVALID_ARGUMENT);
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(value, len) };
+    std::str::from_utf8(bytes)
+        .map(str::to_owned)
+        .map_err(|_| ML_STATUS_INVALID_ARGUMENT)
 }
 
 fn valid_output(struct_size: u32, abi_version: u32, expected_size: usize) -> ml_status_t {
@@ -522,10 +827,11 @@ pub extern "C" fn ml_abi_version() -> u32 {
 ///
 /// # Safety
 ///
-/// `config` must point to a readable `ml_config_v1`. `out_core` must point to
+/// `config` must point to a readable `ml_config_v2`. Its state-directory bytes
+/// must remain readable for this call. `out_core` must point to
 /// writable storage for one handle. Both pointers are borrowed only for this call.
 pub unsafe extern "C" fn ml_core_create(
-    config: *const ml_config_v1,
+    config: *const ml_config_v2,
     out_core: *mut *mut ml_core_t,
 ) -> ml_status_t {
     ffi_status(|| {
@@ -541,14 +847,24 @@ pub unsafe extern "C" fn ml_core_create(
         if status != ML_STATUS_OK {
             return status;
         }
+        let state_dir = match unsafe { copy_state_dir(config) } {
+            Ok(state_dir) => state_dir,
+            Err(status) => return status,
+        };
 
-        let mut state = CoreState::new(config);
-        let event = OwnedEvent::new(0, ML_EVENT_CORE_READY, ML_STATUS_OK, 1, b"1".to_vec());
-        if state.enqueue_unreserved(event).is_err() {
-            return ML_STATUS_BUSY;
-        }
-        let core = Arc::new(Core {
-            state: Mutex::new(state),
+        let state = Arc::new(Mutex::new(CoreState::new(config)));
+        let weak_state = Arc::downgrade(&state);
+        let event_sink: DomainEventSink =
+            Arc::new(move |event| publish_domain_event(&weak_state, event));
+        let capacity = NonZeroUsize::new(config.event_queue_capacity as usize)
+            .expect("validated event capacity is nonzero");
+        let domain = match DomainWorker::start(state_dir, capacity, event_sink) {
+            Ok(domain) => domain,
+            Err(_) => return ML_STATUS_FAILED,
+        };
+        let core = Arc::new(NativeCore {
+            state,
+            domain: Mutex::new(Some(domain)),
         });
         let handle = lock(registry()).insert(core);
         unsafe { *out_core = ptr::without_provenance_mut(handle) };
@@ -574,11 +890,13 @@ pub unsafe extern "C" fn ml_core_destroy(core: *mut ml_core_t) {
         let retired_waker = {
             let mut state = lock(&core.state);
             state.destroyed = true;
+            state.starting = false;
             state.queued.clear();
             state.in_flight.clear();
             state.pending_requests.clear();
             state.waker.take()
         };
+        drop(lock(&core.domain).take());
         if let Some(waker) = retired_waker {
             waker.retire();
         }
@@ -752,6 +1070,119 @@ pub extern "C" fn ml_core_cancel(core: *mut ml_core_t, request_id: u64) -> ml_st
     })
 }
 
+#[unsafe(no_mangle)]
+/// Submits one asynchronous Library course-page request.
+///
+/// # Safety
+///
+/// `request` must point to a readable `ml_library_course_page_request_v1`, and
+/// `out_request_id` must point to writable `u64` storage. Both pointers are
+/// borrowed only for this call.
+pub unsafe extern "C" fn ml_library_course_page_v1(
+    core: *mut ml_core_t,
+    request: *const ml_library_course_page_request_v1,
+    out_request_id: *mut u64,
+) -> ml_status_t {
+    ffi_status(|| {
+        if out_request_id.is_null() {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        unsafe { *out_request_id = 0 };
+        if request.is_null() {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        let request = unsafe { *request };
+        let status = valid_output(
+            request.struct_size,
+            request.abi_version,
+            size_of::<ml_library_course_page_request_v1>(),
+        );
+        if status != ML_STATUS_OK {
+            return status;
+        }
+        if request.reserved != 0 {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        unsafe {
+            submit_domain_request(
+                core,
+                ML_EVENT_LIBRARY_COURSE_PAGE,
+                DomainRequest::CoursePage {
+                    expected_revision: request.expected_revision,
+                    offset: request.offset,
+                    limit: request.limit,
+                },
+                out_request_id,
+            )
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
+/// Submits one asynchronous Library lesson-page request.
+///
+/// A null `section_id` with zero length selects all Sections in the Course.
+///
+/// # Safety
+///
+/// `request` must point to a readable `ml_library_lesson_page_request_v1`.
+/// Its ID byte ranges must remain readable for this call. `out_request_id`
+/// must point to writable `u64` storage. All inputs are copied before return.
+pub unsafe extern "C" fn ml_library_lesson_page_v1(
+    core: *mut ml_core_t,
+    request: *const ml_library_lesson_page_request_v1,
+    out_request_id: *mut u64,
+) -> ml_status_t {
+    ffi_status(|| {
+        if out_request_id.is_null() {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        unsafe { *out_request_id = 0 };
+        if request.is_null() {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        let request = unsafe { *request };
+        let status = valid_output(
+            request.struct_size,
+            request.abi_version,
+            size_of::<ml_library_lesson_page_request_v1>(),
+        );
+        if status != ML_STATUS_OK {
+            return status;
+        }
+        if request.reserved != 0 {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        let course_id =
+            match unsafe { copy_required_string(request.course_id, request.course_id_len) } {
+                Ok(course_id) => course_id,
+                Err(status) => return status,
+            };
+        let section_id = if request.section_id.is_null() && request.section_id_len == 0 {
+            None
+        } else {
+            match unsafe { copy_required_string(request.section_id, request.section_id_len) } {
+                Ok(section_id) => Some(section_id),
+                Err(status) => return status,
+            }
+        };
+        unsafe {
+            submit_domain_request(
+                core,
+                ML_EVENT_LIBRARY_LESSON_PAGE,
+                DomainRequest::LessonPage {
+                    expected_revision: request.expected_revision,
+                    course_id,
+                    section_id,
+                    offset: request.offset,
+                    limit: request.limit,
+                },
+                out_request_id,
+            )
+        }
+    })
+}
+
 #[cfg(feature = "abi-test-hooks")]
 #[unsafe(no_mangle)]
 /// Accepts one deterministic held UTF-8 request for C ABI transport tests.
@@ -797,16 +1228,11 @@ pub unsafe extern "C" fn ml_core_test_submit(
 /// Completes one deterministic held request for C ABI transport tests.
 pub extern "C" fn ml_core_test_complete(core: *mut ml_core_t, request_id: u64) -> ml_status_t {
     ffi_core_status(core, false, |state| {
-        let Some(request) = state.pending_requests.get(&request_id) else {
-            return Action::status(ML_STATUS_NOT_FOUND);
+        let payload = match state.pending_requests.get(&request_id) {
+            Some(PendingRequest::Test { payload }) => payload.clone(),
+            _ => return Action::status(ML_STATUS_NOT_FOUND),
         };
-        let event = OwnedEvent::new(
-            request_id,
-            u32::MAX,
-            ML_STATUS_OK,
-            1,
-            request.payload.clone(),
-        );
+        let event = OwnedEvent::new(request_id, u32::MAX, ML_STATUS_OK, 1, payload);
         state.complete_reserved(request_id, event)
     })
 }
