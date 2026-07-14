@@ -21,7 +21,7 @@ Deletion must stay conservative around user data and required tooling. Do not re
 - Required source files, package manager lockfiles, or active dependency installs.
 - Active local build caches used for iterative development installs, especially `.next`, `out`, `src-tauri/target`, and `tsconfig.tsbuildinfo`. These ignored paths are not stale merely because they are generated; deleting `src-tauri/target` forces slow full Tauri/Rust rebuilds.
 - Release artifacts before they have been installed, uploaded, checksummed, or otherwise consumed.
-- Compatibility code that still has a tested behavior or migration purpose.
+- Current behavior that still has a tested product purpose. Previous melearner database compatibility, migration, backup, restore, and rollback paths are not current behavior and must not be retained.
 
 ## Consequences
 
@@ -29,5 +29,5 @@ Deletion must stay conservative around user data and required tooling. Do not re
 - Cleanup is part of the task, not an optional follow-up.
 - Agents should proactively scan for stale references after changing behavior, especially in docs, ADRs, package metadata, desktop entries, and install/release packaging.
 - Agents should remove proven stale files, code paths, docs, generated outputs, and temporary artifacts without waiting for an extra prompt.
-- If a file looks redundant but still has unclear ownership or migration value, leave it in place and name the uncertainty in the final summary.
+- If a file looks redundant but still has unclear ownership or current product value, leave it in place and name the uncertainty in the final summary.
 - Verification should include a targeted artifact scan after release or build work. For iterative local development, remove package files, package staging folders, temp screenshots, logs, and one-off verification files while keeping active build caches. For deliberate cold rebuilds or final source-only cleanup, explicitly state that caches will be removed and expect the next build to be slower.
