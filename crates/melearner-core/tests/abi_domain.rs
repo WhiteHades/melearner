@@ -43,6 +43,22 @@ fn poll(core: *mut ml_core_t) -> ml_event_v1 {
     }
 }
 
+fn ready_revision(core: *mut ml_core_t) -> u64 {
+    let mut ready = poll(core);
+    assert_eq!(ready.kind, ML_EVENT_CORE_READY);
+    assert_eq!(ready.status, ML_STATUS_OK);
+    assert_eq!(ready.payload_schema_version, 1);
+    assert!(!ready.payload.is_null());
+    let payload = unsafe { std::slice::from_raw_parts(ready.payload, ready.payload_len) };
+    let revision = std::str::from_utf8(payload)
+        .expect("ready revision is UTF-8")
+        .parse()
+        .expect("ready revision is an integer");
+    assert_ne!(revision, 0);
+    unsafe { ml_core_release_event(core, &mut ready) };
+    revision
+}
+
 #[test]
 fn course_page_returns_a_correlated_json_completion() {
     let data_dir = tempfile::tempdir().expect("create ABI state directory");
@@ -56,14 +72,12 @@ fn course_page_returns_a_correlated_json_completion() {
         unsafe { ml_core_create(&config(state_dir), &mut core) },
         ML_STATUS_OK
     );
-    let mut ready = poll(core);
-    assert_eq!(ready.kind, ML_EVENT_CORE_READY);
-    unsafe { ml_core_release_event(core, &mut ready) };
+    let revision = ready_revision(core);
 
     let request = ml_library_course_page_request_v1 {
         struct_size: size_of::<ml_library_course_page_request_v1>() as u32,
         abi_version: ML_ABI_VERSION,
-        expected_revision: 1,
+        expected_revision: revision,
         offset: 0,
         limit: 20,
         reserved: 0,
@@ -82,10 +96,72 @@ fn course_page_returns_a_correlated_json_completion() {
     assert_eq!(completed.payload_schema_version, 1);
     assert_eq!(
         unsafe { std::slice::from_raw_parts(completed.payload, completed.payload_len) },
-        br#"{"revision":1,"offset":0,"total":0,"rows":[]}"#
+        format!(r#"{{"revision":{revision},"offset":0,"total":0,"rows":[]}}"#).as_bytes()
     );
     unsafe { ml_core_release_event(core, &mut completed) };
     unsafe { ml_core_destroy(core) };
+}
+
+#[test]
+fn replacement_core_rejects_the_previous_session_revision() {
+    let data_dir = tempfile::tempdir().expect("create ABI state directory");
+    let state_dir = data_dir
+        .path()
+        .to_str()
+        .expect("temporary state directory is UTF-8")
+        .as_bytes();
+    let mut first = ptr::null_mut();
+    assert_eq!(
+        unsafe { ml_core_create(&config(state_dir), &mut first) },
+        ML_STATUS_OK
+    );
+    let first_revision = ready_revision(first);
+    unsafe { ml_core_destroy(first) };
+
+    let mut replacement = ptr::null_mut();
+    assert_eq!(
+        unsafe { ml_core_create(&config(state_dir), &mut replacement) },
+        ML_STATUS_OK
+    );
+    let replacement_revision = ready_revision(replacement);
+    assert!(replacement_revision > first_revision);
+
+    let mut request = ml_library_course_page_request_v1 {
+        struct_size: size_of::<ml_library_course_page_request_v1>() as u32,
+        abi_version: ML_ABI_VERSION,
+        expected_revision: first_revision,
+        offset: 0,
+        limit: 20,
+        reserved: 0,
+    };
+    let mut request_id = 0;
+    assert_eq!(
+        unsafe { ml_library_course_page_v1(replacement, &request, &mut request_id) },
+        ML_STATUS_OK
+    );
+    let mut stale = poll(replacement);
+    assert_eq!(stale.request_id, request_id);
+    assert_eq!(stale.kind, ML_EVENT_LIBRARY_COURSE_PAGE);
+    assert_eq!(stale.status, ML_STATUS_STALE);
+    assert_eq!(
+        unsafe { std::slice::from_raw_parts(stale.payload, stale.payload_len) },
+        format!(
+            r#"{{"actual":{replacement_revision},"error":"staleRevision","expected":{first_revision}}}"#
+        )
+        .as_bytes()
+    );
+    unsafe { ml_core_release_event(replacement, &mut stale) };
+
+    request.expected_revision = replacement_revision;
+    assert_eq!(
+        unsafe { ml_library_course_page_v1(replacement, &request, &mut request_id) },
+        ML_STATUS_OK
+    );
+    let mut current = poll(replacement);
+    assert_eq!(current.request_id, request_id);
+    assert_eq!(current.status, ML_STATUS_OK);
+    unsafe { ml_core_release_event(replacement, &mut current) };
+    unsafe { ml_core_destroy(replacement) };
 }
 
 #[test]
@@ -101,13 +177,12 @@ fn course_page_validates_its_versioned_request() {
         unsafe { ml_core_create(&config(state_dir), &mut core) },
         ML_STATUS_OK
     );
-    let mut ready = poll(core);
-    unsafe { ml_core_release_event(core, &mut ready) };
+    let revision = ready_revision(core);
 
     let mut request = ml_library_course_page_request_v1 {
         struct_size: size_of::<ml_library_course_page_request_v1>() as u32,
         abi_version: ML_ABI_VERSION,
-        expected_revision: 1,
+        expected_revision: revision,
         offset: 0,
         limit: 20,
         reserved: 0,
@@ -155,15 +230,14 @@ fn lesson_page_copies_unicode_filters_before_returning() {
         unsafe { ml_core_create(&config(state_dir), &mut core) },
         ML_STATUS_OK
     );
-    let mut ready = poll(core);
-    unsafe { ml_core_release_event(core, &mut ready) };
+    let revision = ready_revision(core);
 
     let mut course_id = "course α".as_bytes().to_vec();
     let mut section_id = "section β".as_bytes().to_vec();
     let request = ml_library_lesson_page_request_v1 {
         struct_size: size_of::<ml_library_lesson_page_request_v1>() as u32,
         abi_version: ML_ABI_VERSION,
-        expected_revision: 1,
+        expected_revision: revision,
         offset: 0,
         limit: 20,
         reserved: 0,
@@ -186,7 +260,7 @@ fn lesson_page_copies_unicode_filters_before_returning() {
     assert_eq!(completed.status, ML_STATUS_OK);
     assert_eq!(
         unsafe { std::slice::from_raw_parts(completed.payload, completed.payload_len) },
-        "{\"revision\":1,\"courseId\":\"course α\",\"sectionId\":\"section β\",\"offset\":0,\"total\":0,\"rows\":[]}".as_bytes()
+        format!("{{\"revision\":{revision},\"courseId\":\"course α\",\"sectionId\":\"section β\",\"offset\":0,\"total\":0,\"rows\":[]}}").as_bytes()
     );
     unsafe { ml_core_release_event(core, &mut completed) };
     unsafe { ml_core_destroy(core) };
@@ -205,14 +279,13 @@ fn lesson_page_validates_its_versioned_borrowed_inputs() {
         unsafe { ml_core_create(&config(state_dir), &mut core) },
         ML_STATUS_OK
     );
-    let mut ready = poll(core);
-    unsafe { ml_core_release_event(core, &mut ready) };
+    let revision = ready_revision(core);
 
     let course_id = b"course";
     let mut request = ml_library_lesson_page_request_v1 {
         struct_size: size_of::<ml_library_lesson_page_request_v1>() as u32,
         abi_version: ML_ABI_VERSION,
-        expected_revision: 1,
+        expected_revision: revision,
         offset: 0,
         limit: 20,
         reserved: 0,
@@ -312,7 +385,7 @@ fn lesson_page_validates_its_versioned_borrowed_inputs() {
     assert_eq!(completed.kind, ML_EVENT_LIBRARY_LESSON_PAGE);
     assert_eq!(
         unsafe { std::slice::from_raw_parts(completed.payload, completed.payload_len) },
-        br#"{"revision":1,"courseId":"course","sectionId":null,"offset":0,"total":0,"rows":[]}"#
+        format!(r#"{{"revision":{revision},"courseId":"course","sectionId":null,"offset":0,"total":0,"rows":[]}}"#).as_bytes()
     );
     unsafe { ml_core_release_event(core, &mut completed) };
     unsafe { ml_core_destroy(core) };
@@ -331,13 +404,15 @@ fn domain_errors_are_correlated_json_completions() {
         unsafe { ml_core_create(&config(state_dir), &mut core) },
         ML_STATUS_OK
     );
-    let mut ready = poll(core);
-    unsafe { ml_core_release_event(core, &mut ready) };
+    let revision = ready_revision(core);
+    let stale_revision = revision
+        .checked_add(1)
+        .expect("test revision has a successor");
 
     let mut request = ml_library_course_page_request_v1 {
         struct_size: size_of::<ml_library_course_page_request_v1>() as u32,
         abi_version: ML_ABI_VERSION,
-        expected_revision: 2,
+        expected_revision: stale_revision,
         offset: 0,
         limit: 20,
         reserved: 0,
@@ -353,11 +428,12 @@ fn domain_errors_are_correlated_json_completions() {
     assert_eq!(stale.payload_schema_version, 1);
     assert_eq!(
         unsafe { std::slice::from_raw_parts(stale.payload, stale.payload_len) },
-        br#"{"actual":1,"error":"staleRevision","expected":2}"#
+        format!(r#"{{"actual":{revision},"error":"staleRevision","expected":{stale_revision}}}"#)
+            .as_bytes()
     );
     unsafe { ml_core_release_event(core, &mut stale) };
 
-    request.expected_revision = 1;
+    request.expected_revision = revision;
     request.limit = 0;
     assert_eq!(
         unsafe { ml_library_course_page_v1(core, &request, &mut request_id) },
@@ -401,13 +477,12 @@ fn oversized_domain_payloads_fail_terminally_without_consuming_capacity() {
     limited.max_event_payload_bytes = 8;
     let mut core = ptr::null_mut();
     assert_eq!(unsafe { ml_core_create(&limited, &mut core) }, ML_STATUS_OK);
-    let mut ready = poll(core);
-    unsafe { ml_core_release_event(core, &mut ready) };
+    let revision = ready_revision(core);
 
     let request = ml_library_course_page_request_v1 {
         struct_size: size_of::<ml_library_course_page_request_v1>() as u32,
         abi_version: ML_ABI_VERSION,
-        expected_revision: 1,
+        expected_revision: revision,
         offset: 0,
         limit: 20,
         reserved: 0,
@@ -442,13 +517,12 @@ fn cancellation_and_domain_completion_emit_one_terminal_event() {
         unsafe { ml_core_create(&config(state_dir), &mut core) },
         ML_STATUS_OK
     );
-    let mut ready = poll(core);
-    unsafe { ml_core_release_event(core, &mut ready) };
+    let revision = ready_revision(core);
 
     let request = ml_library_course_page_request_v1 {
         struct_size: size_of::<ml_library_course_page_request_v1>() as u32,
         abi_version: ML_ABI_VERSION,
-        expected_revision: 1,
+        expected_revision: revision,
         offset: 0,
         limit: 20,
         reserved: 0,
@@ -519,8 +593,7 @@ fn worker_waker_observes_the_request_id_and_can_destroy_the_core() {
         unsafe { ml_core_create(&config(state_dir), &mut core) },
         ML_STATUS_OK
     );
-    let mut ready = poll(core);
-    unsafe { ml_core_release_event(core, &mut ready) };
+    let revision = ready_revision(core);
 
     let (completed, completed_receiver) = mpsc::channel();
     let mut request_id = 0;
@@ -542,7 +615,7 @@ fn worker_waker_observes_the_request_id_and_can_destroy_the_core() {
     let request = ml_library_course_page_request_v1 {
         struct_size: size_of::<ml_library_course_page_request_v1>() as u32,
         abi_version: ML_ABI_VERSION,
-        expected_revision: 1,
+        expected_revision: revision,
         offset: 0,
         limit: 20,
         reserved: 0,
