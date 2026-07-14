@@ -1064,7 +1064,7 @@ pub extern "C" fn ml_core_cancel(core: *mut ml_core_t, request_id: u64) -> ml_st
             request_id,
             ML_EVENT_REQUEST_CANCELLED,
             ML_STATUS_CANCELLED,
-            1,
+            0,
             Vec::new(),
         );
         state.complete_reserved(request_id, event)
