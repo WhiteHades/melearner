@@ -756,6 +756,35 @@ fn next_event_sequence() -> u64 {
     }
 }
 
+fn take_next_library_revision(next_revision: &AtomicU64) -> Option<NonZeroU64> {
+    let revision = next_revision
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |revision| {
+            if revision == 0 {
+                None
+            } else {
+                Some(revision.checked_add(1).unwrap_or(0))
+            }
+        })
+        .ok()?;
+    NonZeroU64::new(revision)
+}
+
+fn next_library_revision() -> Option<NonZeroU64> {
+    static NEXT_REVISION: AtomicU64 = AtomicU64::new(1);
+    take_next_library_revision(&NEXT_REVISION)
+}
+
+#[cfg(test)]
+#[test]
+fn library_revision_allocator_exhausts_instead_of_reusing_values() {
+    let next_revision = AtomicU64::new(u64::MAX);
+    assert_eq!(
+        take_next_library_revision(&next_revision).map(NonZeroU64::get),
+        Some(u64::MAX)
+    );
+    assert_eq!(take_next_library_revision(&next_revision), None);
+}
+
 fn valid_config(config: &ml_config_v2) -> ml_status_t {
     if config.struct_size < size_of::<ml_config_v2>() as u32 || config.abi_version != ML_ABI_VERSION
     {
@@ -859,7 +888,10 @@ pub unsafe extern "C" fn ml_core_create(
             Arc::new(move |event| publish_domain_event(&weak_state, event));
         let capacity = NonZeroUsize::new(config.event_queue_capacity as usize)
             .expect("validated event capacity is nonzero");
-        let domain = match DomainWorker::start(state_dir, capacity, event_sink) {
+        let Some(revision) = next_library_revision() else {
+            return ML_STATUS_FAILED;
+        };
+        let domain = match DomainWorker::start(state_dir, revision, capacity, event_sink) {
             Ok(domain) => domain,
             Err(_) => return ML_STATUS_FAILED,
         };
