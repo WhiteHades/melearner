@@ -143,9 +143,10 @@ jobs:
       - name: build frontend assets
         run: pnpm build
 
-      - name: cargo check
+      - name: rust checks
         run: |
           export LIBRARY_PATH="$(brew --prefix mpv)/lib:${LIBRARY_PATH:-}"
+          cargo test --locked --all-features --manifest-path crates/melearner-core/Cargo.toml --target-dir src-tauri/target
           cargo check --manifest-path src-tauri/Cargo.toml
 
   windows-compile:
@@ -193,7 +194,7 @@ jobs:
       - name: build frontend assets
         run: pnpm build
 
-      - name: cargo check
+      - name: rust checks
         shell: msys2 {0}
         env:
           CARGO_BUILD_TARGET: x86_64-pc-windows-gnu
@@ -204,4 +205,5 @@ jobs:
           RUSTFLAGS: -L native=/ucrt64/lib
         run: |
           export PATH="/c/Users/runneradmin/.cargo/bin:/ucrt64/bin:$PATH"
+          cargo test --locked --all-features --manifest-path crates/melearner-core/Cargo.toml --target-dir src-tauri/target
           cargo check --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-gnu
