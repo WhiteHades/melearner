@@ -2,20 +2,27 @@
 
 use std::ffi::c_void;
 use std::mem::size_of;
+use std::path::Path;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, mpsc};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use melearner_core::*;
 
-fn config(capacity: u32, max_payload: u32) -> ml_config_v1 {
-    ml_config_v1 {
-        struct_size: size_of::<ml_config_v1>() as u32,
+fn config(state_dir: &Path, capacity: u32, max_payload: u32) -> ml_config_v2 {
+    let state_dir = state_dir
+        .to_str()
+        .expect("temporary state directory is UTF-8")
+        .as_bytes();
+    ml_config_v2 {
+        struct_size: size_of::<ml_config_v2>() as u32,
         abi_version: ML_ABI_VERSION,
         event_queue_capacity: capacity,
         max_event_payload_bytes: max_payload,
+        state_dir: state_dir.as_ptr(),
+        state_dir_len: state_dir.len(),
     }
 }
 
@@ -34,33 +41,34 @@ fn event() -> ml_event_v1 {
     }
 }
 
-fn create_empty(capacity: u32, max_payload: u32) -> *mut ml_core_t {
+fn create_empty(capacity: u32, max_payload: u32) -> (tempfile::TempDir, *mut ml_core_t) {
+    let state_dir = tempfile::tempdir().expect("create transport state directory");
     let mut core = ptr::null_mut();
     assert_eq!(
-        unsafe { ml_core_create(&config(capacity, max_payload), &mut core) },
+        unsafe { ml_core_create(&config(state_dir.path(), capacity, max_payload), &mut core) },
         ML_STATUS_OK
     );
-    let mut ready = event();
-    assert_eq!(
-        unsafe { ml_core_poll_event(core, &mut ready) },
-        ML_STATUS_OK
-    );
+    let mut ready = poll(core);
+    assert_eq!(ready.kind, ML_EVENT_CORE_READY);
     unsafe { ml_core_release_event(core, &mut ready) };
-    core
+    (state_dir, core)
 }
 
 fn poll(core: *mut ml_core_t) -> ml_event_v1 {
-    let mut event = event();
-    assert_eq!(
-        unsafe { ml_core_poll_event(core, &mut event) },
-        ML_STATUS_OK
-    );
-    event
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let mut next = event();
+        match unsafe { ml_core_poll_event(core, &mut next) } {
+            ML_STATUS_OK => return next,
+            ML_STATUS_EMPTY if Instant::now() < deadline => thread::yield_now(),
+            status => panic!("event did not arrive: status {status}"),
+        }
+    }
 }
 
 #[test]
 fn borrowed_input_is_copied_and_outstanding_events_apply_backpressure() {
-    let core = create_empty(2, 16);
+    let (_state_dir, core) = create_empty(2, 16);
     let mut malformed_request = u64::MAX;
     assert_eq!(
         unsafe { ml_core_test_submit(core, ptr::null(), 1, &mut malformed_request) },
@@ -161,7 +169,7 @@ fn borrowed_input_is_copied_and_outstanding_events_apply_backpressure() {
 
 #[test]
 fn cancellation_and_completion_race_to_one_terminal_event() {
-    let core = create_empty(2, 16);
+    let (_state_dir, core) = create_empty(2, 16);
     let mut request_id = 0;
     assert_eq!(
         unsafe { ml_core_test_submit(core, b"race".as_ptr(), 4, &mut request_id) },
@@ -215,7 +223,7 @@ fn cancellation_and_completion_race_to_one_terminal_event() {
 
 #[test]
 fn multiple_in_flight_payloads_remain_valid_until_each_release() {
-    let core = create_empty(3, 16);
+    let (_state_dir, core) = create_empty(3, 16);
     let mut first_request = 0;
     let mut second_request = 0;
     assert_eq!(
@@ -264,18 +272,19 @@ fn multiple_in_flight_payloads_remain_valid_until_each_release() {
 
 #[test]
 fn panic_marks_the_core_failed_and_emits_one_fatal_event_when_space_is_released() {
+    let state_dir = tempfile::tempdir().expect("create panic transport state directory");
     let mut core = ptr::null_mut();
     assert_eq!(
-        unsafe { ml_core_create(&config(1, 1), &mut core) },
+        unsafe { ml_core_create(&config(state_dir.path(), 1, 1), &mut core) },
         ML_STATUS_OK
     );
 
+    let mut ready = poll(core);
+    assert_eq!(ready.kind, ML_EVENT_CORE_READY);
     assert_eq!(ml_core_test_panic(core), ML_STATUS_PANIC);
     assert_eq!(ml_core_cancel(core, 1), ML_STATUS_FAILED);
     assert_eq!(ml_core_test_panic(core), ML_STATUS_FAILED);
 
-    let mut ready = poll(core);
-    assert_eq!(ready.kind, ML_EVENT_CORE_READY);
     let mut empty = event();
     assert_eq!(
         unsafe { ml_core_poll_event(core, &mut empty) },
@@ -347,7 +356,7 @@ unsafe extern "C" fn reentrant_wake(context: *mut c_void) {
 
 #[test]
 fn concurrent_empty_to_nonempty_transition_wakes_once_outside_core_locks() {
-    let core = create_empty(32, 16);
+    let (_state_dir, core) = create_empty(32, 16);
     let probe = Box::new(ReentrantProbe {
         core: AtomicUsize::new(core.addr()),
         calls: AtomicUsize::new(0),
@@ -398,7 +407,7 @@ fn concurrent_empty_to_nonempty_transition_wakes_once_outside_core_locks() {
 
 #[test]
 fn active_callback_can_clear_itself_or_destroy_its_core() {
-    let core = create_empty(4, 16);
+    let (_clear_state_dir, core) = create_empty(4, 16);
     let clear_probe = Box::new(ReentrantProbe {
         core: AtomicUsize::new(core.addr()),
         calls: AtomicUsize::new(0),
@@ -421,7 +430,7 @@ fn active_callback_can_clear_itself_or_destroy_its_core() {
     }
     unsafe { ml_core_destroy(core) };
 
-    let core = create_empty(4, 16);
+    let (_destroy_state_dir, core) = create_empty(4, 16);
     let destroy_probe = Box::new(ReentrantProbe {
         core: AtomicUsize::new(core.addr()),
         calls: AtomicUsize::new(0),
@@ -463,7 +472,7 @@ unsafe extern "C" fn blocking_wake(context: *mut c_void) {
 
 #[test]
 fn clearing_a_waker_waits_for_an_active_callback() {
-    let core = create_empty(4, 16);
+    let (_state_dir, core) = create_empty(4, 16);
     let probe = Box::new(BlockingProbe {
         entered: Barrier::new(2),
         release: Barrier::new(2),
