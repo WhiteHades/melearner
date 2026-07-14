@@ -128,7 +128,6 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             scanner::scan_folder,
-            scanner::get_file_info,
             log_frontend,
             open_native,
             media::generate_video_thumbnail,
