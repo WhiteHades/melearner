@@ -47,6 +47,65 @@ jobs:
       - name: run zig abi smoke
         run: scripts/test-core-abi.sh
 
+  native-app-linux:
+    name: native app linux
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: install zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: install native dependencies
+        run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev xauth xvfb
+
+      - name: verify native app
+        working-directory: native-app
+        env:
+          GTK_A11Y: none
+          XDG_DATA_HOME: ${{ runner.temp }}/melearner-native-data
+        run: |
+          set -euo pipefail
+
+          zig fmt --check build.zig src
+          zig build test -Dplatform=null
+
+          sdk_dir="$(find zig-pkg -mindepth 1 -maxdepth 1 -type d -name 'native_sdk-*' -print -quit)"
+          test -f "$sdk_dir/build.zig"
+          (cd "$sdk_dir" && zig build cli)
+          cli="$PWD/$sdk_dir/zig-out/bin/native"
+          "$cli" check . --strict
+
+          zig build -Dplatform=linux -Doptimize=ReleaseSafe -Dautomation=true
+          if readelf -dW zig-out/bin/melearner | grep -Eiq 'webkit|javascriptcore'; then
+            echo "native app links a web runtime" >&2
+            exit 1
+          fi
+
+          rm -rf "$XDG_DATA_HOME" .zig-cache/native-sdk-automation
+          xvfb-run -a ./zig-out/bin/melearner >"$RUNNER_TEMP/melearner-native.log" 2>&1 &
+          app_pid=$!
+          cleanup() {
+            kill "$app_pid" >/dev/null 2>&1 || true
+            rm -rf .zig-cache/native-sdk-automation
+          }
+          trap cleanup EXIT
+
+          if ! "$cli" automate assert --timeout-ms 90000 \
+            'ready=true' \
+            'gpu_nonblank=true' \
+            'dispatch_errors=0' \
+            'Your Library is empty'; then
+            cat "$RUNNER_TEMP/melearner-native.log"
+            exit 1
+          fi
+
   linux:
     name: linux checks
     runs-on: ubuntu-22.04
