@@ -22,12 +22,13 @@ use coordinator::{
     DomainError, DomainEvent, DomainEventSink, DomainRequest, DomainResponse, DomainWorker,
     SubmitError,
 };
-use library::{ActivityPageInput, LibraryError, ProgressInput};
+use library::{ActivityPageInput, LibraryError, ProgressInput, SearchPageInput};
 
 pub const ML_ABI_VERSION: u32 = 2;
 pub const ML_MAX_EVENT_QUEUE_CAPACITY: u32 = 65_536;
 pub const ML_MAX_EVENT_PAYLOAD_BYTES: u32 = 16 * 1024 * 1024;
 pub const ML_MIN_EVENT_PAYLOAD_BYTES: u32 = 20;
+pub const ML_MAX_SEARCH_QUERY_BYTES: u32 = 64 * 1024;
 
 pub type ml_status_t = u32;
 pub const ML_STATUS_OK: ml_status_t = 0;
@@ -51,6 +52,8 @@ pub const ML_EVENT_LIBRARY_LESSON_PAGE: ml_event_kind_t = 5;
 pub const ML_EVENT_LIBRARY_SCAN: ml_event_kind_t = 6;
 pub const ML_EVENT_PROGRESS_UPDATED: ml_event_kind_t = 7;
 pub const ML_EVENT_ACTIVITY_DAY_PAGE: ml_event_kind_t = 8;
+pub const ML_EVENT_SEARCH_INDEX_READY: ml_event_kind_t = 9;
+pub const ML_EVENT_SEARCH_PAGE: ml_event_kind_t = 10;
 
 pub type ml_wake_fn = Option<unsafe extern "C" fn(context: *mut c_void)>;
 
@@ -125,6 +128,29 @@ pub struct ml_activity_day_page_request_v1 {
     pub lookback_days: u32,
     pub limit: u32,
     pub reserved: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ml_search_rebuild_request_v1 {
+    pub struct_size: u32,
+    pub abi_version: u32,
+    pub expected_revision: u64,
+    pub reserved: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ml_search_query_request_v1 {
+    pub struct_size: u32,
+    pub abi_version: u32,
+    pub expected_index_revision: u64,
+    pub query_id: u64,
+    pub offset: u64,
+    pub limit: u32,
+    pub reserved: u32,
+    pub query: *const u8,
+    pub query_len: usize,
 }
 
 #[repr(C)]
@@ -644,6 +670,9 @@ unsafe fn submit_domain_request(
             }
             | DomainRequest::PutProgress {
                 max_payload_bytes, ..
+            }
+            | DomainRequest::RebuildSearch {
+                max_payload_bytes, ..
             } => *max_payload_bytes = state.max_event_payload_bytes,
             _ => {}
         }
@@ -790,6 +819,10 @@ fn encode_domain_result(
         Ok(DomainResponse::ActivityDayPage(page)) => {
             encode_json(ML_STATUS_OK, &page, max_payload_bytes)
         }
+        Ok(DomainResponse::SearchIndexReady(ready)) => {
+            encode_json(ML_STATUS_OK, &ready, max_payload_bytes)
+        }
+        Ok(DomainResponse::SearchPage(page)) => encode_json(ML_STATUS_OK, &page, max_payload_bytes),
         Err(DomainError::Library(LibraryError::InvalidPageSize { limit })) => encode_json(
             ML_STATUS_INVALID_ARGUMENT,
             &serde_json::json!({
@@ -819,11 +852,27 @@ fn encode_domain_result(
             &serde_json::json!({"error": "invalidProgress"}),
             max_payload_bytes,
         ),
+        Err(DomainError::Library(LibraryError::InvalidSearchQuery)) => encode_json(
+            ML_STATUS_INVALID_ARGUMENT,
+            &serde_json::json!({"error": "invalidSearchQuery"}),
+            max_payload_bytes,
+        ),
         Err(DomainError::Library(LibraryError::LessonNotFound)) => encode_json(
             ML_STATUS_NOT_FOUND,
             &serde_json::json!({"error": "lessonNotFound"}),
             max_payload_bytes,
         ),
+        Err(DomainError::Library(LibraryError::StaleSearchIndex { expected, actual })) => {
+            encode_json(
+                ML_STATUS_STALE,
+                &serde_json::json!({
+                    "error": "staleSearchIndex",
+                    "expected": expected,
+                    "actual": actual,
+                }),
+                max_payload_bytes,
+            )
+        }
         Err(DomainError::Library(LibraryError::StaleRevision { expected, actual })) => encode_json(
             ML_STATUS_STALE,
             &serde_json::json!({
@@ -1598,6 +1647,115 @@ pub unsafe extern "C" fn ml_activity_day_page_v1(
                     },
                 },
                 None,
+                out_request_id,
+            )
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
+/// Rebuilds the in-memory Lesson search index from the current Library.
+///
+/// # Safety
+///
+/// `request` must point to a readable `ml_search_rebuild_request_v1`, and
+/// `out_request_id` must point to writable `u64` storage. Both pointers are
+/// borrowed only for this call.
+pub unsafe extern "C" fn ml_search_rebuild_v1(
+    core: *mut ml_core_t,
+    request: *const ml_search_rebuild_request_v1,
+    out_request_id: *mut u64,
+) -> ml_status_t {
+    ffi_status(|| {
+        if out_request_id.is_null() {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        unsafe { *out_request_id = 0 };
+        if request.is_null() {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        let request = unsafe { *request };
+        let status = valid_output(
+            request.struct_size,
+            request.abi_version,
+            size_of::<ml_search_rebuild_request_v1>(),
+        );
+        if status != ML_STATUS_OK {
+            return status;
+        }
+        if request.reserved != 0 {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        let control = Arc::new(MutationControl::new());
+        unsafe {
+            submit_domain_request(
+                core,
+                ML_EVENT_SEARCH_INDEX_READY,
+                DomainRequest::RebuildSearch {
+                    expected_revision: request.expected_revision,
+                    max_payload_bytes: 0,
+                    control: Arc::clone(&control),
+                },
+                Some(control),
+                out_request_id,
+            )
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
+/// Submits one asynchronous paged Lesson search query.
+///
+/// # Safety
+///
+/// `request` must point to a readable `ml_search_query_request_v1`. Its query
+/// bytes must remain readable for this call. `out_request_id` must point to
+/// writable `u64` storage. The query is copied before return.
+pub unsafe extern "C" fn ml_search_query_v1(
+    core: *mut ml_core_t,
+    request: *const ml_search_query_request_v1,
+    out_request_id: *mut u64,
+) -> ml_status_t {
+    ffi_status(|| {
+        if out_request_id.is_null() {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        unsafe { *out_request_id = 0 };
+        if request.is_null() {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        let request = unsafe { *request };
+        let status = valid_output(
+            request.struct_size,
+            request.abi_version,
+            size_of::<ml_search_query_request_v1>(),
+        );
+        if status != ML_STATUS_OK {
+            return status;
+        }
+        if request.reserved != 0 || request.query_len > ML_MAX_SEARCH_QUERY_BYTES as usize {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        let query = match unsafe { copy_required_string(request.query, request.query_len) } {
+            Ok(query) => query,
+            Err(status) => return status,
+        };
+        let control = Arc::new(MutationControl::new());
+        unsafe {
+            submit_domain_request(
+                core,
+                ML_EVENT_SEARCH_PAGE,
+                DomainRequest::SearchPage {
+                    input: SearchPageInput {
+                        expected_index_revision: request.expected_index_revision,
+                        query_id: request.query_id,
+                        query,
+                        offset: request.offset,
+                        limit: request.limit,
+                    },
+                    control: Arc::clone(&control),
+                },
+                Some(control),
                 out_request_id,
             )
         }

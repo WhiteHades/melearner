@@ -10,7 +10,7 @@ use std::thread::{self, JoinHandle};
 use crate::MutationControl;
 use crate::library::{
     ActivityDayPage, ActivityPageInput, CoursePage, LessonPage, LibraryDatabase, LibraryError,
-    ProgressInput, ProgressUpdate, ReconcileResult,
+    ProgressInput, ProgressUpdate, ReconcileResult, SearchIndexReady, SearchPage, SearchPageInput,
 };
 
 #[derive(Debug)]
@@ -41,6 +41,15 @@ pub(crate) enum DomainRequest {
     ActivityDayPage {
         input: ActivityPageInput,
     },
+    RebuildSearch {
+        expected_revision: u64,
+        max_payload_bytes: usize,
+        control: Arc<MutationControl>,
+    },
+    SearchPage {
+        input: SearchPageInput,
+        control: Arc<MutationControl>,
+    },
     #[cfg(test)]
     LongQuery {
         entered: mpsc::Sender<()>,
@@ -56,6 +65,8 @@ pub(crate) enum DomainResponse {
     Scan(ReconcileResult),
     Progress(ProgressUpdate),
     ActivityDayPage(ActivityDayPage),
+    SearchIndexReady(SearchIndexReady),
+    SearchPage(SearchPage),
 }
 
 #[derive(Debug)]
@@ -231,6 +242,18 @@ impl DomainState {
             )),
             DomainRequest::ActivityDayPage { input } => Ok(DomainResponse::ActivityDayPage(
                 self.library.activity_day_page(input).await?,
+            )),
+            DomainRequest::RebuildSearch {
+                expected_revision,
+                max_payload_bytes,
+                control,
+            } => Ok(DomainResponse::SearchIndexReady(
+                self.library
+                    .rebuild_search_index(expected_revision, max_payload_bytes, &control)
+                    .await?,
+            )),
+            DomainRequest::SearchPage { input, control } => Ok(DomainResponse::SearchPage(
+                self.library.search_page(input, &control)?,
             )),
             #[cfg(test)]
             DomainRequest::LongQuery { entered } => {

@@ -26,6 +26,28 @@ comptime {
     if (@offsetOf(c.ml_activity_day_page_request_v1, "expected_revision") != 8) {
         @compileError("activity page request layout drift");
     }
+    if (@sizeOf(c.ml_search_rebuild_request_v1) != 24) {
+        @compileError("search rebuild request layout drift");
+    }
+    if (@offsetOf(c.ml_search_rebuild_request_v1, "reserved") != 16) {
+        @compileError("search rebuild reserved offset drift");
+    }
+    if (@sizeOf(c.ml_search_query_request_v1) != 40 + @sizeOf(usize) * 2) {
+        @compileError("search query request layout drift");
+    }
+    if (@offsetOf(c.ml_search_query_request_v1, "expected_index_revision") != 8 or
+        @offsetOf(c.ml_search_query_request_v1, "query_id") != 16 or
+        @offsetOf(c.ml_search_query_request_v1, "offset") != 24 or
+        @offsetOf(c.ml_search_query_request_v1, "limit") != 32 or
+        @offsetOf(c.ml_search_query_request_v1, "reserved") != 36 or
+        @offsetOf(c.ml_search_query_request_v1, "query") != 40 or
+        @offsetOf(c.ml_search_query_request_v1, "query_len") != 40 + @sizeOf(usize))
+    {
+        @compileError("search query request field drift");
+    }
+    if (c.ML_MAX_SEARCH_QUERY_BYTES != 64 * 1024) {
+        @compileError("unexpected search query bound");
+    }
     if (@sizeOf(c.ml_core_limits_v1) != 16) @compileError("ml_core_limits_v1 layout drift");
     if (@offsetOf(c.ml_event_v1, "sequence") != 8) @compileError("ml_event_v1 sequence offset drift");
     if (@offsetOf(c.ml_event_v1, "payload") != 40) @compileError("ml_event_v1 payload offset drift");
@@ -108,6 +130,64 @@ pub fn main(init: std.process.Init) !void {
     );
     try expect(revision > initial_revision);
     c.ml_core_release_event(core, &scanned);
+
+    var rebuild_request = c.ml_search_rebuild_request_v1{
+        .struct_size = @sizeOf(c.ml_search_rebuild_request_v1),
+        .abi_version = c.ML_ABI_VERSION,
+        .expected_revision = revision,
+        .reserved = 0,
+    };
+    var rebuild_request_id: u64 = 0;
+    try expectEqual(
+        @as(c.ml_status_t, c.ML_STATUS_OK),
+        c.ml_search_rebuild_v1(core, &rebuild_request, &rebuild_request_id),
+    );
+    try expect(rebuild_request_id != 0);
+
+    var rebuilt = try pollEvent(io, core);
+    try expectEqual(rebuild_request_id, rebuilt.request_id);
+    try expectEqual(@as(c.ml_event_kind_t, c.ML_EVENT_SEARCH_INDEX_READY), rebuilt.kind);
+    try expectEqual(@as(c.ml_status_t, c.ML_STATUS_OK), rebuilt.status);
+    const expected_rebuild = try std.fmt.allocPrint(
+        init.gpa,
+        "{{\"indexRevision\":{d},\"entryCount\":0}}",
+        .{revision},
+    );
+    defer init.gpa.free(expected_rebuild);
+    try expectPayload(&rebuilt, expected_rebuild);
+    c.ml_core_release_event(core, &rebuilt);
+
+    const search_text = "   ";
+    var search_request = c.ml_search_query_request_v1{
+        .struct_size = @sizeOf(c.ml_search_query_request_v1),
+        .abi_version = c.ML_ABI_VERSION,
+        .expected_index_revision = revision,
+        .query_id = 7,
+        .offset = 0,
+        .limit = 20,
+        .reserved = 0,
+        .query = search_text.ptr,
+        .query_len = search_text.len,
+    };
+    var search_request_id: u64 = 0;
+    try expectEqual(
+        @as(c.ml_status_t, c.ML_STATUS_OK),
+        c.ml_search_query_v1(core, &search_request, &search_request_id),
+    );
+    try expect(search_request_id != 0);
+
+    var searched = try pollEvent(io, core);
+    try expectEqual(search_request_id, searched.request_id);
+    try expectEqual(@as(c.ml_event_kind_t, c.ML_EVENT_SEARCH_PAGE), searched.kind);
+    try expectEqual(@as(c.ml_status_t, c.ML_STATUS_OK), searched.status);
+    const expected_search = try std.fmt.allocPrint(
+        init.gpa,
+        "{{\"queryId\":7,\"indexRevision\":{d},\"offset\":0,\"total\":0,\"rows\":[]}}",
+        .{revision},
+    );
+    defer init.gpa.free(expected_search);
+    try expectPayload(&searched, expected_search);
+    c.ml_core_release_event(core, &searched);
 
     var activity_request = c.ml_activity_day_page_request_v1{
         .struct_size = @sizeOf(c.ml_activity_day_page_request_v1),

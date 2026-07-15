@@ -252,6 +252,200 @@ fn progress_and_activity_round_trip_through_the_versioned_abi() {
 }
 
 #[test]
+fn search_rebuild_and_query_round_trip_through_the_versioned_abi() {
+    let data_dir = tempfile::tempdir().expect("create ABI state directory");
+    let library_dir = tempfile::tempdir().expect("create ABI library directory");
+    for relative_path in [
+        "Systems/Core Concepts/14 Binary Heaps.mp4",
+        "Systems/Core Concepts/notes.pdf",
+    ] {
+        let path = library_dir.path().join(relative_path);
+        std::fs::create_dir_all(path.parent().expect("search item has a parent"))
+            .expect("create search item parent");
+        std::fs::write(path, b"search fixture").expect("write search item");
+    }
+
+    let state_dir = data_dir
+        .path()
+        .to_str()
+        .expect("temporary state directory is UTF-8")
+        .as_bytes();
+    let root_path = library_dir
+        .path()
+        .to_str()
+        .expect("temporary library directory is UTF-8")
+        .as_bytes();
+    let mut core = ptr::null_mut();
+    assert_eq!(
+        unsafe { ml_core_create(&config(state_dir), &mut core) },
+        ML_STATUS_OK
+    );
+    let initial_revision = ready_revision(core);
+    let scan = ml_library_scan_request_v1 {
+        struct_size: size_of::<ml_library_scan_request_v1>() as u32,
+        abi_version: ML_ABI_VERSION,
+        expected_revision: initial_revision,
+        root_path: root_path.as_ptr(),
+        root_path_len: root_path.len(),
+    };
+    let mut request_id = 0;
+    assert_eq!(
+        unsafe { ml_library_scan_v1(core, &scan, &mut request_id) },
+        ML_STATUS_OK
+    );
+    let mut scanned = poll(core);
+    let payload = unsafe { std::slice::from_raw_parts(scanned.payload, scanned.payload_len) };
+    let scan_result: serde_json::Value =
+        serde_json::from_slice(payload).expect("parse scan result");
+    let revision = scan_result["revision"]
+        .as_u64()
+        .expect("scan result has revision");
+    unsafe { ml_core_release_event(core, &mut scanned) };
+
+    let mut query_bytes = b"binary heaps".to_vec();
+    let mut query = ml_search_query_request_v1 {
+        struct_size: size_of::<ml_search_query_request_v1>() as u32,
+        abi_version: ML_ABI_VERSION,
+        expected_index_revision: revision,
+        query_id: 42,
+        offset: 0,
+        limit: 20,
+        reserved: 0,
+        query: query_bytes.as_ptr(),
+        query_len: query_bytes.len(),
+    };
+    assert_eq!(
+        unsafe { ml_search_query_v1(core, &query, &mut request_id) },
+        ML_STATUS_OK
+    );
+    let mut stale = poll(core);
+    assert_eq!(stale.kind, ML_EVENT_SEARCH_PAGE);
+    assert_eq!(stale.status, ML_STATUS_STALE);
+    let payload = unsafe { std::slice::from_raw_parts(stale.payload, stale.payload_len) };
+    let stale_result: serde_json::Value =
+        serde_json::from_slice(payload).expect("parse stale search result");
+    assert_eq!(stale_result["error"], "staleSearchIndex");
+    assert_eq!(stale_result["expected"], revision);
+    assert!(stale_result["actual"].is_null());
+    unsafe { ml_core_release_event(core, &mut stale) };
+
+    let mut rebuild = ml_search_rebuild_request_v1 {
+        struct_size: size_of::<ml_search_rebuild_request_v1>() as u32,
+        abi_version: ML_ABI_VERSION,
+        expected_revision: revision,
+        reserved: 0,
+    };
+    request_id = u64::MAX;
+    assert_eq!(
+        unsafe { ml_search_rebuild_v1(core, ptr::null(), &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    assert_eq!(request_id, 0);
+    rebuild.struct_size -= 1;
+    assert_eq!(
+        unsafe { ml_search_rebuild_v1(core, &rebuild, &mut request_id) },
+        ML_STATUS_ABI_MISMATCH
+    );
+    rebuild.struct_size += 1;
+    rebuild.reserved = 1;
+    assert_eq!(
+        unsafe { ml_search_rebuild_v1(core, &rebuild, &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    rebuild.reserved = 0;
+    assert_eq!(
+        unsafe { ml_search_rebuild_v1(core, &rebuild, &mut request_id) },
+        ML_STATUS_OK
+    );
+    let mut ready = poll(core);
+    assert_eq!(ready.request_id, request_id);
+    assert_eq!(ready.kind, ML_EVENT_SEARCH_INDEX_READY);
+    assert_eq!(ready.status, ML_STATUS_OK);
+    let payload = unsafe { std::slice::from_raw_parts(ready.payload, ready.payload_len) };
+    let ready_result: serde_json::Value =
+        serde_json::from_slice(payload).expect("parse search index result");
+    assert_eq!(ready_result["indexRevision"], revision);
+    assert_eq!(ready_result["entryCount"], 2);
+    unsafe { ml_core_release_event(core, &mut ready) };
+
+    assert_eq!(
+        unsafe { ml_search_query_v1(core, ptr::null(), &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    query.struct_size -= 1;
+    assert_eq!(
+        unsafe { ml_search_query_v1(core, &query, &mut request_id) },
+        ML_STATUS_ABI_MISMATCH
+    );
+    query.struct_size += 1;
+    query.reserved = 1;
+    assert_eq!(
+        unsafe { ml_search_query_v1(core, &query, &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    query.reserved = 0;
+    let invalid_utf8 = [0xff];
+    query.query = invalid_utf8.as_ptr();
+    query.query_len = invalid_utf8.len();
+    assert_eq!(
+        unsafe { ml_search_query_v1(core, &query, &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    let oversized = vec![b'x'; ML_MAX_SEARCH_QUERY_BYTES as usize + 1];
+    query.query = oversized.as_ptr();
+    query.query_len = oversized.len();
+    assert_eq!(
+        unsafe { ml_search_query_v1(core, &query, &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+
+    query.query = query_bytes.as_ptr();
+    query.query_len = query_bytes.len();
+    assert_eq!(
+        unsafe { ml_search_query_v1(core, &query, &mut request_id) },
+        ML_STATUS_OK
+    );
+    query_bytes.fill(b'x');
+    let mut page = poll(core);
+    assert_eq!(page.request_id, request_id);
+    assert_eq!(page.kind, ML_EVENT_SEARCH_PAGE);
+    assert_eq!(page.status, ML_STATUS_OK);
+    let payload = unsafe { std::slice::from_raw_parts(page.payload, page.payload_len) };
+    let result: serde_json::Value = serde_json::from_slice(payload).expect("parse search page");
+    assert_eq!(result["queryId"], 42);
+    assert_eq!(result["indexRevision"], revision);
+    assert_eq!(result["offset"], 0);
+    assert_eq!(result["total"], 1);
+    let hit = &result["rows"][0];
+    assert_eq!(hit["courseName"], "Systems");
+    assert_eq!(hit["sectionName"], "Core Concepts");
+    assert_eq!(hit["name"], "14 Binary Heaps");
+    assert_eq!(hit["relativePath"], "Core Concepts/14 Binary Heaps.mp4");
+    assert_eq!(hit["kind"], "video");
+    assert!(hit["score"].as_i64().is_some_and(|score| score > 0));
+    unsafe { ml_core_release_event(core, &mut page) };
+    unsafe { ml_core_destroy(core) };
+
+    let mut limited = config(state_dir);
+    limited.max_event_payload_bytes = ML_MIN_EVENT_PAYLOAD_BYTES;
+    core = ptr::null_mut();
+    assert_eq!(unsafe { ml_core_create(&limited, &mut core) }, ML_STATUS_OK);
+    rebuild.expected_revision = ready_revision(core);
+    assert_eq!(
+        unsafe { ml_search_rebuild_v1(core, &rebuild, &mut request_id) },
+        ML_STATUS_OK
+    );
+    let mut rejected = poll(core);
+    assert_eq!(rejected.request_id, request_id);
+    assert_eq!(rejected.kind, ML_EVENT_SEARCH_INDEX_READY);
+    assert_eq!(rejected.status, ML_STATUS_FAILED);
+    assert_eq!(rejected.payload_schema_version, 0);
+    assert_eq!(rejected.payload_len, 0);
+    unsafe { ml_core_release_event(core, &mut rejected) };
+    unsafe { ml_core_destroy(core) };
+}
+
+#[test]
 fn scan_commits_a_new_revision_and_populates_native_pages() {
     let data_dir = tempfile::tempdir().expect("create ABI state directory");
     let library_dir = tempfile::tempdir().expect("create ABI library directory");

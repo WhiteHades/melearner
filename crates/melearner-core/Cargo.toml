@@ -17,6 +17,8 @@ crate-type = ["rlib", "staticlib"]
 [dependencies]
 cap-fs-ext = "=4.0.2"
 cap-std = "=4.0.2"
+fff-query-parser = "=0.9.7-nightly.fce72fa"
+futures-util = { version = "=0.3.32", default-features = false, features = ["std"] }
 icu_collator = "=2.2.1"
 jwalk = "=0.8.1"
 seahash = "=4.1.0"

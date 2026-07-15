@@ -298,6 +298,43 @@ fn public_v2_layout_is_pinned() {
     assert_eq!(offset_of!(ml_activity_day_page_request_v1, limit), 28);
     assert_eq!(offset_of!(ml_activity_day_page_request_v1, reserved), 32);
 
+    assert_eq!(size_of::<ml_search_rebuild_request_v1>(), 24);
+    assert_eq!(
+        align_of::<ml_search_rebuild_request_v1>(),
+        align_of::<u64>()
+    );
+    assert_eq!(offset_of!(ml_search_rebuild_request_v1, struct_size), 0);
+    assert_eq!(offset_of!(ml_search_rebuild_request_v1, abi_version), 4);
+    assert_eq!(
+        offset_of!(ml_search_rebuild_request_v1, expected_revision),
+        8
+    );
+    assert_eq!(offset_of!(ml_search_rebuild_request_v1, reserved), 16);
+
+    assert_eq!(
+        size_of::<ml_search_query_request_v1>(),
+        40 + size_of::<usize>() * 2
+    );
+    assert_eq!(
+        align_of::<ml_search_query_request_v1>(),
+        align_of::<u64>().max(align_of::<usize>())
+    );
+    assert_eq!(offset_of!(ml_search_query_request_v1, struct_size), 0);
+    assert_eq!(offset_of!(ml_search_query_request_v1, abi_version), 4);
+    assert_eq!(
+        offset_of!(ml_search_query_request_v1, expected_index_revision),
+        8
+    );
+    assert_eq!(offset_of!(ml_search_query_request_v1, query_id), 16);
+    assert_eq!(offset_of!(ml_search_query_request_v1, offset), 24);
+    assert_eq!(offset_of!(ml_search_query_request_v1, limit), 32);
+    assert_eq!(offset_of!(ml_search_query_request_v1, reserved), 36);
+    assert_eq!(offset_of!(ml_search_query_request_v1, query), 40);
+    assert_eq!(
+        offset_of!(ml_search_query_request_v1, query_len),
+        40 + size_of::<usize>()
+    );
+
     assert_eq!(size_of::<ml_core_limits_v1>(), 16);
     assert_eq!(align_of::<ml_core_limits_v1>(), 4);
     assert_eq!(offset_of!(ml_core_limits_v1, struct_size), 0);

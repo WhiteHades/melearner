@@ -18,9 +18,11 @@ use crate::schema;
 
 mod progress;
 mod reconciliation;
+mod search;
 
 pub(crate) use progress::{ActivityDayPage, ActivityPageInput, ProgressInput, ProgressUpdate};
 pub(crate) use reconciliation::ReconcileResult;
+pub(crate) use search::{SearchIndexReady, SearchPage, SearchPageInput};
 
 const SQLITE_PROGRESS_INTERVAL: i32 = 1_000;
 pub(crate) const NATIVE_DATABASE_FILENAME: &str = "melearner-native.sqlite3";
@@ -42,9 +44,11 @@ pub(crate) enum LibraryError {
     InvalidPageSize { limit: u32 },
     InvalidOffset { offset: u64 },
     InvalidProgress,
+    InvalidSearchQuery,
     LessonNotFound,
     ResponseTooLarge { limit: usize },
     RevisionExhausted,
+    StaleSearchIndex { expected: u64, actual: Option<u64> },
     StaleRevision { expected: u64, actual: u64 },
 }
 impl std::fmt::Display for LibraryError {
@@ -63,11 +67,18 @@ impl std::fmt::Display for LibraryError {
                 write!(formatter, "invalid page offset {offset}")
             }
             Self::InvalidProgress => formatter.write_str("invalid lesson progress"),
+            Self::InvalidSearchQuery => formatter.write_str("invalid search query"),
             Self::LessonNotFound => formatter.write_str("lesson not found"),
             Self::ResponseTooLarge { limit } => {
                 write!(formatter, "library response exceeds {limit} bytes")
             }
             Self::RevisionExhausted => formatter.write_str("library revisions are exhausted"),
+            Self::StaleSearchIndex { expected, actual } => {
+                write!(
+                    formatter,
+                    "stale search index {expected}; current is {actual:?}"
+                )
+            }
             Self::StaleRevision { expected, actual } => {
                 write!(
                     formatter,
@@ -231,6 +242,7 @@ pub(crate) struct LibraryDatabase {
     revision: u64,
     library_path: Option<String>,
     lesson_order_indexes: HashMap<String, LessonOrderIndex>,
+    search_index: Option<search::SearchIndex>,
     #[cfg(test)]
     lesson_order_index_builds: usize,
     _ownership: File,
@@ -331,6 +343,7 @@ impl LibraryDatabase {
             revision: revision.get(),
             library_path,
             lesson_order_indexes: HashMap::new(),
+            search_index: None,
             #[cfg(test)]
             lesson_order_index_builds: 0,
             _ownership: ownership,

@@ -385,6 +385,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
 
 [[package]]
+name = "fff-query-parser"
+version = "0.9.7-nightly.fce72fa"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "05623869db3852162d26fa71c022dafc21e07df4589840e149e30ee9a6f5ab76"
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -829,6 +835,8 @@ dependencies = [
  "cap-fs-ext",
  "cap-std",
  "cbindgen",
+ "fff-query-parser",
+ "futures-util",
  "icu_collator",
  "jwalk",
  "rustix",

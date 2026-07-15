@@ -17,6 +17,8 @@
 
 #define ML_MIN_EVENT_PAYLOAD_BYTES 20
 
+#define ML_MAX_SEARCH_QUERY_BYTES (64 * 1024)
+
 typedef struct ml_core_t ml_core_t;
 
 typedef uint32_t ml_status_t;
@@ -106,6 +108,25 @@ typedef struct ml_activity_day_page_request_v1 {
   uint32_t reserved;
 } ml_activity_day_page_request_v1;
 
+typedef struct ml_search_rebuild_request_v1 {
+  uint32_t struct_size;
+  uint32_t abi_version;
+  uint64_t expected_revision;
+  uint64_t reserved;
+} ml_search_rebuild_request_v1;
+
+typedef struct ml_search_query_request_v1 {
+  uint32_t struct_size;
+  uint32_t abi_version;
+  uint64_t expected_index_revision;
+  uint64_t query_id;
+  uint64_t offset;
+  uint32_t limit;
+  uint32_t reserved;
+  const uint8_t *query;
+  size_t query_len;
+} ml_search_query_request_v1;
+
 #define ML_STATUS_OK 0
 
 #define ML_STATUS_INVALID_ARGUMENT 1
@@ -143,6 +164,10 @@ typedef struct ml_activity_day_page_request_v1 {
 #define ML_EVENT_PROGRESS_UPDATED 7
 
 #define ML_EVENT_ACTIVITY_DAY_PAGE 8
+
+#define ML_EVENT_SEARCH_INDEX_READY 9
+
+#define ML_EVENT_SEARCH_PAGE 10
 
 uint32_t ml_abi_version(void);
 
@@ -285,5 +310,31 @@ ml_status_t ml_progress_put_v1(struct ml_core_t *core,
 ml_status_t ml_activity_day_page_v1(struct ml_core_t *core,
                                     const struct ml_activity_day_page_request_v1 *request,
                                     uint64_t *out_request_id);
+
+/**
+ * Rebuilds the in-memory Lesson search index from the current Library.
+ *
+ * # Safety
+ *
+ * `request` must point to a readable `ml_search_rebuild_request_v1`, and
+ * `out_request_id` must point to writable `u64` storage. Both pointers are
+ * borrowed only for this call.
+ */
+ml_status_t ml_search_rebuild_v1(struct ml_core_t *core,
+                                 const struct ml_search_rebuild_request_v1 *request,
+                                 uint64_t *out_request_id);
+
+/**
+ * Submits one asynchronous paged Lesson search query.
+ *
+ * # Safety
+ *
+ * `request` must point to a readable `ml_search_query_request_v1`. Its query
+ * bytes must remain readable for this call. `out_request_id` must point to
+ * writable `u64` storage. The query is copied before return.
+ */
+ml_status_t ml_search_query_v1(struct ml_core_t *core,
+                               const struct ml_search_query_request_v1 *request,
+                               uint64_t *out_request_id);
 
 #endif  /* MELEARNER_CORE_H */

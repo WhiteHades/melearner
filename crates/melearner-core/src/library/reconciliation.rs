@@ -254,6 +254,7 @@ impl LibraryDatabase {
         self.revision = next_revision.get();
         self.library_path = Some(root_path.to_string());
         self.lesson_order_indexes.clear();
+        self.invalidate_search_index();
         #[cfg(test)]
         {
             self.lesson_order_index_builds = 0;
