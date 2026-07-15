@@ -24,6 +24,7 @@ pub(crate) struct ReconcileResult {
     pub(crate) warnings: Vec<String>,
 }
 
+#[cfg_attr(test, derive(serde::Deserialize))]
 struct PersistedCourse {
     id: String,
     identity_id: String,
@@ -85,6 +86,7 @@ struct PendingLesson {
     subtitles: Vec<PendingSubtitle>,
 }
 
+#[cfg_attr(test, derive(Debug, Eq, PartialEq, serde::Deserialize))]
 struct PendingSubtitle {
     path: String,
     language: String,
@@ -712,12 +714,17 @@ fn resolve_courses(
             matches[scanned_index] = Some(persisted_index);
             claimed.insert(persisted_index);
         } else if by_fingerprint.contains_key(fingerprint) {
+            let reason = if available.is_empty() {
+                "a matching course fingerprint was already used by another scanned course"
+            } else {
+                "multiple existing courses have the same fingerprint"
+            };
             for scanned_index in scanned_indexes {
                 push_warning(
                     warnings,
                     format!(
-                        "Skipped progress reuse for \"{}\": the course fingerprint is ambiguous.",
-                        scanned[scanned_index].name
+                        "Skipped progress reuse for \"{}\": {reason}.",
+                        scanned[scanned_index].name,
                     ),
                 );
             }
@@ -1373,6 +1380,7 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
 
+    use serde::Deserialize;
     use sqlx::Row;
 
     use super::*;
@@ -1403,6 +1411,148 @@ mod tests {
         )
         .await
         .expect("open fresh native library")
+    }
+
+    #[test]
+    fn identity_and_scan_transformation_match_the_frozen_parity_oracle() {
+        #[derive(Deserialize)]
+        struct Oracle {
+            version: u32,
+            identity: IdentityOracle,
+            #[serde(rename = "scanContract")]
+            scan_contract: ScanOracle,
+        }
+        #[derive(Deserialize)]
+        struct IdentityOracle {
+            persisted: Vec<PersistedCourse>,
+            #[serde(rename = "markerMove")]
+            marker_move: MatchOracle,
+            #[serde(rename = "ambiguousFingerprint")]
+            ambiguous_fingerprint: WarningOracle,
+        }
+        #[derive(Deserialize)]
+        struct ScannedOracle {
+            id: String,
+            #[serde(rename = "markerIdentityId")]
+            marker_identity_id: Option<String>,
+            name: String,
+            path: String,
+            fingerprint: String,
+        }
+        #[derive(Deserialize)]
+        struct MatchOracle {
+            scanned: ScannedOracle,
+            #[serde(rename = "expectedId")]
+            expected_id: String,
+        }
+        #[derive(Deserialize)]
+        struct WarningOracle {
+            scanned: ScannedOracle,
+            #[serde(rename = "expectedWarning")]
+            expected_warning: String,
+        }
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct ScanOracle {
+            input: ScanResult,
+            expected_lesson_types: Vec<String>,
+            expected_video_subtitles: Vec<PendingSubtitle>,
+        }
+
+        let oracle: Oracle =
+            serde_json::from_str(include_str!("../../../../fixtures/parity/oracle-v1.json"))
+                .expect("parse parity oracle");
+        assert_eq!(oracle.version, 1);
+        let persisted = oracle.identity.persisted;
+        let scanned_course = |course: ScannedOracle| CourseData {
+            id: course.id.into(),
+            marker_identity_id: course.marker_identity_id.map(Into::into),
+            name: course.name.into(),
+            path: course.path.into(),
+            fingerprint: course.fingerprint.into(),
+            sections: Box::new([]),
+        };
+
+        let marker = oracle.identity.marker_move;
+        let mut warnings = Vec::new();
+        let resolved = resolve_courses(
+            vec![scanned_course(marker.scanned)],
+            &persisted,
+            &mut warnings,
+        )
+        .expect("resolve marker move from parity oracle");
+        assert_eq!(resolved[0].id, marker.expected_id);
+        assert!(warnings.is_empty());
+
+        let ambiguous = oracle.identity.ambiguous_fingerprint;
+        let resolved = resolve_courses(
+            vec![scanned_course(ambiguous.scanned)],
+            &persisted,
+            &mut warnings,
+        )
+        .expect("resolve ambiguous fingerprint from parity oracle");
+        assert_eq!(resolved[0].id, "scan-copy");
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains(&ambiguous.expected_warning)),
+            "expected warning containing {:?}, got {warnings:?}",
+            ambiguous.expected_warning
+        );
+
+        let scan = oracle.scan_contract;
+        let expected_identity = scan.input.courses[0]
+            .marker_identity_id
+            .as_deref()
+            .expect("parity scan marker identity")
+            .to_string();
+        warnings.clear();
+        let course_seeds = resolve_courses(scan.input.courses.into_vec(), &[], &mut warnings)
+            .expect("resolve parity scan courses");
+        let structure = build_scanned_structure(course_seeds, &[], &HashSet::new())
+            .expect("transform parity scan lessons");
+        assert_eq!(structure.courses[0].identity_id, expected_identity);
+        assert_eq!(
+            structure
+                .lessons
+                .iter()
+                .map(|lesson| lesson.kind.as_str())
+                .collect::<Vec<_>>(),
+            scan.expected_lesson_types
+        );
+        let video = structure
+            .lessons
+            .iter()
+            .find(|lesson| lesson.kind == "video")
+            .expect("parity scan video");
+        assert_eq!(
+            video.subtitles.as_slice(),
+            scan.expected_video_subtitles.as_slice()
+        );
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn claimed_fingerprint_warning_matches_the_current_domain() {
+        let persisted = vec![PersistedCourse {
+            id: "course-exact".to_string(),
+            identity_id: "identity-exact".to_string(),
+            path: "/library/exact".to_string(),
+            fingerprint: "shared".to_string(),
+        }];
+        let scanned = vec![
+            scanned_course("scan-exact", "/library/exact", "shared", None),
+            scanned_course("scan-copy", "/library/copy", "shared", None),
+        ];
+        let mut warnings = Vec::new();
+
+        resolve_courses(scanned, &persisted, &mut warnings).expect("resolve claimed fingerprint");
+
+        assert!(warnings.iter().any(|warning| {
+            warning.contains(
+                "a matching course fingerprint was already used by another scanned course",
+            )
+        }));
     }
 
     #[test]

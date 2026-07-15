@@ -1,11 +1,11 @@
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct MigrationDefinition {
-    pub version: i64,
-    pub description: &'static str,
-    pub sql: &'static str,
+pub(crate) struct MigrationDefinition {
+    pub(crate) version: i64,
+    pub(crate) description: &'static str,
+    pub(crate) sql: &'static str,
 }
 
-pub const MIGRATIONS: &[MigrationDefinition] = &[
+pub(crate) const MIGRATIONS: &[MigrationDefinition] = &[
     MigrationDefinition {
         version: 1,
         description: "create_courses_table",

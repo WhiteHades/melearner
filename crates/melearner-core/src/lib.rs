@@ -2,7 +2,6 @@
 
 mod coordinator;
 mod library;
-pub mod migrations;
 pub mod scanner;
 pub mod schema;
 

@@ -1,5 +1,6 @@
 mod library_search;
 mod media;
+mod migrations;
 mod native_player;
 mod scanner;
 
@@ -10,7 +11,7 @@ use tauri::Manager;
 use tauri_plugin_sql::{Builder as SqlBuilder, Migration, MigrationKind};
 
 fn get_migrations() -> Vec<Migration> {
-    melearner_core::migrations::MIGRATIONS
+    migrations::MIGRATIONS
         .iter()
         .map(|migration| Migration {
             version: migration.version,
