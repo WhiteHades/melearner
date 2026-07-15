@@ -24,7 +24,10 @@ mod search;
 pub(crate) use notes::{
     NoteDelete, NoteDeleteInput, NotePage, NotePageInput, NoteSaveInput, NoteSaved,
 };
-pub(crate) use progress::{ActivityDayPage, ActivityPageInput, ProgressInput, ProgressUpdate};
+pub(crate) use progress::{
+    ActivityDayPage, ActivityPageInput, CourseAccess, CourseAccessInput, ProgressInput,
+    ProgressUpdate,
+};
 pub(crate) use reconciliation::ReconcileResult;
 pub(crate) use search::{SearchIndexReady, SearchPage, SearchPageInput};
 
@@ -42,8 +45,10 @@ static NATURAL_COLLATOR: LazyLock<CollatorBorrowed<'static>> = LazyLock::new(|| 
 #[derive(Debug)]
 pub(crate) enum LibraryError {
     Cancelled,
+    CourseNotFound,
     Database(String),
     InvalidActivityLookback { days: u32 },
+    InvalidCourseAccess,
     InvalidScan(String),
     InvalidPageSize { limit: u32 },
     InvalidOffset { offset: u64 },
@@ -61,10 +66,12 @@ impl std::fmt::Display for LibraryError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Cancelled => formatter.write_str("library mutation was cancelled"),
+            Self::CourseNotFound => formatter.write_str("course not found"),
             Self::Database(message) => formatter.write_str(message),
             Self::InvalidActivityLookback { days } => {
                 write!(formatter, "invalid activity lookback {days}")
             }
+            Self::InvalidCourseAccess => formatter.write_str("invalid course access"),
             Self::InvalidScan(message) => formatter.write_str(message),
             Self::InvalidPageSize { limit } => {
                 write!(formatter, "invalid page size {limit}")

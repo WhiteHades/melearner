@@ -1,7 +1,7 @@
 use serde::Serialize;
 use sqlx::{Connection, Row, Sqlite, Transaction};
 
-use super::{LibraryDatabase, LibraryError, MAX_COURSE_PAGE_SIZE};
+use super::{LibraryDatabase, LibraryError, MAX_COURSE_PAGE_SIZE, child_path_range};
 use crate::{MutationControl, next_library_revision};
 
 #[derive(Debug)]
@@ -21,6 +21,20 @@ pub(crate) struct ProgressUpdate {
     pub(crate) watched_time: u64,
     pub(crate) last_position: f64,
     pub(crate) completed: bool,
+}
+
+#[derive(Debug)]
+pub(crate) struct CourseAccessInput {
+    pub(crate) expected_revision: u64,
+    pub(crate) course_id: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CourseAccess {
+    pub(crate) revision: u64,
+    pub(crate) course_id: String,
+    pub(crate) last_accessed: String,
 }
 
 #[derive(Debug)]
@@ -50,6 +64,92 @@ pub(crate) struct ActivityDayPage {
 }
 
 impl LibraryDatabase {
+    pub(crate) async fn access_course(
+        &mut self,
+        input: CourseAccessInput,
+        max_payload_bytes: usize,
+        control: &MutationControl,
+    ) -> Result<CourseAccess, LibraryError> {
+        self.require_revision(input.expected_revision)?;
+        if input.course_id.is_empty() || input.course_id.contains('\0') {
+            return Err(LibraryError::InvalidCourseAccess);
+        }
+        if control.is_cancelled() {
+            return Err(LibraryError::Cancelled);
+        }
+
+        let mut transaction = self.connection.begin_with("BEGIN IMMEDIATE").await?;
+        let library_path = self
+            .library_path
+            .as_deref()
+            .filter(|library_path| !library_path.is_empty());
+        let record = if let Some(library_path) = library_path {
+            let (prefix, upper_bound) = child_path_range(library_path);
+            sqlx::query(
+                "UPDATE courses
+                 SET last_accessed = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                 WHERE id = ?1
+                   AND missing_since IS NULL
+                   AND (path = ?2 OR (path > ?3 AND path < ?4))
+                 RETURNING last_accessed",
+            )
+            .bind(&input.course_id)
+            .bind(library_path)
+            .bind(prefix)
+            .bind(upper_bound)
+            .fetch_optional(&mut *transaction)
+            .await
+        } else {
+            sqlx::query(
+                "UPDATE courses
+                 SET last_accessed = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                 WHERE id = ?1 AND missing_since IS NULL
+                 RETURNING last_accessed",
+            )
+            .bind(&input.course_id)
+            .fetch_optional(&mut *transaction)
+            .await
+        };
+        let record = match record {
+            Ok(Some(record)) => record,
+            Ok(None) => {
+                return Err(rollback_error(transaction, LibraryError::CourseNotFound).await);
+            }
+            Err(error) => {
+                return Err(rollback_error(transaction, LibraryError::from(error)).await);
+            }
+        };
+        let last_accessed = match record.try_get("last_accessed") {
+            Ok(last_accessed) => last_accessed,
+            Err(error) => {
+                return Err(rollback_error(transaction, LibraryError::from(error)).await);
+            }
+        };
+        let Some(next_revision) = next_library_revision() else {
+            return Err(rollback_error(transaction, LibraryError::RevisionExhausted).await);
+        };
+        let access = CourseAccess {
+            revision: next_revision.get(),
+            course_id: input.course_id,
+            last_accessed,
+        };
+        if !response_fits(&access, max_payload_bytes) {
+            return Err(rollback_error(
+                transaction,
+                LibraryError::ResponseTooLarge {
+                    limit: max_payload_bytes,
+                },
+            )
+            .await);
+        }
+        if control.is_cancelled() || !control.begin_commit() {
+            return Err(rollback_error(transaction, LibraryError::Cancelled).await);
+        }
+        transaction.commit().await?;
+        self.revision = next_revision.get();
+        Ok(access)
+    }
+
     pub(crate) async fn put_progress(
         &mut self,
         input: ProgressInput,
@@ -230,8 +330,8 @@ async fn rollback_error(transaction: Transaction<'_, Sqlite>, error: LibraryErro
     }
 }
 
-fn response_fits(update: &ProgressUpdate, max_payload_bytes: usize) -> bool {
-    serde_json::to_vec(update).is_ok_and(|payload| payload.len() <= max_payload_bytes)
+fn response_fits(value: &impl Serialize, max_payload_bytes: usize) -> bool {
+    serde_json::to_vec(value).is_ok_and(|payload| payload.len() <= max_payload_bytes)
 }
 
 fn nonnegative(value: i64) -> Result<u64, LibraryError> {
@@ -247,7 +347,7 @@ mod tests {
 
     use sqlx::Row;
 
-    use super::{ActivityPageInput, ProgressInput};
+    use super::{ActivityPageInput, CourseAccessInput, ProgressInput};
     use crate::library::{LibraryDatabase, LibraryError};
     use crate::{MutationControl, next_library_revision};
 
@@ -268,12 +368,21 @@ mod tests {
         .await
         .expect("open progress fixture");
         sqlx::raw_sql(
-            "INSERT INTO courses (
-                 id, identity_id, name, path, fingerprint, last_scanned_at
-             ) VALUES (
-                 'course', 'identity', 'Course', '/library/Course', 'fingerprint',
-                 '2026-07-15T00:00:00.000Z'
-             );
+            "INSERT INTO app_settings (key, value) VALUES ('libraryPath', '/library');
+             INSERT INTO courses (
+                 id, identity_id, name, path, fingerprint, last_scanned_at,
+                 last_accessed, missing_since
+             ) VALUES
+                 ('course', 'identity', 'Course', '/library/Course', 'fingerprint',
+                  '2026-07-15T00:00:00.000Z', NULL, NULL),
+                 ('other-course', 'other-identity', 'Other', '/library/Other',
+                  'other-fingerprint', '2026-07-15T00:00:00.000Z',
+                  '2000-01-01T00:00:00.000Z', NULL),
+                 ('missing-course', 'missing-identity', 'Missing', '/library/Missing',
+                  'missing-fingerprint', '2026-07-15T00:00:00.000Z', NULL,
+                  '2026-07-14T00:00:00.000Z'),
+                 ('outside-course', 'outside-identity', 'Outside', '/outside/Course',
+                  'outside-fingerprint', '2026-07-15T00:00:00.000Z', NULL, NULL);
              INSERT INTO sections (id, course_id, name, order_index) VALUES
                  ('section', 'course', 'Section', 0);
              INSERT INTO lessons (
@@ -288,7 +397,15 @@ mod tests {
         .execute(&mut library.connection)
         .await
         .expect("seed progress fixture");
+        library.library_path = Some("/library".to_string());
         (temp, library)
+    }
+
+    fn course_access_input(revision: u64, course_id: &str) -> CourseAccessInput {
+        CourseAccessInput {
+            expected_revision: revision,
+            course_id: course_id.to_string(),
+        }
     }
 
     fn progress_input(
@@ -311,6 +428,158 @@ mod tests {
             .fetch_one(&mut library.connection)
             .await
             .expect("count activity")
+    }
+
+    #[test]
+    fn course_access_commits_reorders_and_persists() {
+        block_on(async {
+            let (temp, mut library) = progress_fixture().await;
+            let initial_revision = library.revision();
+            let before = library
+                .course_page(initial_revision, 0, 10)
+                .await
+                .expect("load Courses before access");
+            assert_eq!(before.rows[0].id, "other-course");
+
+            let accessed = library
+                .access_course(
+                    course_access_input(initial_revision, "course"),
+                    usize::MAX,
+                    &MutationControl::new(),
+                )
+                .await
+                .expect("access Course");
+            assert!(accessed.revision > initial_revision);
+            assert_eq!(accessed.revision, library.revision());
+            assert_eq!(accessed.course_id, "course");
+            assert!(accessed.last_accessed.contains('T'));
+            assert!(accessed.last_accessed.ends_with('Z'));
+
+            assert!(matches!(
+                library.course_page(initial_revision, 0, 10).await,
+                Err(LibraryError::StaleRevision { .. })
+            ));
+            let after = library
+                .course_page(accessed.revision, 0, 10)
+                .await
+                .expect("load Courses after access");
+            assert_eq!(after.rows[0].id, "course");
+            assert_eq!(
+                after.rows[0].last_accessed.as_deref(),
+                Some(accessed.last_accessed.as_str())
+            );
+
+            drop(library);
+            let mut reopened = LibraryDatabase::open_current(
+                temp.path(),
+                next_library_revision().expect("allocate reopened revision"),
+                Arc::new(AtomicBool::new(false)),
+            )
+            .await
+            .expect("reopen Course access fixture");
+            let persisted: Option<String> =
+                sqlx::query_scalar("SELECT last_accessed FROM courses WHERE id = 'course'")
+                    .fetch_one(&mut reopened.connection)
+                    .await
+                    .expect("load persisted Course access");
+            assert_eq!(persisted.as_deref(), Some(accessed.last_accessed.as_str()));
+        });
+    }
+
+    #[test]
+    fn rejected_course_access_leaves_timestamp_and_revision_unchanged() {
+        block_on(async {
+            let (_temp, mut library) = progress_fixture().await;
+            let revision = library.revision();
+            let cancelled = MutationControl::new();
+            assert!(cancelled.cancel());
+
+            for input in [
+                course_access_input(revision + 1, "course"),
+                course_access_input(revision, ""),
+                course_access_input(revision, "bad\0id"),
+                course_access_input(revision, "unknown-course"),
+                course_access_input(revision, "missing-course"),
+                course_access_input(revision, "outside-course"),
+            ] {
+                assert!(
+                    library
+                        .access_course(input, usize::MAX, &MutationControl::new())
+                        .await
+                        .is_err()
+                );
+            }
+            assert!(
+                library
+                    .access_course(
+                        course_access_input(revision, "course"),
+                        usize::MAX,
+                        &cancelled,
+                    )
+                    .await
+                    .is_err()
+            );
+            assert!(
+                library
+                    .access_course(
+                        course_access_input(revision, "course"),
+                        1,
+                        &MutationControl::new(),
+                    )
+                    .await
+                    .is_err()
+            );
+
+            assert_eq!(library.revision(), revision);
+            assert_eq!(
+                sqlx::query_scalar::<_, Option<String>>(
+                    "SELECT last_accessed FROM courses WHERE id = 'course'"
+                )
+                .fetch_one(&mut library.connection)
+                .await
+                .expect("load unchanged Course access"),
+                None
+            );
+        });
+    }
+
+    #[test]
+    fn course_access_database_failure_rolls_back() {
+        block_on(async {
+            let (_temp, mut library) = progress_fixture().await;
+            sqlx::raw_sql(
+                "CREATE TRIGGER reject_Course_access
+                 BEFORE UPDATE OF last_accessed ON courses
+                 BEGIN
+                     SELECT RAISE(ABORT, 'Course access rejected');
+                 END;",
+            )
+            .execute(&mut library.connection)
+            .await
+            .expect("install failing Course access trigger");
+            let revision = library.revision();
+
+            assert!(matches!(
+                library
+                    .access_course(
+                        course_access_input(revision, "course"),
+                        usize::MAX,
+                        &MutationControl::new(),
+                    )
+                    .await,
+                Err(LibraryError::Database(_))
+            ));
+            assert_eq!(library.revision(), revision);
+            assert_eq!(
+                sqlx::query_scalar::<_, Option<String>>(
+                    "SELECT last_accessed FROM courses WHERE id = 'course'"
+                )
+                .fetch_one(&mut library.connection)
+                .await
+                .expect("load rolled back Course access"),
+                None
+            );
+        });
     }
 
     #[test]

@@ -277,6 +277,27 @@ fn public_v2_layout_is_pinned() {
         40 + size_of::<usize>()
     );
 
+    assert_eq!(
+        size_of::<ml_course_access_request_v1>(),
+        24 + size_of::<usize>() * 2
+    );
+    assert_eq!(
+        align_of::<ml_course_access_request_v1>(),
+        align_of::<u64>().max(align_of::<usize>())
+    );
+    assert_eq!(offset_of!(ml_course_access_request_v1, struct_size), 0);
+    assert_eq!(offset_of!(ml_course_access_request_v1, abi_version), 4);
+    assert_eq!(
+        offset_of!(ml_course_access_request_v1, expected_revision),
+        8
+    );
+    assert_eq!(offset_of!(ml_course_access_request_v1, reserved), 16);
+    assert_eq!(offset_of!(ml_course_access_request_v1, course_id), 24);
+    assert_eq!(
+        offset_of!(ml_course_access_request_v1, course_id_len),
+        24 + size_of::<usize>()
+    );
+
     let activity_alignment = align_of::<u64>();
     let activity_size = (36 + activity_alignment - 1) & !(activity_alignment - 1);
     assert_eq!(size_of::<ml_activity_day_page_request_v1>(), activity_size);

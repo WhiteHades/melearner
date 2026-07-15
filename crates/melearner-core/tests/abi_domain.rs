@@ -128,6 +128,132 @@ fn course_page_returns_a_correlated_json_completion() {
 }
 
 #[test]
+fn course_access_round_trips_through_the_versioned_abi() {
+    let data_dir = tempfile::tempdir().expect("create ABI Course-access state directory");
+    let state_dir = data_dir
+        .path()
+        .to_str()
+        .expect("temporary Course-access state directory is UTF-8")
+        .as_bytes();
+    let mut core = ptr::null_mut();
+    assert_eq!(
+        unsafe { ml_core_create(&config(state_dir), &mut core) },
+        ML_STATUS_OK
+    );
+    ready_revision(core);
+    unsafe { ml_core_destroy(core) };
+    seed_current_database(data_dir.path());
+
+    core = ptr::null_mut();
+    assert_eq!(
+        unsafe { ml_core_create(&config(state_dir), &mut core) },
+        ML_STATUS_OK
+    );
+    let revision = ready_revision(core);
+    let mut course_id = b"course-marker".to_vec();
+    let mut request = ml_course_access_request_v1 {
+        struct_size: size_of::<ml_course_access_request_v1>() as u32,
+        abi_version: ML_ABI_VERSION,
+        expected_revision: revision,
+        reserved: 0,
+        course_id: course_id.as_ptr(),
+        course_id_len: course_id.len(),
+    };
+    let mut request_id = u64::MAX;
+    assert_eq!(
+        unsafe { ml_course_access_v1(core, ptr::null(), &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    assert_eq!(request_id, 0);
+    request.struct_size -= 1;
+    assert_eq!(
+        unsafe { ml_course_access_v1(core, &request, &mut request_id) },
+        ML_STATUS_ABI_MISMATCH
+    );
+    request.struct_size += 1;
+    request.reserved = 1;
+    assert_eq!(
+        unsafe { ml_course_access_v1(core, &request, &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    request.reserved = 0;
+    request.course_id = ptr::null();
+    assert_eq!(
+        unsafe { ml_course_access_v1(core, &request, &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    let invalid_utf8 = [0xff];
+    request.course_id = invalid_utf8.as_ptr();
+    request.course_id_len = invalid_utf8.len();
+    assert_eq!(
+        unsafe { ml_course_access_v1(core, &request, &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    let embedded_nul = b"bad\0course";
+    request.course_id = embedded_nul.as_ptr();
+    request.course_id_len = embedded_nul.len();
+    assert_eq!(
+        unsafe { ml_course_access_v1(core, &request, &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+
+    request.course_id = course_id.as_ptr();
+    request.course_id_len = course_id.len();
+    assert_eq!(
+        unsafe { ml_course_access_v1(core, &request, &mut request_id) },
+        ML_STATUS_OK
+    );
+    course_id.fill(b'x');
+    let mut accessed = poll(core);
+    assert_eq!(accessed.request_id, request_id);
+    assert_eq!(accessed.kind, ML_EVENT_COURSE_ACCESSED);
+    assert_eq!(accessed.status, ML_STATUS_OK);
+    let payload = unsafe { std::slice::from_raw_parts(accessed.payload, accessed.payload_len) };
+    let result: serde_json::Value = serde_json::from_slice(payload).expect("parse Course access");
+    let accessed_revision = result["revision"]
+        .as_u64()
+        .expect("Course access has revision");
+    assert!(accessed_revision > revision);
+    assert_eq!(result["courseId"], "course-marker");
+    let last_accessed = result["lastAccessed"]
+        .as_str()
+        .expect("Course access has timestamp");
+    assert!(last_accessed.contains('T'));
+    assert!(last_accessed.ends_with('Z'));
+    unsafe { ml_core_release_event(core, &mut accessed) };
+
+    course_id = b"course-marker".to_vec();
+    request.course_id = course_id.as_ptr();
+    request.course_id_len = course_id.len();
+    assert_eq!(
+        unsafe { ml_course_access_v1(core, &request, &mut request_id) },
+        ML_STATUS_OK
+    );
+    let mut stale = poll(core);
+    assert_eq!(stale.kind, ML_EVENT_COURSE_ACCESSED);
+    assert_eq!(stale.status, ML_STATUS_STALE);
+    unsafe { ml_core_release_event(core, &mut stale) };
+
+    course_id = b"course-missing".to_vec();
+    request.expected_revision = accessed_revision;
+    request.course_id = course_id.as_ptr();
+    request.course_id_len = course_id.len();
+    assert_eq!(
+        unsafe { ml_course_access_v1(core, &request, &mut request_id) },
+        ML_STATUS_OK
+    );
+    let mut missing = poll(core);
+    assert_eq!(missing.kind, ML_EVENT_COURSE_ACCESSED);
+    assert_eq!(missing.status, ML_STATUS_NOT_FOUND);
+    assert_eq!(
+        unsafe { std::slice::from_raw_parts(missing.payload, missing.payload_len) },
+        br#"{"error":"courseNotFound"}"#
+    );
+    unsafe { ml_core_release_event(core, &mut missing) };
+    unsafe { ml_core_destroy(core) };
+}
+
+#[test]
 fn progress_and_activity_round_trip_through_the_versioned_abi() {
     let data_dir = tempfile::tempdir().expect("create ABI state directory");
     let state_dir = data_dir

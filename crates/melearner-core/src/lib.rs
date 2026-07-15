@@ -23,8 +23,8 @@ use coordinator::{
     SubmitError,
 };
 use library::{
-    ActivityPageInput, LibraryError, NoteDeleteInput, NotePageInput, NoteSaveInput, ProgressInput,
-    SearchPageInput,
+    ActivityPageInput, CourseAccessInput, LibraryError, NoteDeleteInput, NotePageInput,
+    NoteSaveInput, ProgressInput, SearchPageInput,
 };
 
 pub const ML_ABI_VERSION: u32 = 2;
@@ -61,6 +61,7 @@ pub const ML_EVENT_SEARCH_PAGE: ml_event_kind_t = 10;
 pub const ML_EVENT_NOTES_PAGE: ml_event_kind_t = 11;
 pub const ML_EVENT_NOTE_SAVED: ml_event_kind_t = 12;
 pub const ML_EVENT_NOTE_DELETED: ml_event_kind_t = 13;
+pub const ML_EVENT_COURSE_ACCESSED: ml_event_kind_t = 14;
 
 pub type ml_wake_fn = Option<unsafe extern "C" fn(context: *mut c_void)>;
 
@@ -123,6 +124,17 @@ pub struct ml_progress_put_request_v1 {
     pub reserved: u32,
     pub lesson_id: *const u8,
     pub lesson_id_len: usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ml_course_access_request_v1 {
+    pub struct_size: u32,
+    pub abi_version: u32,
+    pub expected_revision: u64,
+    pub reserved: u64,
+    pub course_id: *const u8,
+    pub course_id_len: usize,
 }
 
 #[repr(C)]
@@ -718,6 +730,9 @@ unsafe fn submit_domain_request(
             | DomainRequest::PutProgress {
                 max_payload_bytes, ..
             }
+            | DomainRequest::AccessCourse {
+                max_payload_bytes, ..
+            }
             | DomainRequest::RebuildSearch {
                 max_payload_bytes, ..
             }
@@ -869,6 +884,9 @@ fn encode_domain_result(
         Ok(DomainResponse::Progress(progress)) => {
             encode_json(ML_STATUS_OK, &progress, max_payload_bytes)
         }
+        Ok(DomainResponse::CourseAccessed(access)) => {
+            encode_json(ML_STATUS_OK, &access, max_payload_bytes)
+        }
         Ok(DomainResponse::ActivityDayPage(page)) => {
             encode_json(ML_STATUS_OK, &page, max_payload_bytes)
         }
@@ -907,6 +925,11 @@ fn encode_domain_result(
             }),
             max_payload_bytes,
         ),
+        Err(DomainError::Library(LibraryError::InvalidCourseAccess)) => encode_json(
+            ML_STATUS_INVALID_ARGUMENT,
+            &serde_json::json!({"error": "invalidCourseAccess"}),
+            max_payload_bytes,
+        ),
         Err(DomainError::Library(LibraryError::InvalidProgress)) => encode_json(
             ML_STATUS_INVALID_ARGUMENT,
             &serde_json::json!({"error": "invalidProgress"}),
@@ -925,6 +948,11 @@ fn encode_domain_result(
         Err(DomainError::Library(LibraryError::LessonNotFound)) => encode_json(
             ML_STATUS_NOT_FOUND,
             &serde_json::json!({"error": "lessonNotFound"}),
+            max_payload_bytes,
+        ),
+        Err(DomainError::Library(LibraryError::CourseNotFound)) => encode_json(
+            ML_STATUS_NOT_FOUND,
+            &serde_json::json!({"error": "courseNotFound"}),
             max_payload_bytes,
         ),
         Err(DomainError::Library(LibraryError::NoteNotFound)) => encode_json(
@@ -1660,6 +1688,67 @@ pub unsafe extern "C" fn ml_progress_put_v1(
                         watched_time: request.watched_time,
                         last_position: request.last_position,
                         completed: request.completed == 1,
+                    },
+                    max_payload_bytes: 0,
+                    control: Arc::clone(&control),
+                },
+                Some(control),
+                out_request_id,
+            )
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
+/// Records that one visible, available Course was accessed.
+///
+/// The timestamp is generated inside SQLite. A successful update commits a
+/// new Library revision because Course-page ordering may change.
+///
+/// # Safety
+///
+/// `request` must point to a readable `ml_course_access_request_v1`. Its
+/// Course ID bytes must remain readable for this call. `out_request_id` must
+/// point to writable `u64` storage. The Course ID is copied before return.
+pub unsafe extern "C" fn ml_course_access_v1(
+    core: *mut ml_core_t,
+    request: *const ml_course_access_request_v1,
+    out_request_id: *mut u64,
+) -> ml_status_t {
+    ffi_status(|| {
+        if out_request_id.is_null() {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        unsafe { *out_request_id = 0 };
+        if request.is_null() {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        let request = unsafe { *request };
+        let status = valid_output(
+            request.struct_size,
+            request.abi_version,
+            size_of::<ml_course_access_request_v1>(),
+        );
+        if status != ML_STATUS_OK {
+            return status;
+        }
+        if request.reserved != 0 {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        let course_id =
+            match unsafe { copy_required_string(request.course_id, request.course_id_len) } {
+                Ok(course_id) => course_id,
+                Err(status) => return status,
+            };
+        let control = Arc::new(MutationControl::new());
+        unsafe {
+            submit_domain_request(
+                core,
+                ML_EVENT_COURSE_ACCESSED,
+                DomainRequest::AccessCourse {
+                    input: CourseAccessInput {
+                        expected_revision: request.expected_revision,
+                        course_id,
                     },
                     max_payload_bytes: 0,
                     control: Arc::clone(&control),

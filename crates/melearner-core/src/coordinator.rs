@@ -9,9 +9,10 @@ use std::thread::{self, JoinHandle};
 
 use crate::MutationControl;
 use crate::library::{
-    ActivityDayPage, ActivityPageInput, CoursePage, LessonPage, LibraryDatabase, LibraryError,
-    NoteDelete, NoteDeleteInput, NotePage, NotePageInput, NoteSaveInput, NoteSaved, ProgressInput,
-    ProgressUpdate, ReconcileResult, SearchIndexReady, SearchPage, SearchPageInput,
+    ActivityDayPage, ActivityPageInput, CourseAccess, CourseAccessInput, CoursePage, LessonPage,
+    LibraryDatabase, LibraryError, NoteDelete, NoteDeleteInput, NotePage, NotePageInput,
+    NoteSaveInput, NoteSaved, ProgressInput, ProgressUpdate, ReconcileResult, SearchIndexReady,
+    SearchPage, SearchPageInput,
 };
 
 #[derive(Debug)]
@@ -36,6 +37,11 @@ pub(crate) enum DomainRequest {
     },
     PutProgress {
         input: ProgressInput,
+        max_payload_bytes: usize,
+        control: Arc<MutationControl>,
+    },
+    AccessCourse {
+        input: CourseAccessInput,
         max_payload_bytes: usize,
         control: Arc<MutationControl>,
     },
@@ -78,6 +84,7 @@ pub(crate) enum DomainResponse {
     LessonPage(LessonPage),
     Scan(ReconcileResult),
     Progress(ProgressUpdate),
+    CourseAccessed(CourseAccess),
     ActivityDayPage(ActivityDayPage),
     SearchIndexReady(SearchIndexReady),
     SearchPage(SearchPage),
@@ -255,6 +262,15 @@ impl DomainState {
             } => Ok(DomainResponse::Progress(
                 self.library
                     .put_progress(input, max_payload_bytes, &control)
+                    .await?,
+            )),
+            DomainRequest::AccessCourse {
+                input,
+                max_payload_bytes,
+                control,
+            } => Ok(DomainResponse::CourseAccessed(
+                self.library
+                    .access_course(input, max_payload_bytes, &control)
                     .await?,
             )),
             DomainRequest::ActivityDayPage { input } => Ok(DomainResponse::ActivityDayPage(

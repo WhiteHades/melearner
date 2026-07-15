@@ -100,6 +100,15 @@ typedef struct ml_progress_put_request_v1 {
   size_t lesson_id_len;
 } ml_progress_put_request_v1;
 
+typedef struct ml_course_access_request_v1 {
+  uint32_t struct_size;
+  uint32_t abi_version;
+  uint64_t expected_revision;
+  uint64_t reserved;
+  const uint8_t *course_id;
+  size_t course_id_len;
+} ml_course_access_request_v1;
+
 typedef struct ml_activity_day_page_request_v1 {
   uint32_t struct_size;
   uint32_t abi_version;
@@ -210,6 +219,8 @@ typedef struct ml_notes_delete_request_v1 {
 #define ML_EVENT_NOTE_SAVED 12
 
 #define ML_EVENT_NOTE_DELETED 13
+
+#define ML_EVENT_COURSE_ACCESSED 14
 
 uint32_t ml_abi_version(void);
 
@@ -339,6 +350,22 @@ ml_status_t ml_library_scan_v1(struct ml_core_t *core,
 ml_status_t ml_progress_put_v1(struct ml_core_t *core,
                                const struct ml_progress_put_request_v1 *request,
                                uint64_t *out_request_id);
+
+/**
+ * Records that one visible, available Course was accessed.
+ *
+ * The timestamp is generated inside SQLite. A successful update commits a
+ * new Library revision because Course-page ordering may change.
+ *
+ * # Safety
+ *
+ * `request` must point to a readable `ml_course_access_request_v1`. Its
+ * Course ID bytes must remain readable for this call. `out_request_id` must
+ * point to writable `u64` storage. The Course ID is copied before return.
+ */
+ml_status_t ml_course_access_v1(struct ml_core_t *core,
+                                const struct ml_course_access_request_v1 *request,
+                                uint64_t *out_request_id);
 
 /**
  * Submits one asynchronous Learning activity day-page request.

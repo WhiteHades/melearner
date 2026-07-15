@@ -23,6 +23,13 @@ comptime {
     if (@sizeOf(c.ml_progress_put_request_v1) != 40 + @sizeOf(usize) * 2) {
         @compileError("progress request layout drift");
     }
+    if (@sizeOf(c.ml_course_access_request_v1) != 24 + @sizeOf(usize) * 2 or
+        @offsetOf(c.ml_course_access_request_v1, "reserved") != 16 or
+        @offsetOf(c.ml_course_access_request_v1, "course_id") != 24 or
+        @offsetOf(c.ml_course_access_request_v1, "course_id_len") != 24 + @sizeOf(usize))
+    {
+        @compileError("Course access request layout drift");
+    }
     if (@offsetOf(c.ml_activity_day_page_request_v1, "expected_revision") != 8) {
         @compileError("activity page request layout drift");
     }
@@ -155,6 +162,29 @@ pub fn main(init: std.process.Init) !void {
     );
     try expect(revision > initial_revision);
     c.ml_core_release_event(core, &scanned);
+
+    const missing_course_id = "missing-course";
+    var access_request = c.ml_course_access_request_v1{
+        .struct_size = @sizeOf(c.ml_course_access_request_v1),
+        .abi_version = c.ML_ABI_VERSION,
+        .expected_revision = revision,
+        .reserved = 0,
+        .course_id = missing_course_id.ptr,
+        .course_id_len = missing_course_id.len,
+    };
+    var access_request_id: u64 = 0;
+    try expectEqual(
+        @as(c.ml_status_t, c.ML_STATUS_OK),
+        c.ml_course_access_v1(core, &access_request, &access_request_id),
+    );
+    try expect(access_request_id != 0);
+
+    var accessed = try pollEvent(io, core);
+    try expectEqual(access_request_id, accessed.request_id);
+    try expectEqual(@as(c.ml_event_kind_t, c.ML_EVENT_COURSE_ACCESSED), accessed.kind);
+    try expectEqual(@as(c.ml_status_t, c.ML_STATUS_NOT_FOUND), accessed.status);
+    try expectPayload(&accessed, "{\"error\":\"courseNotFound\"}");
+    c.ml_core_release_event(core, &accessed);
 
     var rebuild_request = c.ml_search_rebuild_request_v1{
         .struct_size = @sizeOf(c.ml_search_rebuild_request_v1),
