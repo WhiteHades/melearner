@@ -20,6 +20,12 @@ comptime {
     if (@sizeOf(c.ml_library_scan_request_v1) != 16 + @sizeOf(usize) * 2) {
         @compileError("scan request layout drift");
     }
+    if (@sizeOf(c.ml_progress_put_request_v1) != 40 + @sizeOf(usize) * 2) {
+        @compileError("progress request layout drift");
+    }
+    if (@offsetOf(c.ml_activity_day_page_request_v1, "expected_revision") != 8) {
+        @compileError("activity page request layout drift");
+    }
     if (@sizeOf(c.ml_core_limits_v1) != 16) @compileError("ml_core_limits_v1 layout drift");
     if (@offsetOf(c.ml_event_v1, "sequence") != 8) @compileError("ml_event_v1 sequence offset drift");
     if (@offsetOf(c.ml_event_v1, "payload") != 40) @compileError("ml_event_v1 payload offset drift");
@@ -102,6 +108,35 @@ pub fn main(init: std.process.Init) !void {
     );
     try expect(revision > initial_revision);
     c.ml_core_release_event(core, &scanned);
+
+    var activity_request = c.ml_activity_day_page_request_v1{
+        .struct_size = @sizeOf(c.ml_activity_day_page_request_v1),
+        .abi_version = c.ML_ABI_VERSION,
+        .expected_revision = revision,
+        .offset = 0,
+        .lookback_days = 84,
+        .limit = 20,
+        .reserved = 0,
+    };
+    var activity_request_id: u64 = 0;
+    try expectEqual(
+        @as(c.ml_status_t, c.ML_STATUS_OK),
+        c.ml_activity_day_page_v1(core, &activity_request, &activity_request_id),
+    );
+    try expect(activity_request_id != 0);
+
+    var activity = try pollEvent(io, core);
+    try expectEqual(activity_request_id, activity.request_id);
+    try expectEqual(@as(c.ml_event_kind_t, c.ML_EVENT_ACTIVITY_DAY_PAGE), activity.kind);
+    try expectEqual(@as(c.ml_status_t, c.ML_STATUS_OK), activity.status);
+    const expected_activity = try std.fmt.allocPrint(
+        init.gpa,
+        "{{\"revision\":{d},\"offset\":0,\"total\":0,\"rows\":[]}}",
+        .{revision},
+    );
+    defer init.gpa.free(expected_activity);
+    try expectPayload(&activity, expected_activity);
+    c.ml_core_release_event(core, &activity);
 
     var request = c.ml_library_course_page_request_v1{
         .struct_size = @sizeOf(c.ml_library_course_page_request_v1),

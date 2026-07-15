@@ -1,9 +1,14 @@
 use std::mem::size_of;
+use std::path::Path;
 use std::ptr;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use melearner_core::*;
+use sqlx::sqlite::SqliteConnectOptions;
+use sqlx::{Connection, SqliteConnection};
+
+const CURRENT_SEED: &str = include_str!("../../../fixtures/parity/database-current.sql");
 
 fn config(state_dir: &[u8]) -> ml_config_v2 {
     ml_config_v2 {
@@ -59,6 +64,26 @@ fn ready_revision(core: *mut ml_core_t) -> u64 {
     revision
 }
 
+fn seed_progress_database(data_dir: &Path) {
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("build progress seed runtime")
+        .block_on(async {
+            let options = SqliteConnectOptions::new()
+                .filename(data_dir.join("melearner-native.sqlite3"))
+                .foreign_keys(true)
+                .busy_timeout(Duration::from_secs(10));
+            let mut connection = SqliteConnection::connect_with(&options)
+                .await
+                .expect("open progress database");
+            sqlx::raw_sql(CURRENT_SEED)
+                .execute(&mut connection)
+                .await
+                .expect("seed progress database");
+            connection.close().await.expect("close progress database");
+        });
+}
+
 #[test]
 fn course_page_returns_a_correlated_json_completion() {
     let data_dir = tempfile::tempdir().expect("create ABI state directory");
@@ -99,6 +124,130 @@ fn course_page_returns_a_correlated_json_completion() {
         format!(r#"{{"revision":{revision},"offset":0,"total":0,"rows":[]}}"#).as_bytes()
     );
     unsafe { ml_core_release_event(core, &mut completed) };
+    unsafe { ml_core_destroy(core) };
+}
+
+#[test]
+fn progress_and_activity_round_trip_through_the_versioned_abi() {
+    let data_dir = tempfile::tempdir().expect("create ABI state directory");
+    let state_dir = data_dir
+        .path()
+        .to_str()
+        .expect("temporary state directory is UTF-8")
+        .as_bytes();
+    let mut core = ptr::null_mut();
+    assert_eq!(
+        unsafe { ml_core_create(&config(state_dir), &mut core) },
+        ML_STATUS_OK
+    );
+    ready_revision(core);
+    unsafe { ml_core_destroy(core) };
+    seed_progress_database(data_dir.path());
+
+    core = ptr::null_mut();
+    assert_eq!(
+        unsafe { ml_core_create(&config(state_dir), &mut core) },
+        ML_STATUS_OK
+    );
+    let initial_revision = ready_revision(core);
+    let mut lesson_id = b"lesson-video".to_vec();
+    let mut progress = ml_progress_put_request_v1 {
+        struct_size: size_of::<ml_progress_put_request_v1>() as u32,
+        abi_version: ML_ABI_VERSION,
+        expected_revision: initial_revision,
+        watched_time: 340,
+        last_position: 338.5,
+        completed: 0,
+        reserved: 0,
+        lesson_id: lesson_id.as_ptr(),
+        lesson_id_len: lesson_id.len(),
+    };
+    let mut request_id = u64::MAX;
+    assert_eq!(
+        unsafe { ml_progress_put_v1(core, ptr::null(), &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    assert_eq!(request_id, 0);
+    progress.struct_size -= 1;
+    assert_eq!(
+        unsafe { ml_progress_put_v1(core, &progress, &mut request_id) },
+        ML_STATUS_ABI_MISMATCH
+    );
+    progress.struct_size += 1;
+    progress.completed = 2;
+    assert_eq!(
+        unsafe { ml_progress_put_v1(core, &progress, &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    progress.completed = 0;
+    assert_eq!(
+        unsafe { ml_progress_put_v1(core, &progress, &mut request_id) },
+        ML_STATUS_OK
+    );
+    assert_ne!(request_id, 0);
+    lesson_id.fill(b'x');
+
+    let mut updated = poll(core);
+    assert_eq!(updated.request_id, request_id);
+    assert_eq!(updated.kind, ML_EVENT_PROGRESS_UPDATED);
+    assert_eq!(updated.status, ML_STATUS_OK);
+    assert_eq!(updated.payload_schema_version, 1);
+    let payload = unsafe { std::slice::from_raw_parts(updated.payload, updated.payload_len) };
+    let result: serde_json::Value = serde_json::from_slice(payload).expect("parse progress update");
+    let revision = result["revision"]
+        .as_u64()
+        .expect("progress update has a revision");
+    assert!(revision > initial_revision);
+    assert_eq!(result["lessonId"], "lesson-video");
+    assert_eq!(result["watchedTime"], 340);
+    assert_eq!(result["lastPosition"], 338.5);
+    assert_eq!(result["completed"], false);
+    unsafe { ml_core_release_event(core, &mut updated) };
+
+    let mut activity = ml_activity_day_page_request_v1 {
+        struct_size: size_of::<ml_activity_day_page_request_v1>() as u32,
+        abi_version: ML_ABI_VERSION,
+        expected_revision: initial_revision,
+        offset: 0,
+        lookback_days: 84,
+        limit: 20,
+        reserved: 0,
+    };
+    assert_eq!(
+        unsafe { ml_activity_day_page_v1(core, &activity, &mut request_id) },
+        ML_STATUS_OK
+    );
+    let mut stale = poll(core);
+    assert_eq!(stale.kind, ML_EVENT_ACTIVITY_DAY_PAGE);
+    assert_eq!(stale.status, ML_STATUS_STALE);
+    unsafe { ml_core_release_event(core, &mut stale) };
+
+    activity.expected_revision = revision;
+    assert_eq!(
+        unsafe { ml_activity_day_page_v1(core, &activity, &mut request_id) },
+        ML_STATUS_OK
+    );
+    let mut page = poll(core);
+    assert_eq!(page.kind, ML_EVENT_ACTIVITY_DAY_PAGE);
+    assert_eq!(page.status, ML_STATUS_OK);
+    let payload = unsafe { std::slice::from_raw_parts(page.payload, page.payload_len) };
+    let result: serde_json::Value = serde_json::from_slice(payload).expect("parse activity page");
+    assert_eq!(result["revision"], revision);
+    let today = result["rows"]
+        .as_array()
+        .expect("activity rows are an array")
+        .iter()
+        .find(|day| day["watchedSeconds"] == 20)
+        .expect("activity includes the progress delta");
+    assert_eq!(today["lessonsTouched"], 1);
+    assert_eq!(today["completions"], 0);
+    unsafe { ml_core_release_event(core, &mut page) };
+
+    activity.reserved = 1;
+    assert_eq!(
+        unsafe { ml_activity_day_page_v1(core, &activity, &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
     unsafe { ml_core_destroy(core) };
 }
 

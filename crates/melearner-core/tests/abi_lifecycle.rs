@@ -256,6 +256,48 @@ fn public_v2_layout_is_pinned() {
         16 + size_of::<usize>()
     );
 
+    assert_eq!(
+        size_of::<ml_progress_put_request_v1>(),
+        40 + size_of::<usize>() * 2
+    );
+    assert_eq!(
+        align_of::<ml_progress_put_request_v1>(),
+        align_of::<u64>().max(align_of::<usize>())
+    );
+    assert_eq!(offset_of!(ml_progress_put_request_v1, struct_size), 0);
+    assert_eq!(offset_of!(ml_progress_put_request_v1, abi_version), 4);
+    assert_eq!(offset_of!(ml_progress_put_request_v1, expected_revision), 8);
+    assert_eq!(offset_of!(ml_progress_put_request_v1, watched_time), 16);
+    assert_eq!(offset_of!(ml_progress_put_request_v1, last_position), 24);
+    assert_eq!(offset_of!(ml_progress_put_request_v1, completed), 32);
+    assert_eq!(offset_of!(ml_progress_put_request_v1, reserved), 36);
+    assert_eq!(offset_of!(ml_progress_put_request_v1, lesson_id), 40);
+    assert_eq!(
+        offset_of!(ml_progress_put_request_v1, lesson_id_len),
+        40 + size_of::<usize>()
+    );
+
+    let activity_alignment = align_of::<u64>();
+    let activity_size = (36 + activity_alignment - 1) & !(activity_alignment - 1);
+    assert_eq!(size_of::<ml_activity_day_page_request_v1>(), activity_size);
+    assert_eq!(
+        align_of::<ml_activity_day_page_request_v1>(),
+        activity_alignment
+    );
+    assert_eq!(offset_of!(ml_activity_day_page_request_v1, struct_size), 0);
+    assert_eq!(offset_of!(ml_activity_day_page_request_v1, abi_version), 4);
+    assert_eq!(
+        offset_of!(ml_activity_day_page_request_v1, expected_revision),
+        8
+    );
+    assert_eq!(offset_of!(ml_activity_day_page_request_v1, offset), 16);
+    assert_eq!(
+        offset_of!(ml_activity_day_page_request_v1, lookback_days),
+        24
+    );
+    assert_eq!(offset_of!(ml_activity_day_page_request_v1, limit), 28);
+    assert_eq!(offset_of!(ml_activity_day_page_request_v1, reserved), 32);
+
     assert_eq!(size_of::<ml_core_limits_v1>(), 16);
     assert_eq!(align_of::<ml_core_limits_v1>(), 4);
     assert_eq!(offset_of!(ml_core_limits_v1, struct_size), 0);

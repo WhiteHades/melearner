@@ -16,8 +16,10 @@ use sqlx::{Connection, QueryBuilder, Row, Sqlite, SqliteConnection};
 
 use crate::schema;
 
+mod progress;
 mod reconciliation;
 
+pub(crate) use progress::{ActivityDayPage, ActivityPageInput, ProgressInput, ProgressUpdate};
 pub(crate) use reconciliation::ReconcileResult;
 
 const SQLITE_PROGRESS_INTERVAL: i32 = 1_000;
@@ -35,9 +37,12 @@ static NATURAL_COLLATOR: LazyLock<CollatorBorrowed<'static>> = LazyLock::new(|| 
 pub(crate) enum LibraryError {
     Cancelled,
     Database(String),
+    InvalidActivityLookback { days: u32 },
     InvalidScan(String),
     InvalidPageSize { limit: u32 },
     InvalidOffset { offset: u64 },
+    InvalidProgress,
+    LessonNotFound,
     ResponseTooLarge { limit: usize },
     RevisionExhausted,
     StaleRevision { expected: u64, actual: u64 },
@@ -47,6 +52,9 @@ impl std::fmt::Display for LibraryError {
         match self {
             Self::Cancelled => formatter.write_str("library mutation was cancelled"),
             Self::Database(message) => formatter.write_str(message),
+            Self::InvalidActivityLookback { days } => {
+                write!(formatter, "invalid activity lookback {days}")
+            }
             Self::InvalidScan(message) => formatter.write_str(message),
             Self::InvalidPageSize { limit } => {
                 write!(formatter, "invalid page size {limit}")
@@ -54,6 +62,8 @@ impl std::fmt::Display for LibraryError {
             Self::InvalidOffset { offset } => {
                 write!(formatter, "invalid page offset {offset}")
             }
+            Self::InvalidProgress => formatter.write_str("invalid lesson progress"),
+            Self::LessonNotFound => formatter.write_str("lesson not found"),
             Self::ResponseTooLarge { limit } => {
                 write!(formatter, "library response exceeds {limit} bytes")
             }

@@ -8,7 +8,10 @@ use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::thread::{self, JoinHandle};
 
 use crate::MutationControl;
-use crate::library::{CoursePage, LessonPage, LibraryDatabase, LibraryError, ReconcileResult};
+use crate::library::{
+    ActivityDayPage, ActivityPageInput, CoursePage, LessonPage, LibraryDatabase, LibraryError,
+    ProgressInput, ProgressUpdate, ReconcileResult,
+};
 
 #[derive(Debug)]
 pub(crate) enum DomainRequest {
@@ -30,8 +33,18 @@ pub(crate) enum DomainRequest {
         max_payload_bytes: usize,
         control: Arc<MutationControl>,
     },
+    PutProgress {
+        input: ProgressInput,
+        max_payload_bytes: usize,
+        control: Arc<MutationControl>,
+    },
+    ActivityDayPage {
+        input: ActivityPageInput,
+    },
     #[cfg(test)]
-    LongQuery { entered: mpsc::Sender<()> },
+    LongQuery {
+        entered: mpsc::Sender<()>,
+    },
     #[cfg(test)]
     Panic,
 }
@@ -41,6 +54,8 @@ pub(crate) enum DomainResponse {
     CoursePage(CoursePage),
     LessonPage(LessonPage),
     Scan(ReconcileResult),
+    Progress(ProgressUpdate),
+    ActivityDayPage(ActivityDayPage),
 }
 
 #[derive(Debug)]
@@ -205,6 +220,18 @@ impl DomainState {
                     .scan_and_reconcile(expected_revision, &root_path, max_payload_bytes, &control)
                     .await?,
             )),
+            DomainRequest::PutProgress {
+                input,
+                max_payload_bytes,
+                control,
+            } => Ok(DomainResponse::Progress(
+                self.library
+                    .put_progress(input, max_payload_bytes, &control)
+                    .await?,
+            )),
+            DomainRequest::ActivityDayPage { input } => Ok(DomainResponse::ActivityDayPage(
+                self.library.activity_day_page(input).await?,
+            )),
             #[cfg(test)]
             DomainRequest::LongQuery { entered } => {
                 self.library.run_until_interrupted(entered).await?;
@@ -268,7 +295,10 @@ mod tests {
         DomainError, DomainEvent, DomainEventSink, DomainOutcome, DomainRequest, DomainResponse,
         DomainWorker, SubmitError,
     };
-    use crate::library::{LibraryError, NATIVE_DATABASE_FILENAME};
+    use crate::library::{
+        ActivityPageInput, LibraryError, NATIVE_DATABASE_FILENAME, ProgressInput,
+    };
+    use crate::{MutationControl, next_library_revision};
 
     const CURRENT_SEED: &str = include_str!("../../../fixtures/parity/database-current.sql");
 
@@ -296,11 +326,19 @@ mod tests {
     }
 
     fn start(data_dir: &Path, capacity: usize) -> WorkerHarness {
+        start_at(
+            data_dir,
+            capacity,
+            NonZeroU64::new(1).expect("nonzero test revision"),
+        )
+    }
+
+    fn start_at(data_dir: &Path, capacity: usize, revision: NonZeroU64) -> WorkerHarness {
         let (event_sender, event_receiver) = mpsc::channel();
         let event_sink: DomainEventSink = Arc::new(move |event| event_sender.send(event).is_ok());
         let worker = DomainWorker::start(
             data_dir.to_path_buf(),
-            NonZeroU64::new(1).expect("nonzero test revision"),
+            revision,
             NonZeroUsize::new(capacity).expect("nonzero test capacity"),
             event_sink,
         )
@@ -592,6 +630,75 @@ mod tests {
                 request_id: outcome_request_id,
                 result: Ok(DomainResponse::CoursePage(page)),
             }) if outcome_request_id == request_id(12) && page.revision == 1
+        ));
+    }
+
+    #[test]
+    fn progress_and_activity_execute_on_the_single_domain_worker() {
+        let data_dir = tempfile::tempdir().expect("create native data directory");
+        let bootstrap = start(data_dir.path(), 4);
+        assert_eq!(receive_ready(&bootstrap), 1);
+        drop(bootstrap);
+        seed_current_database(&native_database_path(data_dir.path()));
+
+        let initial_revision = next_library_revision().expect("allocate progress revision");
+        let core = start_at(data_dir.path(), 4, initial_revision);
+        assert_eq!(receive_ready(&core), initial_revision.get());
+        core.try_submit(
+            request_id(13),
+            DomainRequest::PutProgress {
+                input: ProgressInput {
+                    expected_revision: initial_revision.get(),
+                    lesson_id: "lesson-video".to_string(),
+                    watched_time: 340,
+                    last_position: 338.5,
+                    completed: false,
+                },
+                max_payload_bytes: usize::MAX,
+                control: Arc::new(MutationControl::new()),
+            },
+        )
+        .expect("submit progress update");
+        let revision = match core
+            .recv_timeout(Duration::from_secs(2))
+            .expect("receive progress update")
+        {
+            DomainEvent::Completed(DomainOutcome {
+                request_id: outcome_request_id,
+                result: Ok(DomainResponse::Progress(update)),
+            }) if outcome_request_id == request_id(13)
+                && update.lesson_id == "lesson-video"
+                && update.watched_time == 340
+                && update.last_position == 338.5
+                && !update.completed =>
+            {
+                update.revision
+            }
+            other => panic!("expected progress update, received {other:?}"),
+        };
+        assert_ne!(revision, initial_revision.get());
+
+        core.try_submit(
+            request_id(14),
+            DomainRequest::ActivityDayPage {
+                input: ActivityPageInput {
+                    expected_revision: revision,
+                    lookback_days: 84,
+                    offset: 0,
+                    limit: 20,
+                },
+            },
+        )
+        .expect("submit activity page");
+        assert!(matches!(
+            core.recv_timeout(Duration::from_secs(2))
+                .expect("receive activity page"),
+            DomainEvent::Completed(DomainOutcome {
+                request_id: outcome_request_id,
+                result: Ok(DomainResponse::ActivityDayPage(page)),
+            }) if outcome_request_id == request_id(14)
+                && page.revision == revision
+                && page.rows.iter().any(|day| day.watched_seconds == 20)
         ));
     }
 

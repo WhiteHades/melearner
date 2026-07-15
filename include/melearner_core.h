@@ -84,6 +84,28 @@ typedef struct ml_library_scan_request_v1 {
   size_t root_path_len;
 } ml_library_scan_request_v1;
 
+typedef struct ml_progress_put_request_v1 {
+  uint32_t struct_size;
+  uint32_t abi_version;
+  uint64_t expected_revision;
+  uint64_t watched_time;
+  double last_position;
+  uint32_t completed;
+  uint32_t reserved;
+  const uint8_t *lesson_id;
+  size_t lesson_id_len;
+} ml_progress_put_request_v1;
+
+typedef struct ml_activity_day_page_request_v1 {
+  uint32_t struct_size;
+  uint32_t abi_version;
+  uint64_t expected_revision;
+  uint64_t offset;
+  uint32_t lookback_days;
+  uint32_t limit;
+  uint32_t reserved;
+} ml_activity_day_page_request_v1;
+
 #define ML_STATUS_OK 0
 
 #define ML_STATUS_INVALID_ARGUMENT 1
@@ -117,6 +139,10 @@ typedef struct ml_library_scan_request_v1 {
 #define ML_EVENT_LIBRARY_LESSON_PAGE 5
 
 #define ML_EVENT_LIBRARY_SCAN 6
+
+#define ML_EVENT_PROGRESS_UPDATED 7
+
+#define ML_EVENT_ACTIVITY_DAY_PAGE 8
 
 uint32_t ml_abi_version(void);
 
@@ -233,5 +259,31 @@ ml_status_t ml_library_lesson_page_v1(struct ml_core_t *core,
 ml_status_t ml_library_scan_v1(struct ml_core_t *core,
                                const struct ml_library_scan_request_v1 *request,
                                uint64_t *out_request_id);
+
+/**
+ * Submits one asynchronous Lesson Progress update.
+ *
+ * # Safety
+ *
+ * `request` must point to a readable `ml_progress_put_request_v1`. Its Lesson
+ * ID bytes must remain readable for this call. `out_request_id` must point to
+ * writable `u64` storage. All inputs are copied before return.
+ */
+ml_status_t ml_progress_put_v1(struct ml_core_t *core,
+                               const struct ml_progress_put_request_v1 *request,
+                               uint64_t *out_request_id);
+
+/**
+ * Submits one asynchronous Learning activity day-page request.
+ *
+ * # Safety
+ *
+ * `request` must point to a readable `ml_activity_day_page_request_v1`, and
+ * `out_request_id` must point to writable `u64` storage. Both pointers are
+ * borrowed only for this call.
+ */
+ml_status_t ml_activity_day_page_v1(struct ml_core_t *core,
+                                    const struct ml_activity_day_page_request_v1 *request,
+                                    uint64_t *out_request_id);
 
 #endif  /* MELEARNER_CORE_H */

@@ -293,7 +293,7 @@ impl LibraryDatabase {
         })
     }
 
-    fn require_revision(&self, expected_revision: u64) -> Result<(), LibraryError> {
+    pub(super) fn require_revision(&self, expected_revision: u64) -> Result<(), LibraryError> {
         if expected_revision == self.revision {
             Ok(())
         } else {

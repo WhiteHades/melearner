@@ -22,7 +22,7 @@ use coordinator::{
     DomainError, DomainEvent, DomainEventSink, DomainRequest, DomainResponse, DomainWorker,
     SubmitError,
 };
-use library::LibraryError;
+use library::{ActivityPageInput, LibraryError, ProgressInput};
 
 pub const ML_ABI_VERSION: u32 = 2;
 pub const ML_MAX_EVENT_QUEUE_CAPACITY: u32 = 65_536;
@@ -49,6 +49,8 @@ pub const ML_EVENT_FATAL: ml_event_kind_t = 3;
 pub const ML_EVENT_LIBRARY_COURSE_PAGE: ml_event_kind_t = 4;
 pub const ML_EVENT_LIBRARY_LESSON_PAGE: ml_event_kind_t = 5;
 pub const ML_EVENT_LIBRARY_SCAN: ml_event_kind_t = 6;
+pub const ML_EVENT_PROGRESS_UPDATED: ml_event_kind_t = 7;
+pub const ML_EVENT_ACTIVITY_DAY_PAGE: ml_event_kind_t = 8;
 
 pub type ml_wake_fn = Option<unsafe extern "C" fn(context: *mut c_void)>;
 
@@ -97,6 +99,32 @@ pub struct ml_library_scan_request_v1 {
     pub expected_revision: u64,
     pub root_path: *const u8,
     pub root_path_len: usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ml_progress_put_request_v1 {
+    pub struct_size: u32,
+    pub abi_version: u32,
+    pub expected_revision: u64,
+    pub watched_time: u64,
+    pub last_position: f64,
+    pub completed: u32,
+    pub reserved: u32,
+    pub lesson_id: *const u8,
+    pub lesson_id_len: usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ml_activity_day_page_request_v1 {
+    pub struct_size: u32,
+    pub abi_version: u32,
+    pub expected_revision: u64,
+    pub offset: u64,
+    pub lookback_days: u32,
+    pub limit: u32,
+    pub reserved: u32,
 }
 
 #[repr(C)]
@@ -610,11 +638,14 @@ unsafe fn submit_domain_request(
         if state.failed {
             return (ML_STATUS_FAILED, None);
         }
-        if let DomainRequest::Scan {
-            max_payload_bytes, ..
-        } = &mut request
-        {
-            *max_payload_bytes = state.max_event_payload_bytes;
+        match &mut request {
+            DomainRequest::Scan {
+                max_payload_bytes, ..
+            }
+            | DomainRequest::PutProgress {
+                max_payload_bytes, ..
+            } => *max_payload_bytes = state.max_event_payload_bytes,
+            _ => {}
         }
         let request_id = match state.reserve_domain_request(event_kind, mutation_control) {
             Ok(request_id) => request_id,
@@ -753,6 +784,12 @@ fn encode_domain_result(
         Ok(DomainResponse::CoursePage(page)) => encode_json(ML_STATUS_OK, &page, max_payload_bytes),
         Ok(DomainResponse::LessonPage(page)) => encode_json(ML_STATUS_OK, &page, max_payload_bytes),
         Ok(DomainResponse::Scan(scan)) => encode_json(ML_STATUS_OK, &scan, max_payload_bytes),
+        Ok(DomainResponse::Progress(progress)) => {
+            encode_json(ML_STATUS_OK, &progress, max_payload_bytes)
+        }
+        Ok(DomainResponse::ActivityDayPage(page)) => {
+            encode_json(ML_STATUS_OK, &page, max_payload_bytes)
+        }
         Err(DomainError::Library(LibraryError::InvalidPageSize { limit })) => encode_json(
             ML_STATUS_INVALID_ARGUMENT,
             &serde_json::json!({
@@ -767,6 +804,24 @@ fn encode_domain_result(
                 "error": "invalidOffset",
                 "offset": offset,
             }),
+            max_payload_bytes,
+        ),
+        Err(DomainError::Library(LibraryError::InvalidActivityLookback { days })) => encode_json(
+            ML_STATUS_INVALID_ARGUMENT,
+            &serde_json::json!({
+                "error": "invalidActivityLookback",
+                "days": days,
+            }),
+            max_payload_bytes,
+        ),
+        Err(DomainError::Library(LibraryError::InvalidProgress)) => encode_json(
+            ML_STATUS_INVALID_ARGUMENT,
+            &serde_json::json!({"error": "invalidProgress"}),
+            max_payload_bytes,
+        ),
+        Err(DomainError::Library(LibraryError::LessonNotFound)) => encode_json(
+            ML_STATUS_NOT_FOUND,
+            &serde_json::json!({"error": "lessonNotFound"}),
             max_payload_bytes,
         ),
         Err(DomainError::Library(LibraryError::StaleRevision { expected, actual })) => encode_json(
@@ -1430,6 +1485,119 @@ pub unsafe extern "C" fn ml_library_scan_v1(
                     control: Arc::clone(&control),
                 },
                 Some(control),
+                out_request_id,
+            )
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
+/// Submits one asynchronous Lesson Progress update.
+///
+/// # Safety
+///
+/// `request` must point to a readable `ml_progress_put_request_v1`. Its Lesson
+/// ID bytes must remain readable for this call. `out_request_id` must point to
+/// writable `u64` storage. All inputs are copied before return.
+pub unsafe extern "C" fn ml_progress_put_v1(
+    core: *mut ml_core_t,
+    request: *const ml_progress_put_request_v1,
+    out_request_id: *mut u64,
+) -> ml_status_t {
+    ffi_status(|| {
+        if out_request_id.is_null() {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        unsafe { *out_request_id = 0 };
+        if request.is_null() {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        let request = unsafe { *request };
+        let status = valid_output(
+            request.struct_size,
+            request.abi_version,
+            size_of::<ml_progress_put_request_v1>(),
+        );
+        if status != ML_STATUS_OK {
+            return status;
+        }
+        if request.reserved != 0 || request.completed > 1 {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        let lesson_id =
+            match unsafe { copy_required_string(request.lesson_id, request.lesson_id_len) } {
+                Ok(lesson_id) => lesson_id,
+                Err(status) => return status,
+            };
+        let control = Arc::new(MutationControl::new());
+        unsafe {
+            submit_domain_request(
+                core,
+                ML_EVENT_PROGRESS_UPDATED,
+                DomainRequest::PutProgress {
+                    input: ProgressInput {
+                        expected_revision: request.expected_revision,
+                        lesson_id,
+                        watched_time: request.watched_time,
+                        last_position: request.last_position,
+                        completed: request.completed == 1,
+                    },
+                    max_payload_bytes: 0,
+                    control: Arc::clone(&control),
+                },
+                Some(control),
+                out_request_id,
+            )
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
+/// Submits one asynchronous Learning activity day-page request.
+///
+/// # Safety
+///
+/// `request` must point to a readable `ml_activity_day_page_request_v1`, and
+/// `out_request_id` must point to writable `u64` storage. Both pointers are
+/// borrowed only for this call.
+pub unsafe extern "C" fn ml_activity_day_page_v1(
+    core: *mut ml_core_t,
+    request: *const ml_activity_day_page_request_v1,
+    out_request_id: *mut u64,
+) -> ml_status_t {
+    ffi_status(|| {
+        if out_request_id.is_null() {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        unsafe { *out_request_id = 0 };
+        if request.is_null() {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        let request = unsafe { *request };
+        let status = valid_output(
+            request.struct_size,
+            request.abi_version,
+            size_of::<ml_activity_day_page_request_v1>(),
+        );
+        if status != ML_STATUS_OK {
+            return status;
+        }
+        if request.reserved != 0 {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        unsafe {
+            submit_domain_request(
+                core,
+                ML_EVENT_ACTIVITY_DAY_PAGE,
+                DomainRequest::ActivityDayPage {
+                    input: ActivityPageInput {
+                        expected_revision: request.expected_revision,
+                        lookback_days: request.lookback_days,
+                        offset: request.offset,
+                        limit: request.limit,
+                    },
+                },
+                None,
                 out_request_id,
             )
         }
