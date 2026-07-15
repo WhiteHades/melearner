@@ -15,7 +15,7 @@ use std::num::{NonZeroU64, NonZeroUsize};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 use std::ptr;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, Weak};
 
 use coordinator::{
@@ -27,6 +27,7 @@ use library::LibraryError;
 pub const ML_ABI_VERSION: u32 = 2;
 pub const ML_MAX_EVENT_QUEUE_CAPACITY: u32 = 65_536;
 pub const ML_MAX_EVENT_PAYLOAD_BYTES: u32 = 16 * 1024 * 1024;
+pub const ML_MIN_EVENT_PAYLOAD_BYTES: u32 = 20;
 
 pub type ml_status_t = u32;
 pub const ML_STATUS_OK: ml_status_t = 0;
@@ -47,6 +48,7 @@ pub const ML_EVENT_REQUEST_CANCELLED: ml_event_kind_t = 2;
 pub const ML_EVENT_FATAL: ml_event_kind_t = 3;
 pub const ML_EVENT_LIBRARY_COURSE_PAGE: ml_event_kind_t = 4;
 pub const ML_EVENT_LIBRARY_LESSON_PAGE: ml_event_kind_t = 5;
+pub const ML_EVENT_LIBRARY_SCAN: ml_event_kind_t = 6;
 
 pub type ml_wake_fn = Option<unsafe extern "C" fn(context: *mut c_void)>;
 
@@ -85,6 +87,16 @@ pub struct ml_library_lesson_page_request_v1 {
     pub course_id_len: usize,
     pub section_id: *const u8,
     pub section_id_len: usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ml_library_scan_request_v1 {
+    pub struct_size: u32,
+    pub abi_version: u32,
+    pub expected_revision: u64,
+    pub root_path: *const u8,
+    pub root_path_len: usize,
 }
 
 #[repr(C)]
@@ -254,11 +266,53 @@ impl Drop for WakeCall {
 enum PendingRequest {
     Domain {
         event_kind: ml_event_kind_t,
+        mutation_control: Option<Arc<MutationControl>>,
     },
     #[cfg(feature = "abi-test-hooks")]
-    Test {
-        payload: Vec<u8>,
-    },
+    Test { payload: Vec<u8> },
+}
+
+const MUTATION_ACTIVE: u8 = 0;
+const MUTATION_CANCELLED: u8 = 1;
+const MUTATION_COMMITTING: u8 = 2;
+
+#[derive(Debug)]
+pub(crate) struct MutationControl {
+    state: AtomicU8,
+}
+
+impl MutationControl {
+    pub(crate) fn new() -> Self {
+        Self {
+            state: AtomicU8::new(MUTATION_ACTIVE),
+        }
+    }
+
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.state.load(Ordering::Acquire) == MUTATION_CANCELLED
+    }
+
+    pub(crate) fn begin_commit(&self) -> bool {
+        self.state
+            .compare_exchange(
+                MUTATION_ACTIVE,
+                MUTATION_COMMITTING,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+    }
+
+    fn cancel(&self) -> bool {
+        self.state
+            .compare_exchange(
+                MUTATION_ACTIVE,
+                MUTATION_CANCELLED,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+    }
 }
 
 struct CoreState {
@@ -352,13 +406,22 @@ impl CoreState {
         Ok(request_id)
     }
 
-    fn reserve_domain_request(&mut self, event_kind: ml_event_kind_t) -> Result<u64, ml_status_t> {
+    fn reserve_domain_request(
+        &mut self,
+        event_kind: ml_event_kind_t,
+        mutation_control: Option<Arc<MutationControl>>,
+    ) -> Result<u64, ml_status_t> {
         if self.starting || self.outstanding() >= self.event_queue_capacity {
             return Err(ML_STATUS_BUSY);
         }
         let request_id = self.next_request_id();
-        self.pending_requests
-            .insert(request_id, PendingRequest::Domain { event_kind });
+        self.pending_requests.insert(
+            request_id,
+            PendingRequest::Domain {
+                event_kind,
+                mutation_control,
+            },
+        );
         Ok(request_id)
     }
 
@@ -387,12 +450,25 @@ impl CoreState {
         ))
     }
 
+    fn cancel_pending_mutations(&self) {
+        for pending in self.pending_requests.values() {
+            if let PendingRequest::Domain {
+                mutation_control: Some(control),
+                ..
+            } = pending
+            {
+                let _ = control.cancel();
+            }
+        }
+    }
+
     fn fail(&mut self) -> Option<WakeCall> {
         if self.destroyed || self.failed {
             return None;
         }
         self.starting = false;
         self.failed = true;
+        self.cancel_pending_mutations();
         self.pending_requests.clear();
         if !self.fatal_emitted {
             self.fatal_pending = true;
@@ -519,7 +595,8 @@ fn ffi_core_status(
 unsafe fn submit_domain_request(
     core: *mut ml_core_t,
     event_kind: ml_event_kind_t,
-    request: DomainRequest,
+    mut request: DomainRequest,
+    mutation_control: Option<Arc<MutationControl>>,
     out_request_id: *mut u64,
 ) -> ml_status_t {
     let Some(core) = resolve_core(core) else {
@@ -533,7 +610,13 @@ unsafe fn submit_domain_request(
         if state.failed {
             return (ML_STATUS_FAILED, None);
         }
-        let request_id = match state.reserve_domain_request(event_kind) {
+        if let DomainRequest::Scan {
+            max_payload_bytes, ..
+        } = &mut request
+        {
+            *max_payload_bytes = state.max_event_payload_bytes;
+        }
+        let request_id = match state.reserve_domain_request(event_kind, mutation_control) {
             Ok(request_id) => request_id,
             Err(status) => return (status, None),
         };
@@ -600,14 +683,19 @@ fn publish_domain_event(state: &Weak<Mutex<CoreState>>, event: DomainEvent) -> b
                 if !state.starting || state.failed {
                     return false;
                 }
-                state.starting = false;
-                state.push_event(OwnedEvent::new(
-                    0,
-                    ML_EVENT_CORE_READY,
-                    ML_STATUS_OK,
-                    1,
-                    revision.to_string().into_bytes(),
-                ))
+                let payload = revision.to_string().into_bytes();
+                if payload.len() > state.max_event_payload_bytes {
+                    state.fail()
+                } else {
+                    state.starting = false;
+                    state.push_event(OwnedEvent::new(
+                        0,
+                        ML_EVENT_CORE_READY,
+                        ML_STATUS_OK,
+                        1,
+                        payload,
+                    ))
+                }
             }
             DomainEvent::Fatal(error) => {
                 drop(error);
@@ -637,7 +725,7 @@ fn publish_domain_completion(
         if state.destroyed || state.failed {
             return false;
         }
-        let Some(PendingRequest::Domain { event_kind }) =
+        let Some(PendingRequest::Domain { event_kind, .. }) =
             state.pending_requests.get(&outcome.request_id.get())
         else {
             return true;
@@ -664,6 +752,7 @@ fn encode_domain_result(
     match result {
         Ok(DomainResponse::CoursePage(page)) => encode_json(ML_STATUS_OK, &page, max_payload_bytes),
         Ok(DomainResponse::LessonPage(page)) => encode_json(ML_STATUS_OK, &page, max_payload_bytes),
+        Ok(DomainResponse::Scan(scan)) => encode_json(ML_STATUS_OK, &scan, max_payload_bytes),
         Err(DomainError::Library(LibraryError::InvalidPageSize { limit })) => encode_json(
             ML_STATUS_INVALID_ARGUMENT,
             &serde_json::json!({
@@ -689,6 +778,20 @@ fn encode_domain_result(
             }),
             max_payload_bytes,
         ),
+        Err(DomainError::Library(LibraryError::Cancelled)) => (ML_STATUS_CANCELLED, 0, Vec::new()),
+        Err(DomainError::Library(LibraryError::InvalidScan(_))) => encode_json(
+            ML_STATUS_INVALID_ARGUMENT,
+            &serde_json::json!({"error": "invalidScan"}),
+            max_payload_bytes,
+        ),
+        Err(DomainError::Library(LibraryError::RevisionExhausted)) => encode_json(
+            ML_STATUS_FAILED,
+            &serde_json::json!({"error": "revisionExhausted"}),
+            max_payload_bytes,
+        ),
+        Err(DomainError::Library(LibraryError::ResponseTooLarge { .. })) => {
+            (ML_STATUS_FAILED, 0, Vec::new())
+        }
         Err(DomainError::Library(LibraryError::Database(_))) => encode_json(
             ML_STATUS_FAILED,
             &serde_json::json!({"error": "database"}),
@@ -785,6 +888,60 @@ fn library_revision_allocator_exhausts_instead_of_reusing_values() {
     assert_eq!(take_next_library_revision(&next_revision), None);
 }
 
+#[cfg(test)]
+#[test]
+fn mutation_cancellation_and_commit_gate_are_mutually_exclusive() {
+    let cancelled = MutationControl::new();
+    assert!(cancelled.cancel());
+    assert!(cancelled.is_cancelled());
+    assert!(!cancelled.begin_commit());
+    assert!(!cancelled.cancel());
+
+    let committing = MutationControl::new();
+    assert!(committing.begin_commit());
+    assert!(!committing.is_cancelled());
+    assert!(!committing.cancel());
+    assert!(!committing.begin_commit());
+}
+
+#[cfg(test)]
+#[test]
+fn required_ffi_strings_are_copied_before_the_caller_mutates_them() {
+    let mut bytes = b"/library/original".to_vec();
+    let copied = unsafe { copy_required_string(bytes.as_ptr(), bytes.len()) }
+        .expect("copy valid FFI string");
+
+    bytes.fill(b'x');
+
+    assert_eq!(copied, "/library/original");
+}
+
+#[cfg(test)]
+#[test]
+fn ready_payload_respects_the_minimum_bound_at_the_largest_revision() {
+    let state_dir = b"state";
+    let config = ml_config_v2 {
+        struct_size: size_of::<ml_config_v2>() as u32,
+        abi_version: ML_ABI_VERSION,
+        event_queue_capacity: 1,
+        max_event_payload_bytes: ML_MIN_EVENT_PAYLOAD_BYTES,
+        state_dir: state_dir.as_ptr(),
+        state_dir_len: state_dir.len(),
+    };
+    let state = Arc::new(Mutex::new(CoreState::new(&config)));
+
+    assert!(publish_domain_event(
+        &Arc::downgrade(&state),
+        DomainEvent::Ready { revision: u64::MAX },
+    ));
+
+    let state = lock(&state);
+    let ready = state.queued.front().expect("ready event");
+    assert_eq!(ready.kind, ML_EVENT_CORE_READY);
+    assert_eq!(ready.payload, u64::MAX.to_string().as_bytes());
+    assert!(ready.payload.len() <= state.max_event_payload_bytes);
+}
+
 fn valid_config(config: &ml_config_v2) -> ml_status_t {
     if config.struct_size < size_of::<ml_config_v2>() as u32 || config.abi_version != ML_ABI_VERSION
     {
@@ -792,7 +949,7 @@ fn valid_config(config: &ml_config_v2) -> ml_status_t {
     }
     if config.event_queue_capacity == 0
         || config.event_queue_capacity > ML_MAX_EVENT_QUEUE_CAPACITY
-        || config.max_event_payload_bytes == 0
+        || config.max_event_payload_bytes < ML_MIN_EVENT_PAYLOAD_BYTES
         || config.max_event_payload_bytes > ML_MAX_EVENT_PAYLOAD_BYTES
         || config.state_dir.is_null()
         || config.state_dir_len == 0
@@ -817,9 +974,11 @@ unsafe fn copy_required_string(value: *const u8, len: usize) -> Result<String, m
         return Err(ML_STATUS_INVALID_ARGUMENT);
     }
     let bytes = unsafe { std::slice::from_raw_parts(value, len) };
-    std::str::from_utf8(bytes)
-        .map(str::to_owned)
-        .map_err(|_| ML_STATUS_INVALID_ARGUMENT)
+    let value = std::str::from_utf8(bytes).map_err(|_| ML_STATUS_INVALID_ARGUMENT)?;
+    if value.contains('\0') {
+        return Err(ML_STATUS_INVALID_ARGUMENT);
+    }
+    Ok(value.to_owned())
 }
 
 fn valid_output(struct_size: u32, abi_version: u32, expected_size: usize) -> ml_status_t {
@@ -926,6 +1085,7 @@ pub unsafe extern "C" fn ml_core_destroy(core: *mut ml_core_t) {
             state.starting = false;
             state.queued.clear();
             state.in_flight.clear();
+            state.cancel_pending_mutations();
             state.pending_requests.clear();
             state.waker.take()
         };
@@ -1089,8 +1249,13 @@ pub extern "C" fn ml_core_cancel(core: *mut ml_core_t, request_id: u64) -> ml_st
         return ML_STATUS_INVALID_ARGUMENT;
     }
     ffi_core_status(core, false, |state| {
-        if !state.pending_requests.contains_key(&request_id) {
-            return Action::status(ML_STATUS_NOT_FOUND);
+        match state.pending_requests.get(&request_id) {
+            Some(PendingRequest::Domain {
+                mutation_control: Some(control),
+                ..
+            }) if !control.cancel() => return Action::status(ML_STATUS_NOT_FOUND),
+            Some(_) => {}
+            None => return Action::status(ML_STATUS_NOT_FOUND),
         }
         let event = OwnedEvent::new(
             request_id,
@@ -1145,6 +1310,7 @@ pub unsafe extern "C" fn ml_library_course_page_v1(
                     offset: request.offset,
                     limit: request.limit,
                 },
+                None,
                 out_request_id,
             )
         }
@@ -1210,6 +1376,60 @@ pub unsafe extern "C" fn ml_library_lesson_page_v1(
                     offset: request.offset,
                     limit: request.limit,
                 },
+                None,
+                out_request_id,
+            )
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
+/// Submits one asynchronous Library scan and reconciliation request.
+///
+/// # Safety
+///
+/// `request` must point to a readable `ml_library_scan_request_v1`. Its root
+/// path bytes must remain readable for this call. `out_request_id` must point
+/// to writable `u64` storage. All inputs are copied before return.
+pub unsafe extern "C" fn ml_library_scan_v1(
+    core: *mut ml_core_t,
+    request: *const ml_library_scan_request_v1,
+    out_request_id: *mut u64,
+) -> ml_status_t {
+    ffi_status(|| {
+        if out_request_id.is_null() {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        unsafe { *out_request_id = 0 };
+        if request.is_null() {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        let request = unsafe { *request };
+        let status = valid_output(
+            request.struct_size,
+            request.abi_version,
+            size_of::<ml_library_scan_request_v1>(),
+        );
+        if status != ML_STATUS_OK {
+            return status;
+        }
+        let root_path =
+            match unsafe { copy_required_string(request.root_path, request.root_path_len) } {
+                Ok(root_path) => root_path,
+                Err(status) => return status,
+            };
+        let control = Arc::new(MutationControl::new());
+        unsafe {
+            submit_domain_request(
+                core,
+                ML_EVENT_LIBRARY_SCAN,
+                DomainRequest::Scan {
+                    expected_revision: request.expected_revision,
+                    root_path,
+                    max_payload_bytes: 0,
+                    control: Arc::clone(&control),
+                },
+                Some(control),
                 out_request_id,
             )
         }
