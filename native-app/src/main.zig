@@ -14,7 +14,6 @@ pub const window_width: f32 = 960;
 pub const window_height: f32 = 680;
 pub const window_min_width: f32 = 560;
 pub const window_min_height: f32 = 400;
-const header_natural_height: f32 = 52;
 const max_courses: usize = core_adapter.library_page_size;
 const max_lessons: usize = core_adapter.lesson_page_size;
 const max_course_id_bytes = core_adapter.max_course_id_bytes;
@@ -145,8 +144,7 @@ pub const CourseState = enum {
 };
 
 pub const Model = struct {
-    chrome_leading: f32 = 0,
-    header_height: f32 = header_natural_height,
+    appearance: native_sdk.Appearance = .{},
     library_state: LibraryState = .opening,
     library_revision: u64 = 0,
     total_courses: u64 = 0,
@@ -168,6 +166,7 @@ pub const Model = struct {
     course_message_len: usize = 0,
 
     pub const view_unbound = .{
+        "appearance",
         "library_state",
         "library_revision",
         "total_courses",
@@ -548,7 +547,7 @@ fn validLessonKind(value: []const u8) bool {
 }
 
 pub const Msg = union(enum) {
-    chrome_changed: native_sdk.WindowChrome,
+    appearance_changed: native_sdk.Appearance,
     library_loaded: native_sdk.EffectExternalResult,
     course_accessed: native_sdk.EffectExternalResult,
     lessons_loaded: native_sdk.EffectExternalResult,
@@ -559,7 +558,7 @@ pub const Msg = union(enum) {
     previous_lesson_page,
     next_lesson_page,
 
-    pub const view_unbound = .{ "chrome_changed", "library_loaded", "course_accessed", "lessons_loaded" };
+    pub const view_unbound = .{ "appearance_changed", "library_loaded", "course_accessed", "lessons_loaded" };
 };
 
 pub const LibraryUi = canvas.Ui(Msg);
@@ -569,6 +568,40 @@ pub const CompiledLibraryView = canvas.CompiledMarkupView(Model, Msg, library_ma
 const dev_markup_reload = builtin.mode == .Debug;
 pub const LibraryApp = native_sdk.UiAppWithFeatures(Model, Msg, .{ .runtime_markup = dev_markup_reload });
 pub const Effects = LibraryApp.Effects;
+
+pub const primary_font_id: canvas.FontId = canvas.min_registered_font_id;
+pub const app_fonts = [_]LibraryApp.FontRegistration{.{
+    .id = primary_font_id,
+    .name = "melearner-ui.ttf",
+    .ttf = @embedFile("fonts/melearner-ui.ttf"),
+}};
+
+pub fn tokensFromModel(model: *const Model) canvas.DesignTokens {
+    var tokens = canvas.DesignTokens.theme(.{
+        .color_scheme = switch (model.appearance.color_scheme) {
+            .light => .light,
+            .dark => .dark,
+        },
+        .contrast = if (model.appearance.high_contrast) .high else .standard,
+        .reduce_motion = model.appearance.reduce_motion,
+    });
+    tokens.typography.font_id = primary_font_id;
+    return tokens;
+}
+
+pub fn appOptions() LibraryApp.Options {
+    return .{
+        .name = "melearner",
+        .scene = shell_scene,
+        .canvas_label = canvas_label,
+        .update_fx = update,
+        .init_fx = boot,
+        .tokens_fn = tokensFromModel,
+        .fonts = &app_fonts,
+        .on_appearance = onAppearance,
+        .view = CompiledLibraryView.build,
+    };
+}
 
 pub fn boot(model: *Model, effects: *Effects) void {
     model.screen = .library;
@@ -641,10 +674,7 @@ fn requestLessonPage(model: *Model, effects: *Effects, offset: u64) void {
 
 pub fn update(model: *Model, msg: Msg, effects: *Effects) void {
     switch (msg) {
-        .chrome_changed => |chrome| {
-            model.chrome_leading = chrome.insets.left;
-            model.header_height = @max(header_natural_height, chrome.insets.top);
-        },
+        .appearance_changed => |appearance| model.appearance = appearance,
         .library_loaded => |result| {
             if (model.screen != .library) return;
             if (result.key != core_adapter.library_page_key or
@@ -762,8 +792,8 @@ pub fn update(model: *Model, msg: Msg, effects: *Effects) void {
     }
 }
 
-pub fn onChrome(chrome: native_sdk.WindowChrome) ?Msg {
-    return .{ .chrome_changed = chrome };
+pub fn onAppearance(appearance: native_sdk.Appearance) ?Msg {
+    return .{ .appearance_changed = appearance };
 }
 
 pub fn main(init: std.process.Init) !void {
@@ -780,19 +810,11 @@ pub fn main(init: std.process.Init) !void {
 
     const app_state = try std.heap.page_allocator.create(LibraryApp);
     defer std.heap.page_allocator.destroy(app_state);
-    app_state.* = LibraryApp.init(std.heap.page_allocator, .{}, .{
-        .name = "melearner",
-        .scene = shell_scene,
-        .canvas_label = canvas_label,
-        .update_fx = update,
-        .init_fx = boot,
-        .on_chrome = onChrome,
-        .view = CompiledLibraryView.build,
-        .markup = if (dev_markup_reload)
-            .{ .source = library_markup, .watch_path = "src/library.native", .io = init.io }
-        else
-            null,
-    });
+    var options = appOptions();
+    if (dev_markup_reload) {
+        options.markup = .{ .source = library_markup, .watch_path = "src/library.native", .io = init.io };
+    }
+    app_state.* = LibraryApp.init(std.heap.page_allocator, .{}, options);
     defer app_state.deinit();
     app_state.effects.bindExternalAdapter(adapter.binding());
 

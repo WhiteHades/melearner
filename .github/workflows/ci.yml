@@ -82,11 +82,26 @@ jobs:
           cli="$PWD/$sdk_dir/zig-out/bin/native"
           "$cli" check . --strict
 
+          printf '%s  %s\n' \
+            '8f57affb411a388eeaa7a2e08a7013a49cccbc65d8db8418b2495a41ba088cc6' \
+            'src/fonts/melearner-ui.ttf' | sha256sum --check --strict
+
           zig build -Dplatform=linux -Doptimize=ReleaseSafe -Dautomation=true
           if readelf -dW zig-out/bin/melearner | grep -Eiq 'webkit|javascriptcore'; then
             echo "native app links a web runtime" >&2
             exit 1
           fi
+
+          zig build package -Dplatform=linux -Doptimize=ReleaseSafe -Dautomation=true
+          font_license_dir="zig-out/package/linux/resources/licenses/melearner-ui"
+          for notice in OFL-Geist.txt OFL-NotoSansJP.txt Unicode-Data-Files-LICENSE.txt NOTICE.txt; do
+            test -s "$font_license_dir/$notice"
+            grep -Fq "licenses/melearner-ui/$notice" zig-out/package/linux/resources/asset-manifest.zon
+          done
+          for license in melearner/LICENSE-MIT.txt native-sdk/LICENSE-Apache-2.0.txt; do
+            test -s "zig-out/package/linux/resources/licenses/$license"
+            grep -Fq "licenses/$license" zig-out/package/linux/resources/asset-manifest.zon
+          done
 
           rm -rf "$XDG_DATA_HOME" .zig-cache/native-sdk-automation
           xvfb-run -a ./zig-out/bin/melearner >"$RUNNER_TEMP/melearner-native.log" 2>&1 &

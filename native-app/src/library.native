@@ -1,10 +1,4 @@
 <column background="background">
-  <row height="{header_height}" padding="12" gap="10" cross="center" background="surface" window-drag="true" label="melearner header">
-    <spacer width="{chrome_leading}" />
-    <text size="sm">melearner</text>
-    <spacer grow="1" />
-  </row>
-  <separator />
   <if test="{showLibrary}">
     <if test="{libraryOpening}">
       <column grow="1" padding="32" gap="8" main="center" cross="center" label="Library opening state">

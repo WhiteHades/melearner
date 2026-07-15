@@ -1,0 +1,13 @@
+melearner-ui.ttf is a Modified Version that combines Geist Regular with
+Noto Sans JP 2.004-H2 Japanese outlines. The Japanese subset uses the
+Unicode 17.0 Unihan Joyo and Jinmeiyo mappings.
+
+The complete licenses and copyright notices are installed alongside this
+notice:
+
+- OFL-Geist.txt
+- OFL-NotoSansJP.txt
+- Unicode-Data-Files-LICENSE.txt
+
+Source provenance and the reproducible generation recipe are documented in
+native-app/src/fonts/README.md in the melearner source distribution.

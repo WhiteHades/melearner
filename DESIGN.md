@@ -16,7 +16,7 @@ Inspired by the Kami paper system: warm parchment surfaces, low-chroma ink, one 
 
 ## Typography
 
-- Use the existing app font stack from `app/layout.tsx` and `app/globals.css`.
+- Use each shell's committed interface face: the existing web font stack during the transition and `native-app/src/fonts/melearner-ui.ttf` in the native shell.
 - Keep headings roman, never italic.
 - Keep product labels compact and readable.
 - Use tabular numbers for progress, versions, counts, and time.

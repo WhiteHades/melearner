@@ -40,6 +40,97 @@ test "the first native frame identifies the Library opening state" {
 
     try testing.expect(findByText(tree.root, .text, "Library") != null);
     try testing.expect(findByText(tree.root, .text, "Opening your Library\u{2026}") != null);
+    try testing.expect(findByText(tree.root, .text, "melearner") == null);
+}
+
+test "static native UI copy stays English-only" {
+    var iterator = std.unicode.Utf8Iterator{ .bytes = main.library_markup, .i = 0 };
+    while (iterator.nextCodepoint()) |codepoint| {
+        try testing.expect(codepoint <= 0x7F or codepoint == 0x2026);
+    }
+}
+
+test "the native app registers renderable Latin Cyrillic and Japanese course text without changing the system theme" {
+    try testing.expectEqual(@as(usize, 1), main.app_fonts.len);
+    try testing.expectEqual(main.primary_font_id, main.app_fonts[0].id);
+    try testing.expect(main.app_fonts[0].ttf.len <= native_sdk.runtime.max_registered_canvas_font_bytes);
+
+    const face = try canvas.font_ttf.Face.parse(main.app_fonts[0].ttf);
+    var mapped: usize = 0;
+    var scalar: u21 = 0;
+    while (scalar <= 0xFFFF) : (scalar += 1) {
+        const glyph = face.glyphIndex(scalar);
+        if (canvas.font_ttf.geist_regular.glyphIndex(scalar) != 0) {
+            try testing.expect(glyph != 0);
+        }
+        if (glyph == 0) continue;
+        var path = canvas.vector.PathBuilder(canvas.font_ttf.max_simple_glyph_path_elements){};
+        try face.glyphOutline(glyph, canvas.Affine.identity(), &path);
+        mapped += 1;
+    }
+    try testing.expectEqual(@as(usize, 3904), mapped);
+
+    for ([_]u21{ 0x0141, 0x0421, 0x044B, 0x2019, 0x2013, 0x2026, 0x65E5, 0x672C, 0x8A9E, 0x5165, 0x9580, 0x6F22, 0x5B57, 0x9B31 }) |codepoint| {
+        const glyph = face.glyphIndex(codepoint);
+        try testing.expect(glyph != 0);
+        var path = canvas.vector.PathBuilder(canvas.font_ttf.max_simple_glyph_path_elements){};
+        try face.glyphOutline(glyph, canvas.Affine.identity(), &path);
+        try testing.expect(path.slice().len != 0);
+    }
+
+    const model = main.Model{ .appearance = .{
+        .color_scheme = .dark,
+        .high_contrast = true,
+        .reduce_motion = true,
+    } };
+    var expected = canvas.DesignTokens.theme(.{
+        .color_scheme = .dark,
+        .contrast = .high,
+        .reduce_motion = true,
+    });
+    expected.typography.font_id = main.primary_font_id;
+    try testing.expectEqualDeep(expected, main.tokensFromModel(&model));
+}
+
+test "the app startup options install and select the course-content font" {
+    const options = main.appOptions();
+    try testing.expectEqual(main.primary_font_id, options.tokens_fn.?(&main.Model{}).typography.font_id);
+    try testing.expectEqualSlices(main.LibraryApp.FontRegistration, &main.app_fonts, options.fonts);
+
+    const app_state = try testing.allocator.create(main.LibraryApp);
+    defer testing.allocator.destroy(app_state);
+    app_state.* = main.LibraryApp.init(testing.allocator, .{}, options);
+    defer app_state.deinit();
+    app_state.effects.executor = .fake;
+
+    const harness = try native_sdk.TestHarness().create(testing.allocator, .{
+        .size = native_sdk.geometry.SizeF.init(main.window_width, main.window_height),
+    });
+    defer harness.destroy(testing.allocator);
+    harness.null_platform.gpu_surfaces = true;
+    const app = app_state.app();
+    try harness.start(app);
+    const appearance: native_sdk.Appearance = .{
+        .color_scheme = .dark,
+        .high_contrast = true,
+        .reduce_motion = true,
+    };
+    try harness.runtime.dispatchPlatformEvent(app, .{ .appearance_changed = appearance });
+    try harness.runtime.dispatchPlatformEvent(app, .{ .gpu_surface_frame = .{
+        .label = main.canvas_label,
+        .size = native_sdk.geometry.SizeF.init(main.window_width, main.window_height),
+        .scale_factor = 1,
+        .frame_index = 1,
+        .timestamp_ns = 1_000_000,
+        .nonblank = true,
+    } });
+
+    try testing.expect(app_state.installed);
+    try testing.expectEqualDeep(appearance, app_state.model.appearance);
+    try testing.expectEqual(@as(usize, 1), harness.runtime.registeredCanvasFontCount());
+    const face = harness.runtime.registeredCanvasFontFace(main.primary_font_id).?;
+    try testing.expect(face.glyphIndex(0x9B31) != 0);
+    try testing.expectEqual(@as(usize, 0), harness.runtime.dispatchErrors().len);
 }
 
 test "Library boot uses the versioned Rust-core effect and renders an empty page" {
@@ -439,19 +530,4 @@ fn expectLiveEmptyPage(state_dir: []const u8) !void {
 
     effects.deinit();
     adapter.destroy();
-}
-
-test "native titlebar geometry reaches the Library model" {
-    var effects = main.Effects.init(testing.allocator);
-    defer effects.deinit();
-    var model = main.Model{};
-    const chrome: native_sdk.WindowChrome = .{
-        .insets = .{ .top = 52, .left = 78 },
-        .buttons = native_sdk.geometry.RectF.init(20, 19, 52, 14),
-    };
-
-    main.update(&model, main.onChrome(chrome).?, &effects);
-
-    try testing.expectEqual(@as(f32, 78), model.chrome_leading);
-    try testing.expectEqual(@as(f32, 52), model.header_height);
 }

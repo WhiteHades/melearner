@@ -5,9 +5,9 @@
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .native_sdk = .{
-            .url = "git+https://github.com/WhiteHades/native.git#9f289924b7b98197b78f0e0b67c7c5d197c3a440",
-            .hash = "native_sdk-0.1.0-hzDzQrzChAFbFw_glvfGKmyUyxVuVbqE12oyfJfC0D6k",
+            .url = "git+https://github.com/WhiteHades/native.git#5c618cbfbc303aef3abae9028b59816838d60766",
+            .hash = "native_sdk-0.1.0-hzDzQvv7hAF7iNyd98EWYNGEU5PrHbtDnVbcb9ZTDJ6S",
         },
     },
-    .paths = .{ "app.zon", "build.zig", "build.zig.zon", "src" },
+    .paths = .{ "app.zon", "build.zig", "build.zig.zon", "src", "assets" },
 }

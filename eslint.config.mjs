@@ -11,5 +11,6 @@ export default defineConfig([
     "build/**",
     "next-env.d.ts",
     "src-tauri/target/**",
+    "native-app/zig-pkg/**",
   ]),
 ])
