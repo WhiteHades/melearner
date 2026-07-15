@@ -10,7 +10,8 @@ use std::thread::{self, JoinHandle};
 use crate::MutationControl;
 use crate::library::{
     ActivityDayPage, ActivityPageInput, CoursePage, LessonPage, LibraryDatabase, LibraryError,
-    ProgressInput, ProgressUpdate, ReconcileResult, SearchIndexReady, SearchPage, SearchPageInput,
+    NoteDelete, NoteDeleteInput, NotePage, NotePageInput, NoteSaveInput, NoteSaved, ProgressInput,
+    ProgressUpdate, ReconcileResult, SearchIndexReady, SearchPage, SearchPageInput,
 };
 
 #[derive(Debug)]
@@ -50,6 +51,19 @@ pub(crate) enum DomainRequest {
         input: SearchPageInput,
         control: Arc<MutationControl>,
     },
+    NotePage {
+        input: NotePageInput,
+    },
+    SaveNote {
+        input: NoteSaveInput,
+        max_payload_bytes: usize,
+        control: Arc<MutationControl>,
+    },
+    DeleteNote {
+        input: NoteDeleteInput,
+        max_payload_bytes: usize,
+        control: Arc<MutationControl>,
+    },
     #[cfg(test)]
     LongQuery {
         entered: mpsc::Sender<()>,
@@ -67,6 +81,9 @@ pub(crate) enum DomainResponse {
     ActivityDayPage(ActivityDayPage),
     SearchIndexReady(SearchIndexReady),
     SearchPage(SearchPage),
+    NotePage(NotePage),
+    NoteSaved(NoteSaved),
+    NoteDeleted(NoteDelete),
 }
 
 #[derive(Debug)]
@@ -254,6 +271,27 @@ impl DomainState {
             )),
             DomainRequest::SearchPage { input, control } => Ok(DomainResponse::SearchPage(
                 self.library.search_page(input, &control)?,
+            )),
+            DomainRequest::NotePage { input } => Ok(DomainResponse::NotePage(
+                self.library.note_page(input).await?,
+            )),
+            DomainRequest::SaveNote {
+                input,
+                max_payload_bytes,
+                control,
+            } => Ok(DomainResponse::NoteSaved(
+                self.library
+                    .save_note(input, max_payload_bytes, &control)
+                    .await?,
+            )),
+            DomainRequest::DeleteNote {
+                input,
+                max_payload_bytes,
+                control,
+            } => Ok(DomainResponse::NoteDeleted(
+                self.library
+                    .delete_note(input, max_payload_bytes, &control)
+                    .await?,
             )),
             #[cfg(test)]
             DomainRequest::LongQuery { entered } => {

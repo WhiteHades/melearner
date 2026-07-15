@@ -64,7 +64,7 @@ fn ready_revision(core: *mut ml_core_t) -> u64 {
     revision
 }
 
-fn seed_progress_database(data_dir: &Path) {
+fn seed_current_database(data_dir: &Path) {
     tokio::runtime::Builder::new_current_thread()
         .build()
         .expect("build progress seed runtime")
@@ -142,7 +142,7 @@ fn progress_and_activity_round_trip_through_the_versioned_abi() {
     );
     ready_revision(core);
     unsafe { ml_core_destroy(core) };
-    seed_progress_database(data_dir.path());
+    seed_current_database(data_dir.path());
 
     core = ptr::null_mut();
     assert_eq!(
@@ -246,6 +246,284 @@ fn progress_and_activity_round_trip_through_the_versioned_abi() {
     activity.reserved = 1;
     assert_eq!(
         unsafe { ml_activity_day_page_v1(core, &activity, &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    unsafe { ml_core_destroy(core) };
+}
+
+#[test]
+fn notes_list_save_update_and_delete_round_trip_through_the_versioned_abi() {
+    let data_dir = tempfile::tempdir().expect("create ABI notes state directory");
+    let state_dir = data_dir
+        .path()
+        .to_str()
+        .expect("temporary notes state directory is UTF-8")
+        .as_bytes();
+    let mut core = ptr::null_mut();
+    assert_eq!(
+        unsafe { ml_core_create(&config(state_dir), &mut core) },
+        ML_STATUS_OK
+    );
+    ready_revision(core);
+    unsafe { ml_core_destroy(core) };
+    seed_current_database(data_dir.path());
+
+    core = ptr::null_mut();
+    assert_eq!(
+        unsafe { ml_core_create(&config(state_dir), &mut core) },
+        ML_STATUS_OK
+    );
+    let revision = ready_revision(core);
+    let mut lesson_id = b"lesson-video".to_vec();
+    let mut list = ml_notes_list_request_v1 {
+        struct_size: size_of::<ml_notes_list_request_v1>() as u32,
+        abi_version: ML_ABI_VERSION,
+        expected_revision: revision,
+        offset: 0,
+        limit: 20,
+        reserved: 0,
+        lesson_id: lesson_id.as_ptr(),
+        lesson_id_len: lesson_id.len(),
+    };
+    let mut request_id = u64::MAX;
+    assert_eq!(
+        unsafe { ml_notes_list_v1(core, ptr::null(), &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    assert_eq!(request_id, 0);
+    list.struct_size -= 1;
+    assert_eq!(
+        unsafe { ml_notes_list_v1(core, &list, &mut request_id) },
+        ML_STATUS_ABI_MISMATCH
+    );
+    list.struct_size += 1;
+    list.reserved = 1;
+    assert_eq!(
+        unsafe { ml_notes_list_v1(core, &list, &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    list.reserved = 0;
+    assert_eq!(
+        unsafe { ml_notes_list_v1(core, &list, &mut request_id) },
+        ML_STATUS_OK
+    );
+    lesson_id.fill(b'x');
+    let mut page = poll(core);
+    assert_eq!(page.request_id, request_id);
+    assert_eq!(page.kind, ML_EVENT_NOTES_PAGE);
+    assert_eq!(page.status, ML_STATUS_OK);
+    let payload = unsafe { std::slice::from_raw_parts(page.payload, page.payload_len) };
+    let listed: serde_json::Value = serde_json::from_slice(payload).expect("parse note page");
+    assert_eq!(listed["revision"], revision);
+    assert_eq!(listed["lessonId"], "lesson-video");
+    assert_eq!(listed["total"], 2);
+    assert_eq!(listed["rows"][0]["id"], "note-video-1");
+    assert_eq!(listed["rows"][1]["id"], "note-video-2");
+    unsafe { ml_core_release_event(core, &mut page) };
+
+    lesson_id = b"lesson-video".to_vec();
+    let mut text = "  Native 復習 note  ".as_bytes().to_vec();
+    let mut save = ml_notes_save_request_v1 {
+        struct_size: size_of::<ml_notes_save_request_v1>() as u32,
+        abi_version: ML_ABI_VERSION,
+        expected_revision: revision,
+        timestamp: 99.5,
+        reserved: 0,
+        lesson_id: lesson_id.as_ptr(),
+        lesson_id_len: lesson_id.len(),
+        note_id: ptr::null(),
+        note_id_len: 0,
+        text: text.as_ptr(),
+        text_len: text.len(),
+    };
+    assert_eq!(
+        unsafe { ml_notes_save_v1(core, ptr::null(), &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    save.struct_size -= 1;
+    assert_eq!(
+        unsafe { ml_notes_save_v1(core, &save, &mut request_id) },
+        ML_STATUS_ABI_MISMATCH
+    );
+    save.struct_size += 1;
+    save.note_id_len = 1;
+    assert_eq!(
+        unsafe { ml_notes_save_v1(core, &save, &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    save.note_id_len = 0;
+    let note_id_probe = b"note";
+    save.note_id = note_id_probe.as_ptr();
+    assert_eq!(
+        unsafe { ml_notes_save_v1(core, &save, &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    save.note_id = ptr::null();
+    save.reserved = 1;
+    assert_eq!(
+        unsafe { ml_notes_save_v1(core, &save, &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    save.reserved = 0;
+    save.timestamp = f64::NAN;
+    assert_eq!(
+        unsafe { ml_notes_save_v1(core, &save, &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    save.timestamp = 99.5;
+    assert_eq!(
+        unsafe { ml_notes_save_v1(core, &save, &mut request_id) },
+        ML_STATUS_OK
+    );
+    lesson_id.fill(b'x');
+    text.fill(b'x');
+    let mut saved = poll(core);
+    assert_eq!(saved.request_id, request_id);
+    assert_eq!(saved.kind, ML_EVENT_NOTE_SAVED);
+    assert_eq!(saved.status, ML_STATUS_OK);
+    let payload = unsafe { std::slice::from_raw_parts(saved.payload, saved.payload_len) };
+    let created: serde_json::Value = serde_json::from_slice(payload).expect("parse saved note");
+    let created_revision = created["revision"]
+        .as_u64()
+        .expect("saved note has revision");
+    let note_id = created["id"]
+        .as_str()
+        .expect("saved note has ID")
+        .to_string();
+    let created_at = created["createdAt"]
+        .as_str()
+        .expect("saved note has creation time")
+        .to_string();
+    assert!(created_revision > revision);
+    assert_eq!(created["lessonId"], "lesson-video");
+    assert_eq!(created["timestamp"], 99.5);
+    assert_eq!(created["text"], "Native 復習 note");
+    unsafe { ml_core_release_event(core, &mut saved) };
+
+    let mut note_id_bytes = note_id.as_bytes().to_vec();
+    lesson_id = b"lesson-video".to_vec();
+    text = b"updated note".to_vec();
+    save.expected_revision = created_revision;
+    save.timestamp = 5.0;
+    save.lesson_id = lesson_id.as_ptr();
+    save.lesson_id_len = lesson_id.len();
+    save.note_id = note_id_bytes.as_ptr();
+    save.note_id_len = note_id_bytes.len();
+    save.text = text.as_ptr();
+    save.text_len = text.len();
+    assert_eq!(
+        unsafe { ml_notes_save_v1(core, &save, &mut request_id) },
+        ML_STATUS_OK
+    );
+    note_id_bytes.fill(b'x');
+    text.fill(b'x');
+    let mut updated = poll(core);
+    assert_eq!(updated.kind, ML_EVENT_NOTE_SAVED);
+    assert_eq!(updated.status, ML_STATUS_OK);
+    let payload = unsafe { std::slice::from_raw_parts(updated.payload, updated.payload_len) };
+    let changed: serde_json::Value = serde_json::from_slice(payload).expect("parse updated note");
+    let updated_revision = changed["revision"]
+        .as_u64()
+        .expect("updated note has revision");
+    assert!(updated_revision > created_revision);
+    assert_eq!(changed["id"], note_id);
+    assert_eq!(changed["createdAt"], created_at);
+    assert_eq!(changed["text"], "updated note");
+    unsafe { ml_core_release_event(core, &mut updated) };
+
+    note_id_bytes = note_id.as_bytes().to_vec();
+    let mut delete = ml_notes_delete_request_v1 {
+        struct_size: size_of::<ml_notes_delete_request_v1>() as u32,
+        abi_version: ML_ABI_VERSION,
+        expected_revision: updated_revision,
+        reserved: 0,
+        note_id: note_id_bytes.as_ptr(),
+        note_id_len: note_id_bytes.len(),
+    };
+    assert_eq!(
+        unsafe { ml_notes_delete_v1(core, ptr::null(), &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    delete.struct_size -= 1;
+    assert_eq!(
+        unsafe { ml_notes_delete_v1(core, &delete, &mut request_id) },
+        ML_STATUS_ABI_MISMATCH
+    );
+    delete.struct_size += 1;
+    delete.reserved = 1;
+    assert_eq!(
+        unsafe { ml_notes_delete_v1(core, &delete, &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    delete.reserved = 0;
+    assert_eq!(
+        unsafe { ml_notes_delete_v1(core, &delete, &mut request_id) },
+        ML_STATUS_OK
+    );
+    note_id_bytes.fill(b'x');
+    let mut deleted = poll(core);
+    assert_eq!(deleted.kind, ML_EVENT_NOTE_DELETED);
+    assert_eq!(deleted.status, ML_STATUS_OK);
+    let payload = unsafe { std::slice::from_raw_parts(deleted.payload, deleted.payload_len) };
+    let removed: serde_json::Value = serde_json::from_slice(payload).expect("parse deleted note");
+    let deleted_revision = removed["revision"]
+        .as_u64()
+        .expect("deleted note has revision");
+    assert!(deleted_revision > updated_revision);
+    assert_eq!(removed["noteId"], note_id);
+    unsafe { ml_core_release_event(core, &mut deleted) };
+
+    let mut nul_text = b"a\0b".to_vec();
+    save.expected_revision = deleted_revision;
+    save.note_id = ptr::null();
+    save.note_id_len = 0;
+    save.text = nul_text.as_ptr();
+    save.text_len = nul_text.len();
+    assert_eq!(
+        unsafe { ml_notes_save_v1(core, &save, &mut request_id) },
+        ML_STATUS_OK
+    );
+    nul_text.fill(b'x');
+    let mut nul_saved = poll(core);
+    assert_eq!(nul_saved.kind, ML_EVENT_NOTE_SAVED);
+    assert_eq!(nul_saved.status, ML_STATUS_OK);
+    let payload = unsafe { std::slice::from_raw_parts(nul_saved.payload, nul_saved.payload_len) };
+    let nul_note: serde_json::Value = serde_json::from_slice(payload).expect("parse NUL note");
+    let nul_revision = nul_note["revision"]
+        .as_u64()
+        .expect("NUL note has revision");
+    assert_eq!(nul_note["text"], "a\0b");
+    unsafe { ml_core_release_event(core, &mut nul_saved) };
+
+    let byte_order_mark = "\u{FEFF}".as_bytes();
+    save.expected_revision = nul_revision;
+    save.text = byte_order_mark.as_ptr();
+    save.text_len = byte_order_mark.len();
+    assert_eq!(
+        unsafe { ml_notes_save_v1(core, &save, &mut request_id) },
+        ML_STATUS_OK
+    );
+    let mut invalid_note = poll(core);
+    assert_eq!(invalid_note.kind, ML_EVENT_NOTE_SAVED);
+    assert_eq!(invalid_note.status, ML_STATUS_INVALID_ARGUMENT);
+    assert_eq!(
+        unsafe { std::slice::from_raw_parts(invalid_note.payload, invalid_note.payload_len) },
+        br#"{"error":"invalidNote"}"#
+    );
+    unsafe { ml_core_release_event(core, &mut invalid_note) };
+
+    let invalid_utf8 = [0xff];
+    save.text = invalid_utf8.as_ptr();
+    save.text_len = invalid_utf8.len();
+    assert_eq!(
+        unsafe { ml_notes_save_v1(core, &save, &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    let oversized = vec![b'x'; ML_MAX_NOTE_TEXT_BYTES as usize + 1];
+    save.text = oversized.as_ptr();
+    save.text_len = oversized.len();
+    assert_eq!(
+        unsafe { ml_notes_save_v1(core, &save, &mut request_id) },
         ML_STATUS_INVALID_ARGUMENT
     );
     unsafe { ml_core_destroy(core) };

@@ -335,6 +335,79 @@ fn public_v2_layout_is_pinned() {
         40 + size_of::<usize>()
     );
 
+    assert_eq!(
+        size_of::<ml_notes_list_request_v1>(),
+        32 + size_of::<usize>() * 2
+    );
+    assert_eq!(
+        align_of::<ml_notes_list_request_v1>(),
+        align_of::<u64>().max(align_of::<usize>())
+    );
+    assert_eq!(offset_of!(ml_notes_list_request_v1, struct_size), 0);
+    assert_eq!(offset_of!(ml_notes_list_request_v1, abi_version), 4);
+    assert_eq!(offset_of!(ml_notes_list_request_v1, expected_revision), 8);
+    assert_eq!(offset_of!(ml_notes_list_request_v1, offset), 16);
+    assert_eq!(offset_of!(ml_notes_list_request_v1, limit), 24);
+    assert_eq!(offset_of!(ml_notes_list_request_v1, reserved), 28);
+    assert_eq!(offset_of!(ml_notes_list_request_v1, lesson_id), 32);
+    assert_eq!(
+        offset_of!(ml_notes_list_request_v1, lesson_id_len),
+        32 + size_of::<usize>()
+    );
+
+    assert_eq!(
+        size_of::<ml_notes_save_request_v1>(),
+        32 + size_of::<usize>() * 6
+    );
+    assert_eq!(
+        align_of::<ml_notes_save_request_v1>(),
+        align_of::<u64>().max(align_of::<usize>())
+    );
+    assert_eq!(offset_of!(ml_notes_save_request_v1, struct_size), 0);
+    assert_eq!(offset_of!(ml_notes_save_request_v1, abi_version), 4);
+    assert_eq!(offset_of!(ml_notes_save_request_v1, expected_revision), 8);
+    assert_eq!(offset_of!(ml_notes_save_request_v1, timestamp), 16);
+    assert_eq!(offset_of!(ml_notes_save_request_v1, reserved), 24);
+    assert_eq!(offset_of!(ml_notes_save_request_v1, lesson_id), 32);
+    assert_eq!(
+        offset_of!(ml_notes_save_request_v1, lesson_id_len),
+        32 + size_of::<usize>()
+    );
+    assert_eq!(
+        offset_of!(ml_notes_save_request_v1, note_id),
+        32 + size_of::<usize>() * 2
+    );
+    assert_eq!(
+        offset_of!(ml_notes_save_request_v1, note_id_len),
+        32 + size_of::<usize>() * 3
+    );
+    assert_eq!(
+        offset_of!(ml_notes_save_request_v1, text),
+        32 + size_of::<usize>() * 4
+    );
+    assert_eq!(
+        offset_of!(ml_notes_save_request_v1, text_len),
+        32 + size_of::<usize>() * 5
+    );
+
+    assert_eq!(
+        size_of::<ml_notes_delete_request_v1>(),
+        24 + size_of::<usize>() * 2
+    );
+    assert_eq!(
+        align_of::<ml_notes_delete_request_v1>(),
+        align_of::<u64>().max(align_of::<usize>())
+    );
+    assert_eq!(offset_of!(ml_notes_delete_request_v1, struct_size), 0);
+    assert_eq!(offset_of!(ml_notes_delete_request_v1, abi_version), 4);
+    assert_eq!(offset_of!(ml_notes_delete_request_v1, expected_revision), 8);
+    assert_eq!(offset_of!(ml_notes_delete_request_v1, reserved), 16);
+    assert_eq!(offset_of!(ml_notes_delete_request_v1, note_id), 24);
+    assert_eq!(
+        offset_of!(ml_notes_delete_request_v1, note_id_len),
+        24 + size_of::<usize>()
+    );
+
     assert_eq!(size_of::<ml_core_limits_v1>(), 16);
     assert_eq!(align_of::<ml_core_limits_v1>(), 4);
     assert_eq!(offset_of!(ml_core_limits_v1, struct_size), 0);

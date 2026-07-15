@@ -19,6 +19,8 @@
 
 #define ML_MAX_SEARCH_QUERY_BYTES (64 * 1024)
 
+#define ML_MAX_NOTE_TEXT_BYTES (8 * 1024)
+
 typedef struct ml_core_t ml_core_t;
 
 typedef uint32_t ml_status_t;
@@ -127,6 +129,40 @@ typedef struct ml_search_query_request_v1 {
   size_t query_len;
 } ml_search_query_request_v1;
 
+typedef struct ml_notes_list_request_v1 {
+  uint32_t struct_size;
+  uint32_t abi_version;
+  uint64_t expected_revision;
+  uint64_t offset;
+  uint32_t limit;
+  uint32_t reserved;
+  const uint8_t *lesson_id;
+  size_t lesson_id_len;
+} ml_notes_list_request_v1;
+
+typedef struct ml_notes_save_request_v1 {
+  uint32_t struct_size;
+  uint32_t abi_version;
+  uint64_t expected_revision;
+  double timestamp;
+  uint64_t reserved;
+  const uint8_t *lesson_id;
+  size_t lesson_id_len;
+  const uint8_t *note_id;
+  size_t note_id_len;
+  const uint8_t *text;
+  size_t text_len;
+} ml_notes_save_request_v1;
+
+typedef struct ml_notes_delete_request_v1 {
+  uint32_t struct_size;
+  uint32_t abi_version;
+  uint64_t expected_revision;
+  uint64_t reserved;
+  const uint8_t *note_id;
+  size_t note_id_len;
+} ml_notes_delete_request_v1;
+
 #define ML_STATUS_OK 0
 
 #define ML_STATUS_INVALID_ARGUMENT 1
@@ -168,6 +204,12 @@ typedef struct ml_search_query_request_v1 {
 #define ML_EVENT_SEARCH_INDEX_READY 9
 
 #define ML_EVENT_SEARCH_PAGE 10
+
+#define ML_EVENT_NOTES_PAGE 11
+
+#define ML_EVENT_NOTE_SAVED 12
+
+#define ML_EVENT_NOTE_DELETED 13
 
 uint32_t ml_abi_version(void);
 
@@ -335,6 +377,50 @@ ml_status_t ml_search_rebuild_v1(struct ml_core_t *core,
  */
 ml_status_t ml_search_query_v1(struct ml_core_t *core,
                                const struct ml_search_query_request_v1 *request,
+                               uint64_t *out_request_id);
+
+/**
+ * Submits one asynchronous paged Lesson-note list request.
+ *
+ * # Safety
+ *
+ * `request` must point to a readable `ml_notes_list_request_v1`. Its Lesson
+ * ID bytes must remain readable for this call. `out_request_id` must point to
+ * writable `u64` storage. The Lesson ID is copied before return.
+ */
+ml_status_t ml_notes_list_v1(struct ml_core_t *core,
+                             const struct ml_notes_list_request_v1 *request,
+                             uint64_t *out_request_id);
+
+/**
+ * Creates or updates one Lesson note asynchronously.
+ *
+ * A null `note_id` with a zero length creates a note. A nonempty `note_id`
+ * updates that note without changing its Lesson or creation time.
+ *
+ * # Safety
+ *
+ * `request` must point to a readable `ml_notes_save_request_v1`. Its Lesson
+ * ID, optional note ID, and text bytes must remain readable for this call.
+ * `out_request_id` must point to writable `u64` storage. All inputs are
+ * copied before return.
+ */
+ml_status_t ml_notes_save_v1(struct ml_core_t *core,
+                             const struct ml_notes_save_request_v1 *request,
+                             uint64_t *out_request_id);
+
+/**
+ * Deletes one Lesson note asynchronously. Missing note IDs are successful
+ * no-ops and keep the current Library revision.
+ *
+ * # Safety
+ *
+ * `request` must point to a readable `ml_notes_delete_request_v1`. Its note
+ * ID bytes must remain readable for this call. `out_request_id` must point to
+ * writable `u64` storage. The note ID is copied before return.
+ */
+ml_status_t ml_notes_delete_v1(struct ml_core_t *core,
+                               const struct ml_notes_delete_request_v1 *request,
                                uint64_t *out_request_id);
 
 #endif  /* MELEARNER_CORE_H */

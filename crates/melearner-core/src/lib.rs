@@ -22,13 +22,17 @@ use coordinator::{
     DomainError, DomainEvent, DomainEventSink, DomainRequest, DomainResponse, DomainWorker,
     SubmitError,
 };
-use library::{ActivityPageInput, LibraryError, ProgressInput, SearchPageInput};
+use library::{
+    ActivityPageInput, LibraryError, NoteDeleteInput, NotePageInput, NoteSaveInput, ProgressInput,
+    SearchPageInput,
+};
 
 pub const ML_ABI_VERSION: u32 = 2;
 pub const ML_MAX_EVENT_QUEUE_CAPACITY: u32 = 65_536;
 pub const ML_MAX_EVENT_PAYLOAD_BYTES: u32 = 16 * 1024 * 1024;
 pub const ML_MIN_EVENT_PAYLOAD_BYTES: u32 = 20;
 pub const ML_MAX_SEARCH_QUERY_BYTES: u32 = 64 * 1024;
+pub const ML_MAX_NOTE_TEXT_BYTES: u32 = 8 * 1024;
 
 pub type ml_status_t = u32;
 pub const ML_STATUS_OK: ml_status_t = 0;
@@ -54,6 +58,9 @@ pub const ML_EVENT_PROGRESS_UPDATED: ml_event_kind_t = 7;
 pub const ML_EVENT_ACTIVITY_DAY_PAGE: ml_event_kind_t = 8;
 pub const ML_EVENT_SEARCH_INDEX_READY: ml_event_kind_t = 9;
 pub const ML_EVENT_SEARCH_PAGE: ml_event_kind_t = 10;
+pub const ML_EVENT_NOTES_PAGE: ml_event_kind_t = 11;
+pub const ML_EVENT_NOTE_SAVED: ml_event_kind_t = 12;
+pub const ML_EVENT_NOTE_DELETED: ml_event_kind_t = 13;
 
 pub type ml_wake_fn = Option<unsafe extern "C" fn(context: *mut c_void)>;
 
@@ -151,6 +158,46 @@ pub struct ml_search_query_request_v1 {
     pub reserved: u32,
     pub query: *const u8,
     pub query_len: usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ml_notes_list_request_v1 {
+    pub struct_size: u32,
+    pub abi_version: u32,
+    pub expected_revision: u64,
+    pub offset: u64,
+    pub limit: u32,
+    pub reserved: u32,
+    pub lesson_id: *const u8,
+    pub lesson_id_len: usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ml_notes_save_request_v1 {
+    pub struct_size: u32,
+    pub abi_version: u32,
+    pub expected_revision: u64,
+    pub timestamp: f64,
+    pub reserved: u64,
+    pub lesson_id: *const u8,
+    pub lesson_id_len: usize,
+    pub note_id: *const u8,
+    pub note_id_len: usize,
+    pub text: *const u8,
+    pub text_len: usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ml_notes_delete_request_v1 {
+    pub struct_size: u32,
+    pub abi_version: u32,
+    pub expected_revision: u64,
+    pub reserved: u64,
+    pub note_id: *const u8,
+    pub note_id_len: usize,
 }
 
 #[repr(C)]
@@ -673,6 +720,12 @@ unsafe fn submit_domain_request(
             }
             | DomainRequest::RebuildSearch {
                 max_payload_bytes, ..
+            }
+            | DomainRequest::SaveNote {
+                max_payload_bytes, ..
+            }
+            | DomainRequest::DeleteNote {
+                max_payload_bytes, ..
             } => *max_payload_bytes = state.max_event_payload_bytes,
             _ => {}
         }
@@ -823,6 +876,13 @@ fn encode_domain_result(
             encode_json(ML_STATUS_OK, &ready, max_payload_bytes)
         }
         Ok(DomainResponse::SearchPage(page)) => encode_json(ML_STATUS_OK, &page, max_payload_bytes),
+        Ok(DomainResponse::NotePage(page)) => encode_json(ML_STATUS_OK, &page, max_payload_bytes),
+        Ok(DomainResponse::NoteSaved(saved)) => {
+            encode_json(ML_STATUS_OK, &saved, max_payload_bytes)
+        }
+        Ok(DomainResponse::NoteDeleted(deleted)) => {
+            encode_json(ML_STATUS_OK, &deleted, max_payload_bytes)
+        }
         Err(DomainError::Library(LibraryError::InvalidPageSize { limit })) => encode_json(
             ML_STATUS_INVALID_ARGUMENT,
             &serde_json::json!({
@@ -852,6 +912,11 @@ fn encode_domain_result(
             &serde_json::json!({"error": "invalidProgress"}),
             max_payload_bytes,
         ),
+        Err(DomainError::Library(LibraryError::InvalidNote)) => encode_json(
+            ML_STATUS_INVALID_ARGUMENT,
+            &serde_json::json!({"error": "invalidNote"}),
+            max_payload_bytes,
+        ),
         Err(DomainError::Library(LibraryError::InvalidSearchQuery)) => encode_json(
             ML_STATUS_INVALID_ARGUMENT,
             &serde_json::json!({"error": "invalidSearchQuery"}),
@@ -860,6 +925,11 @@ fn encode_domain_result(
         Err(DomainError::Library(LibraryError::LessonNotFound)) => encode_json(
             ML_STATUS_NOT_FOUND,
             &serde_json::json!({"error": "lessonNotFound"}),
+            max_payload_bytes,
+        ),
+        Err(DomainError::Library(LibraryError::NoteNotFound)) => encode_json(
+            ML_STATUS_NOT_FOUND,
+            &serde_json::json!({"error": "noteNotFound"}),
             max_payload_bytes,
         ),
         Err(DomainError::Library(LibraryError::StaleSearchIndex { expected, actual })) => {
@@ -1753,6 +1823,213 @@ pub unsafe extern "C" fn ml_search_query_v1(
                         offset: request.offset,
                         limit: request.limit,
                     },
+                    control: Arc::clone(&control),
+                },
+                Some(control),
+                out_request_id,
+            )
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
+/// Submits one asynchronous paged Lesson-note list request.
+///
+/// # Safety
+///
+/// `request` must point to a readable `ml_notes_list_request_v1`. Its Lesson
+/// ID bytes must remain readable for this call. `out_request_id` must point to
+/// writable `u64` storage. The Lesson ID is copied before return.
+pub unsafe extern "C" fn ml_notes_list_v1(
+    core: *mut ml_core_t,
+    request: *const ml_notes_list_request_v1,
+    out_request_id: *mut u64,
+) -> ml_status_t {
+    ffi_status(|| {
+        if out_request_id.is_null() {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        unsafe { *out_request_id = 0 };
+        if request.is_null() {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        let request = unsafe { *request };
+        let status = valid_output(
+            request.struct_size,
+            request.abi_version,
+            size_of::<ml_notes_list_request_v1>(),
+        );
+        if status != ML_STATUS_OK {
+            return status;
+        }
+        if request.reserved != 0 {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        let lesson_id =
+            match unsafe { copy_required_string(request.lesson_id, request.lesson_id_len) } {
+                Ok(lesson_id) => lesson_id,
+                Err(status) => return status,
+            };
+        unsafe {
+            submit_domain_request(
+                core,
+                ML_EVENT_NOTES_PAGE,
+                DomainRequest::NotePage {
+                    input: NotePageInput {
+                        expected_revision: request.expected_revision,
+                        lesson_id,
+                        offset: request.offset,
+                        limit: request.limit,
+                    },
+                },
+                None,
+                out_request_id,
+            )
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
+/// Creates or updates one Lesson note asynchronously.
+///
+/// A null `note_id` with a zero length creates a note. A nonempty `note_id`
+/// updates that note without changing its Lesson or creation time.
+///
+/// # Safety
+///
+/// `request` must point to a readable `ml_notes_save_request_v1`. Its Lesson
+/// ID, optional note ID, and text bytes must remain readable for this call.
+/// `out_request_id` must point to writable `u64` storage. All inputs are
+/// copied before return.
+pub unsafe extern "C" fn ml_notes_save_v1(
+    core: *mut ml_core_t,
+    request: *const ml_notes_save_request_v1,
+    out_request_id: *mut u64,
+) -> ml_status_t {
+    ffi_status(|| {
+        if out_request_id.is_null() {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        unsafe { *out_request_id = 0 };
+        if request.is_null() {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        let request = unsafe { *request };
+        let status = valid_output(
+            request.struct_size,
+            request.abi_version,
+            size_of::<ml_notes_save_request_v1>(),
+        );
+        if status != ML_STATUS_OK {
+            return status;
+        }
+        if request.reserved != 0
+            || !request.timestamp.is_finite()
+            || request.timestamp < 0.0
+            || request.text_len > ML_MAX_NOTE_TEXT_BYTES as usize
+        {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        let lesson_id =
+            match unsafe { copy_required_string(request.lesson_id, request.lesson_id_len) } {
+                Ok(lesson_id) => lesson_id,
+                Err(status) => return status,
+            };
+        let note_id = if request.note_id.is_null() {
+            if request.note_id_len != 0 {
+                return ML_STATUS_INVALID_ARGUMENT;
+            }
+            None
+        } else {
+            if request.note_id_len == 0 {
+                return ML_STATUS_INVALID_ARGUMENT;
+            }
+            match unsafe { copy_required_string(request.note_id, request.note_id_len) } {
+                Ok(note_id) => Some(note_id),
+                Err(status) => return status,
+            }
+        };
+        if request.text.is_null() || request.text_len == 0 {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        let text = match std::str::from_utf8(unsafe {
+            std::slice::from_raw_parts(request.text, request.text_len)
+        }) {
+            Ok(text) => text.to_owned(),
+            Err(_) => return ML_STATUS_INVALID_ARGUMENT,
+        };
+        let control = Arc::new(MutationControl::new());
+        unsafe {
+            submit_domain_request(
+                core,
+                ML_EVENT_NOTE_SAVED,
+                DomainRequest::SaveNote {
+                    input: NoteSaveInput {
+                        expected_revision: request.expected_revision,
+                        lesson_id,
+                        note_id,
+                        timestamp: request.timestamp,
+                        text,
+                    },
+                    max_payload_bytes: 0,
+                    control: Arc::clone(&control),
+                },
+                Some(control),
+                out_request_id,
+            )
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
+/// Deletes one Lesson note asynchronously. Missing note IDs are successful
+/// no-ops and keep the current Library revision.
+///
+/// # Safety
+///
+/// `request` must point to a readable `ml_notes_delete_request_v1`. Its note
+/// ID bytes must remain readable for this call. `out_request_id` must point to
+/// writable `u64` storage. The note ID is copied before return.
+pub unsafe extern "C" fn ml_notes_delete_v1(
+    core: *mut ml_core_t,
+    request: *const ml_notes_delete_request_v1,
+    out_request_id: *mut u64,
+) -> ml_status_t {
+    ffi_status(|| {
+        if out_request_id.is_null() {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        unsafe { *out_request_id = 0 };
+        if request.is_null() {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        let request = unsafe { *request };
+        let status = valid_output(
+            request.struct_size,
+            request.abi_version,
+            size_of::<ml_notes_delete_request_v1>(),
+        );
+        if status != ML_STATUS_OK {
+            return status;
+        }
+        if request.reserved != 0 {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        let note_id = match unsafe { copy_required_string(request.note_id, request.note_id_len) } {
+            Ok(note_id) => note_id,
+            Err(status) => return status,
+        };
+        let control = Arc::new(MutationControl::new());
+        unsafe {
+            submit_domain_request(
+                core,
+                ML_EVENT_NOTE_DELETED,
+                DomainRequest::DeleteNote {
+                    input: NoteDeleteInput {
+                        expected_revision: request.expected_revision,
+                        note_id,
+                    },
+                    max_payload_bytes: 0,
                     control: Arc::clone(&control),
                 },
                 Some(control),

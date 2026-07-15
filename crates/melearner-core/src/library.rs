@@ -16,10 +16,14 @@ use sqlx::{Connection, QueryBuilder, Row, Sqlite, SqliteConnection};
 
 use crate::schema;
 
+mod notes;
 mod progress;
 mod reconciliation;
 mod search;
 
+pub(crate) use notes::{
+    NoteDelete, NoteDeleteInput, NotePage, NotePageInput, NoteSaveInput, NoteSaved,
+};
 pub(crate) use progress::{ActivityDayPage, ActivityPageInput, ProgressInput, ProgressUpdate};
 pub(crate) use reconciliation::ReconcileResult;
 pub(crate) use search::{SearchIndexReady, SearchPage, SearchPageInput};
@@ -43,9 +47,11 @@ pub(crate) enum LibraryError {
     InvalidScan(String),
     InvalidPageSize { limit: u32 },
     InvalidOffset { offset: u64 },
+    InvalidNote,
     InvalidProgress,
     InvalidSearchQuery,
     LessonNotFound,
+    NoteNotFound,
     ResponseTooLarge { limit: usize },
     RevisionExhausted,
     StaleSearchIndex { expected: u64, actual: Option<u64> },
@@ -66,9 +72,11 @@ impl std::fmt::Display for LibraryError {
             Self::InvalidOffset { offset } => {
                 write!(formatter, "invalid page offset {offset}")
             }
+            Self::InvalidNote => formatter.write_str("invalid note"),
             Self::InvalidProgress => formatter.write_str("invalid lesson progress"),
             Self::InvalidSearchQuery => formatter.write_str("invalid search query"),
             Self::LessonNotFound => formatter.write_str("lesson not found"),
+            Self::NoteNotFound => formatter.write_str("note not found"),
             Self::ResponseTooLarge { limit } => {
                 write!(formatter, "library response exceeds {limit} bytes")
             }

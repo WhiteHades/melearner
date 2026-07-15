@@ -48,6 +48,31 @@ comptime {
     if (c.ML_MAX_SEARCH_QUERY_BYTES != 64 * 1024) {
         @compileError("unexpected search query bound");
     }
+    if (@sizeOf(c.ml_notes_list_request_v1) != 32 + @sizeOf(usize) * 2 or
+        @offsetOf(c.ml_notes_list_request_v1, "lesson_id") != 32 or
+        @offsetOf(c.ml_notes_list_request_v1, "lesson_id_len") != 32 + @sizeOf(usize))
+    {
+        @compileError("notes list request layout drift");
+    }
+    if (@sizeOf(c.ml_notes_save_request_v1) != 32 + @sizeOf(usize) * 6 or
+        @offsetOf(c.ml_notes_save_request_v1, "timestamp") != 16 or
+        @offsetOf(c.ml_notes_save_request_v1, "reserved") != 24 or
+        @offsetOf(c.ml_notes_save_request_v1, "lesson_id") != 32 or
+        @offsetOf(c.ml_notes_save_request_v1, "note_id") != 32 + @sizeOf(usize) * 2 or
+        @offsetOf(c.ml_notes_save_request_v1, "text") != 32 + @sizeOf(usize) * 4 or
+        @offsetOf(c.ml_notes_save_request_v1, "text_len") != 32 + @sizeOf(usize) * 5)
+    {
+        @compileError("notes save request layout drift");
+    }
+    if (@sizeOf(c.ml_notes_delete_request_v1) != 24 + @sizeOf(usize) * 2 or
+        @offsetOf(c.ml_notes_delete_request_v1, "note_id") != 24 or
+        @offsetOf(c.ml_notes_delete_request_v1, "note_id_len") != 24 + @sizeOf(usize))
+    {
+        @compileError("notes delete request layout drift");
+    }
+    if (c.ML_MAX_NOTE_TEXT_BYTES != 8 * 1024) {
+        @compileError("unexpected note text bound");
+    }
     if (@sizeOf(c.ml_core_limits_v1) != 16) @compileError("ml_core_limits_v1 layout drift");
     if (@offsetOf(c.ml_event_v1, "sequence") != 8) @compileError("ml_event_v1 sequence offset drift");
     if (@offsetOf(c.ml_event_v1, "payload") != 40) @compileError("ml_event_v1 payload offset drift");
@@ -188,6 +213,37 @@ pub fn main(init: std.process.Init) !void {
     defer init.gpa.free(expected_search);
     try expectPayload(&searched, expected_search);
     c.ml_core_release_event(core, &searched);
+
+    const notes_lesson_id = "missing-lesson";
+    var notes_request = c.ml_notes_list_request_v1{
+        .struct_size = @sizeOf(c.ml_notes_list_request_v1),
+        .abi_version = c.ML_ABI_VERSION,
+        .expected_revision = revision,
+        .offset = 0,
+        .limit = 20,
+        .reserved = 0,
+        .lesson_id = notes_lesson_id.ptr,
+        .lesson_id_len = notes_lesson_id.len,
+    };
+    var notes_request_id: u64 = 0;
+    try expectEqual(
+        @as(c.ml_status_t, c.ML_STATUS_OK),
+        c.ml_notes_list_v1(core, &notes_request, &notes_request_id),
+    );
+    try expect(notes_request_id != 0);
+
+    var notes = try pollEvent(io, core);
+    try expectEqual(notes_request_id, notes.request_id);
+    try expectEqual(@as(c.ml_event_kind_t, c.ML_EVENT_NOTES_PAGE), notes.kind);
+    try expectEqual(@as(c.ml_status_t, c.ML_STATUS_OK), notes.status);
+    const expected_notes = try std.fmt.allocPrint(
+        init.gpa,
+        "{{\"revision\":{d},\"lessonId\":\"missing-lesson\",\"offset\":0,\"total\":0,\"rows\":[]}}",
+        .{revision},
+    );
+    defer init.gpa.free(expected_notes);
+    try expectPayload(&notes, expected_notes);
+    c.ml_core_release_event(core, &notes);
 
     var activity_request = c.ml_activity_day_page_request_v1{
         .struct_size = @sizeOf(c.ml_activity_day_page_request_v1),
