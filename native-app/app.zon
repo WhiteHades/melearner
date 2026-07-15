@@ -1,0 +1,33 @@
+.{
+    .id = "com.whitehades.melearner",
+    .name = "melearner",
+    .display_name = "melearner",
+    .description = "A local-first course learner.",
+    .version = "0.1.0",
+    .platforms = .{"linux"},
+    .capabilities = .{ "native_views", "gpu_surfaces" },
+    .webview_layer = "exclude",
+    .shell = .{
+        .windows = .{
+            .{
+                .label = "main",
+                .title = "melearner",
+                .width = 960,
+                .height = 680,
+                .min_width = 560,
+                .min_height = 400,
+                .restore_state = false,
+                .restore_policy = "center_on_primary",
+                .titlebar = "hidden_inset_tall",
+                .views = .{
+                    .{ .label = "library-canvas", .kind = "gpu_surface", .fill = true, .role = "Library canvas", .accessibility_label = "melearner Library", .gpu_backend = "metal", .gpu_pixel_format = "bgra8_unorm", .gpu_present_mode = "timer", .gpu_alpha_mode = "opaque", .gpu_color_space = "srgb", .gpu_vsync = true },
+                },
+            },
+        },
+    },
+    .security = .{
+        .navigation = .{
+            .external_links = .{ .action = "deny" },
+        },
+    },
+}

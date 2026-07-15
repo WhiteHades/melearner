@@ -9,3 +9,6 @@ out
 src-tauri/target
 crates/*/target
 src-tauri/melearn.db
+native-app/.zig-cache/
+native-app/zig-out/
+native-app/zig-pkg/

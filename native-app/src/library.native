@@ -1,0 +1,13 @@
+<column background="background">
+  <row height="{header_height}" padding="12" gap="10" cross="center" background="surface" window-drag="true" label="melearner header">
+    <spacer width="{chrome_leading}" />
+    <text size="sm">melearner</text>
+    <spacer grow="1" />
+  </row>
+  <separator />
+  <column grow="1" padding="32" gap="8" main="center" cross="center" label="Library opening state">
+    <text size="sm" foreground="text_muted">Library</text>
+    <text size="heading">Opening your Library…</text>
+    <text size="sm" foreground="text_muted">Your Courses and Progress stay on this device.</text>
+  </column>
+</column>

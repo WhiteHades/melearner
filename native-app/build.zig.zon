@@ -1,0 +1,13 @@
+.{
+    .name = .melearner_native,
+    .fingerprint = 0x9e3c8070c8cde414,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .native_sdk = .{
+            .url = "git+https://github.com/WhiteHades/native.git#9f289924b7b98197b78f0e0b67c7c5d197c3a440",
+            .hash = "native_sdk-0.1.0-hzDzQrzChAFbFw_glvfGKmyUyxVuVbqE12oyfJfC0D6k",
+        },
+    },
+    .paths = .{ "app.zon", "build.zig", "build.zig.zon", "src" },
+}
