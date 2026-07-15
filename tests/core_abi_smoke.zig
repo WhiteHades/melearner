@@ -17,6 +17,9 @@ comptime {
     if (@sizeOf(c.ml_library_course_page_request_v1) != 32) {
         @compileError("course page request layout drift");
     }
+    if (@sizeOf(c.ml_library_scan_request_v1) != 16 + @sizeOf(usize) * 2) {
+        @compileError("scan request layout drift");
+    }
     if (@sizeOf(c.ml_core_limits_v1) != 16) @compileError("ml_core_limits_v1 layout drift");
     if (@offsetOf(c.ml_event_v1, "sequence") != 8) @compileError("ml_event_v1 sequence offset drift");
     if (@offsetOf(c.ml_event_v1, "payload") != 40) @compileError("ml_event_v1 payload offset drift");
@@ -62,9 +65,43 @@ pub fn main(init: std.process.Init) !void {
     try expectEqual(@as(c.ml_status_t, c.ML_STATUS_OK), ready.status);
     try expectEqual(@as(u32, 1), ready.payload_schema_version);
     try expect(ready.payload != null);
-    const revision = try std.fmt.parseInt(u64, ready.payload[0..ready.payload_len], 10);
+    var revision = try std.fmt.parseInt(u64, ready.payload[0..ready.payload_len], 10);
     try expect(revision != 0);
+    const initial_revision = revision;
     c.ml_core_release_event(core, &ready);
+
+    var scan_request = c.ml_library_scan_request_v1{
+        .struct_size = @sizeOf(c.ml_library_scan_request_v1),
+        .abi_version = c.ML_ABI_VERSION,
+        .expected_revision = revision,
+        .root_path = state_dir.ptr,
+        .root_path_len = state_dir.len,
+    };
+    var scan_request_id: u64 = 0;
+    try expectEqual(
+        @as(c.ml_status_t, c.ML_STATUS_OK),
+        c.ml_library_scan_v1(core, &scan_request, &scan_request_id),
+    );
+    try expect(scan_request_id != 0);
+
+    var scanned = try pollEvent(io, core);
+    try expectEqual(scan_request_id, scanned.request_id);
+    try expectEqual(@as(c.ml_event_kind_t, c.ML_EVENT_LIBRARY_SCAN), scanned.kind);
+    try expectEqual(@as(c.ml_status_t, c.ML_STATUS_OK), scanned.status);
+    try expectEqual(@as(u32, 1), scanned.payload_schema_version);
+    try expect(scanned.payload != null);
+    const scan_payload = scanned.payload[0..scanned.payload_len];
+    const scan_prefix = "{\"revision\":";
+    const scan_suffix = ",\"courseCount\":0,\"warnings\":[]}";
+    try expect(std.mem.startsWith(u8, scan_payload, scan_prefix));
+    try expect(std.mem.endsWith(u8, scan_payload, scan_suffix));
+    revision = try std.fmt.parseInt(
+        u64,
+        scan_payload[scan_prefix.len .. scan_payload.len - scan_suffix.len],
+        10,
+    );
+    try expect(revision > initial_revision);
+    c.ml_core_release_event(core, &scanned);
 
     var request = c.ml_library_course_page_request_v1{
         .struct_size = @sizeOf(c.ml_library_course_page_request_v1),
