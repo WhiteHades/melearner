@@ -5,57 +5,143 @@
     <spacer grow="1" />
   </row>
   <separator />
-  <if test="{libraryOpening}">
-    <column grow="1" padding="32" gap="8" main="center" cross="center" label="Library opening state">
-      <text size="sm" foreground="text_muted">Library</text>
-      <text size="heading">Opening your Library…</text>
-      <text size="sm" foreground="text_muted">Your Courses and Progress stay on this device.</text>
-    </column>
-  </if>
-  <else>
-    <if test="{libraryFailed}">
-      <column grow="1" padding="32" gap="8" main="center" cross="center" label="Library error state">
+  <if test="{showLibrary}">
+    <if test="{libraryOpening}">
+      <column grow="1" padding="32" gap="8" main="center" cross="center" label="Library opening state">
         <text size="sm" foreground="text_muted">Library</text>
-        <text size="heading">Library unavailable</text>
-        <text size="sm" foreground="text_muted">{libraryMessage}</text>
+        <text size="heading">Opening your Library…</text>
+        <text size="sm" foreground="text_muted">Your Courses and Progress stay on this device.</text>
       </column>
     </if>
     <else>
-      <if test="{libraryEmpty}">
-        <column grow="1" padding="32" gap="8" main="center" cross="center" label="Empty Library state">
+      <if test="{libraryFailed}">
+        <column grow="1" padding="32" gap="8" main="center" cross="center" label="Library error state">
           <text size="sm" foreground="text_muted">Library</text>
-          <text size="heading">Your Library is empty</text>
-          <text size="sm" foreground="text_muted">Course folders you add will appear here.</text>
+          <text size="heading">Library unavailable</text>
+          <text size="sm" foreground="text_muted">{libraryMessage}</text>
         </column>
       </if>
       <else>
-        <column grow="1" padding="24" gap="16" label="Library Courses">
-          <row cross="center" gap="10">
-            <text size="heading" grow="1">Library</text>
-            <badge variant="secondary">{courseTotalLabel}</badge>
-          </row>
-          <scroll grow="1" label="Courses">
-            <column gap="6" role="list" label="Course list">
-              <for each="courseRows" key="id" as="course">
-                <column padding="12" gap="4" background="surface" radius="md" role="listitem" label="{course.name}">
-                  <text>{course.name}</text>
-                  <text size="sm" foreground="text_muted">{course.progressLine}</text>
-                </column>
-              </for>
-            </column>
-          </scroll>
-          <if test="{hasPagination}">
-            <row gap="8" main="end" cross="center" label="Library pages">
-              <if test="{hasPreviousPage}">
-                <button size="sm" variant="secondary" on-press="previous_page" label="Previous Library page">Previous</button>
-              </if>
-              <if test="{hasNextPage}">
-                <button size="sm" variant="secondary" on-press="next_page" label="Next Library page">Next</button>
-              </if>
+        <if test="{libraryEmpty}">
+          <column grow="1" padding="32" gap="8" main="center" cross="center" label="Empty Library state">
+            <text size="sm" foreground="text_muted">Library</text>
+            <text size="heading">Your Library is empty</text>
+            <text size="sm" foreground="text_muted">Course folders you add will appear here.</text>
+          </column>
+        </if>
+        <else>
+          <column grow="1" padding="24" gap="16" label="Library Courses">
+            <row cross="center" gap="10">
+              <text size="heading" grow="1">Library</text>
+              <badge variant="secondary">{courseTotalLabel}</badge>
             </row>
-          </if>
-        </column>
+            <scroll grow="1" label="Courses">
+              <column gap="6" role="list" label="Course list">
+                <for each="courseRows" key="id" as="course">
+                  <if test="{course.available}">
+                    <list-item on-press="open_course:{course.id}" padding="12" gap="4" label="{course.name}">
+                      <column gap="4" grow="1">
+                        <text>{course.name}</text>
+                        <text size="sm" foreground="text_muted">{course.progressLine}</text>
+                      </column>
+                    </list-item>
+                  </if>
+                  <else>
+                    <column padding="12" gap="4" background="surface" radius="md" role="listitem" label="{course.name}">
+                      <row gap="8" cross="center">
+                        <text grow="1">{course.name}</text>
+                        <badge variant="secondary">Missing</badge>
+                      </row>
+                      <text size="sm" foreground="text_muted">{course.progressLine}</text>
+                    </column>
+                  </else>
+                </for>
+              </column>
+            </scroll>
+            <if test="{hasPagination}">
+              <row gap="8" main="end" cross="center" label="Library pages">
+                <if test="{hasPreviousPage}">
+                  <button size="sm" variant="secondary" on-press="previous_page" label="Previous Library page">Previous</button>
+                </if>
+                <if test="{hasNextPage}">
+                  <button size="sm" variant="secondary" on-press="next_page" label="Next Library page">Next</button>
+                </if>
+              </row>
+            </if>
+          </column>
+        </else>
       </else>
     </else>
+  </if>
+  <else>
+    <column grow="1" label="Course outline">
+      <row padding="16" gap="12" cross="center" background="surface" label="Course navigation">
+        <button size="sm" variant="ghost" on-press="back_to_library" label="Back to Library">Back</button>
+        <column gap="2" grow="1">
+          <text>{selectedCourseName}</text>
+          <text size="sm" foreground="text_muted">{selectedCourseProgress}</text>
+        </column>
+      </row>
+      <separator />
+      <if test="{courseOpening}">
+        <column grow="1" padding="32" gap="8" main="center" cross="center" label="Course opening state">
+          <text size="sm" foreground="text_muted">Course</text>
+          <text size="heading">Opening Course…</text>
+          <text size="sm" foreground="text_muted">Loading Sections and Lessons.</text>
+        </column>
+      </if>
+      <else>
+        <if test="{courseFailed}">
+          <column grow="1" padding="32" gap="8" main="center" cross="center" label="Course error state">
+            <text size="sm" foreground="text_muted">Course</text>
+            <text size="heading">Course unavailable</text>
+            <text size="sm" foreground="text_muted">{courseMessage}</text>
+          </column>
+        </if>
+        <else>
+          <if test="{courseEmpty}">
+            <column grow="1" padding="32" gap="8" main="center" cross="center" label="Empty Course state">
+              <text size="sm" foreground="text_muted">Course</text>
+              <text size="heading">This Course has no learning items</text>
+              <text size="sm" foreground="text_muted">Add supported Lessons to the Course folder.</text>
+            </column>
+          </if>
+          <else>
+            <column grow="1" padding="24" gap="16" label="Course Lessons">
+              <row gap="10" cross="center">
+                <text size="heading" grow="1">Lessons</text>
+                <badge variant="secondary">{lessonTotalLabel}</badge>
+              </row>
+              <scroll grow="1" label="Lessons">
+                <column gap="6" role="list" label="Lesson list">
+                  <for each="lessonRows" key="id" as="lesson">
+                    <if test="{lesson.starts_section}">
+                      <text size="sm" foreground="text_muted">{lesson.sectionName}</text>
+                    </if>
+                    <column padding="12" gap="4" background="surface" radius="md" role="listitem" label="{lesson.name}">
+                      <row gap="8" cross="center">
+                        <text grow="1">{lesson.name}</text>
+                        <badge variant="secondary">{lesson.kindLabel}</badge>
+                      </row>
+                      <text size="sm" foreground="text_muted">{lesson.progressLine}</text>
+                    </column>
+                  </for>
+                </column>
+              </scroll>
+              <if test="{hasLessonPagination}">
+                <row gap="8" main="end" cross="center" label="Lesson pages">
+                  <if test="{hasPreviousLessonPage}">
+                    <button size="sm" variant="secondary" on-press="previous_lesson_page" label="Previous Lesson page">Previous</button>
+                  </if>
+                  <if test="{hasNextLessonPage}">
+                    <button size="sm" variant="secondary" on-press="next_lesson_page" label="Next Lesson page">Next</button>
+                  </if>
+                </row>
+              </if>
+            </column>
+          </else>
+        </else>
+      </else>
+    </column>
   </else>
 </column>
