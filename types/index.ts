@@ -45,14 +45,6 @@ export interface SubtitleFile {
   label: string
 }
 
-export interface Note {
-  id: string
-  lessonId: string
-  timestamp: number
-  text: string
-  createdAt: string
-}
-
 export interface ActivityDay {
   date: string
   watchedSeconds: number

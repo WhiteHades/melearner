@@ -1,5 +1,5 @@
 import Database from "@tauri-apps/plugin-sql"
-import type { ActivityDay, Course, Lesson, Note, Section, SubtitleFile } from "@/types"
+import type { ActivityDay, Course, Lesson, Section, SubtitleFile } from "@/types"
 import { isTauri, getDatabasePath } from "./tauri.ts"
 import { frontendLog } from "./frontend-log.ts"
 import {
@@ -66,14 +66,6 @@ type PersistedSubtitleRow = {
   language: string | null
   label: string | null
   order_index: number | null
-}
-
-type PersistedNoteRow = {
-  id: string
-  lesson_id: string
-  timestamp: number
-  text: string
-  created_at: string
 }
 
 type PersistedSettingRow = {
@@ -999,44 +991,4 @@ export async function updateCourseLastAccessed(
   await serializeDatabaseWrite(() =>
     database.execute(`UPDATE courses SET last_accessed = $1 WHERE id = $2`, [timestamp, courseId])
   )
-}
-
-export async function saveNote(note: Note): Promise<void> {
-  const database = await getDatabase()
-  if (!database) return
-
-  await serializeDatabaseWrite(() =>
-    database.execute(
-      `INSERT INTO notes (id, lesson_id, timestamp, text, created_at) VALUES ($1, $2, $3, $4, $5)`,
-      [note.id, note.lessonId, note.timestamp, note.text, note.createdAt]
-    )
-  )
-}
-
-export async function listNotesByLesson(lessonId: string): Promise<Note[]> {
-  const database = await getDatabase()
-  if (!database) return []
-
-  const rows = await database.select<PersistedNoteRow[]>(
-    `SELECT id, lesson_id, timestamp, text, created_at
-     FROM notes
-     WHERE lesson_id = $1
-     ORDER BY timestamp ASC, created_at ASC`,
-    [lessonId]
-  )
-
-  return rows.map((row) => ({
-    id: row.id,
-    lessonId: row.lesson_id,
-    timestamp: row.timestamp,
-    text: row.text,
-    createdAt: row.created_at,
-  }))
-}
-
-export async function deleteNote(noteId: string): Promise<void> {
-  const database = await getDatabase()
-  if (!database) return
-
-  await serializeDatabaseWrite(() => database.execute(`DELETE FROM notes WHERE id = $1`, [noteId]))
 }

@@ -1,5 +1,4 @@
-import { nanoid } from "nanoid"
-import type { ActivityDay, Course, Note } from "@/types"
+import type { ActivityDay, Course } from "@/types"
 import { useCourseStore } from "@/lib/stores/course-store"
 import { processScanResult } from "@/lib/course-utils"
 import { hydrateCourseThumbnails } from "@/lib/course-thumbnails"
@@ -11,7 +10,6 @@ import {
   updateCourseLastAccessed,
   updateLessonProgress as persistLessonProgress,
 } from "@/lib/database"
-import { getNoteStore } from "@/lib/notes-store"
 
 type CourseIndex = {
   courses: ReadonlyArray<Course>
@@ -165,35 +163,4 @@ export async function writeCourseMarkers(courses: Course[]): Promise<string[]> {
     }
   }
   return warnings
-}
-
-export async function listNotes(lessonId: string): Promise<Note[]> {
-  if (!getCourseIndex().lessonsById.has(lessonId)) return []
-  return getNoteStore().list(lessonId)
-}
-
-export async function addNote(input: { lessonId: string; text: string; timestamp: number }): Promise<Note> {
-  if (!getCourseIndex().lessonsById.has(input.lessonId)) {
-    throw new OperationError("not_found", "Lesson not found")
-  }
-
-  const text = input.text.trim()
-  if (text.length < 1 || text.length > 2000) {
-    throw new Error("Note text must be between 1 and 2000 characters.")
-  }
-
-  const note: Note = {
-    id: nanoid(12),
-    lessonId: input.lessonId,
-    timestamp: input.timestamp,
-    text,
-    createdAt: new Date().toISOString(),
-  }
-
-  await getNoteStore().save(note)
-  return note
-}
-
-export async function removeNote(noteId: string): Promise<void> {
-  await getNoteStore().remove(noteId)
 }
