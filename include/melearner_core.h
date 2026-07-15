@@ -67,6 +67,13 @@ typedef struct ml_library_course_page_request_v1 {
   uint32_t reserved;
 } ml_library_course_page_request_v1;
 
+typedef struct ml_library_stats_request_v1 {
+  uint32_t struct_size;
+  uint32_t abi_version;
+  uint64_t expected_revision;
+  uint64_t reserved;
+} ml_library_stats_request_v1;
+
 typedef struct ml_library_lesson_page_request_v1 {
   uint32_t struct_size;
   uint32_t abi_version;
@@ -222,6 +229,8 @@ typedef struct ml_notes_delete_request_v1 {
 
 #define ML_EVENT_COURSE_ACCESSED 14
 
+#define ML_EVENT_LIBRARY_STATS 15
+
 uint32_t ml_abi_version(void);
 
 /**
@@ -309,6 +318,19 @@ ml_status_t ml_core_cancel(struct ml_core_t *core, uint64_t request_id);
 ml_status_t ml_library_course_page_v1(struct ml_core_t *core,
                                       const struct ml_library_course_page_request_v1 *request,
                                       uint64_t *out_request_id);
+
+/**
+ * Submits one asynchronous aggregate Library-stats request.
+ *
+ * # Safety
+ *
+ * `request` must point to a readable `ml_library_stats_request_v1`, and
+ * `out_request_id` must point to writable `u64` storage. Both pointers are
+ * borrowed only for this call.
+ */
+ml_status_t ml_library_stats_v1(struct ml_core_t *core,
+                                const struct ml_library_stats_request_v1 *request,
+                                uint64_t *out_request_id);
 
 /**
  * Submits one asynchronous Library lesson-page request.

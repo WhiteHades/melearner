@@ -128,6 +128,108 @@ fn course_page_returns_a_correlated_json_completion() {
 }
 
 #[test]
+fn library_stats_round_trip_through_the_versioned_abi() {
+    let data_dir = tempfile::tempdir().expect("create ABI stats state directory");
+    let state_dir = data_dir
+        .path()
+        .to_str()
+        .expect("temporary stats state directory is UTF-8")
+        .as_bytes();
+    let mut core = ptr::null_mut();
+    assert_eq!(
+        unsafe { ml_core_create(&config(state_dir), &mut core) },
+        ML_STATUS_OK
+    );
+    ready_revision(core);
+    unsafe { ml_core_destroy(core) };
+    seed_current_database(data_dir.path());
+
+    core = ptr::null_mut();
+    assert_eq!(
+        unsafe { ml_core_create(&config(state_dir), &mut core) },
+        ML_STATUS_OK
+    );
+    let revision = ready_revision(core);
+    let mut request = ml_library_stats_request_v1 {
+        struct_size: size_of::<ml_library_stats_request_v1>() as u32,
+        abi_version: ML_ABI_VERSION,
+        expected_revision: revision,
+        reserved: 0,
+    };
+    let mut request_id = u64::MAX;
+    assert_eq!(
+        unsafe { ml_library_stats_v1(core, ptr::null(), &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    assert_eq!(request_id, 0);
+    request.struct_size -= 1;
+    assert_eq!(
+        unsafe { ml_library_stats_v1(core, &request, &mut request_id) },
+        ML_STATUS_ABI_MISMATCH
+    );
+    request.struct_size += 1;
+    request.reserved = 1;
+    assert_eq!(
+        unsafe { ml_library_stats_v1(core, &request, &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    request.reserved = 0;
+    assert_eq!(
+        unsafe { ml_library_stats_v1(core, &request, ptr::null_mut()) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+
+    assert_eq!(
+        unsafe { ml_library_stats_v1(core, &request, &mut request_id) },
+        ML_STATUS_OK
+    );
+    assert_ne!(request_id, 0);
+    let mut completed = poll(core);
+    assert_eq!(completed.request_id, request_id);
+    assert_eq!(completed.kind, ML_EVENT_LIBRARY_STATS);
+    assert_eq!(completed.status, ML_STATUS_OK);
+    assert_eq!(completed.payload_schema_version, 1);
+    let payload = unsafe { std::slice::from_raw_parts(completed.payload, completed.payload_len) };
+    let stats: serde_json::Value =
+        serde_json::from_slice(payload).expect("parse aggregate Library stats");
+    assert_eq!(stats["revision"], revision);
+    assert_eq!(stats["totalCourses"], 3);
+    assert_eq!(stats["availableCourses"], 1);
+    assert_eq!(stats["missingCourses"], 2);
+    assert_eq!(stats["sections"], 4);
+    assert_eq!(stats["lessons"], 4);
+    assert_eq!(stats["completedLessons"], 2);
+    assert_eq!(stats["completionPercent"], 50);
+    assert_eq!(stats["bytes"], 5_246_976);
+    assert_eq!(stats["watchedSeconds"], 620);
+    assert_eq!(stats["totalSeconds"], 1_200);
+    assert_eq!(stats["mediaTypes"][0]["type"], "video");
+    assert_eq!(stats["mediaTypes"][0]["lessons"], 3);
+    assert_eq!(stats["mediaTypes"][1]["type"], "document");
+    assert_eq!(stats["topCourses"][0]["id"], "course-marker");
+    assert_eq!(stats["topCourses"][1]["id"], "course-missing");
+    assert_eq!(stats["topCourses"][2]["id"], "course-copy");
+    unsafe { ml_core_release_event(core, &mut completed) };
+
+    request.expected_revision = revision + 1;
+    assert_eq!(
+        unsafe { ml_library_stats_v1(core, &request, &mut request_id) },
+        ML_STATUS_OK
+    );
+    let mut stale = poll(core);
+    assert_eq!(stale.kind, ML_EVENT_LIBRARY_STATS);
+    assert_eq!(stale.status, ML_STATUS_STALE);
+    let payload = unsafe { std::slice::from_raw_parts(stale.payload, stale.payload_len) };
+    let error: serde_json::Value =
+        serde_json::from_slice(payload).expect("parse stale Library-stats error");
+    assert_eq!(error["error"], "staleRevision");
+    assert_eq!(error["expected"], revision + 1);
+    assert_eq!(error["actual"], revision);
+    unsafe { ml_core_release_event(core, &mut stale) };
+    unsafe { ml_core_destroy(core) };
+}
+
+#[test]
 fn course_access_round_trips_through_the_versioned_abi() {
     let data_dir = tempfile::tempdir().expect("create ABI Course-access state directory");
     let state_dir = data_dir

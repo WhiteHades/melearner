@@ -17,6 +17,12 @@ comptime {
     if (@sizeOf(c.ml_library_course_page_request_v1) != 32) {
         @compileError("course page request layout drift");
     }
+    if (@sizeOf(c.ml_library_stats_request_v1) != 24 or
+        @offsetOf(c.ml_library_stats_request_v1, "expected_revision") != 8 or
+        @offsetOf(c.ml_library_stats_request_v1, "reserved") != 16)
+    {
+        @compileError("Library stats request layout drift");
+    }
     if (@sizeOf(c.ml_library_scan_request_v1) != 16 + @sizeOf(usize) * 2) {
         @compileError("scan request layout drift");
     }
@@ -303,6 +309,32 @@ pub fn main(init: std.process.Init) !void {
     defer init.gpa.free(expected_activity);
     try expectPayload(&activity, expected_activity);
     c.ml_core_release_event(core, &activity);
+
+    var stats_request = c.ml_library_stats_request_v1{
+        .struct_size = @sizeOf(c.ml_library_stats_request_v1),
+        .abi_version = c.ML_ABI_VERSION,
+        .expected_revision = revision,
+        .reserved = 0,
+    };
+    var stats_request_id: u64 = 0;
+    try expectEqual(
+        @as(c.ml_status_t, c.ML_STATUS_OK),
+        c.ml_library_stats_v1(core, &stats_request, &stats_request_id),
+    );
+    try expect(stats_request_id != 0);
+
+    var stats = try pollEvent(io, core);
+    try expectEqual(stats_request_id, stats.request_id);
+    try expectEqual(@as(c.ml_event_kind_t, c.ML_EVENT_LIBRARY_STATS), stats.kind);
+    try expectEqual(@as(c.ml_status_t, c.ML_STATUS_OK), stats.status);
+    const expected_stats = try std.fmt.allocPrint(
+        init.gpa,
+        "{{\"revision\":{d},\"totalCourses\":0,\"availableCourses\":0,\"missingCourses\":0,\"sections\":0,\"lessons\":0,\"completedLessons\":0,\"completionPercent\":0,\"bytes\":0,\"watchedSeconds\":0,\"totalSeconds\":0,\"mediaTypes\":[],\"topCourses\":[]}}",
+        .{revision},
+    );
+    defer init.gpa.free(expected_stats);
+    try expectPayload(&stats, expected_stats);
+    c.ml_core_release_event(core, &stats);
 
     var request = c.ml_library_course_page_request_v1{
         .struct_size = @sizeOf(c.ml_library_course_page_request_v1),

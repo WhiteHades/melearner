@@ -10,9 +10,9 @@ use std::thread::{self, JoinHandle};
 use crate::MutationControl;
 use crate::library::{
     ActivityDayPage, ActivityPageInput, CourseAccess, CourseAccessInput, CoursePage, LessonPage,
-    LibraryDatabase, LibraryError, NoteDelete, NoteDeleteInput, NotePage, NotePageInput,
-    NoteSaveInput, NoteSaved, ProgressInput, ProgressUpdate, ReconcileResult, SearchIndexReady,
-    SearchPage, SearchPageInput,
+    LibraryDatabase, LibraryError, LibraryStats, NoteDelete, NoteDeleteInput, NotePage,
+    NotePageInput, NoteSaveInput, NoteSaved, ProgressInput, ProgressUpdate, ReconcileResult,
+    SearchIndexReady, SearchPage, SearchPageInput,
 };
 
 #[derive(Debug)]
@@ -21,6 +21,9 @@ pub(crate) enum DomainRequest {
         expected_revision: u64,
         offset: u64,
         limit: u32,
+    },
+    LibraryStats {
+        expected_revision: u64,
     },
     LessonPage {
         expected_revision: u64,
@@ -81,6 +84,7 @@ pub(crate) enum DomainRequest {
 #[derive(Debug)]
 pub(crate) enum DomainResponse {
     CoursePage(CoursePage),
+    LibraryStats(LibraryStats),
     LessonPage(LessonPage),
     Scan(ReconcileResult),
     Progress(ProgressUpdate),
@@ -227,6 +231,9 @@ impl DomainState {
                 self.library
                     .course_page(expected_revision, offset, limit)
                     .await?,
+            )),
+            DomainRequest::LibraryStats { expected_revision } => Ok(DomainResponse::LibraryStats(
+                self.library.stats_snapshot(expected_revision).await?,
             )),
             DomainRequest::LessonPage {
                 expected_revision,

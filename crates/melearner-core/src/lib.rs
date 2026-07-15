@@ -62,6 +62,7 @@ pub const ML_EVENT_NOTES_PAGE: ml_event_kind_t = 11;
 pub const ML_EVENT_NOTE_SAVED: ml_event_kind_t = 12;
 pub const ML_EVENT_NOTE_DELETED: ml_event_kind_t = 13;
 pub const ML_EVENT_COURSE_ACCESSED: ml_event_kind_t = 14;
+pub const ML_EVENT_LIBRARY_STATS: ml_event_kind_t = 15;
 
 pub type ml_wake_fn = Option<unsafe extern "C" fn(context: *mut c_void)>;
 
@@ -85,6 +86,15 @@ pub struct ml_library_course_page_request_v1 {
     pub offset: u64,
     pub limit: u32,
     pub reserved: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ml_library_stats_request_v1 {
+    pub struct_size: u32,
+    pub abi_version: u32,
+    pub expected_revision: u64,
+    pub reserved: u64,
 }
 
 #[repr(C)]
@@ -879,6 +889,9 @@ fn encode_domain_result(
 ) -> (ml_status_t, u32, Vec<u8>) {
     match result {
         Ok(DomainResponse::CoursePage(page)) => encode_json(ML_STATUS_OK, &page, max_payload_bytes),
+        Ok(DomainResponse::LibraryStats(stats)) => {
+            encode_json(ML_STATUS_OK, &stats, max_payload_bytes)
+        }
         Ok(DomainResponse::LessonPage(page)) => encode_json(ML_STATUS_OK, &page, max_payload_bytes),
         Ok(DomainResponse::Scan(scan)) => encode_json(ML_STATUS_OK, &scan, max_payload_bytes),
         Ok(DomainResponse::Progress(progress)) => {
@@ -1511,6 +1524,53 @@ pub unsafe extern "C" fn ml_library_course_page_v1(
                     expected_revision: request.expected_revision,
                     offset: request.offset,
                     limit: request.limit,
+                },
+                None,
+                out_request_id,
+            )
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
+/// Submits one asynchronous aggregate Library-stats request.
+///
+/// # Safety
+///
+/// `request` must point to a readable `ml_library_stats_request_v1`, and
+/// `out_request_id` must point to writable `u64` storage. Both pointers are
+/// borrowed only for this call.
+pub unsafe extern "C" fn ml_library_stats_v1(
+    core: *mut ml_core_t,
+    request: *const ml_library_stats_request_v1,
+    out_request_id: *mut u64,
+) -> ml_status_t {
+    ffi_status(|| {
+        if out_request_id.is_null() {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        unsafe { *out_request_id = 0 };
+        if request.is_null() {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        let request = unsafe { *request };
+        let status = valid_output(
+            request.struct_size,
+            request.abi_version,
+            size_of::<ml_library_stats_request_v1>(),
+        );
+        if status != ML_STATUS_OK {
+            return status;
+        }
+        if request.reserved != 0 {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        unsafe {
+            submit_domain_request(
+                core,
+                ML_EVENT_LIBRARY_STATS,
+                DomainRequest::LibraryStats {
+                    expected_revision: request.expected_revision,
                 },
                 None,
                 out_request_id,

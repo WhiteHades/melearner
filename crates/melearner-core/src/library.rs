@@ -20,6 +20,7 @@ mod notes;
 mod progress;
 mod reconciliation;
 mod search;
+mod stats;
 
 pub(crate) use notes::{
     NoteDelete, NoteDeleteInput, NotePage, NotePageInput, NoteSaveInput, NoteSaved,
@@ -30,6 +31,7 @@ pub(crate) use progress::{
 };
 pub(crate) use reconciliation::ReconcileResult;
 pub(crate) use search::{SearchIndexReady, SearchPage, SearchPageInput};
+pub(crate) use stats::LibraryStats;
 
 const SQLITE_PROGRESS_INTERVAL: i32 = 1_000;
 pub(crate) const NATIVE_DATABASE_FILENAME: &str = "melearner-native.sqlite3";
