@@ -327,6 +327,7 @@ async fn reconcile_transaction(
         .collect::<Vec<_>>();
     let persisted_section_ids = load_persisted_ids(transaction, "sections").await?;
     let persisted_lesson_ids = load_persisted_ids(transaction, "lessons").await?;
+    let persisted_lesson_paths = load_persisted_lesson_paths(transaction).await?;
     let persisted_sections = load_persisted_sections(transaction, &course_ids).await?;
     let persisted_lessons = load_persisted_lessons(transaction, &course_ids).await?;
     let ScannedStructure {
@@ -342,6 +343,7 @@ async fn reconcile_transaction(
         pending_lessons,
         &persisted_lessons,
         &persisted_lesson_ids,
+        &persisted_lesson_paths,
         &mut warnings,
     )?;
 
@@ -433,6 +435,23 @@ fn require_active(control: &MutationControl) -> Result<(), LibraryError> {
 fn push_warning(warnings: &mut Vec<String>, warning: String) {
     if warnings.len() < WARNING_LIMIT {
         warnings.push(warning);
+    }
+}
+
+fn allocate_unique_id<F>(base: &str, is_unavailable: F) -> String
+where
+    F: Fn(&str) -> bool,
+{
+    if !is_unavailable(base) {
+        return base.to_string();
+    }
+    let mut suffix = 1_u64;
+    loop {
+        let candidate = format!("{base}:{suffix}");
+        if !is_unavailable(&candidate) {
+            return candidate;
+        }
+        suffix += 1;
     }
 }
 
@@ -528,6 +547,18 @@ async fn load_persisted_lessons(
     Ok(lessons)
 }
 
+async fn load_persisted_lesson_paths(
+    transaction: &mut Transaction<'_, Sqlite>,
+) -> Result<HashMap<String, String>, LibraryError> {
+    let rows = sqlx::query("SELECT path, course_id FROM lessons")
+        .fetch_all(&mut **transaction)
+        .await?;
+    rows.into_iter()
+        .map(|row| Ok((row.try_get("path")?, row.try_get("course_id")?)))
+        .collect::<Result<_, sqlx::Error>>()
+        .map_err(LibraryError::from)
+}
+
 fn resolve_courses(
     scanned: Vec<CourseData>,
     persisted: &[PersistedCourse],
@@ -562,7 +593,7 @@ fn resolve_courses(
         .collect::<HashMap<_, _>>();
     let persisted_ids = persisted
         .iter()
-        .map(|course| course.id.as_str())
+        .map(|course| course.id.clone())
         .collect::<HashSet<_>>();
     let mut by_fingerprint: HashMap<&str, Vec<usize>> = HashMap::new();
     for (index, course) in persisted.iter().enumerate() {
@@ -614,6 +645,7 @@ fn resolve_courses(
         }
         let Some(&persisted_index) = by_identity.get(marker_identity) else {
             marker_is_usable[index] = true;
+            fingerprint_blocked[index] = true;
             continue;
         };
         if claimed.insert(persisted_index) {
@@ -667,34 +699,42 @@ fn resolve_courses(
     }
 
     let mut resolved = Vec::with_capacity(scanned.len());
+    let mut resolved_ids = HashSet::with_capacity(scanned.len());
     let mut resolved_identities = HashSet::with_capacity(scanned.len());
     for (index, course) in scanned.into_iter().enumerate() {
         let (id, identity_id) = if let Some(persisted_index) = matches[index] {
             let persisted = &persisted[persisted_index];
             (persisted.id.clone(), persisted.identity_id.clone())
         } else {
-            if persisted_ids.contains(course.id.as_ref()) {
-                return Err(LibraryError::InvalidScan(format!(
-                    "new scanned course id collides with stored course: {}",
-                    course.id
-                )));
-            }
-            let identity_id = if marker_is_usable[index] {
+            let has_explicit_identity = marker_is_usable[index];
+            let id = allocate_unique_id(course.id.as_ref(), |candidate| {
+                persisted_ids.contains(candidate)
+                    || resolved_ids.contains(candidate)
+                    || (!has_explicit_identity
+                        && (by_identity.contains_key(candidate)
+                            || resolved_identities.contains(candidate)))
+            });
+            let identity_id = if has_explicit_identity {
                 course
                     .marker_identity_id
                     .as_deref()
-                    .unwrap_or(course.id.as_ref())
+                    .unwrap_or(id.as_str())
                     .to_string()
             } else {
-                course.id.to_string()
+                id.clone()
             };
             if by_identity.contains_key(identity_id.as_str()) {
                 return Err(LibraryError::InvalidScan(format!(
                     "new scanned course identity collides with stored course: {identity_id}"
                 )));
             }
-            (course.id.to_string(), identity_id)
+            (id, identity_id)
         };
+        if !resolved_ids.insert(id.clone()) {
+            return Err(LibraryError::InvalidScan(format!(
+                "duplicate resolved course id: {id}"
+            )));
+        }
         if !resolved_identities.insert(identity_id.clone()) {
             return Err(LibraryError::InvalidScan(format!(
                 "duplicate resolved course identity: {identity_id}"
@@ -751,15 +791,10 @@ fn build_scanned_structure(
                 .copied()
             {
                 Some(section_id) => section_id.to_string(),
-                None => {
-                    if persisted_section_ids.contains(scanned_section.id.as_ref()) {
-                        return Err(LibraryError::InvalidScan(format!(
-                            "new scanned section id collides with stored section: {}",
-                            scanned_section.id
-                        )));
-                    }
-                    scanned_section.id.to_string()
-                }
+                None => allocate_unique_id(scanned_section.id.as_ref(), |candidate| {
+                    persisted_section_ids.contains(candidate)
+                        || resolved_section_ids.contains(candidate)
+                }),
             };
             if !resolved_section_ids.insert(section_id.clone()) {
                 return Err(LibraryError::InvalidScan(format!(
@@ -918,6 +953,7 @@ fn resolve_lessons(
     pending: Vec<PendingLesson>,
     persisted: &[PersistedLesson],
     persisted_ids: &HashSet<String>,
+    persisted_paths: &HashMap<String, String>,
     warnings: &mut Vec<String>,
 ) -> Result<LessonResolution, LibraryError> {
     let exact = persisted
@@ -995,13 +1031,15 @@ fn resolve_lessons(
             claimed_ids.insert(id.clone());
             id
         } else {
-            if persisted_ids.contains(pending.scanned_id.as_str()) {
+            if let Some(course_id) = persisted_paths.get(pending.path.as_str()) {
                 return Err(LibraryError::InvalidScan(format!(
-                    "new scanned lesson id collides with stored lesson: {}",
-                    pending.scanned_id
+                    "scanned lesson path belongs to another stored course: {} ({})",
+                    pending.path, course_id
                 )));
             }
-            pending.scanned_id.clone()
+            allocate_unique_id(pending.scanned_id.as_str(), |candidate| {
+                persisted_ids.contains(candidate) || resolved_ids.contains(candidate)
+            })
         };
         if !resolved_ids.insert(id.clone()) {
             return Err(LibraryError::InvalidScan(format!(
@@ -1414,11 +1452,16 @@ mod tests {
             .iter()
             .map(|lesson| lesson.id.clone())
             .collect();
+        let persisted_paths = persisted_lessons
+            .iter()
+            .map(|lesson| (lesson.path.clone(), lesson.course_id.clone()))
+            .collect();
 
         let resolved = resolve_lessons(
             pending_lessons,
             &persisted_lessons,
             &persisted_ids,
+            &persisted_paths,
             &mut warnings,
         )
         .expect("resolve lessons globally");
@@ -1479,6 +1522,19 @@ mod tests {
                 .iter()
                 .any(|warning| warning.contains("already claimed"))
         );
+
+        warnings.clear();
+        let distinct_marker = vec![scanned_course(
+            "new-copy",
+            "/new/copy",
+            "fingerprint-a",
+            Some("identity-copy"),
+        )];
+        let resolved = resolve_courses(distinct_marker, &persisted, &mut warnings)
+            .expect("keep a distinct explicit identity");
+        assert_eq!(resolved[0].id, "new-copy");
+        assert_eq!(resolved[0].identity_id, "identity-copy");
+        assert!(warnings.is_empty());
     }
 
     fn scanned_course(
@@ -1522,13 +1578,23 @@ mod tests {
             },
         ];
         let persisted_ids = persisted.iter().map(|lesson| lesson.id.clone()).collect();
+        let persisted_paths = persisted
+            .iter()
+            .map(|lesson| (lesson.path.clone(), lesson.course_id.clone()))
+            .collect();
         let mut pending =
             pending_lesson("new-lesson", "/new/target.mp4", "duplicate.mp4", "target");
         pending.section_name = "section".to_string();
         let mut warnings = Vec::new();
 
-        let resolved = resolve_lessons(vec![pending], &persisted, &persisted_ids, &mut warnings)
-            .expect("resolve ambiguous relative lesson");
+        let resolved = resolve_lessons(
+            vec![pending],
+            &persisted,
+            &persisted_ids,
+            &persisted_paths,
+            &mut warnings,
+        )
+        .expect("resolve ambiguous relative lesson");
 
         assert_eq!(resolved.lessons[0].id, "new-lesson");
         assert!(
@@ -1936,6 +2002,55 @@ mod tests {
         });
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn invalid_present_courses_do_not_become_missing() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        block_on(async {
+            let data = tempfile::tempdir().expect("create state directory");
+            let root = tempfile::tempdir().expect("create library root");
+            let lesson = root.path().join("Course/01 Intro/01 lesson.mp4");
+            touch(&lesson);
+            let mut library = open_test_library(data.path()).await;
+            let first = library
+                .scan_and_reconcile(
+                    library.revision(),
+                    root_text(root.path()),
+                    usize::MAX,
+                    &MutationControl::new(),
+                )
+                .await
+                .expect("initial scan");
+            let invalid_name = OsString::from_vec(vec![0xff, b'.', b'm', b'p', b'4']);
+            std::fs::rename(&lesson, lesson.with_file_name(invalid_name))
+                .expect("make course entry invalid UTF-8");
+
+            assert!(matches!(
+                library
+                    .scan_and_reconcile(
+                        first.revision,
+                        root_text(root.path()),
+                        usize::MAX,
+                        &MutationControl::new(),
+                    )
+                    .await,
+                Err(LibraryError::InvalidScan(_))
+            ));
+            assert_eq!(library.revision(), first.revision);
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM courses WHERE missing_since IS NULL"
+                )
+                .fetch_one(&mut library.connection)
+                .await
+                .unwrap(),
+                1
+            );
+        });
+    }
+
     #[test]
     fn database_failures_roll_back_before_marker_writes() {
         block_on(async {
@@ -2009,18 +2124,19 @@ mod tests {
             let course_id: String = original.try_get("course_id").unwrap();
 
             touch(&root.path().join("00 overview.mp4"));
+            let topology_result = library
+                .scan_and_reconcile(
+                    first.revision,
+                    root_text(root.path()),
+                    usize::MAX,
+                    &MutationControl::new(),
+                )
+                .await;
             assert!(matches!(
-                library
-                    .scan_and_reconcile(
-                        first.revision,
-                        root_text(root.path()),
-                        usize::MAX,
-                        &MutationControl::new(),
-                    )
-                    .await,
+                &topology_result,
                 Err(LibraryError::InvalidScan(message))
-                    if message.contains("lesson id collides")
-            ));
+                    if message.contains("belongs to another stored course")
+            ), "unexpected topology result: {topology_result:?}");
             assert_eq!(library.revision(), first.revision);
             let unchanged = sqlx::query("SELECT id, course_id FROM lessons")
                 .fetch_one(&mut library.connection)
@@ -2039,6 +2155,88 @@ mod tests {
                 1
             );
             assert!(!root.path().join(".melearner-course.json").exists());
+        });
+    }
+
+    #[test]
+    fn reused_paths_allocate_new_course_section_and_lesson_ids() {
+        block_on(async {
+            let data = tempfile::tempdir().expect("create state directory");
+            let root = tempfile::tempdir().expect("create library root");
+            touch(&root.path().join("A/01 Intro/01 original.mp4"));
+            let mut library = open_test_library(data.path()).await;
+            let first = library
+                .scan_and_reconcile(
+                    library.revision(),
+                    root_text(root.path()),
+                    usize::MAX,
+                    &MutationControl::new(),
+                )
+                .await
+                .expect("initial scan");
+            let original = sqlx::query(
+                "SELECT courses.id AS course_id, sections.id AS section_id, lessons.id AS lesson_id
+                 FROM courses
+                 INNER JOIN sections ON sections.course_id = courses.id
+                 INNER JOIN lessons ON lessons.section_id = sections.id",
+            )
+            .fetch_one(&mut library.connection)
+            .await
+            .expect("load original ids");
+            let original_course_id: String = original.try_get("course_id").unwrap();
+            let original_section_id: String = original.try_get("section_id").unwrap();
+            let original_lesson_id: String = original.try_get("lesson_id").unwrap();
+
+            std::fs::rename(root.path().join("A"), root.path().join("B"))
+                .expect("move marked course");
+            let second = library
+                .scan_and_reconcile(
+                    first.revision,
+                    root_text(root.path()),
+                    usize::MAX,
+                    &MutationControl::new(),
+                )
+                .await
+                .expect("reconcile moved course");
+            touch(&root.path().join("A/01 Intro/01 replacement.mp4"));
+
+            library
+                .scan_and_reconcile(
+                    second.revision,
+                    root_text(root.path()),
+                    usize::MAX,
+                    &MutationControl::new(),
+                )
+                .await
+                .expect("reconcile reused path");
+
+            let retained = sqlx::query(
+                "SELECT courses.id AS course_id, sections.id AS section_id, lessons.id AS lesson_id
+                 FROM courses
+                 INNER JOIN sections ON sections.course_id = courses.id
+                 INNER JOIN lessons ON lessons.section_id = sections.id
+                 WHERE courses.name = 'B'",
+            )
+            .fetch_one(&mut library.connection)
+            .await
+            .expect("load retained ids");
+            assert_eq!(retained.try_get::<String, _>("course_id").unwrap(), original_course_id);
+            assert_eq!(retained.try_get::<String, _>("section_id").unwrap(), original_section_id);
+            assert_eq!(retained.try_get::<String, _>("lesson_id").unwrap(), original_lesson_id);
+
+            let replacement = sqlx::query(
+                "SELECT courses.id AS course_id, sections.id AS section_id, lessons.id AS lesson_id
+                 FROM courses
+                 INNER JOIN sections ON sections.course_id = courses.id
+                 INNER JOIN lessons ON lessons.section_id = sections.id
+                 WHERE courses.name = 'A'",
+            )
+            .fetch_one(&mut library.connection)
+            .await
+            .expect("load replacement ids");
+            assert_ne!(replacement.try_get::<String, _>("course_id").unwrap(), original_course_id);
+            assert_ne!(replacement.try_get::<String, _>("section_id").unwrap(), original_section_id);
+            assert_ne!(replacement.try_get::<String, _>("lesson_id").unwrap(), original_lesson_id);
         });
     }
 }
