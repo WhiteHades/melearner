@@ -1,11 +1,18 @@
-use cap_std::fs::{Dir as CapabilityDir, OpenOptions as CapabilityOpenOptions};
+use cap_fs_ext::{
+    DirExt as _, FollowSymlinks, MetadataExt as _, OpenOptionsFollowExt as _,
+    OpenOptionsSyncExt as _,
+};
+use cap_std::ambient_authority;
+use cap_std::fs::{
+    Dir as CapabilityDir, File as CapabilityFile, OpenOptions as CapabilityOpenOptions,
+};
 use jwalk::WalkDir;
 use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::hash::Hasher;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use crate::MutationControl;
@@ -107,6 +114,11 @@ pub struct ScanResult {
     pub scan_type: ScanType,
     pub courses: Box<[CourseData]>,
     pub warnings: Box<[String]>,
+}
+
+pub(crate) struct CapturedScan {
+    pub(crate) result: ScanResult,
+    pub(crate) course_dirs: HashMap<PathBuf, CapabilityDir>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -361,6 +373,40 @@ fn require_utf8_path(path: &Path) -> Result<(), ScanError> {
     }
 }
 
+pub(crate) fn verify_captured_root(
+    root_path: &Path,
+    captured_root: &CapabilityDir,
+) -> Result<(), ScanError> {
+    let current =
+        CapabilityDir::open_ambient_dir(root_path, ambient_authority()).map_err(|error| {
+            ScanError::Invalid(format!(
+                "cannot reopen library root {}: {error}",
+                root_path.display()
+            ))
+        })?;
+    let captured_metadata = captured_root.dir_metadata().map_err(|error| {
+        ScanError::Invalid(format!(
+            "cannot inspect captured library root {}: {error}",
+            root_path.display()
+        ))
+    })?;
+    let current_metadata = current.dir_metadata().map_err(|error| {
+        ScanError::Invalid(format!(
+            "cannot inspect current library root {}: {error}",
+            root_path.display()
+        ))
+    })?;
+    if captured_metadata.dev() != current_metadata.dev()
+        || captured_metadata.ino() != current_metadata.ino()
+    {
+        return Err(ScanError::Invalid(format!(
+            "library root changed during scan: {}",
+            root_path.display()
+        )));
+    }
+    Ok(())
+}
+
 fn path_name(path: &Path) -> String {
     path.file_name()
         .and_then(|n| n.to_str())
@@ -510,40 +556,92 @@ fn course_fingerprint(
     Ok(format!("{:016x}", h.finish()).into())
 }
 
-fn read_course_marker(course_path: &Path) -> Result<Option<Box<str>>, String> {
+fn read_course_marker_in_dir(
+    course: &CapabilityDir,
+    course_path: &Path,
+) -> Result<Option<Box<str>>, String> {
+    let Some(file) = open_course_marker(course, course_path)? else {
+        return Ok(None);
+    };
+    read_open_course_marker(file, course_path).map(Some)
+}
+
+fn open_course_marker(
+    course: &CapabilityDir,
+    course_path: &Path,
+) -> Result<Option<CapabilityFile>, String> {
     let marker_path = course_path.join(COURSE_MARKER_FILE_NAME);
-    match std::fs::symlink_metadata(&marker_path) {
-        Ok(metadata) if metadata.file_type().is_symlink() => {
-            return Err(format!(
-                "course marker must not be a symbolic link: {}",
-                marker_path.display()
-            ));
-        }
-        Ok(metadata) if !metadata.file_type().is_file() => {
-            return Err(format!(
-                "course marker is not a regular file: {}",
-                marker_path.display()
-            ));
-        }
-        Ok(metadata) if metadata.len() > COURSE_MARKER_MAX_BYTES => {
-            return Err(format!(
-                "course marker exceeds {COURSE_MARKER_MAX_BYTES} bytes: {}",
-                marker_path.display()
-            ));
-        }
-        Ok(_) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+    let mut options = CapabilityOpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No).nonblock(true);
+    match course.open_with(COURSE_MARKER_FILE_NAME, &options) {
+        Ok(file) => Ok(Some(file)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => {
-            return Err(format!(
-                "cannot inspect course marker {}: {error}",
-                marker_path.display()
-            ));
+            if course
+                .symlink_metadata(COURSE_MARKER_FILE_NAME)
+                .is_ok_and(|metadata| metadata.file_type().is_symlink())
+            {
+                Err(format!(
+                    "course marker must not be a symbolic link: {}",
+                    marker_path.display()
+                ))
+            } else {
+                Err(format!(
+                    "cannot open course marker {}: {error}",
+                    marker_path.display()
+                ))
+            }
         }
     }
+}
 
-    let raw = std::fs::read_to_string(&marker_path)
-        .map_err(|e| format!("cannot read course marker {}: {e}", marker_path.display()))?;
-    parse_course_marker(&raw, &marker_path).map(Some)
+fn read_open_course_marker(
+    mut file: CapabilityFile,
+    course_path: &Path,
+) -> Result<Box<str>, String> {
+    let marker_path = course_path.join(COURSE_MARKER_FILE_NAME);
+    let metadata = file.metadata().map_err(|error| {
+        format!(
+            "cannot inspect course marker {}: {error}",
+            marker_path.display()
+        )
+    })?;
+    if !metadata.is_file() {
+        return Err(format!(
+            "course marker is not a regular file: {}",
+            marker_path.display()
+        ));
+    }
+    if metadata.len() > COURSE_MARKER_MAX_BYTES {
+        return Err(format!(
+            "course marker exceeds {COURSE_MARKER_MAX_BYTES} bytes: {}",
+            marker_path.display()
+        ));
+    }
+
+    let mut bytes = Vec::with_capacity((metadata.len() + 1) as usize);
+    (&mut file)
+        .take(COURSE_MARKER_MAX_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| {
+            format!(
+                "cannot read course marker {}: {error}",
+                marker_path.display()
+            )
+        })?;
+    if bytes.len() as u64 > COURSE_MARKER_MAX_BYTES {
+        return Err(format!(
+            "course marker exceeds {COURSE_MARKER_MAX_BYTES} bytes: {}",
+            marker_path.display()
+        ));
+    }
+    let raw = std::str::from_utf8(&bytes).map_err(|error| {
+        format!(
+            "course marker is not valid UTF-8 {}: {error}",
+            marker_path.display()
+        )
+    })?;
+    parse_course_marker(raw, &marker_path)
 }
 
 fn parse_course_marker(raw: &str, marker_path: &Path) -> Result<Box<str>, String> {
@@ -567,16 +665,22 @@ fn parse_course_marker(raw: &str, marker_path: &Path) -> Result<Box<str>, String
     Ok(identity_id.to_string().into_boxed_str())
 }
 
+#[cfg(test)]
 pub(crate) fn ensure_course_marker(
     root: &CapabilityDir,
     course_relative_path: &Path,
     course_path: &Path,
     identity_id: &str,
 ) -> Result<(), String> {
-    let identity_id = identity_id.trim();
-    if identity_id.is_empty() {
-        return Err("course marker identity is empty".to_string());
-    }
+    let course = open_course_directory(root, course_relative_path, course_path)?;
+    ensure_course_marker_in_dir(&course, course_path, identity_id)
+}
+
+pub(crate) fn open_course_directory(
+    root: &CapabilityDir,
+    course_relative_path: &Path,
+    course_path: &Path,
+) -> Result<CapabilityDir, String> {
     if course_relative_path.is_absolute()
         || course_relative_path.components().any(|component| {
             matches!(
@@ -592,70 +696,38 @@ pub(crate) fn ensure_course_marker(
             course_path.display()
         ));
     }
-    let relative_course = if course_relative_path.as_os_str().is_empty() {
-        Path::new(".")
+    let course = if course_relative_path.as_os_str().is_empty() {
+        root.try_clone()
     } else {
-        course_relative_path
+        root.open_dir_nofollow(course_relative_path)
     };
-    let course_metadata = root.symlink_metadata(relative_course).map_err(|error| {
+    course.map_err(|error| {
         format!(
-            "cannot inspect course folder {}: {error}",
+            "cannot open course folder {}: {error}",
             course_path.display()
         )
-    })?;
-    if course_metadata.file_type().is_symlink() || !course_metadata.is_dir() {
-        return Err(format!(
-            "course folder is not available: {}",
-            course_path.display()
-        ));
+    })
+}
+
+pub(crate) fn ensure_course_marker_in_dir(
+    course: &CapabilityDir,
+    course_path: &Path,
+    identity_id: &str,
+) -> Result<(), String> {
+    let identity_id = identity_id.trim();
+    if identity_id.is_empty() {
+        return Err("course marker identity is empty".to_string());
     }
-    let marker_relative_path = course_relative_path.join(COURSE_MARKER_FILE_NAME);
     let marker_path = course_path.join(COURSE_MARKER_FILE_NAME);
 
-    match root.symlink_metadata(&marker_relative_path) {
-        Ok(metadata) => {
-            if metadata.file_type().is_symlink() {
-                return Err(format!(
-                    "course marker must not be a symbolic link: {}",
-                    marker_path.display()
-                ));
-            }
-            if !metadata.file_type().is_file() {
-                return Err(format!(
-                    "course marker is not a regular file: {}",
-                    marker_path.display()
-                ));
-            }
-            if metadata.len() > COURSE_MARKER_MAX_BYTES {
-                return Err(format!(
-                    "course marker exceeds {COURSE_MARKER_MAX_BYTES} bytes: {}",
-                    marker_path.display()
-                ));
-            }
-            let raw = root
-                .read_to_string(&marker_relative_path)
-                .map_err(|error| {
-                    format!(
-                        "cannot read course marker {}: {error}",
-                        marker_path.display()
-                    )
-                })?;
-            let existing = parse_course_marker(&raw, &marker_path)?;
-            if existing.as_ref() == identity_id {
-                return Ok(());
-            }
-            return Err(format!(
-                "course marker already has a different identity: {}",
-                marker_path.display()
-            ));
+    if let Some(existing) = read_course_marker_in_dir(course, course_path)? {
+        if existing.as_ref() == identity_id {
+            return Ok(());
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => {
-            return Err(format!(
-                "cannot inspect course marker {}: {error}",
-                marker_path.display()
-            ));
-        }
+        return Err(format!(
+            "course marker already has a different identity: {}",
+            marker_path.display()
+        ));
     }
 
     let marker = CourseMarker {
@@ -665,9 +737,12 @@ pub(crate) fn ensure_course_marker(
     let json = serde_json::to_string_pretty(&marker)
         .map_err(|error| format!("cannot serialize course marker: {error}"))?;
     let mut options = CapabilityOpenOptions::new();
-    options.write(true).create_new(true);
-    let mut file = root
-        .open_with(&marker_relative_path, &options)
+    options
+        .write(true)
+        .create_new(true)
+        .follow(FollowSymlinks::No);
+    let mut file = course
+        .open_with(COURSE_MARKER_FILE_NAME, &options)
         .map_err(|error| {
             format!(
                 "cannot create course marker {}: {error}",
@@ -676,7 +751,7 @@ pub(crate) fn ensure_course_marker(
         })?;
     if let Err(error) = file.write_all(format!("{json}\n").as_bytes()) {
         drop(file);
-        let cleanup = root.remove_file(&marker_relative_path);
+        let cleanup = course.remove_file(COURSE_MARKER_FILE_NAME);
         return Err(match cleanup {
             Ok(()) => format!(
                 "cannot write course marker {}: {error}",
@@ -781,6 +856,7 @@ fn scan_directory(
 
 fn scan_course_with_control(
     course_path: &Path,
+    course_dir: &CapabilityDir,
     control: &MutationControl,
 ) -> Result<(CourseData, Vec<String>), ScanError> {
     let mut sections: Vec<SectionData> = Vec::new();
@@ -789,7 +865,7 @@ fn scan_course_with_control(
     let entries = read_dir_sorted(course_path, control)?;
     let root_paths = entries.iter().map(|entry| entry.path()).collect::<Vec<_>>();
     let root_download_sidecars = download_sidecar_targets(&root_paths, control)?;
-    let marker_identity_id = match read_course_marker(course_path) {
+    let marker_identity_id = match read_course_marker_in_dir(course_dir, course_path) {
         Ok(identity_id) => identity_id,
         Err(message) => {
             push_warning(&mut warnings, message);
@@ -893,7 +969,10 @@ fn scan_course_with_control(
 
 #[cfg(test)]
 fn scan_course(course_path: &Path) -> (CourseData, Vec<String>) {
-    scan_course_with_control(course_path, &MutationControl::new()).expect("scan test course")
+    let course_dir = CapabilityDir::open_ambient_dir(course_path, ambient_authority())
+        .expect("open test course directory");
+    scan_course_with_control(course_path, &course_dir, &MutationControl::new())
+        .expect("scan test course")
 }
 
 pub(crate) fn scan_library_checked_with_control(
@@ -933,10 +1012,29 @@ pub(crate) fn scan_library_checked_with_control(
             root_path.display()
         ))
     })?;
-    require_utf8_path(&root)?;
-    let entries = read_dir_sorted(&root, control)?;
+    let captured_root =
+        CapabilityDir::open_ambient_dir(&root, ambient_authority()).map_err(|error| {
+            ScanError::Invalid(format!(
+                "cannot open library root {}: {error}",
+                root.display()
+            ))
+        })?;
 
-    scan_valid_root(root, entries, control)
+    scan_library_checked_in_root(&root, &captured_root, control).map(|captured| captured.result)
+}
+
+pub(crate) fn scan_library_checked_in_root(
+    root: &Path,
+    captured_root: &CapabilityDir,
+    control: &MutationControl,
+) -> Result<CapturedScan, ScanError> {
+    require_active(control)?;
+    require_utf8_path(root)?;
+    verify_captured_root(root, captured_root)?;
+    let entries = read_dir_sorted(root, control)?;
+    let result = scan_valid_root(root.to_path_buf(), captured_root, entries, control)?;
+    verify_captured_root(root, captured_root)?;
+    Ok(result)
 }
 
 pub(crate) fn scan_library_checked(root_path: &Path) -> Result<ScanResult, String> {
@@ -955,22 +1053,41 @@ pub fn scan_library(root_path: &str) -> ScanResult {
     })
 }
 
+fn captured_single_course(
+    course: CourseData,
+    warnings: Vec<String>,
+    course_dir: &CapabilityDir,
+) -> Result<CapturedScan, ScanError> {
+    let path = PathBuf::from(course.path.as_ref());
+    let course_dir = course_dir.try_clone().map_err(|error| {
+        ScanError::Invalid(format!(
+            "cannot retain course folder {}: {error}",
+            path.display()
+        ))
+    })?;
+    Ok(CapturedScan {
+        result: ScanResult {
+            scan_type: ScanType::SingleCourse,
+            courses: Box::new([course]),
+            warnings: warnings.into_boxed_slice(),
+        },
+        course_dirs: HashMap::from([(path, course_dir)]),
+    })
+}
+
 fn scan_valid_root(
     root: PathBuf,
+    root_dir: &CapabilityDir,
     entries: Vec<std::fs::DirEntry>,
     control: &MutationControl,
-) -> Result<ScanResult, ScanError> {
+) -> Result<CapturedScan, ScanError> {
     require_active(control)?;
     let mut warnings = Vec::new();
-    match read_course_marker(&root) {
+    match read_course_marker_in_dir(root_dir, &root) {
         Ok(Some(_)) => {
-            let (course, course_warnings) = scan_course_with_control(&root, control)?;
+            let (course, course_warnings) = scan_course_with_control(&root, root_dir, control)?;
             extend_warnings(&mut warnings, course_warnings);
-            return Ok(ScanResult {
-                scan_type: ScanType::SingleCourse,
-                courses: Box::new([course]),
-                warnings: warnings.into_boxed_slice(),
-            });
+            return captured_single_course(course, warnings, root_dir);
         }
         Ok(None) => {}
         Err(message) => push_warning(&mut warnings, message),
@@ -1022,35 +1139,23 @@ fn scan_valid_root(
     }
 
     if root_files_exist && subdirs.is_empty() {
-        let (course, course_warnings) = scan_course_with_control(&root, control)?;
+        let (course, course_warnings) = scan_course_with_control(&root, root_dir, control)?;
         extend_warnings(&mut warnings, course_warnings);
-        return Ok(ScanResult {
-            scan_type: ScanType::SingleCourse,
-            courses: Box::new([course]),
-            warnings: warnings.into_boxed_slice(),
-        });
+        return captured_single_course(course, warnings, root_dir);
     }
 
     if root_files_exist && !subdirs.is_empty() {
-        let (course, course_warnings) = scan_course_with_control(&root, control)?;
+        let (course, course_warnings) = scan_course_with_control(&root, root_dir, control)?;
         extend_warnings(&mut warnings, course_warnings);
         push_warning(&mut warnings, "mixed content at root level".to_string());
-        return Ok(ScanResult {
-            scan_type: ScanType::SingleCourse,
-            courses: Box::new([course]),
-            warnings: warnings.into_boxed_slice(),
-        });
+        return captured_single_course(course, warnings, root_dir);
     }
 
     if should_scan_root_as_single_course(&subdirs, control)? {
-        let (course, course_warnings) = scan_course_with_control(&root, control)?;
+        let (course, course_warnings) = scan_course_with_control(&root, root_dir, control)?;
         if !course.sections.is_empty() {
             extend_warnings(&mut warnings, course_warnings);
-            return Ok(ScanResult {
-                scan_type: ScanType::SingleCourse,
-                courses: Box::new([course]),
-                warnings: warnings.into_boxed_slice(),
-            });
+            return captured_single_course(course, warnings, root_dir);
         }
         extend_warnings(&mut warnings, course_warnings);
     }
@@ -1059,18 +1164,36 @@ fn scan_valid_root(
         .iter()
         .map(|dir| {
             require_active(control)?;
-            std::panic::catch_unwind(|| scan_course_with_control(dir, control))
-                .map_err(|_| format!("skipped course after scanner panic: {}", dir.display()))
-                .map_err(ScanError::Invalid)
+            let relative_path = dir.strip_prefix(&root).map_err(|_| {
+                ScanError::Invalid(format!(
+                    "course folder escaped library root: {}",
+                    dir.display()
+                ))
+            })?;
+            let course_dir =
+                open_course_directory(root_dir, relative_path, dir).map_err(ScanError::Invalid)?;
+            let scanned =
+                std::panic::catch_unwind(|| scan_course_with_control(dir, &course_dir, control))
+                    .map_err(|_| format!("skipped course after scanner panic: {}", dir.display()))
+                    .map_err(ScanError::Invalid)?;
+            Ok(scanned.map(|(course, warnings)| (course, warnings, course_dir)))
         })
         .collect::<Result<Vec<_>, ScanError>>()?;
 
     let mut courses = Vec::new();
+    let mut course_dirs = HashMap::new();
     for result in scanned {
         match result {
-            Ok((course, course_warnings)) => {
+            Ok((course, course_warnings, course_dir)) => {
                 extend_warnings(&mut warnings, course_warnings);
                 if !course.sections.is_empty() {
+                    let path = PathBuf::from(course.path.as_ref());
+                    if course_dirs.insert(path.clone(), course_dir).is_some() {
+                        return Err(ScanError::Invalid(format!(
+                            "duplicate captured course path: {}",
+                            path.display()
+                        )));
+                    }
                     courses.push(course);
                 }
             }
@@ -1079,10 +1202,13 @@ fn scan_valid_root(
         }
     }
 
-    Ok(ScanResult {
-        scan_type: ScanType::Library,
-        courses: courses.into_boxed_slice(),
-        warnings: warnings.into_boxed_slice(),
+    Ok(CapturedScan {
+        result: ScanResult {
+            scan_type: ScanType::Library,
+            courses: courses.into_boxed_slice(),
+            warnings: warnings.into_boxed_slice(),
+        },
+        course_dirs,
     })
 }
 
@@ -1172,6 +1298,63 @@ mod tests {
     }
 
     #[test]
+    fn captured_root_identity_rejects_another_directory() {
+        let root = temp_root("captured-root");
+        let other = temp_root("other-root");
+        let captured = CapabilityDir::open_ambient_dir(&root, ambient_authority())
+            .expect("capture library root");
+
+        verify_captured_root(&root, &captured).expect("accept captured root");
+        assert!(matches!(
+            verify_captured_root(&other, &captured),
+            Err(ScanError::Invalid(message))
+                if message.contains("library root changed during scan")
+        ));
+
+        cleanup(&root);
+        cleanup(&other);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn checked_scan_rejects_a_replaced_captured_root() {
+        let parent = temp_root("captured-root-swap");
+        let root = parent.join("Library");
+        let original = parent.join("Original");
+        fs::create_dir(&root).expect("create original library root");
+        touch(&root.join("Course/01 Intro/01 original.mp4"));
+        let captured = CapabilityDir::open_ambient_dir(&root, ambient_authority())
+            .expect("capture original library root");
+        fs::rename(&root, &original).expect("move original library root");
+        fs::create_dir(&root).expect("create replacement library root");
+        touch(&root.join("Replacement/01 Intro/01 replacement.mp4"));
+
+        assert!(matches!(
+            scan_library_checked_in_root(&root, &captured, &MutationControl::new()),
+            Err(ScanError::Invalid(message))
+                if message.contains("library root changed during scan")
+        ));
+
+        cleanup(&parent);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn captured_root_blocks_replacement_on_windows() {
+        let parent = temp_root("captured-root-windows");
+        let root = parent.join("Library");
+        let moved = parent.join("Moved");
+        fs::create_dir(&root).expect("create library root");
+        let captured = CapabilityDir::open_ambient_dir(&root, ambient_authority())
+            .expect("capture library root");
+
+        assert!(fs::rename(&root, &moved).is_err());
+
+        drop(captured);
+        cleanup(&parent);
+    }
+
+    #[test]
     fn invalid_root_marker_does_not_collapse_a_library_scan() {
         let root = temp_root("invalid-root-marker");
         touch(&root.join("Course A/01 Intro/01 a.mp4"));
@@ -1237,6 +1420,45 @@ mod tests {
                 existing
             );
         }
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn marker_owner_rejects_oversized_markers() {
+        let root = temp_root("marker-oversized");
+        let course = root.join("Course");
+        fs::create_dir_all(&course).expect("create course");
+        let marker_path = course.join(COURSE_MARKER_FILE_NAME);
+        let existing = vec![b'x'; COURSE_MARKER_MAX_BYTES as usize + 1];
+        fs::write(&marker_path, &existing).expect("write oversized marker");
+
+        let error = ensure_test_course_marker(&root, &course, "course-identity-1")
+            .expect_err("oversized marker should be rejected");
+        assert!(error.contains("course marker exceeds"));
+        assert_eq!(fs::read(&marker_path).unwrap(), existing);
+
+        cleanup(&root);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn marker_owner_rejects_a_fifo_without_blocking() {
+        use rustix::fs::{CWD, Mode, mkfifoat};
+
+        let root = temp_root("marker-fifo");
+        let course = root.join("Course");
+        fs::create_dir_all(&course).expect("create course");
+        mkfifoat(
+            CWD,
+            course.join(COURSE_MARKER_FILE_NAME),
+            Mode::RUSR | Mode::WUSR,
+        )
+        .expect("create marker FIFO");
+
+        let error = ensure_test_course_marker(&root, &course, "course-identity-1")
+            .expect_err("marker FIFO should be rejected");
+        assert!(error.contains("course marker is not a regular file"));
 
         cleanup(&root);
     }
@@ -1356,6 +1578,59 @@ mod tests {
         )
         .expect_err("replaced course directory should be rejected");
         assert!(!outside.join(COURSE_MARKER_FILE_NAME).exists());
+
+        cleanup(&root);
+        cleanup(&outside);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn captured_course_handle_never_writes_into_its_replacement() {
+        let root = temp_root("captured-course-swap");
+        let course = root.join("Course");
+        let original = root.join("Original");
+        fs::create_dir(&course).expect("create original course");
+        let root_dir = CapabilityDir::open_ambient_dir(&root, ambient_authority())
+            .expect("open root capability");
+        let captured = open_course_directory(&root_dir, Path::new("Course"), &course)
+            .expect("capture course directory");
+        fs::rename(&course, &original).expect("move original course");
+        fs::create_dir(&course).expect("create replacement course");
+
+        ensure_course_marker_in_dir(&captured, &course, "course-identity-1")
+            .expect("write through captured course handle");
+        assert!(original.join(COURSE_MARKER_FILE_NAME).exists());
+        assert!(!course.join(COURSE_MARKER_FILE_NAME).exists());
+
+        cleanup(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn opened_marker_handle_ignores_path_replacement() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_root("opened-marker-swap");
+        let outside = temp_root("opened-marker-outside");
+        let course = root.join("Course");
+        fs::create_dir(&course).expect("create course");
+        let marker = course.join(COURSE_MARKER_FILE_NAME);
+        let original = r#"{"version":1,"identityId":"captured-identity"}"#;
+        fs::write(&marker, original).expect("write original marker");
+        let course_dir = CapabilityDir::open_ambient_dir(&course, ambient_authority())
+            .expect("open course directory");
+        let opened = open_course_marker(&course_dir, &course)
+            .expect("open marker")
+            .expect("marker exists");
+        fs::rename(&marker, course.join("captured-marker.json")).expect("move marker path");
+        let outside_marker = outside.join("outside-marker.json");
+        let outside_bytes = b"outside";
+        fs::write(&outside_marker, outside_bytes).expect("write outside marker");
+        symlink(&outside_marker, &marker).expect("replace marker path");
+
+        let identity = read_open_course_marker(opened, &course).expect("read captured marker");
+        assert_eq!(identity.as_ref(), "captured-identity");
+        assert_eq!(fs::read(&outside_marker).unwrap(), outside_bytes);
 
         cleanup(&root);
         cleanup(&outside);
