@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use cap_std::ambient_authority;
 use cap_std::fs::Dir as CapabilityDir;
@@ -8,8 +8,8 @@ use sqlx::{Connection, QueryBuilder, Row, Sqlite, Transaction};
 
 use super::{LibraryDatabase, LibraryError, child_path_range, natural_cmp};
 use crate::scanner::{
-    CourseData, FileEntry, FileType, ScanError, ScanResult, ensure_course_marker,
-    scan_library_checked_with_control,
+    CapturedScan, CourseData, FileEntry, FileType, ScanError, ScanResult,
+    ensure_course_marker_in_dir, scan_library_checked_in_root, verify_captured_root,
 };
 use crate::{MutationControl, next_library_revision};
 
@@ -115,7 +115,6 @@ struct ResolvedSubtitle {
 struct MarkerWrite {
     course_name: String,
     path: String,
-    relative_path: PathBuf,
     identity_id: String,
 }
 
@@ -172,16 +171,13 @@ impl LibraryDatabase {
                     root.display()
                 ))
             })?;
-        let scan =
-            scan_library_checked_with_control(&root, control).map_err(|error| match error {
-                ScanError::Cancelled => LibraryError::Cancelled,
-                ScanError::Invalid(message) => LibraryError::InvalidScan(message),
-            })?;
+        let captured_scan = scan_library_checked_in_root(&root, &marker_root, control)
+            .map_err(library_scan_error)?;
         require_active(control)?;
         self.reconcile_scan(
             expected_revision,
             &canonical_root,
-            scan,
+            captured_scan,
             max_payload_bytes,
             control,
             &marker_root,
@@ -193,19 +189,41 @@ impl LibraryDatabase {
         &mut self,
         expected_revision: u64,
         root_path: &str,
-        scan: ScanResult,
+        captured_scan: CapturedScan,
         max_payload_bytes: usize,
         control: &MutationControl,
         marker_root: &CapabilityDir,
     ) -> Result<ReconcileResult, LibraryError> {
         self.require_revision(expected_revision)?;
         require_active(control)?;
+        let CapturedScan {
+            result: scan,
+            mut course_dirs,
+        } = captured_scan;
 
         let mut transaction = self.connection.begin_with("BEGIN IMMEDIATE").await?;
         let mut plan = match reconcile_transaction(&mut transaction, root_path, scan, control).await
         {
             Ok(plan) => plan,
             Err(error) => return Err(rollback_error(transaction, error).await),
+        };
+        let marker_dirs = match plan
+            .marker_writes
+            .iter()
+            .map(|marker| {
+                course_dirs.remove(Path::new(&marker.path)).ok_or_else(|| {
+                    LibraryError::InvalidScan(format!(
+                        "scan did not retain course folder: {}",
+                        marker.path
+                    ))
+                })
+            })
+            .collect::<Result<Vec<_>, LibraryError>>()
+        {
+            Ok(marker_dirs) => marker_dirs,
+            Err(error) => {
+                return Err(rollback_error(transaction, error).await);
+            }
         };
 
         if control.is_cancelled() || !control.begin_commit() {
@@ -228,6 +246,9 @@ impl LibraryDatabase {
             )
             .await);
         }
+        if let Err(error) = verify_captured_root(Path::new(root_path), marker_root) {
+            return Err(rollback_error(transaction, library_scan_error(error)).await);
+        }
         transaction.commit().await?;
 
         self.revision = next_revision.get();
@@ -239,10 +260,9 @@ impl LibraryDatabase {
         }
 
         let mut warnings = plan.warnings;
-        for marker in plan.marker_writes {
-            if let Err(error) = ensure_course_marker(
-                marker_root,
-                &marker.relative_path,
+        for (marker, marker_dir) in plan.marker_writes.into_iter().zip(marker_dirs) {
+            if let Err(error) = ensure_course_marker_in_dir(
+                &marker_dir,
                 Path::new(&marker.path),
                 marker.identity_id.as_str(),
             ) {
@@ -282,6 +302,13 @@ impl LibraryDatabase {
                 actual: self.revision,
             })
         }
+    }
+}
+
+fn library_scan_error(error: ScanError) -> LibraryError {
+    match error {
+        ScanError::Cancelled => LibraryError::Cancelled,
+        ScanError::Invalid(message) => LibraryError::InvalidScan(message),
     }
 }
 
@@ -391,19 +418,17 @@ async fn reconcile_transaction(
     let marker_writes = courses
         .iter()
         .map(|course| {
-            let relative_path = Path::new(&course.path)
+            Path::new(&course.path)
                 .strip_prefix(root_path)
                 .map_err(|_| {
                     LibraryError::InvalidScan(format!(
                         "scanned course escaped library root: {}",
                         course.path
                     ))
-                })?
-                .to_path_buf();
+                })?;
             Ok(MarkerWrite {
                 course_name: course.name.clone(),
                 path: course.path.clone(),
-                relative_path,
                 identity_id: course.identity_id.clone(),
             })
         })
@@ -2004,6 +2029,49 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn reconciliation_keeps_scan_time_course_handles_for_marker_writes() {
+        block_on(async {
+            let data = tempfile::tempdir().expect("create state directory");
+            let root = tempfile::tempdir().expect("create library root");
+            let course = root.path().join("Course");
+            let original = root.path().join("Original");
+            touch(&course.join("01 Intro/01 lesson.mp4"));
+            let canonical_root = std::fs::canonicalize(root.path()).expect("resolve library root");
+            let root_dir = CapabilityDir::open_ambient_dir(&canonical_root, ambient_authority())
+                .expect("capture library root");
+            let captured =
+                scan_library_checked_in_root(&canonical_root, &root_dir, &MutationControl::new())
+                    .expect("capture scanned courses");
+            std::fs::rename(&course, &original).expect("move scanned course");
+            std::fs::create_dir(&course).expect("create replacement course");
+            let mut library = open_test_library(data.path()).await;
+
+            library
+                .reconcile_scan(
+                    library.revision(),
+                    root_text(&canonical_root),
+                    captured,
+                    usize::MAX,
+                    &MutationControl::new(),
+                    &root_dir,
+                )
+                .await
+                .expect("reconcile captured course");
+
+            assert!(original.join(".melearner-course.json").exists());
+            assert!(!course.join(".melearner-course.json").exists());
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM courses")
+                    .fetch_one(&mut library.connection)
+                    .await
+                    .unwrap(),
+                1
+            );
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn invalid_present_courses_do_not_become_missing() {
         use std::ffi::OsString;
         use std::os::unix::ffi::OsStringExt;
@@ -2132,11 +2200,14 @@ mod tests {
                     &MutationControl::new(),
                 )
                 .await;
-            assert!(matches!(
-                &topology_result,
-                Err(LibraryError::InvalidScan(message))
-                    if message.contains("belongs to another stored course")
-            ), "unexpected topology result: {topology_result:?}");
+            assert!(
+                matches!(
+                    &topology_result,
+                    Err(LibraryError::InvalidScan(message))
+                        if message.contains("belongs to another stored course")
+                ),
+                "unexpected topology result: {topology_result:?}"
+            );
             assert_eq!(library.revision(), first.revision);
             let unchanged = sqlx::query("SELECT id, course_id FROM lessons")
                 .fetch_one(&mut library.connection)
@@ -2220,9 +2291,18 @@ mod tests {
             .fetch_one(&mut library.connection)
             .await
             .expect("load retained ids");
-            assert_eq!(retained.try_get::<String, _>("course_id").unwrap(), original_course_id);
-            assert_eq!(retained.try_get::<String, _>("section_id").unwrap(), original_section_id);
-            assert_eq!(retained.try_get::<String, _>("lesson_id").unwrap(), original_lesson_id);
+            assert_eq!(
+                retained.try_get::<String, _>("course_id").unwrap(),
+                original_course_id
+            );
+            assert_eq!(
+                retained.try_get::<String, _>("section_id").unwrap(),
+                original_section_id
+            );
+            assert_eq!(
+                retained.try_get::<String, _>("lesson_id").unwrap(),
+                original_lesson_id
+            );
 
             let replacement = sqlx::query(
                 "SELECT courses.id AS course_id, sections.id AS section_id, lessons.id AS lesson_id
@@ -2234,9 +2314,18 @@ mod tests {
             .fetch_one(&mut library.connection)
             .await
             .expect("load replacement ids");
-            assert_ne!(replacement.try_get::<String, _>("course_id").unwrap(), original_course_id);
-            assert_ne!(replacement.try_get::<String, _>("section_id").unwrap(), original_section_id);
-            assert_ne!(replacement.try_get::<String, _>("lesson_id").unwrap(), original_lesson_id);
+            assert_ne!(
+                replacement.try_get::<String, _>("course_id").unwrap(),
+                original_course_id
+            );
+            assert_ne!(
+                replacement.try_get::<String, _>("section_id").unwrap(),
+                original_section_id
+            );
+            assert_ne!(
+                replacement.try_get::<String, _>("lesson_id").unwrap(),
+                original_lesson_id
+            );
         });
     }
 }
