@@ -7,7 +7,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::thread::{self, JoinHandle};
 
-use crate::library::{CoursePage, LessonPage, LibraryDatabase, LibraryError};
+use crate::MutationControl;
+use crate::library::{CoursePage, LessonPage, LibraryDatabase, LibraryError, ReconcileResult};
 
 #[derive(Debug)]
 pub(crate) enum DomainRequest {
@@ -23,6 +24,12 @@ pub(crate) enum DomainRequest {
         offset: u64,
         limit: u32,
     },
+    Scan {
+        expected_revision: u64,
+        root_path: String,
+        max_payload_bytes: usize,
+        control: Arc<MutationControl>,
+    },
     #[cfg(test)]
     LongQuery { entered: mpsc::Sender<()> },
     #[cfg(test)]
@@ -33,6 +40,7 @@ pub(crate) enum DomainRequest {
 pub(crate) enum DomainResponse {
     CoursePage(CoursePage),
     LessonPage(LessonPage),
+    Scan(ReconcileResult),
 }
 
 #[derive(Debug)]
@@ -185,6 +193,16 @@ impl DomainState {
                         offset,
                         limit,
                     )
+                    .await?,
+            )),
+            DomainRequest::Scan {
+                expected_revision,
+                root_path,
+                max_payload_bytes,
+                control,
+            } => Ok(DomainResponse::Scan(
+                self.library
+                    .scan_and_reconcile(expected_revision, &root_path, max_payload_bytes, &control)
                     .await?,
             )),
             #[cfg(test)]
