@@ -483,6 +483,12 @@ fn safe_entry_type(
         warn_for_symlink_escape(&path, root, warnings);
         return Ok(None);
     }
+    if !file_type.is_file() && !file_type.is_dir() {
+        return Err(ScanError::Invalid(format!(
+            "unsupported filesystem entry: {}",
+            path.display()
+        )));
+    }
     Ok(Some(file_type))
 }
 
@@ -816,6 +822,12 @@ fn scan_directory(
         if entry.file_type().is_symlink() {
             symlinks.push(path);
             continue;
+        }
+        if !entry.file_type().is_file() && !entry.file_type().is_dir() {
+            return Err(ScanError::Invalid(format!(
+                "unsupported filesystem entry: {}",
+                path.display()
+            )));
         }
         if entry.file_type().is_file() && !is_ignored_or_partial_path(&path, dir) {
             paths.push(path);

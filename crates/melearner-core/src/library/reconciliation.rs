@@ -2073,8 +2073,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn invalid_present_courses_do_not_become_missing() {
-        use std::ffi::OsString;
-        use std::os::unix::ffi::OsStringExt;
+        use std::os::unix::net::UnixListener;
 
         block_on(async {
             let data = tempfile::tempdir().expect("create state directory");
@@ -2091,9 +2090,8 @@ mod tests {
                 )
                 .await
                 .expect("initial scan");
-            let invalid_name = OsString::from_vec(vec![0xff, b'.', b'm', b'p', b'4']);
-            std::fs::rename(&lesson, lesson.with_file_name(invalid_name))
-                .expect("make course entry invalid UTF-8");
+            std::fs::remove_file(&lesson).expect("remove learning file");
+            let _socket = UnixListener::bind(&lesson).expect("make course entry unsupported");
 
             assert!(matches!(
                 library
