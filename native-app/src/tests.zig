@@ -42,11 +42,11 @@ test "Library boot uses the versioned Rust-core effect and renders an empty page
     main.boot(&model, &effects);
 
     const request = effects.pendingExternalAt(0).?;
-    try testing.expectEqual(core_adapter.request_key, request.key);
+    try testing.expectEqual(core_adapter.library_page_key, request.key);
     try testing.expectEqual(core_adapter.adapter_id, request.adapter_id);
-    try testing.expectEqual(@intFromEnum(core_adapter.Operation.open_library), request.kind);
+    try testing.expectEqual(@intFromEnum(core_adapter.Operation.load_library_page), request.kind);
     try testing.expectEqual(core_adapter.schema_version, request.schema_version);
-    try testing.expectEqualStrings("", request.payload);
+    try testing.expectEqualSlices(u8, &([_]u8{0} ** core_adapter.library_page_request_bytes), request.payload);
 
     try effects.feedExternalResult(request.request_id, .success,
         \\{"revision":1,"offset":0,"total":0,"rows":[]}
@@ -89,15 +89,62 @@ test "a populated Rust-core page is copied into the native Library model" {
     try testing.expect(findByText(compiled.root, .text, "Systems") != null);
 }
 
-test "a partial Library page reports both visible and total course counts" {
+test "Library paging carries the revision and offset in the core request" {
+    var effects = main.Effects.init(testing.allocator);
+    defer effects.deinit();
+    effects.executor = .fake;
+
+    var model = main.Model{
+        .library_state = .ready,
+        .library_revision = 7,
+        .total_courses = 21,
+        .course_count = 20,
+    };
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
+    try testing.expectEqualStrings("1–20 of 21 Courses", model.courseTotalLabel(arena_state.allocator()));
+    main.update(&model, .next_page, &effects);
+
+    const next_request = effects.pendingExternalAt(0).?;
+    var expected_next: [core_adapter.library_page_request_bytes]u8 = undefined;
+    std.mem.writeInt(u64, expected_next[0..8], 7, .little);
+    std.mem.writeInt(u64, expected_next[8..16], 20, .little);
+    try testing.expectEqualSlices(u8, &expected_next, next_request.payload);
+
+    try effects.feedExternalResult(next_request.request_id, .success,
+        \\{"revision":7,"offset":20,"total":21,"rows":[{"id":"course-21","name":"Course 21","lessonCount":1,"completedLessonCount":0,"progressPercent":0}]}
+    );
+    main.update(&model, effects.takeMsg().?, &effects);
+    try testing.expectEqual(@as(u64, 20), model.page_offset);
+
+    try testing.expectEqualStrings("21 of 21 Courses", model.courseTotalLabel(arena_state.allocator()));
+    const tree = try buildTree(arena_state.allocator(), &model);
+    try testing.expect(findByText(tree.root, .button, "Previous") != null);
+    try testing.expect(findByText(tree.root, .button, "Next") == null);
+
+    main.update(&model, .previous_page, &effects);
+    const previous_request = effects.pendingExternalAt(0).?;
+    var expected_previous: [core_adapter.library_page_request_bytes]u8 = undefined;
+    std.mem.writeInt(u64, expected_previous[0..8], 7, .little);
+    std.mem.writeInt(u64, expected_previous[8..16], 0, .little);
+    try testing.expectEqualSlices(u8, &expected_previous, previous_request.payload);
+}
+
+test "a Library response for a different page is rejected" {
+    var effects = main.Effects.init(testing.allocator);
+    defer effects.deinit();
+    effects.executor = .fake;
 
     var model = main.Model{};
-    model.course_count = 20;
-    model.total_courses = 50;
+    main.boot(&model, &effects);
+    const request = effects.pendingExternalAt(0).?;
+    try effects.feedExternalResult(request.request_id, .success,
+        \\{"revision":7,"offset":20,"total":21,"rows":[{"id":"course-21","name":"Course 21","lessonCount":1,"completedLessonCount":0,"progressPercent":0}]}
+    );
+    main.update(&model, effects.takeMsg().?, &effects);
 
-    try testing.expectEqualStrings("20 of 50 Courses", model.courseTotalLabel(arena_state.allocator()));
+    try testing.expect(model.libraryFailed());
+    try testing.expectEqualStrings("The Library service returned invalid data.", model.libraryMessage());
 }
 
 test "Rust-core failures become an honest native Library state" {
@@ -107,9 +154,9 @@ test "Rust-core failures become an honest native Library state" {
     var model = main.Model{};
     main.update(&model, .{ .library_loaded = .{
         .request_id = 1,
-        .key = core_adapter.request_key,
+        .key = core_adapter.library_page_key,
         .adapter_id = core_adapter.adapter_id,
-        .kind = @intFromEnum(core_adapter.Operation.open_library),
+        .kind = @intFromEnum(core_adapter.Operation.load_library_page),
         .schema_version = core_adapter.schema_version,
         .outcome = .failed,
         .bytes = "The Library database could not open.",

@@ -7,10 +7,17 @@ const c = @cImport({
 
 pub const adapter_id: u32 = 1;
 pub const schema_version: u32 = 1;
-pub const request_key: u64 = 1;
+pub const library_page_key: u64 = 1;
+pub const library_page_request_bytes: usize = 16;
+pub const library_page_size: u32 = 20;
 
 pub const Operation = enum(u32) {
-    open_library = 1,
+    load_library_page = 1,
+};
+
+const LibraryPageRequest = struct {
+    expected_revision: u64,
+    offset: u64,
 };
 
 const SlotState = enum {
@@ -23,6 +30,8 @@ const Slot = struct {
     state: SlotState = .free,
     sdk_request_id: u64 = 0,
     core_request_id: u64 = 0,
+    expected_revision: u64 = 0,
+    page_offset: u64 = 0,
     cancelled: bool = false,
     completion: ?native_sdk.ExternalEffectCompletion = null,
 };
@@ -71,12 +80,12 @@ pub const CoreAdapter = struct {
     fn submit(context: *anyopaque, request: native_sdk.EffectExternalRequest, completion: native_sdk.ExternalEffectCompletion) anyerror!void {
         const self: *CoreAdapter = @ptrCast(@alignCast(context));
         if (request.adapter_id != adapter_id or
-            request.kind != @intFromEnum(Operation.open_library) or
-            request.schema_version != schema_version or
-            request.payload.len != 0)
+            request.kind != @intFromEnum(Operation.load_library_page) or
+            request.schema_version != schema_version)
         {
             return error.UnsupportedCoreRequest;
         }
+        const page_request = decodeLibraryPageRequest(request.payload) catch return error.UnsupportedCoreRequest;
         if (self.shutdown_requested.load(.acquire)) return error.CoreAdapterStopped;
 
         self.mutex.lockUncancelable(self.io);
@@ -93,6 +102,8 @@ pub const CoreAdapter = struct {
         slot.* = .{
             .state = .queued,
             .sdk_request_id = request.request_id,
+            .expected_revision = page_request.expected_revision,
+            .page_offset = page_request.offset,
             .completion = completion,
         };
         self.mutex.unlock(self.io);
@@ -219,9 +230,9 @@ pub const CoreAdapter = struct {
         const request: c.ml_library_course_page_request_v1 = .{
             .struct_size = @sizeOf(c.ml_library_course_page_request_v1),
             .abi_version = c.ML_ABI_VERSION,
-            .expected_revision = revision,
-            .offset = 0,
-            .limit = 20,
+            .expected_revision = if (slot.expected_revision == 0) revision else slot.expected_revision,
+            .offset = slot.page_offset,
+            .limit = library_page_size,
             .reserved = 0,
         };
         var core_request_id: u64 = 0;
@@ -341,6 +352,27 @@ pub const CoreAdapter = struct {
     }
 };
 
+pub fn encodeLibraryPageRequest(buffer: *[library_page_request_bytes]u8, expected_revision: u64, offset: u64) []const u8 {
+    std.mem.writeInt(u64, buffer[0..8], expected_revision, .little);
+    std.mem.writeInt(u64, buffer[8..16], offset, .little);
+    return buffer;
+}
+
+fn decodeLibraryPageRequest(payload: []const u8) !LibraryPageRequest {
+    if (payload.len != library_page_request_bytes) return error.InvalidLibraryPageRequest;
+    const request: LibraryPageRequest = .{
+        .expected_revision = std.mem.readInt(u64, payload[0..8], .little),
+        .offset = std.mem.readInt(u64, payload[8..16], .little),
+    };
+    if (request.offset > std.math.maxInt(i64) or
+        request.offset % library_page_size != 0 or
+        (request.expected_revision == 0 and request.offset != 0))
+    {
+        return error.InvalidLibraryPageRequest;
+    }
+    return request;
+}
+
 fn emptyEvent() c.ml_event_v1 {
     return .{
         .struct_size = @sizeOf(c.ml_event_v1),
@@ -369,4 +401,19 @@ fn requestFailureMessage(status: c.ml_status_t) []const u8 {
         c.ML_STATUS_PANIC => "The Library service stopped unexpectedly.",
         else => "The Library database could not be read.",
     };
+}
+
+test "Library page requests use one strict revision and offset wire format" {
+    var payload: [library_page_request_bytes]u8 = undefined;
+    _ = encodeLibraryPageRequest(&payload, 7, 20);
+    const decoded = try decodeLibraryPageRequest(&payload);
+    try std.testing.expectEqual(@as(u64, 7), decoded.expected_revision);
+    try std.testing.expectEqual(@as(u64, 20), decoded.offset);
+
+    _ = encodeLibraryPageRequest(&payload, 0, 20);
+    try std.testing.expectError(error.InvalidLibraryPageRequest, decodeLibraryPageRequest(&payload));
+
+    _ = encodeLibraryPageRequest(&payload, 7, 1);
+    try std.testing.expectError(error.InvalidLibraryPageRequest, decodeLibraryPageRequest(&payload));
+    try std.testing.expectError(error.InvalidLibraryPageRequest, decodeLibraryPageRequest(payload[0..15]));
 }

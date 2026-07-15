@@ -44,6 +44,16 @@
               </for>
             </column>
           </scroll>
+          <if test="{hasPagination}">
+            <row gap="8" main="end" cross="center" label="Library pages">
+              <if test="{hasPreviousPage}">
+                <button size="sm" variant="secondary" on-press="previous_page" label="Previous Library page">Previous</button>
+              </if>
+              <if test="{hasNextPage}">
+                <button size="sm" variant="secondary" on-press="next_page" label="Next Library page">Next</button>
+              </if>
+            </row>
+          </if>
         </column>
       </else>
     </else>

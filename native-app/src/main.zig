@@ -15,7 +15,7 @@ pub const window_height: f32 = 680;
 pub const window_min_width: f32 = 560;
 pub const window_min_height: f32 = 400;
 const header_natural_height: f32 = 52;
-const max_courses = 20;
+const max_courses: usize = core_adapter.library_page_size;
 const max_course_id_bytes = 128;
 const max_course_name_bytes = 512;
 const max_library_message_bytes = 256;
@@ -74,6 +74,8 @@ pub const Model = struct {
     library_state: LibraryState = .opening,
     library_revision: u64 = 0,
     total_courses: u64 = 0,
+    page_offset: u64 = 0,
+    pending_page_offset: u64 = 0,
     courses: [max_courses]Course = undefined,
     course_count: usize = 0,
     library_message_storage: [max_library_message_bytes]u8 = [_]u8{0} ** max_library_message_bytes,
@@ -83,6 +85,8 @@ pub const Model = struct {
         "library_state",
         "library_revision",
         "total_courses",
+        "page_offset",
+        "pending_page_offset",
         "courses",
         "course_count",
         "library_message_storage",
@@ -106,6 +110,19 @@ pub const Model = struct {
         return model.library_state == .failed;
     }
 
+    pub fn hasPreviousPage(model: *const Model) bool {
+        return model.library_state == .ready and model.page_offset != 0;
+    }
+
+    pub fn hasNextPage(model: *const Model) bool {
+        return model.library_state == .ready and
+            model.page_offset + @as(u64, @intCast(model.course_count)) < model.total_courses;
+    }
+
+    pub fn hasPagination(model: *const Model) bool {
+        return model.hasPreviousPage() or model.hasNextPage();
+    }
+
     pub fn libraryMessage(model: *const Model) []const u8 {
         return model.library_message_storage[0..model.library_message_len];
     }
@@ -116,9 +133,18 @@ pub const Model = struct {
     }
 
     pub fn courseTotalLabel(model: *const Model, arena: std.mem.Allocator) []const u8 {
-        if (model.course_count < model.total_courses) {
-            return std.fmt.allocPrint(arena, "{d} of {d} Courses", .{
-                model.course_count,
+        if (model.page_offset != 0 or model.course_count < model.total_courses) {
+            const first = model.page_offset + 1;
+            const last = model.page_offset + @as(u64, @intCast(model.course_count));
+            if (first == last) {
+                return std.fmt.allocPrint(arena, "{d} of {d} Courses", .{
+                    first,
+                    model.total_courses,
+                }) catch "";
+            }
+            return std.fmt.allocPrint(arena, "{d}–{d} of {d} Courses", .{
+                first,
+                last,
                 model.total_courses,
             }) catch "";
         }
@@ -138,6 +164,8 @@ pub const Model = struct {
         model.library_state = .failed;
         model.library_revision = 0;
         model.total_courses = 0;
+        model.page_offset = 0;
+        model.pending_page_offset = 0;
         model.course_count = 0;
     }
 
@@ -161,10 +189,20 @@ pub const Model = struct {
         });
         defer parsed.deinit();
         const page = parsed.value;
-        if (page.revision == 0 or page.offset != 0 or page.rows.len > max_courses or page.total < page.rows.len) {
+        if (page.revision == 0 or
+            (model.library_revision != 0 and page.revision != model.library_revision) or
+            page.offset != model.pending_page_offset or
+            page.offset % core_adapter.library_page_size != 0 or
+            page.offset > page.total or
+            page.rows.len > max_courses)
+        {
             return error.InvalidLibraryPage;
         }
-        if ((page.total == 0) != (page.rows.len == 0)) return error.InvalidLibraryPage;
+        const remaining = page.total - page.offset;
+        const expected_rows = @min(@as(u64, max_courses), remaining);
+        if (page.rows.len != expected_rows or (page.total != 0 and page.offset == page.total)) {
+            return error.InvalidLibraryPage;
+        }
 
         var courses: [max_courses]Course = undefined;
         for (page.rows, 0..) |source, index| {
@@ -192,6 +230,8 @@ pub const Model = struct {
         model.course_count = page.rows.len;
         model.library_revision = page.revision;
         model.total_courses = page.total;
+        model.page_offset = page.offset;
+        model.pending_page_offset = page.offset;
         model.library_message_len = 0;
         model.library_state = if (page.total == 0) .empty else .ready;
     }
@@ -200,6 +240,8 @@ pub const Model = struct {
 pub const Msg = union(enum) {
     chrome_changed: native_sdk.WindowChrome,
     library_loaded: native_sdk.EffectExternalResult,
+    previous_page,
+    next_page,
 
     pub const view_unbound = .{ "chrome_changed", "library_loaded" };
 };
@@ -213,28 +255,38 @@ pub const LibraryApp = native_sdk.UiAppWithFeatures(Model, Msg, .{ .runtime_mark
 pub const Effects = LibraryApp.Effects;
 
 pub fn boot(model: *Model, effects: *Effects) void {
+    model.library_revision = 0;
+    model.total_courses = 0;
+    model.page_offset = 0;
+    model.course_count = 0;
+    requestLibraryPage(model, effects, 0, 0);
+}
+
+fn requestLibraryPage(model: *Model, effects: *Effects, expected_revision: u64, offset: u64) void {
+    var payload_storage: [core_adapter.library_page_request_bytes]u8 = undefined;
+    const payload = core_adapter.encodeLibraryPageRequest(&payload_storage, expected_revision, offset);
     model.library_state = .opening;
+    model.pending_page_offset = offset;
     _ = effects.external(.{
-        .key = core_adapter.request_key,
+        .key = core_adapter.library_page_key,
         .adapter_id = core_adapter.adapter_id,
-        .kind = @intFromEnum(core_adapter.Operation.open_library),
+        .kind = @intFromEnum(core_adapter.Operation.load_library_page),
         .schema_version = core_adapter.schema_version,
-        .payload = "",
+        .payload = payload,
         .on_result = Effects.externalMsg(.library_loaded),
     }) catch model.setFailure("The Library service could not start.");
 }
 
 pub fn update(model: *Model, msg: Msg, effects: *Effects) void {
-    _ = effects;
     switch (msg) {
         .chrome_changed => |chrome| {
             model.chrome_leading = chrome.insets.left;
             model.header_height = @max(header_natural_height, chrome.insets.top);
         },
         .library_loaded => |result| {
-            if (result.key != core_adapter.request_key or
+            if (result.key != core_adapter.library_page_key or
                 result.adapter_id != core_adapter.adapter_id or
-                result.kind != @intFromEnum(core_adapter.Operation.open_library) or
+                result.kind != @intFromEnum(core_adapter.Operation.load_library_page) or
                 result.schema_version != core_adapter.schema_version)
             {
                 model.setFailure("The Library service returned an unexpected response.");
@@ -247,6 +299,24 @@ pub fn update(model: *Model, msg: Msg, effects: *Effects) void {
                 .cancelled => model.setFailure("Opening the Library was cancelled."),
                 .adapter_unavailable, .submit_failed => model.setFailure("The Library service is unavailable."),
             }
+        },
+        .previous_page => {
+            if (!model.hasPreviousPage()) return;
+            requestLibraryPage(
+                model,
+                effects,
+                model.library_revision,
+                model.page_offset - core_adapter.library_page_size,
+            );
+        },
+        .next_page => {
+            if (!model.hasNextPage()) return;
+            requestLibraryPage(
+                model,
+                effects,
+                model.library_revision,
+                model.page_offset + core_adapter.library_page_size,
+            );
         },
     }
 }
