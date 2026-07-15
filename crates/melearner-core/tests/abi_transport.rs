@@ -68,7 +68,7 @@ fn poll(core: *mut ml_core_t) -> ml_event_v1 {
 
 #[test]
 fn borrowed_input_is_copied_and_outstanding_events_apply_backpressure() {
-    let (_state_dir, core) = create_empty(2, 16);
+    let (_state_dir, core) = create_empty(2, ML_MIN_EVENT_PAYLOAD_BYTES);
     let mut malformed_request = u64::MAX;
     assert_eq!(
         unsafe { ml_core_test_submit(core, ptr::null(), 1, &mut malformed_request) },
@@ -159,8 +159,8 @@ fn borrowed_input_is_copied_and_outstanding_events_apply_backpressure() {
         unsafe {
             ml_core_test_submit(
                 core,
-                b"0123456789abcdefg".as_ptr(),
-                17,
+                [b'x'; ML_MIN_EVENT_PAYLOAD_BYTES as usize + 1].as_ptr(),
+                ML_MIN_EVENT_PAYLOAD_BYTES as usize + 1,
                 &mut oversized_request,
             )
         },
@@ -171,7 +171,7 @@ fn borrowed_input_is_copied_and_outstanding_events_apply_backpressure() {
 
 #[test]
 fn cancellation_and_completion_race_to_one_terminal_event() {
-    let (_state_dir, core) = create_empty(2, 16);
+    let (_state_dir, core) = create_empty(2, ML_MIN_EVENT_PAYLOAD_BYTES);
     let mut request_id = 0;
     assert_eq!(
         unsafe { ml_core_test_submit(core, b"race".as_ptr(), 4, &mut request_id) },
@@ -225,7 +225,7 @@ fn cancellation_and_completion_race_to_one_terminal_event() {
 
 #[test]
 fn multiple_in_flight_payloads_remain_valid_until_each_release() {
-    let (_state_dir, core) = create_empty(3, 16);
+    let (_state_dir, core) = create_empty(3, ML_MIN_EVENT_PAYLOAD_BYTES);
     let mut first_request = 0;
     let mut second_request = 0;
     assert_eq!(
@@ -277,7 +277,12 @@ fn panic_marks_the_core_failed_and_emits_one_fatal_event_when_space_is_released(
     let state_dir = tempfile::tempdir().expect("create panic transport state directory");
     let mut core = ptr::null_mut();
     assert_eq!(
-        unsafe { ml_core_create(&config(state_dir.path(), 1, 1), &mut core) },
+        unsafe {
+            ml_core_create(
+                &config(state_dir.path(), 1, ML_MIN_EVENT_PAYLOAD_BYTES),
+                &mut core,
+            )
+        },
         ML_STATUS_OK
     );
 
@@ -358,7 +363,7 @@ unsafe extern "C" fn reentrant_wake(context: *mut c_void) {
 
 #[test]
 fn concurrent_empty_to_nonempty_transition_wakes_once_outside_core_locks() {
-    let (_state_dir, core) = create_empty(32, 16);
+    let (_state_dir, core) = create_empty(32, ML_MIN_EVENT_PAYLOAD_BYTES);
     let probe = Box::new(ReentrantProbe {
         core: AtomicUsize::new(core.addr()),
         calls: AtomicUsize::new(0),
@@ -409,7 +414,7 @@ fn concurrent_empty_to_nonempty_transition_wakes_once_outside_core_locks() {
 
 #[test]
 fn active_callback_can_clear_itself_or_destroy_its_core() {
-    let (_clear_state_dir, core) = create_empty(4, 16);
+    let (_clear_state_dir, core) = create_empty(4, ML_MIN_EVENT_PAYLOAD_BYTES);
     let clear_probe = Box::new(ReentrantProbe {
         core: AtomicUsize::new(core.addr()),
         calls: AtomicUsize::new(0),
@@ -432,7 +437,7 @@ fn active_callback_can_clear_itself_or_destroy_its_core() {
     }
     unsafe { ml_core_destroy(core) };
 
-    let (_destroy_state_dir, core) = create_empty(4, 16);
+    let (_destroy_state_dir, core) = create_empty(4, ML_MIN_EVENT_PAYLOAD_BYTES);
     let destroy_probe = Box::new(ReentrantProbe {
         core: AtomicUsize::new(core.addr()),
         calls: AtomicUsize::new(0),
@@ -474,7 +479,7 @@ unsafe extern "C" fn blocking_wake(context: *mut c_void) {
 
 #[test]
 fn clearing_a_waker_waits_for_an_active_callback() {
-    let (_state_dir, core) = create_empty(4, 16);
+    let (_state_dir, core) = create_empty(4, ML_MIN_EVENT_PAYLOAD_BYTES);
     let probe = Box::new(BlockingProbe {
         entered: Barrier::new(2),
         release: Barrier::new(2),
