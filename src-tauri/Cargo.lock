@@ -2925,6 +2925,8 @@ version = "0.1.0"
 dependencies = [
  "cap-fs-ext",
  "cap-std",
+ "fff-query-parser",
+ "futures-util",
  "icu_collator",
  "jwalk",
  "seahash",
