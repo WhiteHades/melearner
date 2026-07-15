@@ -4,14 +4,20 @@ const core_adapter = @import("core_adapter.zig");
 const main = @import("main.zig");
 
 const canvas = native_sdk.canvas;
+const geometry = native_sdk.geometry;
 const testing = std.testing;
 
 const LibraryMarkup = canvas.MarkupView(main.Model, main.Msg);
 
 fn buildTree(arena: std.mem.Allocator, model: *const main.Model) !main.LibraryUi.Tree {
+    var ui = main.LibraryUi.init(arena);
+    return ui.finalizeWithTokens(main.rootView(&ui, model), main.tokensFromModel(model));
+}
+
+fn buildMarkupTree(arena: std.mem.Allocator, model: *const main.Model) !main.LibraryUi.Tree {
     var view = try LibraryMarkup.init(arena, main.library_markup);
     var ui = main.LibraryUi.init(arena);
-    return ui.finalize(try view.build(&ui, model));
+    return ui.finalizeWithTokens(try view.build(&ui, model), main.tokensFromModel(model));
 }
 
 fn findByText(widget: canvas.Widget, kind: canvas.WidgetKind, value: []const u8) ?canvas.Widget {
@@ -29,6 +35,125 @@ fn selectCourse(model: *main.Model, id: []const u8, name: []const u8) void {
     };
     @memcpy(model.selected_course.id_storage[0..id.len], id);
     @memcpy(model.selected_course.name_storage[0..name.len], name);
+}
+
+fn setCourse(course: *main.Course, id: []const u8, name: []const u8, available: bool) void {
+    course.* = .{
+        .id_len = id.len,
+        .name_len = name.len,
+        .lesson_count = 10,
+        .completed_lesson_count = 4,
+        .progress_percent = 40,
+        .available = available,
+    };
+    @memcpy(course.id_storage[0..id.len], id);
+    @memcpy(course.name_storage[0..name.len], name);
+}
+
+fn populatedLibraryModel() main.Model {
+    var model = main.Model{
+        .library_state = .ready,
+        .library_revision = 7,
+        .total_courses = 21,
+        .course_count = 2,
+    };
+    setCourse(&model.courses[0], "course-1", "Systems", true);
+    setCourse(&model.courses[1], "course-2", "Archived Systems", false);
+    return model;
+}
+
+fn largeCourseModel() main.Model {
+    var model = main.Model{
+        .library_revision = 8,
+        .screen = .course,
+        .course_state = .ready,
+        .total_lessons = 100_000,
+        .lesson_count = core_adapter.lesson_page_size,
+    };
+    selectCourse(&model, "course-1", "Systems");
+    for (model.lessons[0..model.lesson_count], 0..) |*lesson, index| {
+        var id_buffer: [32]u8 = undefined;
+        var name_buffer: [32]u8 = undefined;
+        const id = std.fmt.bufPrint(&id_buffer, "lesson-{d}", .{index + 1}) catch unreachable;
+        const name = std.fmt.bufPrint(&name_buffer, "Lesson {d}", .{index + 1}) catch unreachable;
+        lesson.* = .{
+            .id_len = id.len,
+            .section_id_len = "section-1".len,
+            .section_name_len = "Foundations".len,
+            .name_len = name.len,
+            .kind_len = "video".len,
+            .duration = 120,
+            .starts_section = index == 0,
+        };
+        @memcpy(lesson.id_storage[0..id.len], id);
+        @memcpy(lesson.section_id_storage[0.."section-1".len], "section-1");
+        @memcpy(lesson.section_name_storage[0.."Foundations".len], "Foundations");
+        @memcpy(lesson.name_storage[0..name.len], name);
+        @memcpy(lesson.kind_storage[0.."video".len], "video");
+    }
+    return model;
+}
+
+const LiveLibrary = struct {
+    harness: *native_sdk.TestHarness(),
+    app_state: *main.LibraryApp,
+    app: native_sdk.App,
+
+    fn start(model: main.Model, size: geometry.SizeF, appearance: native_sdk.Appearance) !LiveLibrary {
+        const harness = try native_sdk.TestHarness().create(testing.allocator, .{ .size = size });
+        errdefer harness.destroy(testing.allocator);
+        harness.null_platform.gpu_surfaces = true;
+
+        const app_state = try testing.allocator.create(main.LibraryApp);
+        errdefer testing.allocator.destroy(app_state);
+        var options = main.appOptions();
+        options.init_fx = null;
+        app_state.* = main.LibraryApp.init(testing.allocator, model, options);
+        app_state.effects.executor = .fake;
+        const app = app_state.app();
+        try harness.start(app);
+        try harness.runtime.dispatchPlatformEvent(app, .{ .appearance_changed = appearance });
+        try harness.runtime.dispatchPlatformEvent(app, .{ .gpu_surface_frame = .{
+            .label = main.canvas_label,
+            .size = size,
+            .scale_factor = 1,
+            .frame_index = 1,
+            .timestamp_ns = 1_000_000,
+            .nonblank = true,
+        } });
+        return .{ .harness = harness, .app_state = app_state, .app = app };
+    }
+
+    fn stop(live: LiveLibrary) void {
+        live.app_state.deinit();
+        testing.allocator.destroy(live.app_state);
+        live.harness.destroy(testing.allocator);
+    }
+};
+
+fn snapshotByName(snapshot: native_sdk.automation.snapshot.Input, name: []const u8) ?native_sdk.automation.snapshot.Widget {
+    for (snapshot.widgets) |widget| {
+        if (std.mem.eql(u8, widget.name, name)) return widget;
+    }
+    return null;
+}
+
+fn snapshotByNameAndRole(snapshot: native_sdk.automation.snapshot.Input, name: []const u8, role: []const u8) ?native_sdk.automation.snapshot.Widget {
+    for (snapshot.widgets) |widget| {
+        if (std.mem.eql(u8, widget.name, name) and std.mem.eql(u8, widget.role, role)) return widget;
+    }
+    return null;
+}
+
+fn screenshotHash(runtime: anytype) !u64 {
+    const pixel_size = try runtime.canvasScreenshotPixelSize(1, main.canvas_label, 1);
+    const pixels = try testing.allocator.alloc(u8, pixel_size.byte_len);
+    defer testing.allocator.free(pixels);
+    const scratch = try testing.allocator.alloc(u8, pixel_size.byte_len);
+    defer testing.allocator.free(scratch);
+    const screenshot = try runtime.renderCanvasScreenshot(1, main.canvas_label, 1, pixels, scratch);
+
+    return std.hash.Wyhash.hash(0, screenshot.rgba8);
 }
 
 test "the first native frame identifies the Library opening state" {
@@ -89,7 +214,46 @@ test "the native app registers renderable Latin Cyrillic and Japanese course tex
         .reduce_motion = true,
     });
     expected.typography.font_id = main.primary_font_id;
+    expected.metrics.control_height_sm = 40;
+    expected.metrics.control_height = 40;
+    expected.metrics.control_height_lg = 48;
+    expected.metrics.row_extent = 40;
     try testing.expectEqualDeep(expected, main.tokensFromModel(&model));
+}
+
+test "the native theme follows the warm-paper and graphite token contract" {
+    const light = main.tokensFromModel(&main.Model{});
+    try testing.expectEqualDeep(canvas.Color.rgb8(245, 244, 237), light.colors.background);
+    try testing.expectEqualDeep(canvas.Color.rgb8(250, 249, 245), light.colors.surface);
+    try testing.expectEqualDeep(canvas.Color.rgb8(232, 230, 220), light.colors.surface_subtle);
+    try testing.expectEqualDeep(canvas.Color.rgb8(228, 236, 245), light.colors.surface_pressed);
+    try testing.expectEqualDeep(canvas.Color.rgb8(20, 20, 19), light.colors.text);
+    try testing.expectEqualDeep(canvas.Color.rgb8(100, 97, 89), light.colors.text_muted);
+    try testing.expectEqualDeep(canvas.Color.rgb8(227, 224, 211), light.colors.border);
+    try testing.expectEqualDeep(canvas.Color.rgb8(27, 54, 93), light.colors.accent);
+    try testing.expectEqualDeep(canvas.Color.rgb8(250, 249, 245), light.colors.accent_text);
+    try testing.expectEqualDeep(canvas.Color.rgb8(27, 54, 93), light.colors.focus_ring);
+    try testing.expectEqualDeep(canvas.Color.rgb8(238, 236, 227), light.colors.disabled);
+    try testing.expectEqual(@as(f32, 40), light.metrics.control_height_sm);
+    try testing.expectEqual(@as(f32, 40), light.metrics.control_height);
+    try testing.expectEqual(@as(f32, 48), light.metrics.control_height_lg);
+    try testing.expectEqual(@as(f32, 40), light.metrics.row_extent);
+    try testing.expectEqual(@as(u32, 150), light.motion.fast_ms);
+    try testing.expectEqual(@as(u32, 200), light.motion.normal_ms);
+    try testing.expectEqual(@as(u32, 250), light.motion.slow_ms);
+
+    const dark = main.tokensFromModel(&main.Model{ .appearance = .{ .color_scheme = .dark } });
+    try testing.expectEqualDeep(canvas.Color.rgb8(16, 17, 19), dark.colors.background);
+    try testing.expectEqualDeep(canvas.Color.rgb8(23, 23, 25), dark.colors.surface);
+    try testing.expectEqualDeep(canvas.Color.rgb8(36, 35, 33), dark.colors.surface_subtle);
+    try testing.expectEqualDeep(canvas.Color.rgb8(38, 52, 71), dark.colors.surface_pressed);
+    try testing.expectEqualDeep(canvas.Color.rgb8(235, 232, 223), dark.colors.text);
+    try testing.expectEqualDeep(canvas.Color.rgb8(166, 160, 149), dark.colors.text_muted);
+    try testing.expectEqualDeep(canvas.Color.rgb8(45, 44, 41), dark.colors.border);
+    try testing.expectEqualDeep(canvas.Color.rgb8(158, 184, 220), dark.colors.accent);
+    try testing.expectEqualDeep(canvas.Color.rgb8(16, 17, 19), dark.colors.accent_text);
+    try testing.expectEqualDeep(canvas.Color.rgb8(158, 184, 220), dark.colors.focus_ring);
+    try testing.expectEqualDeep(canvas.Color.rgb8(34, 34, 34), dark.colors.disabled);
 }
 
 test "the app startup options install and select the course-content font" {
@@ -280,6 +444,7 @@ test "a Course that disappears during access becomes an honest error state" {
         .screen = .course,
         .course_state = .accessing,
         .library_revision = 7,
+        .pending_request_id = 1,
     };
     selectCourse(&model, "course-1", "Systems");
 
@@ -323,6 +488,7 @@ test "Lesson pages reject mismatched Course snapshots" {
         .screen = .course,
         .course_state = .loading,
         .library_revision = 8,
+        .pending_request_id = 1,
     };
     selectCourse(&model, "course-1", "Systems");
 
@@ -420,7 +586,34 @@ test "Library paging carries the revision and offset in the core request" {
     try testing.expectEqualSlices(u8, &expected_previous, previous_request.payload);
 }
 
-test "a Library response for a different page is rejected" {
+test "a stale Library request result is discarded while the current request remains active" {
+    var effects = main.Effects.init(testing.allocator);
+    defer effects.deinit();
+    effects.executor = .fake;
+
+    var model = main.Model{};
+    main.boot(&model, &effects);
+    const request = effects.pendingExternalAt(0).?;
+    main.update(&model, .{ .library_loaded = .{
+        .request_id = request.request_id + 1,
+        .key = core_adapter.library_page_key,
+        .adapter_id = core_adapter.adapter_id,
+        .kind = @intFromEnum(core_adapter.Operation.load_library_page),
+        .schema_version = core_adapter.schema_version,
+        .outcome = .ok,
+        .bytes =
+        \\{"revision":7,"offset":20,"total":21,"rows":[{"id":"course-21","name":"Course 21","missingSince":null,"lessonCount":1,"completedLessonCount":0,"progressPercent":0}]}
+        ,
+    } }, &effects);
+
+    try testing.expect(model.libraryOpening());
+    try testing.expectEqual(@as(u64, 0), model.pending_page_offset);
+    try testing.expectEqual(request.request_id, model.pending_request_id);
+    try testing.expectEqual(@as(usize, 0), model.course_count);
+    try testing.expectEqualStrings("", model.libraryMessage());
+}
+
+test "a malformed current Library page remains an honest error" {
     var effects = main.Effects.init(testing.allocator);
     defer effects.deinit();
     effects.executor = .fake;
@@ -442,6 +635,7 @@ test "Rust-core failures become an honest native Library state" {
     defer effects.deinit();
 
     var model = main.Model{};
+    model.pending_request_id = 1;
     main.update(&model, .{ .library_loaded = .{
         .request_id = 1,
         .key = core_adapter.library_page_key,
@@ -474,20 +668,102 @@ test "the live adapter creates and reopens only the fresh native database" {
     try expectLiveEmptyPage(state_dir);
 }
 
-test "the native shell stays clean at its compact and default sizes" {
+test "the populated native shell stays clean and caps its study surface on ultrawide windows" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
 
-    const model = main.Model{};
+    const model = populatedLibraryModel();
     const tree = try buildTree(arena_state.allocator(), &model);
     try canvas.expectLayoutAuditSweepClean(testing.allocator, tree.root, .{
+        .tokens = main.tokensFromModel(&model),
         .min_size = native_sdk.geometry.SizeF.init(main.window_min_width, main.window_min_height),
         .default_size = native_sdk.geometry.SizeF.init(main.window_width, main.window_height),
+        .large_size = native_sdk.geometry.SizeF.init(1920, 1080),
     });
     try canvas.expectA11yAuditSweepClean(testing.allocator, tree.root, .{
+        .tokens = main.tokensFromModel(&model),
         .min_size = native_sdk.geometry.SizeF.init(main.window_min_width, main.window_min_height),
         .default_size = native_sdk.geometry.SizeF.init(main.window_width, main.window_height),
+        .large_size = native_sdk.geometry.SizeF.init(1920, 1080),
     });
+}
+
+test "a 100000-Lesson Course mounts only its bounded page at every target size" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+
+    const model = largeCourseModel();
+    const tree = try buildTree(arena_state.allocator(), &model);
+    try testing.expect(findByText(tree.root, .text, "1–20 of 100000 Lessons") != null);
+    try testing.expect(findByText(tree.root, .text, "Lesson 20") != null);
+    try testing.expect(findByText(tree.root, .text, "Lesson 21") == null);
+    try canvas.expectLayoutAuditSweepClean(testing.allocator, tree.root, .{
+        .tokens = main.tokensFromModel(&model),
+        .min_size = geometry.SizeF.init(560, 400),
+        .default_size = geometry.SizeF.init(960, 680),
+        .large_size = geometry.SizeF.init(1920, 1080),
+    });
+}
+
+test "keyboard focus opens the first available Course" {
+    const live = try LiveLibrary.start(populatedLibraryModel(), geometry.SizeF.init(960, 680), .{});
+    defer live.stop();
+
+    try live.harness.runtime.dispatchAutomationCommand(live.app, "widget-key " ++ main.canvas_label ++ " tab");
+    var snapshot = live.harness.runtime.automationSnapshot("melearner");
+    try testing.expect((snapshotByName(snapshot, "Courses") orelse return error.TestUnexpectedResult).focused);
+    try live.harness.runtime.dispatchAutomationCommand(live.app, "widget-key " ++ main.canvas_label ++ " tab");
+    snapshot = live.harness.runtime.automationSnapshot("melearner");
+    const course = snapshotByNameAndRole(snapshot, "Systems", "listitem") orelse return error.TestUnexpectedResult;
+    try testing.expect(course.focused);
+    try testing.expectEqualStrings("listitem", course.role);
+    try testing.expect(course.actions.press);
+
+    try live.harness.runtime.dispatchAutomationCommand(live.app, "widget-key " ++ main.canvas_label ++ " enter");
+    try testing.expectEqual(main.Screen.course, live.app_state.model.screen);
+    try testing.expectEqual(main.CourseState.accessing, live.app_state.model.course_state);
+    try testing.expect(live.app_state.effects.pendingExternalAt(0) != null);
+}
+
+test "light and dark Library screenshots and semantic snapshots stay deterministic" {
+    const cases = [_]struct {
+        size: geometry.SizeF,
+        expected_x: f32,
+    }{
+        .{ .size = geometry.SizeF.init(560, 400), .expected_x = 0 },
+        .{ .size = geometry.SizeF.init(960, 680), .expected_x = 0 },
+        .{ .size = geometry.SizeF.init(1920, 1080), .expected_x = 480 },
+    };
+    var screenshot_hashes: [cases.len * 2]u64 = undefined;
+
+    for (cases, 0..) |case, index| {
+        for ([_]native_sdk.Appearance{
+            .{},
+            .{ .color_scheme = .dark },
+        }, 0..) |appearance, scheme_index| {
+            const live = try LiveLibrary.start(populatedLibraryModel(), case.size, appearance);
+            defer live.stop();
+            const snapshot = live.harness.runtime.automationSnapshot("melearner");
+            const library = snapshotByName(snapshot, "Library Courses") orelse return error.TestUnexpectedResult;
+            try testing.expectEqual(case.expected_x, library.bounds.x);
+            try testing.expectEqual(@min(case.size.width, main.content_max_width), library.bounds.width);
+            try testing.expect(snapshotByNameAndRole(snapshot, "Systems", "listitem") != null);
+            try testing.expectEqualStrings("progressbar", (snapshotByName(snapshot, "Systems Progress") orelse return error.TestUnexpectedResult).role);
+            try testing.expect(snapshotByName(snapshot, "Archived Systems") != null);
+
+            const result_index = index * 2 + scheme_index;
+            screenshot_hashes[result_index] = try screenshotHash(&live.harness.runtime);
+        }
+    }
+
+    try testing.expectEqualSlices(u64, &[_]u64{
+        6559461630511852737,
+        1307133522201074578,
+        2879665690939281361,
+        12495037189123983726,
+        11865650813177772464,
+        3164154168597024543,
+    }, &screenshot_hashes);
 }
 
 test "compiled and interpreted Library views have the same widget identities" {
@@ -496,9 +772,9 @@ test "compiled and interpreted Library views have the same widget identities" {
     const arena = arena_state.allocator();
 
     const model = main.Model{};
-    const interpreted = try buildTree(arena, &model);
+    const interpreted = try buildMarkupTree(arena, &model);
     var compiled_ui = main.LibraryUi.init(arena);
-    const compiled = try compiled_ui.finalize(main.CompiledLibraryView.build(&compiled_ui, &model));
+    const compiled = try compiled_ui.finalizeWithTokens(main.CompiledLibraryView.build(&compiled_ui, &model), main.tokensFromModel(&model));
 
     try expectSameTree(interpreted.root, compiled.root);
 }

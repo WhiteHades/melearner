@@ -14,6 +14,7 @@ pub const window_width: f32 = 960;
 pub const window_height: f32 = 680;
 pub const window_min_width: f32 = 560;
 pub const window_min_height: f32 = 400;
+pub const content_max_width: f32 = 960;
 const max_courses: usize = core_adapter.library_page_size;
 const max_lessons: usize = core_adapter.lesson_page_size;
 const max_course_id_bytes = core_adapter.max_course_id_bytes;
@@ -65,6 +66,14 @@ pub const Course = struct {
             course.lesson_count,
             course.progress_percent,
         }) catch "";
+    }
+
+    pub fn progressValue(course: *const Course) f32 {
+        return @as(f32, @floatFromInt(course.progress_percent)) / 100;
+    }
+
+    pub fn progressLabel(course: *const Course, arena: std.mem.Allocator) []const u8 {
+        return std.fmt.allocPrint(arena, "{s} Progress", .{course.name()}) catch "Course Progress";
     }
 };
 
@@ -150,6 +159,7 @@ pub const Model = struct {
     total_courses: u64 = 0,
     page_offset: u64 = 0,
     pending_page_offset: u64 = 0,
+    pending_request_id: u64 = 0,
     courses: [max_courses]Course = undefined,
     course_count: usize = 0,
     library_message_storage: [max_library_message_bytes]u8 = [_]u8{0} ** max_library_message_bytes,
@@ -172,6 +182,7 @@ pub const Model = struct {
         "total_courses",
         "page_offset",
         "pending_page_offset",
+        "pending_request_id",
         "courses",
         "course_count",
         "library_message_storage",
@@ -332,6 +343,7 @@ pub const Model = struct {
         model.total_courses = 0;
         model.page_offset = 0;
         model.pending_page_offset = 0;
+        model.pending_request_id = 0;
         model.course_count = 0;
     }
 
@@ -346,6 +358,7 @@ pub const Model = struct {
         model.total_lessons = 0;
         model.lesson_page_offset = 0;
         model.pending_lesson_page_offset = 0;
+        model.pending_request_id = 0;
         model.lesson_count = 0;
     }
 
@@ -564,6 +577,9 @@ pub const Msg = union(enum) {
 pub const LibraryUi = canvas.Ui(Msg);
 pub const library_markup = @embedFile("library.native");
 pub const CompiledLibraryView = canvas.CompiledMarkupView(Model, Msg, library_markup);
+const library_fragments = [_]canvas.MarkupFragment{
+    CompiledLibraryView.fragment("src/library.native"),
+};
 
 const dev_markup_reload = builtin.mode == .Debug;
 pub const LibraryApp = native_sdk.UiAppWithFeatures(Model, Msg, .{ .runtime_markup = dev_markup_reload });
@@ -577,16 +593,71 @@ pub const app_fonts = [_]LibraryApp.FontRegistration{.{
 }};
 
 pub fn tokensFromModel(model: *const Model) canvas.DesignTokens {
+    const color_scheme: canvas.ColorScheme = switch (model.appearance.color_scheme) {
+        .light => .light,
+        .dark => .dark,
+    };
     var tokens = canvas.DesignTokens.theme(.{
-        .color_scheme = switch (model.appearance.color_scheme) {
-            .light => .light,
-            .dark => .dark,
-        },
+        .color_scheme = color_scheme,
         .contrast = if (model.appearance.high_contrast) .high else .standard,
         .reduce_motion = model.appearance.reduce_motion,
     });
+    if (!model.appearance.high_contrast) {
+        tokens.colors = switch (color_scheme) {
+            .light => (canvas.ColorTokenOverrides{
+                .background = canvas.Color.rgb8(245, 244, 237),
+                .surface = canvas.Color.rgb8(250, 249, 245),
+                .surface_subtle = canvas.Color.rgb8(232, 230, 220),
+                .surface_pressed = canvas.Color.rgb8(228, 236, 245),
+                .text = canvas.Color.rgb8(20, 20, 19),
+                .text_muted = canvas.Color.rgb8(100, 97, 89),
+                .border = canvas.Color.rgb8(227, 224, 211),
+                .accent = canvas.Color.rgb8(27, 54, 93),
+                .accent_text = canvas.Color.rgb8(250, 249, 245),
+                .destructive = canvas.Color.rgb8(169, 67, 69),
+                .destructive_text = canvas.Color.rgb8(250, 249, 245),
+                .focus_ring = canvas.Color.rgb8(27, 54, 93),
+                .disabled = canvas.Color.rgb8(238, 236, 227),
+            }).apply(tokens.colors),
+            .dark => (canvas.ColorTokenOverrides{
+                .background = canvas.Color.rgb8(16, 17, 19),
+                .surface = canvas.Color.rgb8(23, 23, 25),
+                .surface_subtle = canvas.Color.rgb8(36, 35, 33),
+                .surface_pressed = canvas.Color.rgb8(38, 52, 71),
+                .text = canvas.Color.rgb8(235, 232, 223),
+                .text_muted = canvas.Color.rgb8(166, 160, 149),
+                .border = canvas.Color.rgb8(45, 44, 41),
+                .accent = canvas.Color.rgb8(158, 184, 220),
+                .accent_text = canvas.Color.rgb8(16, 17, 19),
+                .destructive = canvas.Color.rgb8(211, 107, 112),
+                .destructive_text = canvas.Color.rgb8(31, 14, 16),
+                .focus_ring = canvas.Color.rgb8(158, 184, 220),
+                .disabled = canvas.Color.rgb8(34, 34, 34),
+            }).apply(tokens.colors),
+        };
+    }
     tokens.typography.font_id = primary_font_id;
+    tokens.metrics.control_height_sm = 40;
+    tokens.metrics.control_height = 40;
+    tokens.metrics.control_height_lg = 48;
+    tokens.metrics.row_extent = 40;
+    if (!model.appearance.reduce_motion) {
+        tokens.motion.fast_ms = 150;
+        tokens.motion.normal_ms = 200;
+        tokens.motion.slow_ms = 250;
+    }
     return tokens;
+}
+
+pub fn rootView(ui: *LibraryUi, model: *const Model) LibraryUi.Node {
+    var content = CompiledLibraryView.build(ui, model);
+    content.widget.layout.grow = 1;
+    content.widget.layout.max_size.width = content_max_width;
+    return ui.row(.{
+        .grow = 1,
+        .main = .center,
+        .style_tokens = .{ .background = .background },
+    }, .{content});
 }
 
 pub fn appOptions() LibraryApp.Options {
@@ -599,7 +670,7 @@ pub fn appOptions() LibraryApp.Options {
         .tokens_fn = tokensFromModel,
         .fonts = &app_fonts,
         .on_appearance = onAppearance,
-        .view = CompiledLibraryView.build,
+        .view = rootView,
     };
 }
 
@@ -609,6 +680,7 @@ pub fn boot(model: *Model, effects: *Effects) void {
     model.library_revision = 0;
     model.total_courses = 0;
     model.page_offset = 0;
+    model.pending_request_id = 0;
     model.course_count = 0;
     requestLibraryPage(model, effects, 0, 0);
 }
@@ -618,14 +690,17 @@ fn requestLibraryPage(model: *Model, effects: *Effects, expected_revision: u64, 
     const payload = core_adapter.encodeLibraryPageRequest(&payload_storage, expected_revision, offset);
     model.library_state = .opening;
     model.pending_page_offset = offset;
-    _ = effects.external(.{
+    model.pending_request_id = effects.external(.{
         .key = core_adapter.library_page_key,
         .adapter_id = core_adapter.adapter_id,
         .kind = @intFromEnum(core_adapter.Operation.load_library_page),
         .schema_version = core_adapter.schema_version,
         .payload = payload,
         .on_result = Effects.externalMsg(.library_loaded),
-    }) catch model.setFailure("The Library service could not start.");
+    }) catch {
+        model.setFailure("The Library service could not start.");
+        return;
+    };
 }
 
 fn requestCourseAccess(model: *Model, effects: *Effects) void {
@@ -639,14 +714,17 @@ fn requestCourseAccess(model: *Model, effects: *Effects) void {
         return;
     };
     model.course_state = .accessing;
-    _ = effects.external(.{
+    model.pending_request_id = effects.external(.{
         .key = core_adapter.course_access_key,
         .adapter_id = core_adapter.adapter_id,
         .kind = @intFromEnum(core_adapter.Operation.access_course),
         .schema_version = core_adapter.schema_version,
         .payload = payload,
         .on_result = Effects.externalMsg(.course_accessed),
-    }) catch model.setCourseFailure("The Course service could not start.");
+    }) catch {
+        model.setCourseFailure("The Course service could not start.");
+        return;
+    };
 }
 
 fn requestLessonPage(model: *Model, effects: *Effects, offset: u64) void {
@@ -662,21 +740,25 @@ fn requestLessonPage(model: *Model, effects: *Effects, offset: u64) void {
     };
     model.course_state = .loading;
     model.pending_lesson_page_offset = offset;
-    _ = effects.external(.{
+    model.pending_request_id = effects.external(.{
         .key = core_adapter.lesson_page_key,
         .adapter_id = core_adapter.adapter_id,
         .kind = @intFromEnum(core_adapter.Operation.load_lesson_page),
         .schema_version = core_adapter.schema_version,
         .payload = payload,
         .on_result = Effects.externalMsg(.lessons_loaded),
-    }) catch model.setCourseFailure("The Lesson service could not start.");
+    }) catch {
+        model.setCourseFailure("The Lesson service could not start.");
+        return;
+    };
 }
 
 pub fn update(model: *Model, msg: Msg, effects: *Effects) void {
     switch (msg) {
         .appearance_changed => |appearance| model.appearance = appearance,
         .library_loaded => |result| {
-            if (model.screen != .library) return;
+            if (model.screen != .library or result.request_id != model.pending_request_id) return;
+            model.pending_request_id = 0;
             if (result.key != core_adapter.library_page_key or
                 result.adapter_id != core_adapter.adapter_id or
                 result.kind != @intFromEnum(core_adapter.Operation.load_library_page) or
@@ -694,7 +776,10 @@ pub fn update(model: *Model, msg: Msg, effects: *Effects) void {
             }
         },
         .course_accessed => |result| {
-            if (model.screen != .course or model.course_state != .accessing) return;
+            if (model.screen != .course or
+                model.course_state != .accessing or
+                result.request_id != model.pending_request_id) return;
+            model.pending_request_id = 0;
             if (result.key != core_adapter.course_access_key or
                 result.adapter_id != core_adapter.adapter_id or
                 result.kind != @intFromEnum(core_adapter.Operation.access_course) or
@@ -717,7 +802,10 @@ pub fn update(model: *Model, msg: Msg, effects: *Effects) void {
             }
         },
         .lessons_loaded => |result| {
-            if (model.screen != .course or model.course_state != .loading) return;
+            if (model.screen != .course or
+                model.course_state != .loading or
+                result.request_id != model.pending_request_id) return;
+            model.pending_request_id = 0;
             if (result.key != core_adapter.lesson_page_key or
                 result.adapter_id != core_adapter.adapter_id or
                 result.kind != @intFromEnum(core_adapter.Operation.load_lesson_page) or
@@ -746,6 +834,7 @@ pub fn update(model: *Model, msg: Msg, effects: *Effects) void {
             model.pending_lesson_page_offset = 0;
             model.lesson_count = 0;
             model.course_message_len = 0;
+            model.pending_request_id = 0;
             model.screen = .course;
             requestCourseAccess(model, effects);
         },
@@ -760,6 +849,7 @@ pub fn update(model: *Model, msg: Msg, effects: *Effects) void {
             model.pending_lesson_page_offset = 0;
             model.lesson_count = 0;
             model.course_message_len = 0;
+            model.pending_request_id = 0;
             model.library_revision = 0;
             requestLibraryPage(model, effects, 0, 0);
         },
@@ -812,7 +902,7 @@ pub fn main(init: std.process.Init) !void {
     defer std.heap.page_allocator.destroy(app_state);
     var options = appOptions();
     if (dev_markup_reload) {
-        options.markup = .{ .source = library_markup, .watch_path = "src/library.native", .io = init.io };
+        options.fragment_watch = .{ .fragments = &library_fragments, .io = init.io };
     }
     app_state.* = LibraryApp.init(std.heap.page_allocator, .{}, options);
     defer app_state.deinit();

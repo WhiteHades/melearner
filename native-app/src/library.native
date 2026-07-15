@@ -25,18 +25,19 @@
         </if>
         <else>
           <column grow="1" padding="24" gap="16" label="Library Courses">
-            <row cross="center" gap="10">
+            <row cross="center" gap="12">
               <text size="heading" grow="1">Library</text>
-              <badge variant="secondary">{courseTotalLabel}</badge>
+              <text size="sm" foreground="text_muted" label="{courseTotalLabel}"><span mono>{courseTotalLabel}</span></text>
             </row>
             <scroll grow="1" label="Courses">
-              <column gap="6" role="list" label="Course list">
+              <column gap="8" role="list" label="Course list">
                 <for each="courseRows" key="id" as="course">
                   <if test="{course.available}">
                     <list-item on-press="open_course:{course.id}" padding="12" gap="4" label="{course.name}">
                       <column gap="4" grow="1">
                         <text>{course.name}</text>
-                        <text size="sm" foreground="text_muted">{course.progressLine}</text>
+                        <text size="sm" foreground="text_muted" label="{course.progressLine}"><span mono>{course.progressLine}</span></text>
+                        <progress value="{course.progressValue}" label="{course.progressLabel}" />
                       </column>
                     </list-item>
                   </if>
@@ -46,7 +47,8 @@
                         <text grow="1">{course.name}</text>
                         <badge variant="secondary">Missing</badge>
                       </row>
-                      <text size="sm" foreground="text_muted">{course.progressLine}</text>
+                      <text size="sm" foreground="text_muted" label="{course.progressLine}"><span mono>{course.progressLine}</span></text>
+                      <progress value="{course.progressValue}" label="{course.progressLabel}" />
                     </column>
                   </else>
                 </for>
@@ -71,9 +73,9 @@
     <column grow="1" label="Course outline">
       <row padding="16" gap="12" cross="center" background="surface" label="Course navigation">
         <button size="sm" variant="ghost" on-press="back_to_library" label="Back to Library">Back</button>
-        <column gap="2" grow="1">
+        <column gap="4" grow="1">
           <text>{selectedCourseName}</text>
-          <text size="sm" foreground="text_muted">{selectedCourseProgress}</text>
+          <text size="sm" foreground="text_muted" label="{selectedCourseProgress}"><span mono>{selectedCourseProgress}</span></text>
         </column>
       </row>
       <separator />
@@ -102,12 +104,12 @@
           </if>
           <else>
             <column grow="1" padding="24" gap="16" label="Course Lessons">
-              <row gap="10" cross="center">
+              <row gap="12" cross="center">
                 <text size="heading" grow="1">Lessons</text>
-                <badge variant="secondary">{lessonTotalLabel}</badge>
+                <text size="sm" foreground="text_muted" label="{lessonTotalLabel}"><span mono>{lessonTotalLabel}</span></text>
               </row>
               <scroll grow="1" label="Lessons">
-                <column gap="6" role="list" label="Lesson list">
+                <column gap="8" role="list" label="Lesson list">
                   <for each="lessonRows" key="id" as="lesson">
                     <if test="{lesson.starts_section}">
                       <text size="sm" foreground="text_muted">{lesson.sectionName}</text>
@@ -117,7 +119,7 @@
                         <text grow="1">{lesson.name}</text>
                         <badge variant="secondary">{lesson.kindLabel}</badge>
                       </row>
-                      <text size="sm" foreground="text_muted">{lesson.progressLine}</text>
+                      <text size="sm" foreground="text_muted" label="{lesson.progressLine}"><span mono>{lesson.progressLine}</span></text>
                     </column>
                   </for>
                 </column>
