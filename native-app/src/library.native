@@ -5,9 +5,47 @@
     <spacer grow="1" />
   </row>
   <separator />
-  <column grow="1" padding="32" gap="8" main="center" cross="center" label="Library opening state">
-    <text size="sm" foreground="text_muted">Library</text>
-    <text size="heading">Opening your Library…</text>
-    <text size="sm" foreground="text_muted">Your Courses and Progress stay on this device.</text>
-  </column>
+  <if test="{libraryOpening}">
+    <column grow="1" padding="32" gap="8" main="center" cross="center" label="Library opening state">
+      <text size="sm" foreground="text_muted">Library</text>
+      <text size="heading">Opening your Library…</text>
+      <text size="sm" foreground="text_muted">Your Courses and Progress stay on this device.</text>
+    </column>
+  </if>
+  <else>
+    <if test="{libraryFailed}">
+      <column grow="1" padding="32" gap="8" main="center" cross="center" label="Library error state">
+        <text size="sm" foreground="text_muted">Library</text>
+        <text size="heading">Library unavailable</text>
+        <text size="sm" foreground="text_muted">{libraryMessage}</text>
+      </column>
+    </if>
+    <else>
+      <if test="{libraryEmpty}">
+        <column grow="1" padding="32" gap="8" main="center" cross="center" label="Empty Library state">
+          <text size="sm" foreground="text_muted">Library</text>
+          <text size="heading">Your Library is empty</text>
+          <text size="sm" foreground="text_muted">Course folders you add will appear here.</text>
+        </column>
+      </if>
+      <else>
+        <column grow="1" padding="24" gap="16" label="Library Courses">
+          <row cross="center" gap="10">
+            <text size="heading" grow="1">Library</text>
+            <badge variant="secondary">{courseTotalLabel}</badge>
+          </row>
+          <scroll grow="1" label="Courses">
+            <column gap="6" role="list" label="Course list">
+              <for each="courseRows" key="id" as="course">
+                <column padding="12" gap="4" background="surface" radius="md" role="listitem" label="{course.name}">
+                  <text>{course.name}</text>
+                  <text size="sm" foreground="text_muted">{course.progressLine}</text>
+                </column>
+              </for>
+            </column>
+          </scroll>
+        </column>
+      </else>
+    </else>
+  </else>
 </column>
