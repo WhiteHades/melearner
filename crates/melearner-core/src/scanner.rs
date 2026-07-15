@@ -1,10 +1,14 @@
+use cap_std::fs::{Dir as CapabilityDir, OpenOptions as CapabilityOpenOptions};
 use jwalk::WalkDir;
 use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::hash::Hasher;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+
+use crate::MutationControl;
 
 const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mkv", "webm", "mov", "avi", "m4v"];
 const AUDIO_EXTENSIONS: &[&str] = &["mp3", "wav", "aac", "m4a", "flac", "ogg"];
@@ -43,6 +47,7 @@ const DOWNLOAD_SIDECAR_SUFFIXES: &[&str] =
 const WARNING_LIMIT: usize = 24;
 const COURSE_MARKER_FILE_NAME: &str = ".melearner-course.json";
 const COURSE_MARKER_VERSION: u8 = 1;
+const COURSE_MARKER_MAX_BYTES: u64 = 4 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileEntry {
@@ -102,6 +107,20 @@ pub struct ScanResult {
     pub scan_type: ScanType,
     pub courses: Box<[CourseData]>,
     pub warnings: Box<[String]>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ScanError {
+    Cancelled,
+    Invalid(String),
+}
+
+fn require_active(control: &MutationControl) -> Result<(), ScanError> {
+    if control.is_cancelled() {
+        Err(ScanError::Cancelled)
+    } else {
+        Ok(())
+    }
 }
 
 fn new_hasher() -> SeaHasher {
@@ -215,14 +234,24 @@ fn download_sidecar_target(path: &Path) -> Option<PathBuf> {
     None
 }
 
-fn download_sidecar_targets(paths: &[PathBuf]) -> HashSet<PathBuf> {
-    paths
-        .iter()
-        .filter_map(|path| download_sidecar_target(path))
-        .collect()
+fn download_sidecar_targets(
+    paths: &[PathBuf],
+    control: &MutationControl,
+) -> Result<HashSet<PathBuf>, ScanError> {
+    let mut targets = HashSet::new();
+    for path in paths {
+        require_active(control)?;
+        if let Some(target) = download_sidecar_target(path) {
+            targets.insert(target);
+        }
+    }
+    Ok(targets)
 }
 
 fn push_warning(warnings: &mut Vec<String>, message: String) {
+    if warnings.iter().any(|warning| warning == &message) {
+        return;
+    }
     if warnings.len() < WARNING_LIMIT {
         warnings.push(message);
     } else if warnings.len() == WARNING_LIMIT {
@@ -318,7 +347,18 @@ fn natural_cmp(a: &str, b: &str) -> Ordering {
         bi += 1;
     }
 
-    ab.len().cmp(&bb.len())
+    ab.len().cmp(&bb.len()).then_with(|| a.cmp(b))
+}
+
+fn require_utf8_path(path: &Path) -> Result<(), ScanError> {
+    if path.to_str().is_some() {
+        Ok(())
+    } else {
+        Err(ScanError::Invalid(format!(
+            "path is not valid UTF-8: {}",
+            path.display()
+        )))
+    }
 }
 
 fn path_name(path: &Path) -> String {
@@ -328,22 +368,76 @@ fn path_name(path: &Path) -> String {
         .to_string()
 }
 
-fn read_dir_sorted(path: &Path) -> Vec<std::fs::DirEntry> {
-    let mut entries: Vec<_> = std::fs::read_dir(path)
-        .into_iter()
-        .flatten()
-        .filter_map(|e| e.ok())
-        .collect();
+fn read_dir_sorted(
+    path: &Path,
+    control: &MutationControl,
+) -> Result<Vec<std::fs::DirEntry>, ScanError> {
+    let directory = std::fs::read_dir(path).map_err(|error| {
+        ScanError::Invalid(format!("cannot read directory {}: {error}", path.display()))
+    })?;
+    let mut entries = Vec::new();
+    for entry in directory {
+        require_active(control)?;
+        let entry = entry.map_err(|error| {
+            ScanError::Invalid(format!(
+                "cannot read directory entry in {}: {error}",
+                path.display()
+            ))
+        })?;
+        require_utf8_path(&entry.path())?;
+        entries.push(entry);
+    }
     entries.sort_by(|a, b| natural_cmp(&path_name(&a.path()), &path_name(&b.path())));
-    entries
+    Ok(entries)
 }
 
-fn visible_child_dirs(path: &Path) -> Vec<PathBuf> {
-    read_dir_sorted(path)
-        .iter()
-        .map(|entry| entry.path())
-        .filter(|path| path.is_dir() && !is_ignored(path) && !is_partial_folder(path))
-        .collect()
+fn visible_child_dirs(path: &Path, control: &MutationControl) -> Result<Vec<PathBuf>, ScanError> {
+    let mut directories = Vec::new();
+    for entry in read_dir_sorted(path, control)? {
+        require_active(control)?;
+        let entry_path = entry.path();
+        let file_type = entry.file_type().map_err(|error| {
+            ScanError::Invalid(format!(
+                "cannot inspect path {}: {error}",
+                entry_path.display()
+            ))
+        })?;
+        if file_type.is_dir() && !is_ignored(&entry_path) && !is_partial_folder(&entry_path) {
+            directories.push(entry_path);
+        }
+    }
+    Ok(directories)
+}
+
+fn warn_for_symlink_escape(path: &Path, root: &Path, warnings: &mut Vec<String>) {
+    let message = match std::fs::canonicalize(path) {
+        Ok(target) if target.starts_with(root) => return,
+        Ok(_) => format!(
+            "skipped symbolic link outside scan root: {}",
+            path.display()
+        ),
+        Err(error) => format!(
+            "skipped unreadable symbolic link {}: {error}",
+            path.display()
+        ),
+    };
+    push_warning(warnings, message);
+}
+
+fn safe_entry_type(
+    entry: &std::fs::DirEntry,
+    root: &Path,
+    warnings: &mut Vec<String>,
+) -> Result<Option<std::fs::FileType>, ScanError> {
+    let path = entry.path();
+    let file_type = entry.file_type().map_err(|error| {
+        ScanError::Invalid(format!("cannot inspect path {}: {error}", path.display()))
+    })?;
+    if file_type.is_symlink() {
+        warn_for_symlink_escape(&path, root, warnings);
+        return Ok(None);
+    }
+    Ok(Some(file_type))
 }
 
 fn looks_like_section_folder(path: &Path) -> bool {
@@ -356,15 +450,23 @@ fn looks_like_section_folder(path: &Path) -> bool {
         || trimmed.contains("lecture")
 }
 
-fn should_scan_root_as_single_course(subdirs: &[PathBuf]) -> bool {
+fn should_scan_root_as_single_course(
+    subdirs: &[PathBuf],
+    control: &MutationControl,
+) -> Result<bool, ScanError> {
     if subdirs.len() < 2 {
-        return false;
+        return Ok(false);
     }
 
-    subdirs.iter().all(|path| {
-        looks_like_section_folder(path)
-            && !should_scan_root_as_single_course(&visible_child_dirs(path))
-    })
+    for path in subdirs {
+        require_active(control)?;
+        if !looks_like_section_folder(path)
+            || should_scan_root_as_single_course(&visible_child_dirs(path, control)?, control)?
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn file_type_key(file_type: FileType) -> &'static [u8] {
@@ -378,11 +480,15 @@ fn file_type_key(file_type: FileType) -> &'static [u8] {
     }
 }
 
-fn course_fingerprint(sections: &[SectionData]) -> Box<str> {
+fn course_fingerprint(
+    sections: &[SectionData],
+    control: &MutationControl,
+) -> Result<Box<str>, ScanError> {
     let mut h = new_hasher();
     h.write(b"course-fingerprint-v1");
 
     for section in sections {
+        require_active(control)?;
         h.write(b"\x1fsection\x1e");
         h.write(section.name.as_bytes());
 
@@ -391,6 +497,7 @@ fn course_fingerprint(sections: &[SectionData]) -> Box<str> {
             .iter()
             .filter(|file| file.file_type != FileType::Subtitle)
         {
+            require_active(control)?;
             h.write(b"\x1ffile\x1e");
             h.write(file.relative_path.as_bytes());
             h.write(b"\x1e");
@@ -400,18 +507,47 @@ fn course_fingerprint(sections: &[SectionData]) -> Box<str> {
         }
     }
 
-    format!("{:016x}", h.finish()).into()
+    Ok(format!("{:016x}", h.finish()).into())
 }
 
 fn read_course_marker(course_path: &Path) -> Result<Option<Box<str>>, String> {
     let marker_path = course_path.join(COURSE_MARKER_FILE_NAME);
-    if !marker_path.exists() {
-        return Ok(None);
+    match std::fs::symlink_metadata(&marker_path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            return Err(format!(
+                "course marker must not be a symbolic link: {}",
+                marker_path.display()
+            ));
+        }
+        Ok(metadata) if !metadata.file_type().is_file() => {
+            return Err(format!(
+                "course marker is not a regular file: {}",
+                marker_path.display()
+            ));
+        }
+        Ok(metadata) if metadata.len() > COURSE_MARKER_MAX_BYTES => {
+            return Err(format!(
+                "course marker exceeds {COURSE_MARKER_MAX_BYTES} bytes: {}",
+                marker_path.display()
+            ));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(format!(
+                "cannot inspect course marker {}: {error}",
+                marker_path.display()
+            ));
+        }
     }
 
     let raw = std::fs::read_to_string(&marker_path)
         .map_err(|e| format!("cannot read course marker {}: {e}", marker_path.display()))?;
-    let marker: CourseMarker = serde_json::from_str(&raw)
+    parse_course_marker(&raw, &marker_path).map(Some)
+}
+
+fn parse_course_marker(raw: &str, marker_path: &Path) -> Result<Box<str>, String> {
+    let marker: CourseMarker = serde_json::from_str(raw)
         .map_err(|e| format!("invalid course marker {}: {e}", marker_path.display()))?;
     if marker.version != COURSE_MARKER_VERSION {
         return Err(format!(
@@ -428,11 +564,142 @@ fn read_course_marker(course_path: &Path) -> Result<Option<Box<str>>, String> {
         ));
     }
 
-    Ok(Some(identity_id.to_string().into_boxed_str()))
+    Ok(identity_id.to_string().into_boxed_str())
 }
 
-fn file_size(path: &Path) -> u64 {
-    std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
+pub(crate) fn ensure_course_marker(
+    root: &CapabilityDir,
+    course_relative_path: &Path,
+    course_path: &Path,
+    identity_id: &str,
+) -> Result<(), String> {
+    let identity_id = identity_id.trim();
+    if identity_id.is_empty() {
+        return Err("course marker identity is empty".to_string());
+    }
+    if course_relative_path.is_absolute()
+        || course_relative_path.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir
+                    | std::path::Component::RootDir
+                    | std::path::Component::Prefix(_)
+            )
+        })
+    {
+        return Err(format!(
+            "course folder escaped library root: {}",
+            course_path.display()
+        ));
+    }
+    let relative_course = if course_relative_path.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        course_relative_path
+    };
+    let course_metadata = root.symlink_metadata(relative_course).map_err(|error| {
+        format!(
+            "cannot inspect course folder {}: {error}",
+            course_path.display()
+        )
+    })?;
+    if course_metadata.file_type().is_symlink() || !course_metadata.is_dir() {
+        return Err(format!(
+            "course folder is not available: {}",
+            course_path.display()
+        ));
+    }
+    let marker_relative_path = course_relative_path.join(COURSE_MARKER_FILE_NAME);
+    let marker_path = course_path.join(COURSE_MARKER_FILE_NAME);
+
+    match root.symlink_metadata(&marker_relative_path) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() {
+                return Err(format!(
+                    "course marker must not be a symbolic link: {}",
+                    marker_path.display()
+                ));
+            }
+            if !metadata.file_type().is_file() {
+                return Err(format!(
+                    "course marker is not a regular file: {}",
+                    marker_path.display()
+                ));
+            }
+            if metadata.len() > COURSE_MARKER_MAX_BYTES {
+                return Err(format!(
+                    "course marker exceeds {COURSE_MARKER_MAX_BYTES} bytes: {}",
+                    marker_path.display()
+                ));
+            }
+            let raw = root
+                .read_to_string(&marker_relative_path)
+                .map_err(|error| {
+                    format!(
+                        "cannot read course marker {}: {error}",
+                        marker_path.display()
+                    )
+                })?;
+            let existing = parse_course_marker(&raw, &marker_path)?;
+            if existing.as_ref() == identity_id {
+                return Ok(());
+            }
+            return Err(format!(
+                "course marker already has a different identity: {}",
+                marker_path.display()
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!(
+                "cannot inspect course marker {}: {error}",
+                marker_path.display()
+            ));
+        }
+    }
+
+    let marker = CourseMarker {
+        version: COURSE_MARKER_VERSION,
+        identity_id: Some(identity_id.to_string()),
+    };
+    let json = serde_json::to_string_pretty(&marker)
+        .map_err(|error| format!("cannot serialize course marker: {error}"))?;
+    let mut options = CapabilityOpenOptions::new();
+    options.write(true).create_new(true);
+    let mut file = root
+        .open_with(&marker_relative_path, &options)
+        .map_err(|error| {
+            format!(
+                "cannot create course marker {}: {error}",
+                marker_path.display()
+            )
+        })?;
+    if let Err(error) = file.write_all(format!("{json}\n").as_bytes()) {
+        drop(file);
+        let cleanup = root.remove_file(&marker_relative_path);
+        return Err(match cleanup {
+            Ok(()) => format!(
+                "cannot write course marker {}: {error}",
+                marker_path.display()
+            ),
+            Err(cleanup_error) => format!(
+                "cannot write course marker {}: {error}; cannot remove partial marker: {cleanup_error}",
+                marker_path.display()
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn file_size(path: &Path) -> Result<u64, ScanError> {
+    std::fs::metadata(path)
+        .map(|metadata| metadata.len())
+        .map_err(|error| {
+            ScanError::Invalid(format!(
+                "cannot inspect learning item {}: {error}",
+                path.display()
+            ))
+        })
 }
 
 fn file_entry(
@@ -456,49 +723,72 @@ fn file_entry(
     })
 }
 
-fn scan_directory(dir: &Path, course_root: &Path) -> (Box<[FileEntry]>, Vec<String>) {
+fn scan_directory(
+    dir: &Path,
+    course_root: &Path,
+    control: &MutationControl,
+) -> Result<(Box<[FileEntry]>, Vec<String>), ScanError> {
     let mut warnings = Vec::new();
-    let paths = WalkDir::new(dir)
-        .skip_hidden(true)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
-        .map(|e| e.path())
-        .filter(|p| !is_ignored_or_partial_path(p, dir))
-        .collect::<Vec<_>>();
-    let download_sidecars = download_sidecar_targets(&paths);
+    let mut paths = Vec::new();
+    let mut symlinks = Vec::new();
+    for entry in WalkDir::new(dir).skip_hidden(true).follow_links(false) {
+        require_active(control)?;
+        let entry = entry.map_err(|error| {
+            ScanError::Invalid(format!("cannot walk directory {}: {error}", dir.display()))
+        })?;
+        let path = entry.path();
+        require_utf8_path(&path)?;
+        if entry.file_type().is_symlink() {
+            symlinks.push(path);
+            continue;
+        }
+        if entry.file_type().is_file() && !is_ignored_or_partial_path(&path, dir) {
+            paths.push(path);
+        }
+    }
+    symlinks.sort_by(|left, right| natural_cmp(&left.to_string_lossy(), &right.to_string_lossy()));
+    for path in symlinks {
+        require_active(control)?;
+        warn_for_symlink_escape(&path, course_root, &mut warnings);
+    }
+    paths.sort_by(|left, right| natural_cmp(&left.to_string_lossy(), &right.to_string_lossy()));
+    let download_sidecars = download_sidecar_targets(&paths, control)?;
 
-    let mut files = paths
-        .into_iter()
-        .filter_map(|p| {
-            let file_type = get_file_type(&p);
-            if !is_learning_file(file_type) {
-                if let Some(reason) = skip_file_reason(&p, file_type, 0, &download_sidecars) {
-                    push_warning(&mut warnings, reason);
-                }
-                return None;
-            }
-            let size = file_size(&p);
-            if let Some(reason) = skip_file_reason(&p, file_type, size, &download_sidecars) {
+    let mut files = Vec::new();
+    for path in paths {
+        require_active(control)?;
+        let file_type = get_file_type(&path);
+        if !is_learning_file(file_type) {
+            if let Some(reason) = skip_file_reason(&path, file_type, 0, &download_sidecars) {
                 push_warning(&mut warnings, reason);
-                return None;
             }
-            file_entry(&p, file_type, course_root, size)
-        })
-        .collect::<Vec<_>>();
+            continue;
+        }
+        let size = file_size(&path)?;
+        if let Some(reason) = skip_file_reason(&path, file_type, size, &download_sidecars) {
+            push_warning(&mut warnings, reason);
+            continue;
+        }
+        if let Some(entry) = file_entry(&path, file_type, course_root, size) {
+            files.push(entry);
+        }
+    }
 
     files.sort_by(|a, b| natural_cmp(&a.relative_path, &b.relative_path));
 
-    (files.into_boxed_slice(), warnings)
+    Ok((files.into_boxed_slice(), warnings))
 }
 
-fn scan_course(course_path: &Path) -> (CourseData, Vec<String>) {
+fn scan_course_with_control(
+    course_path: &Path,
+    control: &MutationControl,
+) -> Result<(CourseData, Vec<String>), ScanError> {
     let mut sections: Vec<SectionData> = Vec::new();
     let mut root_files: Vec<FileEntry> = Vec::new();
     let mut warnings = Vec::new();
-    let entries = read_dir_sorted(course_path);
+    let entries = read_dir_sorted(course_path, control)?;
     let root_paths = entries.iter().map(|entry| entry.path()).collect::<Vec<_>>();
-    let root_download_sidecars = download_sidecar_targets(&root_paths);
+    let root_download_sidecars = download_sidecar_targets(&root_paths, control)?;
     let marker_identity_id = match read_course_marker(course_path) {
         Ok(identity_id) => identity_id,
         Err(message) => {
@@ -508,9 +798,13 @@ fn scan_course(course_path: &Path) -> (CourseData, Vec<String>) {
     };
 
     for (index, entry) in entries.iter().enumerate() {
+        require_active(control)?;
         let path = entry.path();
+        let Some(entry_type) = safe_entry_type(entry, course_path, &mut warnings)? else {
+            continue;
+        };
 
-        if path.is_dir() && is_partial_folder(&path) {
+        if entry_type.is_dir() && is_partial_folder(&path) {
             push_warning(
                 &mut warnings,
                 format!("skipped incomplete folder: {}", path.display()),
@@ -522,8 +816,8 @@ fn scan_course(course_path: &Path) -> (CourseData, Vec<String>) {
             continue;
         }
 
-        if path.is_dir() {
-            let (files, section_warnings) = scan_directory(&path, course_path);
+        if entry_type.is_dir() {
+            let (files, section_warnings) = scan_directory(&path, course_path, control)?;
             extend_warnings(&mut warnings, section_warnings);
             if !files.is_empty() {
                 sections.push(SectionData {
@@ -537,7 +831,7 @@ fn scan_course(course_path: &Path) -> (CourseData, Vec<String>) {
                     order: index,
                 });
             }
-        } else if path.is_file() {
+        } else if entry_type.is_file() {
             let file_type = get_file_type(&path);
             if !is_learning_file(file_type) {
                 if let Some(reason) = skip_file_reason(&path, file_type, 0, &root_download_sidecars)
@@ -546,7 +840,7 @@ fn scan_course(course_path: &Path) -> (CourseData, Vec<String>) {
                 }
                 continue;
             }
-            let size = file_size(&path);
+            let size = file_size(&path)?;
             if let Some(reason) = skip_file_reason(&path, file_type, size, &root_download_sidecars)
             {
                 push_warning(&mut warnings, reason);
@@ -578,9 +872,9 @@ fn scan_course(course_path: &Path) -> (CourseData, Vec<String>) {
             .cmp(&b.order)
             .then_with(|| natural_cmp(&a.name, &b.name))
     });
-    let fingerprint = course_fingerprint(&sections);
+    let fingerprint = course_fingerprint(&sections, control)?;
 
-    (
+    Ok((
         CourseData {
             id: hash_path_to_id(course_path),
             marker_identity_id,
@@ -594,58 +888,107 @@ fn scan_course(course_path: &Path) -> (CourseData, Vec<String>) {
             sections: sections.into_boxed_slice(),
         },
         warnings,
-    )
+    ))
+}
+
+#[cfg(test)]
+fn scan_course(course_path: &Path) -> (CourseData, Vec<String>) {
+    scan_course_with_control(course_path, &MutationControl::new()).expect("scan test course")
+}
+
+pub(crate) fn scan_library_checked_with_control(
+    root_path: &Path,
+    control: &MutationControl,
+) -> Result<ScanResult, ScanError> {
+    require_active(control)?;
+    let exists = root_path.try_exists().map_err(|error| {
+        ScanError::Invalid(format!(
+            "cannot access path {}: {error}",
+            root_path.display()
+        ))
+    })?;
+    if !exists {
+        return Err(ScanError::Invalid(format!(
+            "path does not exist: {}",
+            root_path.display()
+        )));
+    }
+
+    let metadata = std::fs::metadata(root_path).map_err(|error| {
+        ScanError::Invalid(format!(
+            "cannot inspect path {}: {error}",
+            root_path.display()
+        ))
+    })?;
+    if !metadata.is_dir() {
+        return Err(ScanError::Invalid(format!(
+            "not a directory: {}",
+            root_path.display()
+        )));
+    }
+
+    let root = std::fs::canonicalize(root_path).map_err(|error| {
+        ScanError::Invalid(format!(
+            "cannot resolve directory {}: {error}",
+            root_path.display()
+        ))
+    })?;
+    require_utf8_path(&root)?;
+    let entries = read_dir_sorted(&root, control)?;
+
+    scan_valid_root(root, entries, control)
+}
+
+pub(crate) fn scan_library_checked(root_path: &Path) -> Result<ScanResult, String> {
+    let control = MutationControl::new();
+    scan_library_checked_with_control(root_path, &control).map_err(|error| match error {
+        ScanError::Cancelled => "scan cancelled".to_string(),
+        ScanError::Invalid(message) => message,
+    })
 }
 
 pub fn scan_library(root_path: &str) -> ScanResult {
-    let root = PathBuf::from(root_path);
+    scan_library_checked(Path::new(root_path)).unwrap_or_else(|warning| ScanResult {
+        scan_type: ScanType::Library,
+        courses: Box::new([]),
+        warnings: Box::new([warning]),
+    })
+}
 
-    if !root.exists() {
-        return ScanResult {
-            scan_type: ScanType::Library,
-            courses: Box::new([]),
-            warnings: Box::new([format!("path does not exist: {root_path}")]),
-        };
-    }
-
-    if !root.is_dir() {
-        return ScanResult {
-            scan_type: ScanType::Library,
-            courses: Box::new([]),
-            warnings: Box::new([format!("not a directory: {root_path}")]),
-        };
-    }
-
-    let entries = match std::fs::read_dir(&root) {
-        Ok(entries) => entries.filter_map(|e| e.ok()).collect::<Vec<_>>(),
-        Err(e) => {
-            return ScanResult {
-                scan_type: ScanType::Library,
-                courses: Box::new([]),
-                warnings: Box::new([format!("cannot read directory {}: {e}", root.display())]),
-            };
-        }
-    };
-
+fn scan_valid_root(
+    root: PathBuf,
+    entries: Vec<std::fs::DirEntry>,
+    control: &MutationControl,
+) -> Result<ScanResult, ScanError> {
+    require_active(control)?;
     let mut warnings = Vec::new();
-    if root.join(COURSE_MARKER_FILE_NAME).exists() {
-        let (course, course_warnings) = scan_course(&root);
-        extend_warnings(&mut warnings, course_warnings);
-        return ScanResult {
-            scan_type: ScanType::SingleCourse,
-            courses: Box::new([course]),
-            warnings: warnings.into_boxed_slice(),
-        };
+    match read_course_marker(&root) {
+        Ok(Some(_)) => {
+            let (course, course_warnings) = scan_course_with_control(&root, control)?;
+            extend_warnings(&mut warnings, course_warnings);
+            return Ok(ScanResult {
+                scan_type: ScanType::SingleCourse,
+                courses: Box::new([course]),
+                warnings: warnings.into_boxed_slice(),
+            });
+        }
+        Ok(None) => {}
+        Err(message) => push_warning(&mut warnings, message),
     }
 
     let mut root_files_exist = false;
     let mut subdirs: Vec<PathBuf> = Vec::new();
     let root_paths = entries.iter().map(|entry| entry.path()).collect::<Vec<_>>();
-    let root_download_sidecars = download_sidecar_targets(&root_paths);
+    let root_download_sidecars = download_sidecar_targets(&root_paths, control)?;
 
     for entry in entries {
+        require_active(control)?;
         let path = entry.path();
-        if path.is_file() {
+        let Some(entry_type) = safe_entry_type(&entry, &root, &mut warnings)? else {
+            continue;
+        };
+
+        if entry_type.is_file() {
             let file_type = get_file_type(&path);
             if !is_learning_file(file_type) {
                 if let Some(reason) = skip_file_reason(&path, file_type, 0, &root_download_sidecars)
@@ -654,7 +997,7 @@ pub fn scan_library(root_path: &str) -> ScanResult {
                 }
                 continue;
             }
-            let size = file_size(&path);
+            let size = file_size(&path)?;
             if let Some(reason) = skip_file_reason(&path, file_type, size, &root_download_sidecars)
             {
                 push_warning(&mut warnings, reason);
@@ -663,7 +1006,7 @@ pub fn scan_library(root_path: &str) -> ScanResult {
             if is_media_file(file_type) {
                 root_files_exist = true;
             }
-        } else if path.is_dir() {
+        } else if entry_type.is_dir() {
             if is_partial_folder(&path) {
                 push_warning(
                     &mut warnings,
@@ -679,35 +1022,35 @@ pub fn scan_library(root_path: &str) -> ScanResult {
     }
 
     if root_files_exist && subdirs.is_empty() {
-        let (course, course_warnings) = scan_course(&root);
+        let (course, course_warnings) = scan_course_with_control(&root, control)?;
         extend_warnings(&mut warnings, course_warnings);
-        return ScanResult {
+        return Ok(ScanResult {
             scan_type: ScanType::SingleCourse,
             courses: Box::new([course]),
             warnings: warnings.into_boxed_slice(),
-        };
+        });
     }
 
     if root_files_exist && !subdirs.is_empty() {
-        let (course, course_warnings) = scan_course(&root);
+        let (course, course_warnings) = scan_course_with_control(&root, control)?;
         extend_warnings(&mut warnings, course_warnings);
         push_warning(&mut warnings, "mixed content at root level".to_string());
-        return ScanResult {
+        return Ok(ScanResult {
             scan_type: ScanType::SingleCourse,
             courses: Box::new([course]),
             warnings: warnings.into_boxed_slice(),
-        };
+        });
     }
 
-    if should_scan_root_as_single_course(&subdirs) {
-        let (course, course_warnings) = scan_course(&root);
+    if should_scan_root_as_single_course(&subdirs, control)? {
+        let (course, course_warnings) = scan_course_with_control(&root, control)?;
         if !course.sections.is_empty() {
             extend_warnings(&mut warnings, course_warnings);
-            return ScanResult {
+            return Ok(ScanResult {
                 scan_type: ScanType::SingleCourse,
                 courses: Box::new([course]),
                 warnings: warnings.into_boxed_slice(),
-            };
+            });
         }
         extend_warnings(&mut warnings, course_warnings);
     }
@@ -715,10 +1058,12 @@ pub fn scan_library(root_path: &str) -> ScanResult {
     let scanned = subdirs
         .iter()
         .map(|dir| {
-            std::panic::catch_unwind(|| scan_course(dir))
+            require_active(control)?;
+            std::panic::catch_unwind(|| scan_course_with_control(dir, control))
                 .map_err(|_| format!("skipped course after scanner panic: {}", dir.display()))
+                .map_err(ScanError::Invalid)
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, ScanError>>()?;
 
     let mut courses = Vec::new();
     for result in scanned {
@@ -729,15 +1074,16 @@ pub fn scan_library(root_path: &str) -> ScanResult {
                     courses.push(course);
                 }
             }
-            Err(message) => push_warning(&mut warnings, message),
+            Err(ScanError::Cancelled) => return Err(ScanError::Cancelled),
+            Err(ScanError::Invalid(message)) => push_warning(&mut warnings, message),
         }
     }
 
-    ScanResult {
+    Ok(ScanResult {
         scan_type: ScanType::Library,
         courses: courses.into_boxed_slice(),
         warnings: warnings.into_boxed_slice(),
-    }
+    })
 }
 
 #[cfg(test)]
@@ -766,6 +1112,253 @@ mod tests {
 
     fn cleanup(path: &Path) {
         let _ = fs::remove_dir_all(path);
+    }
+
+    fn ensure_test_course_marker(
+        root: &Path,
+        course: &Path,
+        identity_id: &str,
+    ) -> Result<(), String> {
+        let capability = CapabilityDir::open_ambient_dir(root, cap_std::ambient_authority())
+            .map_err(|error| format!("open test root capability: {error}"))?;
+        let relative = course
+            .strip_prefix(root)
+            .map_err(|error| format!("resolve test course relative path: {error}"))?;
+        ensure_course_marker(&capability, relative, course, identity_id)
+    }
+
+    #[test]
+    fn checked_scan_rejects_invalid_roots_without_writing_markers() {
+        let root = temp_root("checked-root");
+        let missing = root.join("missing");
+        let file = root.join("not-a-directory");
+        fs::write(&file, b"fixture").expect("write non-directory fixture");
+
+        assert!(
+            scan_library_checked(&missing)
+                .expect_err("missing root should fail")
+                .starts_with("path does not exist:")
+        );
+        assert!(
+            scan_library_checked(&file)
+                .expect_err("file root should fail")
+                .starts_with("not a directory:")
+        );
+
+        let course = root.join("Course");
+        touch(&course.join("01 Intro/01 welcome.mp4"));
+        let result = scan_library_checked(&root).expect("scan readable root");
+
+        assert_eq!(result.courses.len(), 1);
+        assert!(!course.join(COURSE_MARKER_FILE_NAME).exists());
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn checked_scan_stops_before_traversal_when_cancelled() {
+        let root = temp_root("cancelled-scan");
+        touch(&root.join("Course/01 Intro/01 welcome.mp4"));
+        let control = MutationControl::new();
+        assert!(control.cancel());
+
+        assert!(matches!(
+            scan_library_checked_with_control(&root, &control),
+            Err(ScanError::Cancelled)
+        ));
+        assert!(!root.join("Course").join(COURSE_MARKER_FILE_NAME).exists());
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn invalid_root_marker_does_not_collapse_a_library_scan() {
+        let root = temp_root("invalid-root-marker");
+        touch(&root.join("Course A/01 Intro/01 a.mp4"));
+        touch(&root.join("Course B/01 Intro/01 b.mp4"));
+        fs::write(root.join(COURSE_MARKER_FILE_NAME), "not json")
+            .expect("write invalid root marker");
+
+        let result = scan_library_checked(&root).expect("scan library with invalid root marker");
+
+        assert_eq!(result.scan_type, ScanType::Library);
+        assert_eq!(result.courses.len(), 2);
+        assert!(result.warnings.iter().any(|warning| {
+            warning.contains("invalid course marker") && warning.contains(COURSE_MARKER_FILE_NAME)
+        }));
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn marker_owner_creates_v1_and_preserves_an_existing_match() {
+        let root = temp_root("marker-owner");
+        let course = root.join("Course");
+        fs::create_dir_all(&course).expect("create course");
+        let marker_path = course.join(COURSE_MARKER_FILE_NAME);
+
+        ensure_test_course_marker(&root, &course, " course-identity-1 ").expect("create marker");
+        assert_eq!(
+            fs::read_to_string(&marker_path).expect("read created marker"),
+            "{\n  \"version\": 1,\n  \"identityId\": \"course-identity-1\"\n}\n"
+        );
+
+        let existing = "{\"identityId\":\"course-identity-1\",\"version\":1}\n";
+        fs::write(&marker_path, existing).expect("replace marker fixture");
+        ensure_test_course_marker(&root, &course, "course-identity-1")
+            .expect("accept matching marker");
+        assert_eq!(
+            fs::read_to_string(&marker_path).expect("read preserved marker"),
+            existing
+        );
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn marker_owner_never_overwrites_unowned_marker_bytes() {
+        let root = temp_root("marker-conflicts");
+        let course = root.join("Course");
+        fs::create_dir_all(&course).expect("create course");
+        let marker_path = course.join(COURSE_MARKER_FILE_NAME);
+        let fixtures = [
+            r#"{"version":1,"identityId":"different"}"#,
+            r#"{"version":1,"identityId":""}"#,
+            r#"{"version":2,"identityId":"course-identity-1"}"#,
+            "not json",
+        ];
+
+        for existing in fixtures {
+            fs::write(&marker_path, existing).expect("write conflicting marker fixture");
+            ensure_test_course_marker(&root, &course, "course-identity-1")
+                .expect_err("unowned marker should be rejected");
+            assert_eq!(
+                fs::read_to_string(&marker_path).expect("read rejected marker"),
+                existing
+            );
+        }
+
+        cleanup(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn checked_scan_rejects_direct_and_nested_symlink_escapes() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_root("symlink-root");
+        let outside = temp_root("symlink-outside");
+        let safe_course = root.join("Safe Course");
+        touch(&safe_course.join("01 Intro/01 safe.mp4"));
+        touch(&outside.join("Outside Course/01 Intro/01 outside.mp4"));
+        touch(&outside.join("outside-direct.mp4"));
+
+        symlink(outside.join("Outside Course"), root.join("Escaped Course"))
+            .expect("link escaped course");
+        symlink(
+            outside.join("outside-direct.mp4"),
+            safe_course.join("02 escaped.mp4"),
+        )
+        .expect("link escaped lesson");
+        symlink(
+            outside.join("Outside Course"),
+            safe_course.join("01 Intro/escaped"),
+        )
+        .expect("link escaped nested directory");
+
+        let result = scan_library_checked(&root).expect("scan contained root");
+        let canonical_root = fs::canonicalize(&root).expect("canonical root");
+        let files = result
+            .courses
+            .iter()
+            .flat_map(|course| course.sections.iter())
+            .flat_map(|section| section.files.iter())
+            .collect::<Vec<_>>();
+
+        assert_eq!(result.courses.len(), 1);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].name.as_ref(), "01 safe.mp4");
+        assert!(result.courses.iter().all(|course| {
+            fs::canonicalize(Path::new(course.path.as_ref()))
+                .is_ok_and(|path| path.starts_with(&canonical_root))
+        }));
+        assert!(files.iter().all(|file| {
+            fs::canonicalize(Path::new(file.path.as_ref()))
+                .is_ok_and(|path| path.starts_with(&canonical_root))
+        }));
+        assert!(
+            result
+                .warnings
+                .iter()
+                .filter(|warning| warning.contains("symbolic link outside scan root"))
+                .count()
+                >= 3
+        );
+
+        cleanup(&root);
+        cleanup(&outside);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn marker_owner_never_follows_a_symbolic_link() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_root("marker-link-root");
+        let outside = temp_root("marker-link-outside");
+        let course = root.join("Course");
+        fs::create_dir_all(&course).expect("create course");
+        let outside_marker = outside.join("marker.json");
+        let existing = r#"{"version":1,"identityId":"outside-identity"}"#;
+        fs::write(&outside_marker, existing).expect("write outside marker");
+        symlink(&outside_marker, course.join(COURSE_MARKER_FILE_NAME)).expect("link course marker");
+
+        ensure_test_course_marker(&root, &course, "course-identity-1")
+            .expect_err("symbolic marker should be rejected");
+        assert_eq!(
+            fs::read_to_string(&outside_marker).expect("read outside marker"),
+            existing
+        );
+
+        touch(&course.join("01 Intro/01 safe.mp4"));
+        let result = scan_library_checked(&root).expect("scan root");
+        assert_eq!(result.courses[0].marker_identity_id, None);
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("course marker must not be a symbolic link"))
+        );
+
+        cleanup(&root);
+        cleanup(&outside);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn marker_owner_rejects_a_replaced_course_directory() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_root("marker-course-swap-root");
+        let outside = temp_root("marker-course-swap-outside");
+        let course = root.join("Course");
+        fs::create_dir_all(&course).expect("create course");
+        let capability = CapabilityDir::open_ambient_dir(&root, cap_std::ambient_authority())
+            .expect("open root capability before directory replacement");
+        fs::remove_dir(&course).expect("remove scanned course");
+        symlink(&outside, &course).expect("replace course with symlink");
+
+        ensure_course_marker(
+            &capability,
+            Path::new("Course"),
+            &course,
+            "course-identity-1",
+        )
+        .expect_err("replaced course directory should be rejected");
+        assert!(!outside.join(COURSE_MARKER_FILE_NAME).exists());
+
+        cleanup(&root);
+        cleanup(&outside);
     }
 
     #[derive(Deserialize)]
