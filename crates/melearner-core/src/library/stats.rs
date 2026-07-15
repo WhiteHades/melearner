@@ -2,7 +2,7 @@ use serde::Serialize;
 use sqlx::sqlite::SqliteRow;
 use sqlx::{Connection, Row};
 
-use super::{LibraryDatabase, LibraryError, child_path_range};
+use super::{LibraryDatabase, LibraryError, child_path_range, completion_percent};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -261,21 +261,6 @@ fn aggregate(row: &SqliteRow, column: &str) -> Result<u64, LibraryError> {
         .map_err(|_| LibraryError::Database(format!("negative Library stats aggregate {column}")))
 }
 
-fn completion_percent(completed_lessons: u64, lessons: u64) -> Result<u32, LibraryError> {
-    if lessons == 0 {
-        return Ok(0);
-    }
-    if completed_lessons > lessons {
-        return Err(LibraryError::Database(
-            "completed lesson count exceeds lesson count".to_string(),
-        ));
-    }
-    let percent =
-        (u128::from(completed_lessons) * 100 + u128::from(lessons) / 2) / u128::from(lessons);
-    u32::try_from(percent)
-        .map_err(|_| LibraryError::Database("invalid completion percent".to_string()))
-}
-
 #[cfg(test)]
 mod tests {
     use std::future::Future;
@@ -514,6 +499,7 @@ mod tests {
         assert_eq!(super::completion_percent(1, 3).expect("one third"), 33);
         assert_eq!(super::completion_percent(2, 3).expect("two thirds"), 67);
         assert_eq!(super::completion_percent(1, 8).expect("one eighth"), 13);
+        assert_eq!(super::completion_percent(23, 40).expect("half up"), 58);
         assert!(super::completion_percent(2, 1).is_err());
     }
 }

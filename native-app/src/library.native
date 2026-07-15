@@ -1,3 +1,72 @@
+<template name="course-outline">
+  <column grow="1" padding="24" gap="16" label="Course outline">
+    <column gap="4">
+      <text size="heading">Course outline</text>
+      <text size="sm" foreground="text_muted" label="{lessonTotalLabel}"><span mono>{lessonTotalLabel}</span></text>
+    </column>
+    <scroll grow="1" label="Lessons">
+      <tree label="Course Sections and Lessons">
+        <for each="lessonRows" key="id" as="lesson">
+          <if test="{lesson.starts_section}">
+            <list-item global-key="{lesson.sectionId}" on-press="toggle_section:{lesson.sectionId}" on-toggle="toggle_section:{lesson.sectionId}" expanded="{lesson.section_expanded}" padding="8" gap="8" role="treeitem" label="{lesson.sectionName}">
+              <text size="sm" foreground="text_muted" grow="1">{lesson.sectionName}</text>
+              <badge variant="secondary">{lesson.sectionToggleLabel}</badge>
+            </list-item>
+          </if>
+          <if test="{lesson.section_expanded}">
+            <list-item global-key="{lesson.id}" on-press="open_lesson:{lesson.id}" selected="{lesson.selected}" autofocus="{lesson.restore_focus}" padding="12" gap="8" role="treeitem" label="{lesson.name}">
+              <column gap="4" grow="1">
+                <row gap="8" cross="center">
+                  <text grow="1">{lesson.name}</text>
+                  <badge variant="secondary">{lesson.kindLabel}</badge>
+                </row>
+                <text size="sm" foreground="text_muted" label="{lesson.progressLine}"><span mono>{lesson.progressLine}</span></text>
+              </column>
+            </list-item>
+          </if>
+        </for>
+      </tree>
+    </scroll>
+    <if test="{hasLessonPagination}">
+      <row gap="8" main="end" cross="center" label="Lesson pages">
+        <if test="{hasPreviousLessonPage}">
+          <button size="sm" variant="secondary" on-press="previous_lesson_page" label="Previous Lesson page">Previous</button>
+        </if>
+        <if test="{hasNextLessonPage}">
+          <button size="sm" variant="secondary" on-press="next_lesson_page" label="Next Lesson page">Next</button>
+        </if>
+      </row>
+    </if>
+  </column>
+</template>
+
+<template name="lesson-detail">
+  <column grow="1" padding="24" gap="16" label="Lesson detail">
+    <if test="{has_selected_lesson}">
+      <column gap="8">
+        <text size="sm" foreground="text_muted">{selectedLessonSection}</text>
+        <text size="heading">{selectedLessonName}</text>
+        <row gap="8" cross="center">
+          <badge variant="secondary">{selectedLessonKind}</badge>
+          <text size="sm" foreground="text_muted" label="{selectedLessonProgress}"><span mono>{selectedLessonProgress}</span></text>
+        </row>
+      </column>
+      <separator />
+      <column grow="1" gap="8" main="center" cross="center" label="Read-only Lesson placeholder">
+        <text>Content preview unavailable</text>
+        <text size="sm" foreground="text_muted">You can keep browsing the Course outline.</text>
+      </column>
+    </if>
+    <else>
+      <column grow="1" gap="8" main="center" cross="center" label="No Lesson selected">
+        <text size="heading">Select a Lesson</text>
+        <text size="sm" foreground="text_muted">Choose an item from the Course outline.</text>
+      </column>
+    </else>
+  </column>
+</template>
+
+<stack>
 <column background="background">
   <if test="{showLibrary}">
     <if test="{libraryOpening}">
@@ -27,13 +96,14 @@
           <column grow="1" padding="24" gap="16" label="Library Courses">
             <row cross="center" gap="12">
               <text size="heading" grow="1">Library</text>
+              <button size="sm" variant="secondary" on-press="open_search" autofocus="{restore_search_focus}" label="Search Library">Search</button>
               <text size="sm" foreground="text_muted" label="{courseTotalLabel}"><span mono>{courseTotalLabel}</span></text>
             </row>
             <scroll grow="1" label="Courses">
               <column gap="8" role="list" label="Course list">
                 <for each="courseRows" key="id" as="course">
                   <if test="{course.available}">
-                    <list-item on-press="open_course:{course.id}" padding="12" gap="4" label="{course.name}">
+                    <list-item on-press="open_course:{course.id}" selected="{course.selected}" autofocus="{course.restore_focus}" padding="12" gap="4" label="{course.name}">
                       <column gap="4" grow="1">
                         <text>{course.name}</text>
                         <text size="sm" foreground="text_muted" label="{course.progressLine}"><span mono>{course.progressLine}</span></text>
@@ -70,9 +140,9 @@
     </else>
   </if>
   <else>
-    <column grow="1" label="Course outline">
+    <column grow="1">
       <row padding="16" gap="12" cross="center" background="surface" label="Course navigation">
-        <button size="sm" variant="ghost" on-press="back_to_library" label="Back to Library">Back</button>
+        <button size="sm" variant="ghost" on-press="navigate_back">Back</button>
         <column gap="4" grow="1">
           <text>{selectedCourseName}</text>
           <text size="sm" foreground="text_muted" label="{selectedCourseProgress}"><span mono>{selectedCourseProgress}</span></text>
@@ -103,41 +173,110 @@
             </column>
           </if>
           <else>
-            <column grow="1" padding="24" gap="16" label="Course Lessons">
-              <row gap="12" cross="center">
-                <text size="heading" grow="1">Lessons</text>
-                <text size="sm" foreground="text_muted" label="{lessonTotalLabel}"><span mono>{lessonTotalLabel}</span></text>
-              </row>
-              <scroll grow="1" label="Lessons">
-                <column gap="8" role="list" label="Lesson list">
-                  <for each="lessonRows" key="id" as="lesson">
-                    <if test="{lesson.starts_section}">
-                      <text size="sm" foreground="text_muted">{lesson.sectionName}</text>
-                    </if>
-                    <column padding="12" gap="4" background="surface" radius="md" role="listitem" label="{lesson.name}">
-                      <row gap="8" cross="center">
-                        <text grow="1">{lesson.name}</text>
-                        <badge variant="secondary">{lesson.kindLabel}</badge>
-                      </row>
-                      <text size="sm" foreground="text_muted" label="{lesson.progressLine}"><span mono>{lesson.progressLine}</span></text>
-                    </column>
-                  </for>
-                </column>
-              </scroll>
-              <if test="{hasLessonPagination}">
-                <row gap="8" main="end" cross="center" label="Lesson pages">
-                  <if test="{hasPreviousLessonPage}">
-                    <button size="sm" variant="secondary" on-press="previous_lesson_page" label="Previous Lesson page">Previous</button>
-                  </if>
-                  <if test="{hasNextLessonPage}">
-                    <button size="sm" variant="secondary" on-press="next_lesson_page" label="Next Lesson page">Next</button>
-                  </if>
-                </row>
+            <if test="{showWideCourse}">
+              <split grow="1" value="{course_split_fraction}" on-resize="course_split_resized">
+                <column min-width="280"><use template="course-outline" /></column>
+                <column min-width="360"><use template="lesson-detail" /></column>
+              </split>
+            </if>
+            <else>
+              <if test="{showCompactLesson}">
+                <use template="lesson-detail" />
               </if>
-            </column>
+              <else>
+                <use template="course-outline" />
+              </else>
+            </else>
           </else>
         </else>
       </else>
     </column>
   </else>
 </column>
+<if test="{search_open}">
+  <panel background="scrim" on-press="dismiss_search" label="Search backdrop">
+    <column main="center" cross="center">
+      <dialog width="520" height="360" label="Library search">
+        <column padding="16" gap="12">
+          <row gap="8" cross="center">
+            <text size="heading" grow="1">Search Library</text>
+            <button size="sm" variant="ghost" on-press="dismiss_search" label="Close search">Close</button>
+          </row>
+          <search-field text="{searchQuery}" placeholder="Search Courses and Lessons…" autofocus="true" on-input="search_edited" label="Search Courses and Lessons" />
+          <if test="{searchBuilding}">
+            <column grow="1" gap="8" main="center" cross="center" label="Search index loading">
+              <text>Preparing search…</text>
+              <text size="sm" foreground="text_muted">Large Libraries stay responsive while the index opens.</text>
+            </column>
+          </if>
+          <else>
+            <if test="{searchQuerying}">
+              <column grow="1" gap="8" main="center" cross="center" label="Search loading">
+                <text>Searching…</text>
+              </column>
+            </if>
+            <else>
+              <if test="{searchFailed}">
+                <column grow="1" gap="8" main="center" cross="center" label="Search error">
+                  <text>Search unavailable</text>
+                  <text size="sm" foreground="text_muted">{searchMessage}</text>
+                </column>
+              </if>
+              <else>
+                <if test="{searchEmpty}">
+                  <column grow="1" gap="8" main="center" cross="center" label="Empty search results">
+                    <text>No results found</text>
+                    <text size="sm" foreground="text_muted">Try a Course, Section, or Lesson name.</text>
+                  </column>
+                </if>
+                <else>
+                  <if test="{searchResultsReady}">
+                    <column grow="1" gap="8">
+                      <row gap="8" cross="center">
+                        <text size="sm" foreground="text_muted" grow="1">Results</text>
+                        <text size="sm" foreground="text_muted" label="{searchTotalLabel}"><span mono>{searchTotalLabel}</span></text>
+                      </row>
+                      <scroll grow="1" label="Search results">
+                        <column role="list" label="Course and Lesson search results">
+                          <for each="searchRows" key="actionKey" as="result">
+                            <list-item global-key="{result.actionKey}" on-press="open_search_result:{result.actionKey}" padding="10" gap="8" label="{result.name}">
+                              <column gap="4" grow="1">
+                                <row gap="8" cross="center">
+                                  <text grow="1">{result.name}</text>
+                                  <badge variant="secondary">{result.kindLabel}</badge>
+                                </row>
+                                <text size="sm" foreground="text_muted">{result.contextLine}</text>
+                              </column>
+                            </list-item>
+                          </for>
+                        </column>
+                      </scroll>
+                      <if test="{hasSearchPagination}">
+                        <row gap="8" main="end" cross="center" label="Search pages">
+                          <if test="{hasPreviousSearchPage}">
+                            <button size="sm" variant="secondary" on-press="previous_search_page" label="Previous Search page">Previous</button>
+                          </if>
+                          <if test="{hasNextSearchPage}">
+                            <button size="sm" variant="secondary" on-press="next_search_page" label="Next Search page">Next</button>
+                          </if>
+                        </row>
+                      </if>
+                    </column>
+                  </if>
+                  <else>
+                    <column grow="1" gap="8" main="center" cross="center" label="Search ready">
+                      <text>Find a Course or Lesson</text>
+                      <text size="sm" foreground="text_muted">Type a Course, Section, or Lesson name.</text>
+                    </column>
+                  </else>
+                </else>
+              </else>
+            </else>
+          </else>
+          <text size="sm" foreground="text_muted">Enter opens / Esc closes</text>
+        </column>
+      </dialog>
+    </column>
+  </panel>
+</if>
+</stack>

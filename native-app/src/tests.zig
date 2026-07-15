@@ -50,6 +50,47 @@ fn setCourse(course: *main.Course, id: []const u8, name: []const u8, available: 
     @memcpy(course.name_storage[0..name.len], name);
 }
 
+fn setSearchResult(result: *main.SearchResult, id: []const u8, course_id: []const u8, course_name: []const u8, section_name: []const u8, name: []const u8, lesson_offset: u64) void {
+    result.* = .{
+        .result_type = .lesson,
+        .action_key_len = "lesson/".len + id.len,
+        .id_len = id.len,
+        .course_id_len = course_id.len,
+        .course_name_len = course_name.len,
+        .section_name_len = section_name.len,
+        .name_len = name.len,
+        .kind_len = "video".len,
+        .lesson_offset = lesson_offset,
+    };
+    @memcpy(result.action_key_storage[0.."lesson/".len], "lesson/");
+    @memcpy(result.action_key_storage["lesson/".len..][0..id.len], id);
+    @memcpy(result.id_storage[0..id.len], id);
+    @memcpy(result.course_id_storage[0..course_id.len], course_id);
+    @memcpy(result.course_name_storage[0..course_name.len], course_name);
+    @memcpy(result.section_name_storage[0..section_name.len], section_name);
+    @memcpy(result.name_storage[0..name.len], name);
+    @memcpy(result.kind_storage[0.."video".len], "video");
+}
+
+fn setCourseSearchResult(result: *main.SearchResult, id: []const u8, name: []const u8) void {
+    result.* = .{
+        .result_type = .course,
+        .action_key_len = "course/".len + id.len,
+        .id_len = id.len,
+        .course_id_len = id.len,
+        .course_name_len = name.len,
+        .name_len = name.len,
+        .kind_len = "course".len,
+    };
+    @memcpy(result.action_key_storage[0.."course/".len], "course/");
+    @memcpy(result.action_key_storage["course/".len..][0..id.len], id);
+    @memcpy(result.id_storage[0..id.len], id);
+    @memcpy(result.course_id_storage[0..id.len], id);
+    @memcpy(result.course_name_storage[0..name.len], name);
+    @memcpy(result.name_storage[0..name.len], name);
+    @memcpy(result.kind_storage[0.."course".len], "course");
+}
+
 fn populatedLibraryModel() main.Model {
     var model = main.Model{
         .library_state = .ready,
@@ -71,6 +112,9 @@ fn largeCourseModel() main.Model {
         .lesson_count = core_adapter.lesson_page_size,
     };
     selectCourse(&model, "course-1", "Systems");
+    model.selected_course.lesson_count = 100_000;
+    model.selected_course.completed_lesson_count = 42_000;
+    model.selected_course.progress_percent = 42;
     for (model.lessons[0..model.lesson_count], 0..) |*lesson, index| {
         var id_buffer: [32]u8 = undefined;
         var name_buffer: [32]u8 = undefined;
@@ -377,7 +421,7 @@ test "opening a Course records access before loading its Lessons" {
     try testing.expectEqualSlices(u8, &expected_access, access_request.payload);
 
     try effects.feedExternalResult(access_request.request_id, .success,
-        \\{"revision":8,"courseId":"course-1","lastAccessed":"2026-07-15T10:00:00.000Z"}
+        \\{"revision":8,"courseId":"course-1","courseName":"Systems","lessonCount":1,"completedLessonCount":0,"progressPercent":0,"resumeLessonId":"lesson-1","resumeLessonOffset":0,"lastAccessed":"2026-07-15T10:00:00.000Z"}
     );
     main.update(&model, effects.takeMsg().?, &effects);
 
@@ -408,9 +452,53 @@ test "opening a Course records access before loading its Lessons" {
     try testing.expect(findByText(tree.root, .text, "Foundations") != null);
     try testing.expect(findByText(tree.root, .text, "Introduction") != null);
 
-    main.update(&model, .back_to_library, &effects);
+    main.update(&model, .navigate_back, &effects);
     const refreshed_library = effects.pendingExternalAt(0).?;
     try testing.expectEqualSlices(u8, &([_]u8{0} ** core_adapter.library_page_request_bytes), refreshed_library.payload);
+}
+
+test "Course access loads and selects the exact bounded resume Lesson page" {
+    var effects = main.Effects.init(testing.allocator);
+    defer effects.deinit();
+    effects.executor = .fake;
+
+    var model = main.Model{
+        .screen = .course,
+        .course_state = .accessing,
+        .library_revision = 7,
+        .course_access_request_id = 1,
+    };
+    selectCourse(&model, "course-1", "Systems");
+
+    main.update(&model, .{ .course_accessed = .{
+        .request_id = 1,
+        .key = core_adapter.course_access_key,
+        .adapter_id = core_adapter.adapter_id,
+        .kind = @intFromEnum(core_adapter.Operation.access_course),
+        .schema_version = core_adapter.schema_version,
+        .outcome = .ok,
+        .bytes =
+        \\{"revision":8,"courseId":"course-1","courseName":"Systems","lessonCount":21,"completedLessonCount":4,"progressPercent":19,"resumeLessonId":"lesson-21","resumeLessonOffset":20,"lastAccessed":"2026-07-15T10:00:00.000Z"}
+        ,
+    } }, &effects);
+
+    const lesson_request = effects.pendingExternalAt(0).?;
+    var expected: [core_adapter.lesson_page_request_header_bytes + "course-1".len]u8 = undefined;
+    std.mem.writeInt(u64, expected[0..8], 8, .little);
+    std.mem.writeInt(u64, expected[8..16], 20, .little);
+    @memcpy(expected[16..], "course-1");
+    try testing.expectEqualSlices(u8, &expected, lesson_request.payload);
+    try testing.expectEqual(@as(u64, 21), model.selected_course.lesson_count);
+    try testing.expectEqual(@as(u32, 19), model.selected_course.progress_percent);
+
+    try effects.feedExternalResult(lesson_request.request_id, .success,
+        \\{"revision":8,"courseId":"course-1","sectionId":null,"offset":20,"total":21,"rows":[{"id":"lesson-21","courseId":"course-1","sectionId":"section-2","sectionName":"Advanced","name":"Wrap up","kind":"document","duration":0,"fileSize":512,"completed":false,"watchedTime":0,"lastPosition":0.0,"order":0}]}
+    );
+    main.update(&model, effects.takeMsg().?, &effects);
+
+    try testing.expect(model.has_selected_lesson);
+    try testing.expectEqualStrings("lesson-21", model.selected_lesson.id());
+    try testing.expectEqual(@as(u64, 20), model.selected_lesson_offset);
 }
 
 test "missing Courses remain visible without dispatching access" {
@@ -444,7 +532,7 @@ test "a Course that disappears during access becomes an honest error state" {
         .screen = .course,
         .course_state = .accessing,
         .library_revision = 7,
-        .pending_request_id = 1,
+        .course_access_request_id = 1,
     };
     selectCourse(&model, "course-1", "Systems");
 
@@ -473,7 +561,7 @@ test "Back always reloads against the adapter's recovered revision" {
     };
     selectCourse(&model, "course-1", "Systems");
 
-    main.update(&model, .back_to_library, &effects);
+    main.update(&model, .navigate_back, &effects);
 
     try testing.expect(model.showLibrary());
     try testing.expectEqual(@as(u64, 0), model.library_revision);
@@ -488,7 +576,7 @@ test "Lesson pages reject mismatched Course snapshots" {
         .screen = .course,
         .course_state = .loading,
         .library_revision = 8,
-        .pending_request_id = 1,
+        .lesson_page_request_id = 1,
     };
     selectCourse(&model, "course-1", "Systems");
 
@@ -608,7 +696,7 @@ test "a stale Library request result is discarded while the current request rema
 
     try testing.expect(model.libraryOpening());
     try testing.expectEqual(@as(u64, 0), model.pending_page_offset);
-    try testing.expectEqual(request.request_id, model.pending_request_id);
+    try testing.expectEqual(request.request_id, model.library_request_id);
     try testing.expectEqual(@as(usize, 0), model.course_count);
     try testing.expectEqualStrings("", model.libraryMessage());
 }
@@ -635,7 +723,7 @@ test "Rust-core failures become an honest native Library state" {
     defer effects.deinit();
 
     var model = main.Model{};
-    model.pending_request_id = 1;
+    model.library_request_id = 1;
     main.update(&model, .{ .library_loaded = .{
         .request_id = 1,
         .key = core_adapter.library_page_key,
@@ -666,6 +754,35 @@ test "the live adapter creates and reopens only the fresh native database" {
         try tmp.dir.readFile(testing.io, "melearner.db", &previous_database),
     );
     try expectLiveEmptyPage(state_dir);
+}
+
+test "the live adapter rebuilds and queries the bounded native search index" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var state_dir_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const state_dir_len = try tmp.dir.realPath(testing.io, &state_dir_buffer);
+    const state_dir = state_dir_buffer[0..state_dir_len];
+
+    const adapter = try core_adapter.CoreAdapter.create(testing.allocator, testing.io, state_dir);
+    defer adapter.destroy();
+    var effects = main.Effects.init(testing.allocator);
+    defer effects.deinit();
+    effects.bindExternalAdapter(adapter.binding());
+
+    var model = main.Model{};
+    main.boot(&model, &effects);
+    main.update(&model, try waitForEffectMsg(&effects), &effects);
+    try testing.expect(model.libraryEmpty());
+
+    main.update(&model, .open_search, &effects);
+    main.update(&model, try waitForEffectMsg(&effects), &effects);
+    try testing.expectEqual(main.SearchState.ready, model.search_state);
+    try testing.expect(model.search_index_revision != 0);
+
+    main.update(&model, .{ .search_edited = .{ .insert_text = "lesson" } }, &effects);
+    main.update(&model, try waitForEffectMsg(&effects), &effects);
+    try testing.expectEqual(main.SearchState.empty, model.search_state);
+    try testing.expectEqual(@as(usize, 0), model.search_result_count);
 }
 
 test "the populated native shell stays clean and caps its study surface on ultrawide windows" {
@@ -705,12 +822,510 @@ test "a 100000-Lesson Course mounts only its bounded page at every target size" 
     });
 }
 
+test "compact wide and search compositions pass layout and accessibility audits" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+
+    var compact = largeCourseModel();
+    compact.canvas_width = 560;
+    const compact_tree = try buildTree(arena_state.allocator(), &compact);
+    try canvas.expectLayoutAuditSweepClean(testing.allocator, compact_tree.root, .{
+        .tokens = main.tokensFromModel(&compact),
+        .min_size = geometry.SizeF.init(560, 400),
+        .default_size = geometry.SizeF.init(560, 400),
+        .large_size = geometry.SizeF.init(560, 400),
+    });
+    try canvas.expectA11yAuditSweepClean(testing.allocator, compact_tree.root, .{
+        .tokens = main.tokensFromModel(&compact),
+        .min_size = geometry.SizeF.init(560, 400),
+        .default_size = geometry.SizeF.init(560, 400),
+        .large_size = geometry.SizeF.init(560, 400),
+    });
+
+    var wide = largeCourseModel();
+    wide.canvas_width = 768;
+    wide.selected_lesson = wide.lessons[0];
+    wide.lessons[0].selected = true;
+    wide.has_selected_lesson = true;
+    const wide_tree = try buildTree(arena_state.allocator(), &wide);
+    try canvas.expectLayoutAuditSweepClean(testing.allocator, wide_tree.root, .{
+        .tokens = main.tokensFromModel(&wide),
+        .min_size = geometry.SizeF.init(768, 680),
+        .default_size = geometry.SizeF.init(768, 680),
+        .large_size = geometry.SizeF.init(768, 680),
+    });
+    try canvas.expectA11yAuditSweepClean(testing.allocator, wide_tree.root, .{
+        .tokens = main.tokensFromModel(&wide),
+        .min_size = geometry.SizeF.init(768, 680),
+        .default_size = geometry.SizeF.init(768, 680),
+        .large_size = geometry.SizeF.init(768, 680),
+    });
+
+    var search = populatedLibraryModel();
+    search.search_open = true;
+    search.search_state = .building;
+    const search_tree = try buildTree(arena_state.allocator(), &search);
+    try canvas.expectLayoutAuditSweepClean(testing.allocator, search_tree.root, .{
+        .tokens = main.tokensFromModel(&search),
+        .min_size = geometry.SizeF.init(560, 400),
+        .default_size = geometry.SizeF.init(560, 400),
+        .large_size = geometry.SizeF.init(560, 400),
+    });
+    try canvas.expectA11yAuditSweepClean(testing.allocator, search_tree.root, .{
+        .tokens = main.tokensFromModel(&search),
+        .min_size = geometry.SizeF.init(560, 400),
+        .default_size = geometry.SizeF.init(560, 400),
+        .large_size = geometry.SizeF.init(560, 400),
+    });
+}
+
+test "compact Course navigation replaces the outline while wide navigation keeps both panes" {
+    var effects = main.Effects.init(testing.allocator);
+    defer effects.deinit();
+
+    var compact = largeCourseModel();
+    compact.canvas_width = main.course_split_breakpoint - 1;
+    try testing.expectEqual(@as(usize, 1), main.navigationDepth(&compact));
+
+    main.update(&compact, .{ .open_lesson = "lesson-1" }, &effects);
+    try testing.expectEqual(main.CompactCoursePage.lesson, compact.compact_course_page);
+    try testing.expectEqual(@as(usize, 2), main.navigationDepth(&compact));
+    try testing.expect(compact.has_selected_lesson);
+
+    var compact_arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer compact_arena.deinit();
+    const compact_detail = try buildTree(compact_arena.allocator(), &compact);
+    try testing.expect(findByText(compact_detail.root, .text, "Wrap up") == null);
+    try testing.expect(findByText(compact_detail.root, .text, "Lesson 1") != null);
+    try testing.expect(findByText(compact_detail.root, .text, "Course outline") == null);
+
+    main.update(&compact, .navigate_back, &effects);
+    try testing.expectEqual(main.CompactCoursePage.outline, compact.compact_course_page);
+    try testing.expectEqual(@as(usize, 1), main.navigationDepth(&compact));
+    try testing.expectEqualStrings("lesson-1", compact.selected_lesson.id());
+
+    var wide = largeCourseModel();
+    wide.canvas_width = main.course_split_breakpoint;
+    main.update(&wide, .{ .open_lesson = "lesson-1" }, &effects);
+    try testing.expectEqual(@as(usize, 1), main.navigationDepth(&wide));
+
+    var wide_arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer wide_arena.deinit();
+    const wide_tree = try buildTree(wide_arena.allocator(), &wide);
+    try testing.expect(findByText(wide_tree.root, .text, "Course outline") != null);
+    try testing.expect(findByText(wide_tree.root, .text, "Lesson 1") != null);
+}
+
+test "Course Section rows expose and own their expanded state" {
+    var effects = main.Effects.init(testing.allocator);
+    defer effects.deinit();
+
+    var model = largeCourseModel();
+    var open_arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer open_arena.deinit();
+    const open_tree = try buildTree(open_arena.allocator(), &model);
+    try testing.expect(findByText(open_tree.root, .text, "Foundations") != null);
+    try testing.expect(findByText(open_tree.root, .text, "Lesson 1") != null);
+
+    main.update(&model, .{ .toggle_section = "section-1" }, &effects);
+    var closed_arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer closed_arena.deinit();
+    const closed_tree = try buildTree(closed_arena.allocator(), &model);
+    try testing.expect(findByText(closed_tree.root, .text, "Foundations") != null);
+    try testing.expect(findByText(closed_tree.root, .text, "Lesson 1") == null);
+}
+
+test "compact Lesson Back restores focus and stale pages cannot replace its selection" {
+    var effects = main.Effects.init(testing.allocator);
+    defer effects.deinit();
+
+    var model = largeCourseModel();
+    model.canvas_width = 560;
+    main.update(&model, .{ .open_lesson = "lesson-1" }, &effects);
+    model.course_state = .loading;
+    model.lesson_page_request_id = 9;
+    model.pending_lesson_page_offset = 20;
+    main.update(&model, .{ .lessons_loaded = .{
+        .request_id = 10,
+        .key = core_adapter.lesson_page_key,
+        .adapter_id = core_adapter.adapter_id,
+        .kind = @intFromEnum(core_adapter.Operation.load_lesson_page),
+        .schema_version = core_adapter.schema_version,
+        .outcome = .ok,
+        .bytes =
+        \\{"revision":8,"courseId":"course-1","sectionId":null,"offset":20,"total":21,"rows":[{"id":"lesson-21","courseId":"course-1","sectionId":"section-2","sectionName":"Advanced","name":"Stale","kind":"document","duration":0,"fileSize":512,"completed":false,"watchedTime":0,"lastPosition":0.0,"order":0}]}
+        ,
+    } }, &effects);
+    try testing.expectEqualStrings("lesson-1", model.selected_lesson.id());
+    try testing.expectEqual(@as(u64, 9), model.lesson_page_request_id);
+
+    model.course_state = .ready;
+    const live = try LiveLibrary.start(model, geometry.SizeF.init(560, 400), .{});
+    defer live.stop();
+    try live.app_state.dispatch(&live.harness.runtime, 1, .navigate_back);
+    const snapshot = live.harness.runtime.automationSnapshot("melearner");
+    const selected = snapshotByNameAndRole(snapshot, "Lesson 1", "treeitem") orelse return error.TestUnexpectedResult;
+    try testing.expect(selected.selected);
+    try testing.expect(selected.focused);
+}
+
+test "Course Back restores the selected Library row" {
+    var effects = main.Effects.init(testing.allocator);
+    defer effects.deinit();
+    effects.executor = .fake;
+
+    var model = main.Model{
+        .screen = .course,
+        .course_state = .ready,
+        .library_revision = 8,
+    };
+    selectCourse(&model, "course-1", "Systems");
+    main.update(&model, .navigate_back, &effects);
+    const library = effects.pendingExternalAt(0).?;
+    try effects.feedExternalResult(library.request_id, .success,
+        \\{"revision":9,"offset":0,"total":1,"rows":[{"id":"course-1","name":"Systems","missingSince":null,"lessonCount":21,"completedLessonCount":4,"progressPercent":19}]}
+    );
+    main.update(&model, effects.takeMsg().?, &effects);
+
+    const live = try LiveLibrary.start(model, geometry.SizeF.init(960, 680), .{});
+    defer live.stop();
+    const snapshot = live.harness.runtime.automationSnapshot("melearner");
+    const course = snapshotByNameAndRole(snapshot, "Systems", "listitem") orelse return error.TestUnexpectedResult;
+    try testing.expect(course.selected);
+    try testing.expect(course.focused);
+}
+
+test "incremental search waits for cancellation and installs only the latest query page" {
+    var effects = main.Effects.init(testing.allocator);
+    defer effects.deinit();
+    effects.executor = .fake;
+
+    var model = main.Model{
+        .library_state = .ready,
+        .library_revision = 8,
+        .search_open = true,
+        .search_index_revision = 8,
+        .search_state = .ready,
+    };
+
+    main.update(&model, .{ .search_edited = .{ .insert_text = "binary" } }, &effects);
+    const first = effects.pendingExternalAt(0).?;
+    try testing.expectEqual(@intFromEnum(core_adapter.Operation.query_search), first.kind);
+    try testing.expectEqual(@as(u64, 1), model.active_search_query_id);
+
+    main.update(&model, .{ .search_edited = .{ .insert_text = " heaps" } }, &effects);
+    try testing.expectEqualStrings("binary heaps", model.searchQuery());
+    try testing.expectEqual(@as(u64, 2), model.desired_search_query_id);
+    try testing.expect(effects.pendingExternalAt(0) == null);
+
+    main.update(&model, effects.takeMsg().?, &effects);
+    const second = effects.pendingExternalAt(0).?;
+    try testing.expect(second.request_id != first.request_id);
+    try testing.expectEqual(@as(u64, 2), model.active_search_query_id);
+    const decoded_query = second.payload[core_adapter.search_query_request_header_bytes..];
+    try testing.expectEqualStrings("binary heaps", decoded_query);
+
+    main.update(&model, .{ .search_loaded = .{
+        .request_id = first.request_id,
+        .key = first.key,
+        .adapter_id = core_adapter.adapter_id,
+        .kind = @intFromEnum(core_adapter.Operation.query_search),
+        .schema_version = core_adapter.schema_version,
+        .outcome = .ok,
+        .bytes =
+        \\{"queryId":1,"indexRevision":8,"offset":0,"total":1,"rows":[{"resultType":"lesson","id":"stale","courseId":"course-1","courseName":"Systems","sectionId":"section-1","sectionName":"Foundations","lessonOffset":0,"name":"Stale","kind":"video","score":1000}]}
+        ,
+    } }, &effects);
+    try testing.expectEqual(@as(usize, 0), model.search_result_count);
+    try testing.expectEqual(second.request_id, model.search_query_request_id);
+
+    try effects.feedExternalResult(second.request_id, .success,
+        \\{"queryId":2,"indexRevision":8,"offset":0,"total":1,"rows":[{"resultType":"lesson","id":"lesson-41","courseId":"course-1","courseName":"Systems","sectionId":"section-3","sectionName":"Storage","lessonOffset":40,"name":"Binary heaps","kind":"video","score":1700}]}
+    );
+    main.update(&model, effects.takeMsg().?, &effects);
+
+    try testing.expectEqual(main.SearchState.results, model.search_state);
+    try testing.expectEqual(@as(usize, 1), model.search_result_count);
+    try testing.expectEqualStrings("lesson-41", model.search_results[0].id());
+    try testing.expectEqual(@as(u64, 40), model.search_results[0].lesson_offset);
+}
+
+test "closing an active search and reopening it restarts the retained query" {
+    var effects = main.Effects.init(testing.allocator);
+    defer effects.deinit();
+    effects.executor = .fake;
+
+    var model = main.Model{
+        .library_state = .ready,
+        .library_revision = 8,
+        .search_open = true,
+        .search_index_revision = 8,
+        .search_state = .ready,
+    };
+    main.update(&model, .{ .search_edited = .{ .insert_text = "binary" } }, &effects);
+    const cancelled = effects.pendingExternalAt(0).?;
+    main.update(&model, .dismiss_search, &effects);
+    main.update(&model, effects.takeMsg().?, &effects);
+    try testing.expect(!model.search_open);
+    try testing.expectEqual(@as(u64, 0), model.search_query_request_id);
+
+    main.update(&model, .open_search, &effects);
+    const restarted = effects.pendingExternalAt(0).?;
+    try testing.expect(restarted.request_id != cancelled.request_id);
+    try testing.expectEqual(@intFromEnum(core_adapter.Operation.query_search), restarted.kind);
+    try testing.expectEqualStrings("binary", restarted.payload[core_adapter.search_query_request_header_bytes..]);
+    try testing.expectEqual(main.SearchState.querying, model.search_state);
+}
+
+test "a stale search index rebuilds once and retries the current query" {
+    var effects = main.Effects.init(testing.allocator);
+    defer effects.deinit();
+    effects.executor = .fake;
+
+    var model = main.Model{
+        .library_state = .ready,
+        .library_revision = 9,
+        .search_open = true,
+        .search_state = .querying,
+        .search_index_revision = 8,
+        .search_query_request_id = 41,
+        .search_query_key = core_adapter.search_query_key_base + 3,
+        .desired_search_query_id = 3,
+        .active_search_query_id = 3,
+    };
+    model.search_query_buffer.set("heaps");
+
+    main.update(&model, .{ .search_loaded = .{
+        .request_id = 41,
+        .key = core_adapter.search_query_key_base + 3,
+        .adapter_id = core_adapter.adapter_id,
+        .kind = @intFromEnum(core_adapter.Operation.query_search),
+        .schema_version = core_adapter.schema_version,
+        .outcome = .failed,
+        .bytes =
+        \\{"error":"staleSearchIndex","expected":8,"actual":null}
+        ,
+    } }, &effects);
+
+    try testing.expectEqual(main.SearchState.building, model.search_state);
+    try testing.expectEqual(@as(u64, 0), model.search_index_revision);
+    const rebuild = effects.pendingExternalAt(0).?;
+    try testing.expectEqual(@intFromEnum(core_adapter.Operation.rebuild_search_index), rebuild.kind);
+    try testing.expectEqual(@as(u64, 9), std.mem.readInt(u64, rebuild.payload[0..8], .little));
+
+    try effects.feedExternalResult(rebuild.request_id, .success,
+        \\{"indexRevision":9,"entryCount":100000}
+    );
+    main.update(&model, effects.takeMsg().?, &effects);
+
+    const retried = effects.pendingExternalAt(0).?;
+    try testing.expectEqual(@intFromEnum(core_adapter.Operation.query_search), retried.kind);
+    try testing.expectEqual(@as(u64, 9), std.mem.readInt(u64, retried.payload[0..8], .little));
+    try testing.expectEqual(@as(u64, 3), std.mem.readInt(u64, retried.payload[8..16], .little));
+    try testing.expectEqualStrings("heaps", retried.payload[core_adapter.search_query_request_header_bytes..]);
+}
+
+test "Search paging keeps the query identity and requests one bounded page" {
+    var effects = main.Effects.init(testing.allocator);
+    defer effects.deinit();
+    effects.executor = .fake;
+
+    var model = main.Model{
+        .library_state = .ready,
+        .library_revision = 9,
+        .search_open = true,
+        .search_state = .results,
+        .search_index_revision = 9,
+        .desired_search_query_id = 3,
+        .total_search_results = 21,
+        .search_result_count = 20,
+    };
+    model.search_query_buffer.set("lesson");
+
+    main.update(&model, .next_search_page, &effects);
+    const next = effects.pendingExternalAt(0).?;
+    try testing.expectEqual(@as(u64, 3), std.mem.readInt(u64, next.payload[8..16], .little));
+    try testing.expectEqual(@as(u64, 20), std.mem.readInt(u64, next.payload[16..24], .little));
+    try testing.expectEqualStrings("lesson", next.payload[core_adapter.search_query_request_header_bytes..]);
+}
+
+test "Primary K autofocuses search and keyboard activation opens an exact Lesson result" {
+    var model = populatedLibraryModel();
+    model.search_state = .results;
+    model.search_index_revision = 7;
+    model.desired_search_query_id = 1;
+    model.total_search_results = 1;
+    model.search_result_count = 1;
+    model.search_query_buffer.set("intro");
+    setSearchResult(
+        &model.search_results[0],
+        "lesson-41",
+        "course-1",
+        "Systems",
+        "Storage",
+        "Binary heaps",
+        40,
+    );
+
+    const live = try LiveLibrary.start(model, geometry.SizeF.init(960, 680), .{});
+    defer live.stop();
+
+    try live.harness.runtime.dispatchPlatformEvent(live.app, .{ .shortcut = .{
+        .id = main.cmd_search,
+        .key = "k",
+        .window_id = 1,
+    } });
+
+    var snapshot = live.harness.runtime.automationSnapshot("melearner");
+    try testing.expect((snapshotByName(snapshot, "Search Courses and Lessons") orelse return error.TestUnexpectedResult).focused);
+    try live.harness.runtime.dispatchPlatformEvent(live.app, .{ .shortcut = .{
+        .id = main.cmd_dismiss,
+        .key = "escape",
+        .window_id = 1,
+    } });
+    snapshot = live.harness.runtime.automationSnapshot("melearner");
+    try testing.expect((snapshotByNameAndRole(snapshot, "Search Library", "button") orelse return error.TestUnexpectedResult).focused);
+    try live.harness.runtime.dispatchPlatformEvent(live.app, .{ .shortcut = .{
+        .id = main.cmd_search,
+        .key = "k",
+        .window_id = 1,
+    } });
+    snapshot = live.harness.runtime.automationSnapshot("melearner");
+    try testing.expect((snapshotByName(snapshot, "Search Courses and Lessons") orelse return error.TestUnexpectedResult).focused);
+    try live.harness.runtime.dispatchAutomationCommand(live.app, "widget-key " ++ main.canvas_label ++ " tab");
+    snapshot = live.harness.runtime.automationSnapshot("melearner");
+    try testing.expect((snapshotByName(snapshot, "Search results") orelse return error.TestUnexpectedResult).focused);
+    try live.harness.runtime.dispatchAutomationCommand(live.app, "widget-key " ++ main.canvas_label ++ " tab");
+    snapshot = live.harness.runtime.automationSnapshot("melearner");
+    const result = snapshotByNameAndRole(snapshot, "Binary heaps", "listitem") orelse return error.TestUnexpectedResult;
+    try testing.expect(result.focused);
+    try testing.expect(result.actions.press);
+
+    try live.harness.runtime.dispatchAutomationCommand(live.app, "widget-key " ++ main.canvas_label ++ " enter");
+    try testing.expectEqual(main.Screen.course, live.app_state.model.screen);
+    try testing.expectEqual(main.CompactCoursePage.lesson, live.app_state.model.compact_course_page);
+    try testing.expectEqualStrings(
+        "lesson-41",
+        live.app_state.model.target_lesson_id_storage[0..live.app_state.model.target_lesson_id_len],
+    );
+    const access = live.app_state.effects.pendingExternalAt(0) orelse return error.TestUnexpectedResult;
+    try testing.expectEqual(@intFromEnum(core_adapter.Operation.access_course), access.kind);
+    try live.app_state.effects.feedExternalResult(access.request_id, .success,
+        \\{"revision":8,"courseId":"course-1","courseName":"Systems","lessonCount":60,"completedLessonCount":4,"progressPercent":7,"resumeLessonId":"lesson-1","resumeLessonOffset":0,"lastAccessed":"2026-07-15T10:00:00.000Z"}
+    );
+    main.update(&live.app_state.model, live.app_state.effects.takeMsg().?, &live.app_state.effects);
+    const lesson_page = live.app_state.effects.pendingExternalAt(0) orelse return error.TestUnexpectedResult;
+    try testing.expectEqual(@intFromEnum(core_adapter.Operation.load_lesson_page), lesson_page.kind);
+    try testing.expectEqual(@as(u64, 40), std.mem.readInt(u64, lesson_page.payload[8..16], .little));
+}
+
+test "a Course search result opens its outline without inventing a Lesson selection" {
+    var effects = main.Effects.init(testing.allocator);
+    defer effects.deinit();
+    effects.executor = .fake;
+
+    var model = main.Model{
+        .library_state = .ready,
+        .library_revision = 8,
+        .search_open = true,
+        .search_state = .querying,
+        .search_index_revision = 8,
+        .search_query_request_id = 41,
+        .search_query_key = core_adapter.search_query_key_base + 1,
+        .desired_search_query_id = 1,
+        .active_search_query_id = 1,
+    };
+    model.search_query_buffer.set("systems");
+    main.update(&model, .{ .search_loaded = .{
+        .request_id = 41,
+        .key = core_adapter.search_query_key_base + 1,
+        .adapter_id = core_adapter.adapter_id,
+        .kind = @intFromEnum(core_adapter.Operation.query_search),
+        .schema_version = core_adapter.schema_version,
+        .outcome = .ok,
+        .bytes =
+        \\{"queryId":1,"indexRevision":8,"offset":0,"total":2,"rows":[{"resultType":"course","id":"shared-id","courseId":"shared-id","courseName":"Systems","sectionId":"","sectionName":"","lessonOffset":0,"name":"Systems","kind":"course","score":2000},{"resultType":"lesson","id":"shared-id","courseId":"shared-id","courseName":"Systems","sectionId":"section-1","sectionName":"Foundations","lessonOffset":0,"name":"Introduction","kind":"video","score":1000}]}
+        ,
+    } }, &effects);
+    try testing.expectEqual(main.SearchState.results, model.search_state);
+    try testing.expectEqual(@as(usize, 2), model.search_result_count);
+    try testing.expectEqualStrings("course/shared-id", model.search_results[0].actionKey());
+    try testing.expectEqualStrings("lesson/shared-id", model.search_results[1].actionKey());
+
+    main.update(&model, .{ .open_search_result = "course/shared-id" }, &effects);
+    try testing.expectEqual(main.Screen.course, model.screen);
+    try testing.expectEqual(main.CompactCoursePage.outline, model.compact_course_page);
+    try testing.expectEqual(@as(usize, 0), model.target_lesson_id_len);
+    try testing.expect(!model.has_selected_lesson);
+}
+
+test "a same-Course search result preserves the selected Lesson" {
+    var effects = main.Effects.init(testing.allocator);
+    defer effects.deinit();
+    effects.executor = .fake;
+
+    var model = populatedLibraryModel();
+    selectCourse(&model, "course-1", "Systems");
+    model.selected_lesson.id_len = "lesson-7".len;
+    @memcpy(model.selected_lesson.id_storage[0.."lesson-7".len], "lesson-7");
+    model.has_selected_lesson = true;
+    model.selected_lesson_offset = 6;
+    model.search_open = true;
+    model.search_state = .results;
+    model.search_index_revision = 7;
+    model.desired_search_query_id = 1;
+    model.total_search_results = 1;
+    model.search_result_count = 1;
+    model.search_query_buffer.set("systems");
+    setCourseSearchResult(&model.search_results[0], "course-1", "Systems");
+
+    main.update(&model, .{ .open_search_result = "course/course-1" }, &effects);
+    try testing.expectEqual(main.Screen.course, model.screen);
+    try testing.expectEqual(main.CompactCoursePage.outline, model.compact_course_page);
+    try testing.expect(model.has_selected_lesson);
+    try testing.expectEqualStrings(
+        "lesson-7",
+        model.target_lesson_id_storage[0..model.target_lesson_id_len],
+    );
+    try testing.expectEqual(@as(u64, 6), model.target_lesson_offset);
+}
+
+test "Course access accepts the canonical integer Progress percentage" {
+    var effects = main.Effects.init(testing.allocator);
+    defer effects.deinit();
+    effects.executor = .fake;
+
+    var model = main.Model{
+        .library_revision = 8,
+        .screen = .course,
+        .course_state = .accessing,
+        .course_access_request_id = 41,
+    };
+    selectCourse(&model, "course-1", "Systems");
+    main.update(&model, .{ .course_accessed = .{
+        .request_id = 41,
+        .key = core_adapter.course_access_key,
+        .adapter_id = core_adapter.adapter_id,
+        .kind = @intFromEnum(core_adapter.Operation.access_course),
+        .schema_version = core_adapter.schema_version,
+        .outcome = .ok,
+        .bytes =
+        \\{"revision":9,"courseId":"course-1","courseName":"Systems","lessonCount":40,"completedLessonCount":23,"progressPercent":58,"resumeLessonId":"lesson-24","resumeLessonOffset":23,"lastAccessed":"2026-07-16T12:00:00.000Z"}
+        ,
+    } }, &effects);
+    try testing.expectEqual(main.CourseState.loading, model.course_state);
+    try testing.expectEqual(@as(u32, 58), model.selected_course.progress_percent);
+}
+
 test "keyboard focus opens the first available Course" {
     const live = try LiveLibrary.start(populatedLibraryModel(), geometry.SizeF.init(960, 680), .{});
     defer live.stop();
 
     try live.harness.runtime.dispatchAutomationCommand(live.app, "widget-key " ++ main.canvas_label ++ " tab");
     var snapshot = live.harness.runtime.automationSnapshot("melearner");
+    try testing.expect((snapshotByNameAndRole(snapshot, "Search Library", "button") orelse return error.TestUnexpectedResult).focused);
+    try live.harness.runtime.dispatchAutomationCommand(live.app, "widget-key " ++ main.canvas_label ++ " tab");
+    snapshot = live.harness.runtime.automationSnapshot("melearner");
     try testing.expect((snapshotByName(snapshot, "Courses") orelse return error.TestUnexpectedResult).focused);
     try live.harness.runtime.dispatchAutomationCommand(live.app, "widget-key " ++ main.canvas_label ++ " tab");
     snapshot = live.harness.runtime.automationSnapshot("melearner");
@@ -757,12 +1372,72 @@ test "light and dark Library screenshots and semantic snapshots stay determinist
     }
 
     try testing.expectEqualSlices(u64, &[_]u64{
-        6559461630511852737,
-        1307133522201074578,
-        2879665690939281361,
-        12495037189123983726,
-        11865650813177772464,
-        3164154168597024543,
+        9708422609027202112,
+        2301313746157295371,
+        11939615121557138468,
+        11541238420278536206,
+        15635631435211064495,
+        15068470137857644819,
+    }, &screenshot_hashes);
+}
+
+test "Course navigation and search screenshots stay deterministic" {
+    const sizes = [_]geometry.SizeF{
+        geometry.SizeF.init(560, 400),
+        geometry.SizeF.init(560, 400),
+        geometry.SizeF.init(960, 680),
+        geometry.SizeF.init(560, 400),
+    };
+    var screenshot_hashes: [sizes.len * 2]u64 = undefined;
+
+    for (sizes, 0..) |size, case_index| {
+        var model = if (case_index == 3) populatedLibraryModel() else largeCourseModel();
+        model.canvas_width = size.width;
+        if (case_index == 1 or case_index == 2) {
+            model.selected_lesson = model.lessons[0];
+            model.lessons[0].selected = true;
+            model.has_selected_lesson = true;
+            model.compact_course_page = .lesson;
+        } else if (case_index == 3) {
+            model.search_open = true;
+            model.search_state = .results;
+            model.search_index_revision = 7;
+            model.desired_search_query_id = 1;
+            model.total_search_results = 2;
+            model.search_result_count = 2;
+            model.search_query_buffer.set("systems");
+            setCourseSearchResult(&model.search_results[0], "course-1", "Systems");
+            setSearchResult(
+                &model.search_results[1],
+                "lesson-41",
+                "course-1",
+                "Systems",
+                "Storage",
+                "Binary heaps",
+                40,
+            );
+        }
+
+        for ([_]native_sdk.Appearance{
+            .{},
+            .{ .color_scheme = .dark },
+        }, 0..) |appearance, scheme_index| {
+            const live = try LiveLibrary.start(model, size, appearance);
+            defer live.stop();
+            const result_index = case_index * 2 + scheme_index;
+            screenshot_hashes[result_index] = try screenshotHash(&live.harness.runtime);
+        }
+    }
+
+    try testing.expectEqualSlices(u64, &[_]u64{
+        6989406396576010989,
+        5833644193176711401,
+        15439241892458306360,
+        17601016577952864682,
+        5776370605640282519,
+        13543513569934783543,
+        10455963579296583143,
+        12771900024855511110,
     }, &screenshot_hashes);
 }
 
@@ -796,14 +1471,17 @@ fn expectLiveEmptyPage(state_dir: []const u8) !void {
 
     var model = main.Model{};
     main.boot(&model, &effects);
-    var waited_ms: usize = 0;
-    while (!effects.hasPending() and waited_ms < 5_000) : (waited_ms += 1) {
-        try std.Io.sleep(testing.io, std.Io.Duration.fromMilliseconds(1), .awake);
-    }
-    const msg = effects.takeMsg() orelse return error.TestTimedOut;
-    main.update(&model, msg, &effects);
+    main.update(&model, try waitForEffectMsg(&effects), &effects);
     try testing.expect(model.libraryEmpty());
 
     effects.deinit();
     adapter.destroy();
+}
+
+fn waitForEffectMsg(effects: *main.Effects) !main.Msg {
+    var waited_ms: usize = 0;
+    while (!effects.hasPending() and waited_ms < 5_000) : (waited_ms += 1) {
+        try std.Io.sleep(testing.io, std.Io.Duration.fromMilliseconds(1), .awake);
+    }
+    return effects.takeMsg() orelse error.TestTimedOut;
 }

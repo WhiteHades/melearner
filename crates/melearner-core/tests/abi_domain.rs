@@ -317,6 +317,12 @@ fn course_access_round_trips_through_the_versioned_abi() {
         .expect("Course access has revision");
     assert!(accessed_revision > revision);
     assert_eq!(result["courseId"], "course-marker");
+    assert_eq!(result["courseName"], "Systems 日本語");
+    assert_eq!(result["lessonCount"], 2);
+    assert_eq!(result["completedLessonCount"], 1);
+    assert_eq!(result["progressPercent"], 50);
+    assert_eq!(result["resumeLessonId"], "lesson-video");
+    assert_eq!(result["resumeLessonOffset"], 0);
     let last_accessed = result["lastAccessed"]
         .as_str()
         .expect("Course access has timestamp");
@@ -871,7 +877,7 @@ fn search_rebuild_and_query_round_trip_through_the_versioned_abi() {
     let ready_result: serde_json::Value =
         serde_json::from_slice(payload).expect("parse search index result");
     assert_eq!(ready_result["indexRevision"], revision);
-    assert_eq!(ready_result["entryCount"], 2);
+    assert_eq!(ready_result["entryCount"], 3);
     unsafe { ml_core_release_event(core, &mut ready) };
 
     assert_eq!(
@@ -923,8 +929,10 @@ fn search_rebuild_and_query_round_trip_through_the_versioned_abi() {
     assert_eq!(result["offset"], 0);
     assert_eq!(result["total"], 1);
     let hit = &result["rows"][0];
+    assert_eq!(hit["resultType"], "lesson");
     assert_eq!(hit["courseName"], "Systems");
     assert_eq!(hit["sectionName"], "Core Concepts");
+    assert_eq!(hit["lessonOffset"], 0);
     assert_eq!(hit["name"], "14 Binary Heaps");
     assert_eq!(hit["relativePath"], "Core Concepts/14 Binary Heaps.mp4");
     assert_eq!(hit["kind"], "video");

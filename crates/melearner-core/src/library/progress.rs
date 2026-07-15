@@ -1,7 +1,9 @@
 use serde::Serialize;
 use sqlx::{Connection, Row, Sqlite, Transaction};
 
-use super::{LibraryDatabase, LibraryError, MAX_COURSE_PAGE_SIZE, child_path_range};
+use super::{
+    LibraryDatabase, LibraryError, MAX_COURSE_PAGE_SIZE, child_path_range, completion_percent,
+};
 use crate::{MutationControl, next_library_revision};
 
 #[derive(Debug)]
@@ -34,6 +36,12 @@ pub(crate) struct CourseAccessInput {
 pub(crate) struct CourseAccess {
     pub(crate) revision: u64,
     pub(crate) course_id: String,
+    pub(crate) course_name: String,
+    pub(crate) lesson_count: u64,
+    pub(crate) completed_lesson_count: u64,
+    pub(crate) progress_percent: u32,
+    pub(crate) resume_lesson_id: Option<String>,
+    pub(crate) resume_lesson_offset: Option<u64>,
     pub(crate) last_accessed: String,
 }
 
@@ -125,12 +133,102 @@ impl LibraryDatabase {
                 return Err(rollback_error(transaction, LibraryError::from(error)).await);
             }
         };
+        let summary = match sqlx::query(
+            "WITH ordered_lessons AS (
+                 SELECT lessons.id, lessons.completed,
+                        ROW_NUMBER() OVER (
+                            ORDER BY sections.order_index,
+                                     sections.name COLLATE MELEARNER_NATURAL,
+                                     sections.id,
+                                     lessons.order_index,
+                                     lessons.name COLLATE MELEARNER_NATURAL,
+                                     lessons.id
+                        ) - 1 AS lesson_offset
+                 FROM lessons INDEXED BY idx_lessons_course
+                 INNER JOIN sections ON sections.id = lessons.section_id
+                                    AND sections.course_id = lessons.course_id
+                 WHERE lessons.course_id = ?1
+             )
+             SELECT courses.name AS course_name,
+                    (SELECT COUNT(*) FROM ordered_lessons) AS lesson_count,
+                    (SELECT COUNT(*) FROM ordered_lessons WHERE completed != 0)
+                        AS completed_lesson_count,
+                    (SELECT id FROM ordered_lessons
+                     ORDER BY CASE WHEN completed = 0 THEN 0 ELSE 1 END, lesson_offset
+                     LIMIT 1) AS resume_lesson_id,
+                    (SELECT lesson_offset FROM ordered_lessons
+                     ORDER BY CASE WHEN completed = 0 THEN 0 ELSE 1 END, lesson_offset
+                     LIMIT 1) AS resume_lesson_offset
+             FROM courses
+             WHERE courses.id = ?1",
+        )
+        .bind(&input.course_id)
+        .fetch_one(&mut *transaction)
+        .await
+        {
+            Ok(summary) => summary,
+            Err(error) => {
+                return Err(rollback_error(transaction, LibraryError::from(error)).await);
+            }
+        };
+        let lesson_count = match summary.try_get::<i64, _>("lesson_count") {
+            Ok(value) if value >= 0 => value as u64,
+            Ok(value) => {
+                return Err(rollback_error(
+                    transaction,
+                    LibraryError::Database(format!("negative Lesson count {value}")),
+                )
+                .await);
+            }
+            Err(error) => {
+                return Err(rollback_error(transaction, LibraryError::from(error)).await);
+            }
+        };
+        let completed_lesson_count = match summary.try_get::<i64, _>("completed_lesson_count") {
+            Ok(value) if value >= 0 => value as u64,
+            Ok(value) => {
+                return Err(rollback_error(
+                    transaction,
+                    LibraryError::Database(format!("negative completed Lesson count {value}")),
+                )
+                .await);
+            }
+            Err(error) => {
+                return Err(rollback_error(transaction, LibraryError::from(error)).await);
+            }
+        };
+        let resume_lesson_offset = match summary.try_get::<Option<i64>, _>("resume_lesson_offset") {
+            Ok(Some(value)) => match u64::try_from(value) {
+                Ok(value) => Some(value),
+                Err(error) => {
+                    return Err(rollback_error(
+                        transaction,
+                        LibraryError::Database(error.to_string()),
+                    )
+                    .await);
+                }
+            },
+            Ok(None) => None,
+            Err(error) => {
+                return Err(rollback_error(transaction, LibraryError::from(error)).await);
+            }
+        };
+        let progress_percent = match completion_percent(completed_lesson_count, lesson_count) {
+            Ok(progress_percent) => progress_percent,
+            Err(error) => return Err(rollback_error(transaction, error).await),
+        };
         let Some(next_revision) = next_library_revision() else {
             return Err(rollback_error(transaction, LibraryError::RevisionExhausted).await);
         };
         let access = CourseAccess {
             revision: next_revision.get(),
             course_id: input.course_id,
+            course_name: summary.try_get("course_name")?,
+            lesson_count,
+            completed_lesson_count,
+            progress_percent,
+            resume_lesson_id: summary.try_get("resume_lesson_id")?,
+            resume_lesson_offset,
             last_accessed,
         };
         if !response_fits(&access, max_payload_bytes) {
@@ -452,6 +550,12 @@ mod tests {
             assert!(accessed.revision > initial_revision);
             assert_eq!(accessed.revision, library.revision());
             assert_eq!(accessed.course_id, "course");
+            assert_eq!(accessed.course_name, "Course");
+            assert_eq!(accessed.lesson_count, 1);
+            assert_eq!(accessed.completed_lesson_count, 0);
+            assert_eq!(accessed.progress_percent, 0);
+            assert_eq!(accessed.resume_lesson_id.as_deref(), Some("lesson"));
+            assert_eq!(accessed.resume_lesson_offset, Some(0));
             assert!(accessed.last_accessed.contains('T'));
             assert!(accessed.last_accessed.ends_with('Z'));
 

@@ -5,7 +5,11 @@
     .description = "A local-first course learner.",
     .version = "0.1.0",
     .platforms = .{"linux"},
-    .capabilities = .{ "native_views", "gpu_surfaces" },
+    .capabilities = .{ "native_views", "gpu_surfaces", "shortcuts" },
+    .shortcuts = .{
+        .{ .id = "melearner.search", .key = "k", .modifiers = .{"primary"} },
+        .{ .id = "melearner.dismiss", .key = "escape" },
+    },
     .webview_layer = "exclude",
     .shell = .{
         .windows = .{

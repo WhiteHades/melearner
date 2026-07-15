@@ -16,17 +16,26 @@ pub(super) struct SearchIndex {
 }
 
 struct SearchEntry {
+    result_type: SearchHitType,
     id: String,
     course_id: String,
     course_name: String,
     section_id: String,
     section_name: String,
+    lesson_offset: u64,
     name: String,
     name_folded: String,
     path: String,
     relative_path: String,
     kind: String,
     searchable: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum SearchHitType {
+    Course,
+    Lesson,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -48,11 +57,13 @@ pub(crate) struct SearchPageInput {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SearchHit {
+    pub(crate) result_type: SearchHitType,
     pub(crate) id: String,
     pub(crate) course_id: String,
     pub(crate) course_name: String,
     pub(crate) section_id: String,
     pub(crate) section_name: String,
+    pub(crate) lesson_offset: u64,
     pub(crate) name: String,
     pub(crate) path: String,
     pub(crate) relative_path: String,
@@ -206,11 +217,13 @@ impl LibraryDatabase {
 impl SearchEntry {
     fn hit(&self, score: i32) -> SearchHit {
         SearchHit {
+            result_type: self.result_type,
             id: self.id.clone(),
             course_id: self.course_id.clone(),
             course_name: self.course_name.clone(),
             section_id: self.section_id.clone(),
             section_name: self.section_name.clone(),
+            lesson_offset: self.lesson_offset,
             name: self.name.clone(),
             path: self.path.clone(),
             relative_path: self.relative_path.clone(),
@@ -225,12 +238,67 @@ async fn load_entries(
     root: &Path,
     control: &MutationControl,
 ) -> Result<Vec<SearchEntry>, LibraryError> {
+    let mut entries = Vec::new();
+    let mut course_rows = sqlx::query(
+        "SELECT id, name, path
+         FROM courses
+         WHERE missing_since IS NULL
+         ORDER BY name COLLATE MELEARNER_NATURAL, id",
+    )
+    .fetch(&mut **transaction);
+    while let Some(row) = course_rows.try_next().await? {
+        if control.is_cancelled() {
+            return Err(LibraryError::Cancelled);
+        }
+        let path: String = row.try_get("path")?;
+        let path_value = Path::new(&path);
+        if !path_value.is_dir() {
+            continue;
+        }
+        let Ok(canonical_path) = std::fs::canonicalize(path_value) else {
+            continue;
+        };
+        if !canonical_path.starts_with(root) {
+            continue;
+        }
+        let id: String = row.try_get("id")?;
+        let name: String = row.try_get("name")?;
+        let mut searchable = String::new();
+        append_search_text(&mut searchable, &name);
+        append_search_text(&mut searchable, file_name(&path));
+        entries.push(SearchEntry {
+            result_type: SearchHitType::Course,
+            id: id.clone(),
+            course_id: id,
+            course_name: name.clone(),
+            section_id: String::new(),
+            section_name: String::new(),
+            lesson_offset: 0,
+            name_folded: name.to_ascii_lowercase(),
+            name,
+            path,
+            relative_path: String::new(),
+            kind: "course".to_string(),
+            searchable: searchable.to_ascii_lowercase(),
+        });
+    }
+    drop(course_rows);
+
     let mut rows = sqlx::query(
         "SELECT lessons.id,
                 lessons.course_id,
                 courses.name AS course_name,
                 lessons.section_id,
                 sections.name AS section_name,
+                ROW_NUMBER() OVER (
+                    PARTITION BY lessons.course_id
+                    ORDER BY sections.order_index,
+                             sections.name COLLATE MELEARNER_NATURAL,
+                             sections.id,
+                             lessons.order_index,
+                             lessons.name COLLATE MELEARNER_NATURAL,
+                             lessons.id
+                ) - 1 AS lesson_offset,
                 lessons.name,
                 lessons.path,
                 lessons.relative_path,
@@ -243,7 +311,6 @@ async fn load_entries(
          ORDER BY lessons.id",
     )
     .fetch(&mut **transaction);
-    let mut entries = Vec::new();
     while let Some(row) = rows.try_next().await? {
         if control.is_cancelled() {
             return Err(LibraryError::Cancelled);
@@ -270,11 +337,14 @@ async fn load_entries(
         append_search_text(&mut searchable, &relative_path);
         append_search_text(&mut searchable, file_name(&path));
         entries.push(SearchEntry {
+            result_type: SearchHitType::Lesson,
             id: row.try_get("id")?,
             course_id: row.try_get("course_id")?,
             course_name,
             section_id: row.try_get("section_id")?,
             section_name,
+            lesson_offset: u64::try_from(row.try_get::<i64, _>("lesson_offset")?)
+                .map_err(|_| LibraryError::Database("negative Lesson offset".to_string()))?,
             name_folded: name.to_ascii_lowercase(),
             name,
             path,
@@ -320,7 +390,10 @@ fn score_entry(entry: &SearchEntry, parts: &[String]) -> Option<i32> {
         return None;
     }
 
-    let mut score = 1000_i32;
+    let mut score = match entry.result_type {
+        SearchHitType::Course => 2000_i32,
+        SearchHitType::Lesson => 1000_i32,
+    };
     for part in parts {
         if entry.name_folded.contains(part) {
             score += 400;
@@ -339,7 +412,7 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
 
-    use super::{SearchEntry, SearchIndex, SearchPageInput};
+    use super::{SearchEntry, SearchHitType, SearchIndex, SearchPageInput};
     use crate::library::progress::ProgressInput;
     use crate::library::{LibraryDatabase, LibraryError};
     use crate::{ML_MAX_SEARCH_QUERY_BYTES, MutationControl, next_library_revision};
@@ -587,7 +660,21 @@ mod tests {
                 .await
                 .expect("rebuild search index");
             assert_eq!(ready.index_revision, revision);
-            assert_eq!(ready.entry_count, 4);
+            assert_eq!(ready.entry_count, 5);
+
+            let courses = fixture
+                .library
+                .search_page(
+                    query_input(revision, 6, "systems", 0, 10),
+                    &MutationControl::new(),
+                )
+                .expect("search Systems Course");
+            assert_eq!(courses.total, 5);
+            assert_eq!(courses.rows[0].result_type, SearchHitType::Course);
+            assert_eq!(courses.rows[0].id, "course");
+            assert_eq!(courses.rows[0].course_id, "course");
+            assert_eq!(courses.rows[0].name, "Systems");
+            assert_eq!(courses.rows[0].kind, "course");
 
             let page = fixture
                 .library
@@ -599,6 +686,7 @@ mod tests {
             assert_eq!(page.query_id, 7);
             assert_eq!(page.index_revision, revision);
             assert_eq!(page.total, 1);
+            assert_eq!(page.rows[0].result_type, SearchHitType::Lesson);
             assert_eq!(page.rows[0].id, "heaps");
             assert_eq!(page.rows[0].course_id, "course");
             assert_eq!(page.rows[0].course_name, "Systems");
@@ -654,8 +742,10 @@ mod tests {
                 .expect("load second search page");
             assert_eq!(first.total, 2);
             assert_eq!(first.rows[0].id, "lecture-a");
+            assert_eq!(first.rows[0].lesson_offset, 2);
             assert_eq!(second.total, 2);
             assert_eq!(second.rows[0].id, "lecture-b");
+            assert_eq!(second.rows[0].lesson_offset, 3);
 
             let empty = fixture
                 .library
@@ -704,11 +794,13 @@ mod tests {
                 revision,
                 entries: (0..100_000)
                     .map(|index| SearchEntry {
+                        result_type: SearchHitType::Lesson,
                         id: format!("lesson-{index:06}"),
                         course_id: String::new(),
                         course_name: String::new(),
                         section_id: String::new(),
                         section_name: String::new(),
+                        lesson_offset: index,
                         name: "Lesson".to_string(),
                         name_folded: "lesson".to_string(),
                         path: String::new(),

@@ -957,11 +957,7 @@ fn course_summary(row: SqliteRow) -> Result<CourseSummary, LibraryError> {
     let section_count = nonnegative_count(section_count)?;
     let lesson_count = nonnegative_count(lesson_count)?;
     let completed_lesson_count = nonnegative_count(completed_lesson_count)?;
-    let progress_percent = if lesson_count == 0 {
-        0
-    } else {
-        ((completed_lesson_count as f64 / lesson_count as f64) * 100.0).round() as u32
-    };
+    let progress_percent = completion_percent(completed_lesson_count, lesson_count)?;
     Ok(CourseSummary {
         id: row.try_get("id")?,
         identity_id: row.try_get("identity_id")?,
@@ -1005,6 +1001,21 @@ fn lesson_summary(row: SqliteRow, indexed: &LessonPageKey) -> Result<LessonSumma
 
 fn nonnegative_count(value: i64) -> Result<u64, LibraryError> {
     u64::try_from(value).map_err(|_| LibraryError::Database("negative aggregate count".to_string()))
+}
+
+fn completion_percent(completed_lessons: u64, lessons: u64) -> Result<u32, LibraryError> {
+    if lessons == 0 {
+        return Ok(0);
+    }
+    if completed_lessons > lessons {
+        return Err(LibraryError::Database(
+            "completed lesson count exceeds lesson count".to_string(),
+        ));
+    }
+    let percent =
+        (u128::from(completed_lessons) * 100 + u128::from(lessons) / 2) / u128::from(lessons);
+    u32::try_from(percent)
+        .map_err(|_| LibraryError::Database("invalid completion percent".to_string()))
 }
 
 fn child_path_prefix(path: &str) -> String {

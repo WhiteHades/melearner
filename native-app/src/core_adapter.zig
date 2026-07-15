@@ -10,17 +10,25 @@ pub const schema_version: u32 = 1;
 pub const library_page_key: u64 = 1;
 pub const course_access_key: u64 = 2;
 pub const lesson_page_key: u64 = 3;
+pub const search_index_key: u64 = 4;
+pub const search_query_key_base: u64 = 1_000;
 pub const library_page_request_bytes: usize = 16;
 pub const course_access_request_header_bytes: usize = 8;
 pub const lesson_page_request_header_bytes: usize = 16;
+pub const search_index_request_bytes: usize = 8;
+pub const search_query_request_header_bytes: usize = 24;
 pub const library_page_size: u32 = 20;
 pub const lesson_page_size: u32 = 20;
+pub const search_page_size: u32 = 20;
 pub const max_course_id_bytes: usize = 128;
+pub const max_search_query_bytes: usize = 512;
 
 pub const Operation = enum(u32) {
     load_library_page = 1,
     access_course = 2,
     load_lesson_page = 3,
+    rebuild_search_index = 4,
+    query_search = 5,
 };
 
 const Request = struct {
@@ -28,6 +36,8 @@ const Request = struct {
     expected_revision: u64,
     page_offset: u64 = 0,
     course_id: []const u8 = "",
+    query_id: u64 = 0,
+    query: []const u8 = "",
 };
 
 const SlotState = enum {
@@ -46,11 +56,18 @@ const Slot = struct {
     page_offset: u64 = 0,
     course_id_storage: [max_course_id_bytes]u8 = [_]u8{0} ** max_course_id_bytes,
     course_id_len: usize = 0,
+    query_id: u64 = 0,
+    query_storage: [max_search_query_bytes]u8 = [_]u8{0} ** max_search_query_bytes,
+    query_len: usize = 0,
     cancelled: bool = false,
     completion: ?native_sdk.ExternalEffectCompletion = null,
 
     fn courseId(slot: *const Slot) []const u8 {
         return slot.course_id_storage[0..slot.course_id_len];
+    }
+
+    fn query(slot: *const Slot) []const u8 {
+        return slot.query_storage[0..slot.query_len];
     }
 };
 
@@ -104,6 +121,8 @@ pub const CoreAdapter = struct {
             @intFromEnum(Operation.load_library_page) => .load_library_page,
             @intFromEnum(Operation.access_course) => .access_course,
             @intFromEnum(Operation.load_lesson_page) => .load_lesson_page,
+            @intFromEnum(Operation.rebuild_search_index) => .rebuild_search_index,
+            @intFromEnum(Operation.query_search) => .query_search,
             else => return error.UnsupportedCoreRequest,
         };
         const decoded = decodeRequest(operation, request.payload) catch return error.UnsupportedCoreRequest;
@@ -127,9 +146,12 @@ pub const CoreAdapter = struct {
             .expected_revision = decoded.expected_revision,
             .page_offset = decoded.page_offset,
             .course_id_len = decoded.course_id.len,
+            .query_id = decoded.query_id,
+            .query_len = decoded.query.len,
             .completion = completion,
         };
         @memcpy(slot.course_id_storage[0..decoded.course_id.len], decoded.course_id);
+        @memcpy(slot.query_storage[0..decoded.query.len], decoded.query);
         self.mutex.unlock(self.io);
         self.wake.post(self.io);
     }
@@ -290,6 +312,29 @@ pub const CoreAdapter = struct {
                 };
                 break :blk c.ml_library_lesson_page_v1(core, &request, &core_request_id);
             },
+            .rebuild_search_index => blk: {
+                const request: c.ml_search_rebuild_request_v1 = .{
+                    .struct_size = @sizeOf(c.ml_search_rebuild_request_v1),
+                    .abi_version = c.ML_ABI_VERSION,
+                    .expected_revision = expected_revision,
+                    .reserved = 0,
+                };
+                break :blk c.ml_search_rebuild_v1(core, &request, &core_request_id);
+            },
+            .query_search => blk: {
+                const request: c.ml_search_query_request_v1 = .{
+                    .struct_size = @sizeOf(c.ml_search_query_request_v1),
+                    .abi_version = c.ML_ABI_VERSION,
+                    .expected_index_revision = slot.expected_revision,
+                    .query_id = slot.query_id,
+                    .offset = slot.page_offset,
+                    .limit = search_page_size,
+                    .reserved = 0,
+                    .query = slot.query().ptr,
+                    .query_len = slot.query_len,
+                };
+                break :blk c.ml_search_query_v1(core, &request, &core_request_id);
+            },
         };
         if (status == c.ML_STATUS_OK and core_request_id != 0) {
             slot.core_request_id = core_request_id;
@@ -345,9 +390,15 @@ pub const CoreAdapter = struct {
             if (active.completion) |completion| self.completeWithRetry(completion, .success, payload);
             return;
         }
-        if (event.status == c.ML_STATUS_STALE) revision.* = staleActualRevision(payload) catch revision.*;
+        if (event.status == c.ML_STATUS_STALE and active.operation != .query_search) {
+            revision.* = staleActualRevision(payload) catch revision.*;
+        }
         if (active.completion) |completion| {
-            self.completeWithRetry(completion, .failure, requestFailureMessage(active.operation, event.status));
+            const failure = if (active.operation == .query_search and event.status == c.ML_STATUS_STALE)
+                payload
+            else
+                requestFailureMessage(active.operation, event.status);
+            self.completeWithRetry(completion, .failure, failure);
         }
     }
 
@@ -481,6 +532,30 @@ pub fn encodeLessonPageRequest(buffer: []u8, expected_revision: u64, offset: u64
     return buffer[0..len];
 }
 
+pub fn encodeSearchIndexRequest(buffer: *[search_index_request_bytes]u8, expected_revision: u64) ![]const u8 {
+    if (expected_revision == 0) return error.InvalidSearchIndexRequest;
+    std.mem.writeInt(u64, buffer, expected_revision, .little);
+    return buffer;
+}
+
+pub fn encodeSearchQueryRequest(buffer: []u8, expected_index_revision: u64, query_id: u64, offset: u64, query: []const u8) ![]const u8 {
+    const len = search_query_request_header_bytes + query.len;
+    if (buffer.len < len or
+        expected_index_revision == 0 or
+        query_id == 0 or
+        offset > std.math.maxInt(i64) or
+        offset % search_page_size != 0 or
+        !validSearchQuery(query))
+    {
+        return error.InvalidSearchQueryRequest;
+    }
+    std.mem.writeInt(u64, buffer[0..8], expected_index_revision, .little);
+    std.mem.writeInt(u64, buffer[8..16], query_id, .little);
+    std.mem.writeInt(u64, buffer[16..24], offset, .little);
+    @memcpy(buffer[24..len], query);
+    return buffer[0..len];
+}
+
 fn decodeRequest(operation: Operation, payload: []const u8) !Request {
     return switch (operation) {
         .load_library_page => blk: {
@@ -537,6 +612,41 @@ fn decodeRequest(operation: Operation, payload: []const u8) !Request {
                 .course_id = course_id,
             };
         },
+        .rebuild_search_index => blk: {
+            if (payload.len != search_index_request_bytes) return error.InvalidSearchIndexRequest;
+            const expected_revision = std.mem.readInt(u64, payload[0..8], .little);
+            if (expected_revision == 0) return error.InvalidSearchIndexRequest;
+            break :blk .{
+                .operation = operation,
+                .expected_revision = expected_revision,
+            };
+        },
+        .query_search => blk: {
+            if (payload.len <= search_query_request_header_bytes or
+                payload.len > search_query_request_header_bytes + max_search_query_bytes)
+            {
+                return error.InvalidSearchQueryRequest;
+            }
+            const expected_revision = std.mem.readInt(u64, payload[0..8], .little);
+            const query_id = std.mem.readInt(u64, payload[8..16], .little);
+            const offset = std.mem.readInt(u64, payload[16..24], .little);
+            const query = payload[search_query_request_header_bytes..];
+            if (expected_revision == 0 or
+                query_id == 0 or
+                offset > std.math.maxInt(i64) or
+                offset % search_page_size != 0 or
+                !validSearchQuery(query))
+            {
+                return error.InvalidSearchQueryRequest;
+            }
+            break :blk .{
+                .operation = operation,
+                .expected_revision = expected_revision,
+                .page_offset = offset,
+                .query_id = query_id,
+                .query = query,
+            };
+        },
     };
 }
 
@@ -545,6 +655,13 @@ fn validCourseId(course_id: []const u8) bool {
         course_id.len <= max_course_id_bytes and
         std.unicode.utf8ValidateSlice(course_id) and
         std.mem.indexOfScalar(u8, course_id, 0) == null;
+}
+
+fn validSearchQuery(query: []const u8) bool {
+    return query.len != 0 and
+        query.len <= max_search_query_bytes and
+        std.unicode.utf8ValidateSlice(query) and
+        std.mem.indexOfScalar(u8, query, 0) == null;
 }
 
 fn emptyEvent() c.ml_event_v1 {
@@ -572,6 +689,8 @@ fn expectedEventKind(operation: Operation) c.ml_event_kind_t {
         .load_library_page => c.ML_EVENT_LIBRARY_COURSE_PAGE,
         .access_course => c.ML_EVENT_COURSE_ACCESSED,
         .load_lesson_page => c.ML_EVENT_LIBRARY_LESSON_PAGE,
+        .rebuild_search_index => c.ML_EVENT_SEARCH_INDEX_READY,
+        .query_search => c.ML_EVENT_SEARCH_PAGE,
     };
 }
 
@@ -600,6 +719,8 @@ fn requestFailureMessage(operation: Operation, status: c.ml_status_t) []const u8
         c.ML_STATUS_STALE => switch (operation) {
             .load_library_page => "The Library changed while this page was opening.",
             .access_course, .load_lesson_page => "The Library changed while this Course was opening.",
+            .rebuild_search_index => "The Library changed while search was preparing.",
+            .query_search => "The search index changed while results were loading.",
         },
         c.ML_STATUS_NOT_FOUND => if (operation == .access_course)
             "This Course is no longer available."
@@ -608,6 +729,8 @@ fn requestFailureMessage(operation: Operation, status: c.ml_status_t) []const u8
         c.ML_STATUS_CANCELLED => switch (operation) {
             .load_library_page => "Opening the Library was cancelled.",
             .access_course, .load_lesson_page => "Opening the Course was cancelled.",
+            .rebuild_search_index => "Preparing search was cancelled.",
+            .query_search => "Searching was cancelled.",
         },
         c.ML_STATUS_BUSY => "The Library is busy. Try again.",
         c.ML_STATUS_PANIC => "The Library service stopped unexpectedly.",
@@ -658,6 +781,32 @@ test "Course requests use bounded strict binary wire formats" {
     try std.testing.expectError(error.InvalidLessonPageRequest, encodeLessonPageRequest(&lesson_storage, 8, 1, "course-1"));
     try std.testing.expectError(error.InvalidLessonPageRequest, encodeLessonPageRequest(&lesson_storage, 8, @as(u64, std.math.maxInt(i64)) + 1, "course-1"));
     try std.testing.expectError(error.InvalidLessonPageRequest, encodeLessonPageRequest(&lesson_storage, 8, 20, "bad\x00id"));
+}
+
+test "Search requests use bounded strict binary wire formats" {
+    var rebuild_storage: [search_index_request_bytes]u8 = undefined;
+    const rebuild = try encodeSearchIndexRequest(&rebuild_storage, 8);
+    const decoded_rebuild = try decodeRequest(.rebuild_search_index, rebuild);
+    try std.testing.expectEqual(@as(u64, 8), decoded_rebuild.expected_revision);
+    try std.testing.expectError(error.InvalidSearchIndexRequest, encodeSearchIndexRequest(&rebuild_storage, 0));
+
+    var query_storage: [search_query_request_header_bytes + max_search_query_bytes]u8 = undefined;
+    const query = try encodeSearchQueryRequest(&query_storage, 8, 42, 20, "binary heaps");
+    const decoded_query = try decodeRequest(.query_search, query);
+    try std.testing.expectEqual(@as(u64, 8), decoded_query.expected_revision);
+    try std.testing.expectEqual(@as(u64, 42), decoded_query.query_id);
+    try std.testing.expectEqual(@as(u64, 20), decoded_query.page_offset);
+    try std.testing.expectEqualStrings("binary heaps", decoded_query.query);
+
+    try std.testing.expectError(error.InvalidSearchQueryRequest, encodeSearchQueryRequest(&query_storage, 0, 42, 20, "binary heaps"));
+    try std.testing.expectError(error.InvalidSearchQueryRequest, encodeSearchQueryRequest(&query_storage, 8, 0, 20, "binary heaps"));
+    try std.testing.expectError(error.InvalidSearchQueryRequest, encodeSearchQueryRequest(&query_storage, 8, 42, 1, "binary heaps"));
+    try std.testing.expectError(error.InvalidSearchQueryRequest, encodeSearchQueryRequest(&query_storage, 8, 42, 20, ""));
+    try std.testing.expectError(error.InvalidSearchQueryRequest, encodeSearchQueryRequest(&query_storage, 8, 42, 20, "bad\x00query"));
+    try std.testing.expectError(error.InvalidSearchQueryRequest, encodeSearchQueryRequest(&query_storage, 8, 42, 20, "\xff"));
+    const oversized = [_]u8{'q'} ** (max_search_query_bytes + 1);
+    var oversized_storage: [search_query_request_header_bytes + oversized.len]u8 = undefined;
+    try std.testing.expectError(error.InvalidSearchQueryRequest, encodeSearchQueryRequest(&oversized_storage, 8, 42, 20, &oversized));
 }
 
 test "active mutation cancellation stays correlated until its terminal core event" {
