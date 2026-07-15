@@ -15,6 +15,7 @@ name = "melearner_core"
 crate-type = ["rlib", "staticlib"]
 
 [dependencies]
+cap-fs-ext = "=4.0.2"
 cap-std = "=4.0.2"
 icu_collator = "=2.2.1"
 jwalk = "=0.8.1"
@@ -27,3 +28,6 @@ tokio = { version = "=1.52.3", features = ["rt"] }
 [dev-dependencies]
 cbindgen = "=0.29.4"
 tempfile = "=3.27.0"
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+rustix = { version = "=1.1.4", features = ["fs"] }
