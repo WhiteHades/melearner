@@ -15,6 +15,8 @@
 
 #define ML_MAX_EVENT_PAYLOAD_BYTES ((16 * 1024) * 1024)
 
+#define ML_MIN_EVENT_PAYLOAD_BYTES 20
+
 typedef struct ml_core_t ml_core_t;
 
 typedef uint32_t ml_status_t;
@@ -74,6 +76,14 @@ typedef struct ml_library_lesson_page_request_v1 {
   size_t section_id_len;
 } ml_library_lesson_page_request_v1;
 
+typedef struct ml_library_scan_request_v1 {
+  uint32_t struct_size;
+  uint32_t abi_version;
+  uint64_t expected_revision;
+  const uint8_t *root_path;
+  size_t root_path_len;
+} ml_library_scan_request_v1;
+
 #define ML_STATUS_OK 0
 
 #define ML_STATUS_INVALID_ARGUMENT 1
@@ -105,6 +115,8 @@ typedef struct ml_library_lesson_page_request_v1 {
 #define ML_EVENT_LIBRARY_COURSE_PAGE 4
 
 #define ML_EVENT_LIBRARY_LESSON_PAGE 5
+
+#define ML_EVENT_LIBRARY_SCAN 6
 
 uint32_t ml_abi_version(void);
 
@@ -208,5 +220,18 @@ ml_status_t ml_library_course_page_v1(struct ml_core_t *core,
 ml_status_t ml_library_lesson_page_v1(struct ml_core_t *core,
                                       const struct ml_library_lesson_page_request_v1 *request,
                                       uint64_t *out_request_id);
+
+/**
+ * Submits one asynchronous Library scan and reconciliation request.
+ *
+ * # Safety
+ *
+ * `request` must point to a readable `ml_library_scan_request_v1`. Its root
+ * path bytes must remain readable for this call. `out_request_id` must point
+ * to writable `u64` storage. All inputs are copied before return.
+ */
+ml_status_t ml_library_scan_v1(struct ml_core_t *core,
+                               const struct ml_library_scan_request_v1 *request,
+                               uint64_t *out_request_id);
 
 #endif  /* MELEARNER_CORE_H */
