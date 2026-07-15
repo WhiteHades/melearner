@@ -16,6 +16,10 @@ use sqlx::{Connection, QueryBuilder, Row, Sqlite, SqliteConnection};
 
 use crate::schema;
 
+mod reconciliation;
+
+pub(crate) use reconciliation::ReconcileResult;
+
 const SQLITE_PROGRESS_INTERVAL: i32 = 1_000;
 pub(crate) const NATIVE_DATABASE_FILENAME: &str = "melearner-native.sqlite3";
 const NATIVE_DATABASE_LOCK_FILENAME: &str = "melearner-native.lock";
@@ -29,21 +33,31 @@ static NATURAL_COLLATOR: LazyLock<CollatorBorrowed<'static>> = LazyLock::new(|| 
 
 #[derive(Debug)]
 pub(crate) enum LibraryError {
+    Cancelled,
     Database(String),
+    InvalidScan(String),
     InvalidPageSize { limit: u32 },
     InvalidOffset { offset: u64 },
+    ResponseTooLarge { limit: usize },
+    RevisionExhausted,
     StaleRevision { expected: u64, actual: u64 },
 }
 impl std::fmt::Display for LibraryError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Cancelled => formatter.write_str("library mutation was cancelled"),
             Self::Database(message) => formatter.write_str(message),
+            Self::InvalidScan(message) => formatter.write_str(message),
             Self::InvalidPageSize { limit } => {
                 write!(formatter, "invalid page size {limit}")
             }
             Self::InvalidOffset { offset } => {
                 write!(formatter, "invalid page offset {offset}")
             }
+            Self::ResponseTooLarge { limit } => {
+                write!(formatter, "library response exceeds {limit} bytes")
+            }
+            Self::RevisionExhausted => formatter.write_str("library revisions are exhausted"),
             Self::StaleRevision { expected, actual } => {
                 write!(
                     formatter,
