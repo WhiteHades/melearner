@@ -239,6 +239,23 @@ fn public_v2_layout_is_pinned() {
         32 + size_of::<usize>() * 3
     );
 
+    assert_eq!(
+        size_of::<ml_library_scan_request_v1>(),
+        16 + size_of::<usize>() * 2
+    );
+    assert_eq!(
+        align_of::<ml_library_scan_request_v1>(),
+        align_of::<u64>().max(align_of::<usize>())
+    );
+    assert_eq!(offset_of!(ml_library_scan_request_v1, struct_size), 0);
+    assert_eq!(offset_of!(ml_library_scan_request_v1, abi_version), 4);
+    assert_eq!(offset_of!(ml_library_scan_request_v1, expected_revision), 8);
+    assert_eq!(offset_of!(ml_library_scan_request_v1, root_path), 16);
+    assert_eq!(
+        offset_of!(ml_library_scan_request_v1, root_path_len),
+        16 + size_of::<usize>()
+    );
+
     assert_eq!(size_of::<ml_core_limits_v1>(), 16);
     assert_eq!(align_of::<ml_core_limits_v1>(), 4);
     assert_eq!(offset_of!(ml_core_limits_v1, struct_size), 0);
@@ -309,7 +326,7 @@ fn capacity_one_startup_emits_fatal_for_a_noncurrent_native_database() {
         .expect("create noncurrent native database");
     let mut startup_config = config(data_dir.path());
     startup_config.event_queue_capacity = 1;
-    startup_config.max_event_payload_bytes = 1;
+    startup_config.max_event_payload_bytes = ML_MIN_EVENT_PAYLOAD_BYTES;
     let mut core = ptr::null_mut();
     assert_eq!(
         unsafe { ml_core_create(&startup_config, &mut core) },
@@ -446,6 +463,13 @@ fn public_abi_rejects_null_and_incompatible_structs() {
     zero_payload.max_event_payload_bytes = 0;
     assert_eq!(
         unsafe { ml_core_create(&zero_payload, &mut core) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+
+    let mut undersized_payload = config(data_dir.path());
+    undersized_payload.max_event_payload_bytes = ML_MIN_EVENT_PAYLOAD_BYTES - 1;
+    assert_eq!(
+        unsafe { ml_core_create(&undersized_payload, &mut core) },
         ML_STATUS_INVALID_ARGUMENT
     );
 
