@@ -1075,7 +1075,7 @@ fn scan_valid_root(
                 }
             }
             Err(ScanError::Cancelled) => return Err(ScanError::Cancelled),
-            Err(ScanError::Invalid(message)) => push_warning(&mut warnings, message),
+            Err(error @ ScanError::Invalid(_)) => return Err(error),
         }
     }
 
