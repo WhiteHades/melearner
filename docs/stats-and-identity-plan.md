@@ -1,12 +1,13 @@
 # Stats and Course Identity
 
-This document records the current stats and course-identity behavior plus remaining product decisions.
+This document records the canonical stats and course-identity behavior and the resolved product decisions.
 
-## Implemented Behavior
+## Product Behavior
 
-- The dashboard shows local library stats: total courses, missing courses, completion percent, watched progress, storage size, section count, media split, top courses, and a 12-week activity heatmap.
-- Lesson progress updates append rows to `lesson_activity` for daily watched seconds, touched lessons, and completions.
+- The dashboard shows local Library stats: total Courses, missing Courses, completion percent, position-derived Progress time, storage size, Section count, media split, top Courses, and a 12-week activity heatmap.
+- Lesson Progress updates append rows to `lesson_activity` for daily positive position advances, touched Lessons, and completions.
 - Course rows are retained when folders are temporarily missing. Missing courses keep progress, notes, sections, lessons, subtitles, stats inputs, and activity history in SQLite.
+- Missing courses remain in the main Library with their retained Progress. Activating one opens recovery actions to locate the Course, rescan the current root, or change the root; it does not open stale Lessons.
 - Renamed or moved courses can reconnect to existing progress by exact path, marker identity, or one unambiguous fingerprint match.
 - Marker files are automatic local metadata. melearner writes `.melearner-course.json` into available course folders and uses its marker ID before fingerprint matching on later scans.
 - Marker writing has no dashboard toggle. The app skips missing courses, refuses to overwrite marker files with a different existing identity, and reports warnings instead of guessing.
@@ -22,20 +23,33 @@ Current stats are derived locally from:
 
 The app does not maintain a separate `course_stats` table. Aggregate stats are computed from current lesson rows and historical activity rows.
 
-Implemented stats:
+### Canonical snapshot fields
 
-- Total courses
-- Available and missing courses
-- Total sections
-- Total lessons
-- Completed lessons
-- Completion percent
-- Total file size
-- File size by lesson type
-- Watched progress seconds
-- Available duration when known
-- Per-course lesson, storage, completion, and watched-progress summaries
-- Daily activity heatmap from `lesson_activity`
+The Rust `LibraryStats` response uses camelCase JSON and contains exactly:
+
+- `revision`: current Library revision; requests for another revision fail as stale.
+- `totalCourses`: all retained Course rows in scope, including missing Courses.
+- `availableCourses`: Course rows whose `missing_since` is null.
+- `missingCourses`: Course rows whose `missing_since` is non-null.
+- `sections`: Section rows belonging to in-scope Courses.
+- `lessons`: Lesson rows belonging to in-scope Courses.
+- `completedLessons`: sum of the boolean `lessons.completed` values.
+- `completionPercent`: `0` for no Lessons; otherwise `(completedLessons * 100 + lessons / 2) / lessons`, using nonnegative integer half-up rounding.
+- `bytes`: sum of `lessons.file_size`.
+- `watchedSeconds`: sum of `lessons.watched_time`.
+- `totalSeconds`: sum of known `lessons.duration`; unknown duration contributes `0`.
+- `mediaTypes`: rows with `type`, `lessons`, `bytes`, `completed`, and `watchedSeconds`, grouped by Lesson type and ordered `video`, `audio`, `document`, then `quiz`.
+- `topCourses`: at most four rows with `id`, `name`, `lessons`, `completedLessons`, `bytes`, and `watchedSeconds`, ordered by `watchedSeconds` descending, `bytes` descending, natural Course name, then ID.
+
+When a root is configured, every aggregate uses the same selected-root Course scope; otherwise it uses all Course rows. Retained missing Courses remain in that scope and therefore retain their contribution to counts, Progress, storage, media, and top-Course summaries.
+
+### Canonical activity fields
+
+The 12-week heatmap requests an 84-day `ActivityDayPage` with `revision`, `offset`, `total`, and `rows`. Each returned active date row has `date`, `watchedSeconds`, `lessonsTouched`, and `completions`, ordered oldest to newest. The UI fills dates with no row as zero-valued cells; it does not infer extra activity.
+
+The database fields named `watched_time` and `watched_seconds`, and the API field `watchedSeconds`, are position-derived Progress. A Progress write replaces `lessons.watched_time`; `lesson_activity.watched_seconds` records only `max(new watched_time - previous watched_time, 0)`. A completion-state change records an activity row even when that delta is zero, and `completions` counts only transitions into completed. These fields do not measure wall-clock time spent playing. melearner does not maintain a separate played-time clock.
+
+The activity heatmap remains a fixed 12-week window. It can be revisited only if configurability improves the learning UI without adding settings complexity.
 
 ## Identity Model
 
@@ -84,14 +98,9 @@ Format:
 Rules:
 
 - Scanner reads `.melearner-course.json` if present.
-- Available scanned courses get marker files after sync.
+- Available scanned Courses get marker files after the database reconciliation transaction commits and the new Library revision is installed.
 - Sync matches marker identity before fingerprint matching.
 - Duplicate marker IDs in the same scan are ignored with warnings.
 - Existing marker files with a different identity are not overwritten.
 - Missing courses are skipped when writing markers.
-
-## Open Decisions
-
-- Should missing courses stay visible in the main library long-term or move to a separate recovery/settings view?
-- Keep the activity heatmap at the current 12-week window for now. Revisit configurability only if it improves the learning UI without adding settings complexity.
-- Should stats distinguish played time from position-derived progress if a future player records wall-clock playback time?
+- Marker writes are nontransactional filesystem side effects. A write failure adds a warning to the committed scan result and does not roll back the new revision.

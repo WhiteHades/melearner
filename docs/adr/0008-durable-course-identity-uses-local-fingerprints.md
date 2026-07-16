@@ -25,9 +25,11 @@ Lessons use exact path first, then relative path within the resolved course, the
 
 ## Marker Files
 
-The app writes `.melearner-course.json` automatically for available course folders after scans and after loading an existing local library. There is no user-facing marker toggle. Course identity should be durable without asking the user to understand implementation details.
+The app writes `.melearner-course.json` automatically for available course folders after scans and after loading an existing local Library. There is no user-facing marker toggle. Course identity should be durable without asking the user to understand implementation details.
 
 Existing marker files are read during scans. Duplicate marker IDs in one scan are ignored with warnings, and marker files with a different existing identity are not overwritten. Missing courses are skipped when writing markers.
+
+Scan reconciliation commits the selected root, safe Course/Lesson rows, and new Library revision before marker writes begin. Marker writes are nontransactional filesystem side effects. A write failure adds a warning to the already committed scan result and never rolls its revision back. Cancellation or fatal failure before the commit boundary retains the prior revision and performs none of the planned marker writes.
 
 ## Consequences
 
@@ -35,3 +37,4 @@ Existing marker files are read during scans. Duplicate marker IDs in one scan ar
 - Temporarily missing courses keep progress, notes, sections, lessons, and subtitles in SQLite.
 - Copied or duplicate courses can produce identical fingerprints or duplicated marker files; melearner must refuse ambiguous progress reuse instead of guessing.
 - Fingerprints and marker IDs are local metadata, not telemetry or remote analytics.
+- Current marker files remain current domain inputs across native package replacement; reading them is not previous-version database compatibility.

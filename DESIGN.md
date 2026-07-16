@@ -1,6 +1,12 @@
 # Design: melearner
 
-A locked visual system for the app. Every visual change should preserve the current product structure and component ownership while applying this system.
+A locked visual system for the app. Every visual change should preserve the current product structure while applying this system; shell ownership follows ADR 0011.
+
+## Scope
+
+- The transitional production shell is React/shadcn/Radix inside Tauri. Its browser-responsive verification remains 320, 375, 414, 768, and desktop widths until cutover.
+- The final native shell is Native SDK `.native` views and Zig. Its supported content floor is 560x400 logical pixels, with compact at 560-767 px, standard at 768-1279 px, and wide at 1280 px or greater as specified in `docs/specs/fully-native-melearner.md`.
+- The visual language is shared, but a shell-specific implementation rule applies only to that shell. Do not turn transitional DOM, WebView, shadcn, or Radix constraints into final-native requirements.
 
 ## Register
 
@@ -26,7 +32,7 @@ Inspired by the Kami paper system: warm parchment surfaces, low-chroma ink, one 
 - App background is warm paper, not pure white or pure black.
 - Cards lift one shade above the page with a 1px warm border.
 - Elevation should be a whisper shadow only; if a shadow is obvious, it is too strong.
-- Rounded corners should stay consistent with existing shadcn/Radix primitives.
+- Rounded corners stay consistent with existing shadcn/Radix primitives in the transitional shell and with the committed Native SDK design tokens in the final native shell.
 
 ## Accent Rules
 
@@ -36,10 +42,11 @@ Inspired by the Kami paper system: warm parchment surfaces, low-chroma ink, one 
 
 ## Layout Rules
 
-- Preserve existing routes, components, content, and information architecture.
+- Preserve product routes, content, and information architecture. Preserve a shell's committed component structure only within that shell.
 - Improve rhythm through spacing, borders, and surface contrast rather than reordering UI.
 - Avoid nested-card feeling by letting parent surfaces and child controls differ subtly.
-- Keep responsive behavior stable at 320, 375, 414, 768, and desktop widths.
+- Keep transitional browser behavior stable at 320, 375, 414, 768, and desktop widths.
+- Keep final-native behavior stable at 560x400, 768-wide, 1280-wide, and representative desktop/ultrawide viewports; widths below 560 are outside the final-native support contract.
 
 ## Motion
 

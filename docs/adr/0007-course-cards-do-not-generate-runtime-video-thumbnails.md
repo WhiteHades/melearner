@@ -10,8 +10,10 @@ Course cards should not invoke video decoding or FFmpeg at render/scroll time.
 
 Thumbnail generation may run after library scan or persisted-library load as a queued native background job with a persistent cache key derived from source metadata. Card render must only consume already-known thumbnail URLs or the fallback visual.
 
+In the final architecture from ADR 0011, that background work runs in process through the embedded media engine. The package must not contain or launch `ffmpeg` or `ffprobe` executables for thumbnails, metadata, or optional processing. References to FFmpeg in this ADR do not authorize a helper process in the final native line.
+
 ## Consequences
 
-- Scrolling the course grid/list stays DOM/CSS-bound instead of media-decoding-bound.
+- Transitional scrolling stays DOM/CSS-bound and final-native scrolling stays Native SDK list/canvas-bound; neither path decodes media while scrolling.
 - Native playback work no longer competes with thumbnail extraction for CPU.
-- Dynamic thumbnails can return later only if they are generated in a queued background job with strict concurrency and cached output metadata.
+- Dynamic thumbnails can return later only if they are generated in a queued, in-process background job with strict concurrency and cached output metadata.

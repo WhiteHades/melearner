@@ -1,5 +1,9 @@
 # Curated release assets
 
+## Status
+
+Accepted for curated, tested release assets. ADR 0011 and `docs/research/native-sdk-overhaul.md` supersede Tauri build commands, transitional platform restrictions, and final native package lifecycle details. This file remains the production-shell release rule until cutover.
+
 melearner releases should publish a small set of tested installer assets. the goal is to make installation clear, not to upload every bundle format Tauri can produce.
 
 for linux x86_64 releases, publish these assets:

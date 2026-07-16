@@ -2,7 +2,8 @@
 
 ## Native cutover policy
 
-- The fully native app uses one fresh current schema. Do not add backup, restore, or compatibility paths for databases or artifacts from previous melearner versions.
+- The fully native line uses one current schema at a time. Do not add import, migration, backup, restore, rollback, or compatibility paths for pre-native databases, obsolete schemas, or obsolete artifacts.
+- An unchanged current native database survives native-to-native package replacement. A future schema replacement uses a new fresh data path and decision instead of compatibility code. Current `.melearner-course.json` markers are domain inputs, not previous-version artifacts.
 - Delete deprecated versions, artifacts, features, functions, and fallback paths in the change that supersedes them. Do not retain legacy behavior as a fallback.
 
 ## Agent skills

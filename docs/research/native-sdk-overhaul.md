@@ -1,17 +1,16 @@
 # Native SDK overhaul for melearner
 
-Research date: 2026-07-10. Scope: the Native SDK documentation and source under `/home/efaz/Codes/native`, the current melearner UI and Rust/Tauri implementation, ADRs 0008-0010, and release workflows. This is an architecture and cutover decision; no application or Native SDK source changes were applied.
+Research date: 2026-07-10. Decision update: 2026-07-16. Scope: the Native SDK documentation and source under `/home/efaz/Codes/projects/native`, the current melearner UI and Rust/Tauri implementation, ADRs 0008-0011, and release workflows. This is an architecture and cutover decision; no application or Native SDK source changes were applied.
 
 ## Conclusion
 
 Proceed with the Native SDK UI and retained Rust core architecture, but do not begin by rewriting screens. The final product should be one Native SDK executable with all UI authored in `.native` markup and Zig, linked to an in-process Rust `staticlib` through a versioned C ABI. Rust remains the sole owner of the current SQLite schema, scanning, course identity, search, progress, notes, document decoding, and embedded libmpv. There is no Tauri, React, Node runtime, browser engine, WebView, or helper process in the shipped app. Bundled dynamic libraries such as libmpv and a PDF renderer are in-process dependencies, not sidecars.
 
-This is a conditional go because the current Native SDK cannot yet host the product as specified. Four upstream capabilities are release blockers:
+ADR 0011 approves this architecture, but cutover remains gated because the current Native SDK cannot yet host the product as specified. Three upstream capabilities are release blockers:
 
-1. A native-only desktop host/build mode that does not compile or link WebKit, WebKitGTK, WebView2, or CEF.
+1. Completion of the existing `webview_layer = "exclude"` contract on macOS so it omits WebKit as Linux and Windows already omit their WebView layers.
 2. A cross-platform external media-surface widget whose lifecycle, layout, clipping, visibility, and rendering are owned by the Native SDK.
-3. An app-defined asynchronous effect source that participates in the SDK's fake executor and session record/replay machinery.
-4. OS accessibility bridges for canvas widgets on Linux and Windows, equivalent in purpose to the existing macOS bridge.
+3. OS accessibility bridges for canvas widgets on Linux and Windows, equivalent in purpose to the existing macOS bridge.
 
 The first engineering milestone is therefore an upstream foundation spike, not a melearner screen. It must render a libmpv test pattern inside one Native SDK window on Linux, macOS, and Windows, with no WebView dependency in the binary. If that milestone fails, stop the overhaul. Do not work around it with a second window, pixel copies through `gpu_surface`, a private overlay unknown to the SDK, or a player sidecar.
 
@@ -47,9 +46,9 @@ The boundary has these non-negotiable rules:
 - Only the Native SDK event-loop thread mutates the Zig `Model`.
 - Rust callbacks may only enqueue an event and invoke the registered thread-safe waker. They must not call `update`, render UI, or retain Zig memory.
 - Paths remain local and must resolve beneath an approved root before Rust reads or plays them. URLs and schemes remain rejected, preserving ADR 0010.
-- The native app creates one fresh current database at a distinct path and never inspects, imports, migrates, backs up, restores, or reuses a previous melearner database. Current `.melearner-course.json` marker IDs remain Course identity inputs.
+- The first native release creates one fresh current database at a distinct path and never inspects or imports a pre-native or obsolete-schema database. An unchanged current native database reopens across native package replacement; a future schema replacement uses a new fresh path rather than migration, backup, restore, rollback, or compatibility code. Current `.melearner-course.json` marker IDs remain Course identity inputs.
 
-ADR 0010 remains authoritative for embedded libmpv, one compositor-visible app window, local-file validation, playback controls, and the packaged codec matrix. This report supersedes only its React/Tauri transport and WebView layout statements. ADR 0008 remains authoritative for conservative course and lesson identity. ADR 0009 requires the old frontend, Tauri shell, superseded packaging, and generated leftovers to be deleted in the cutover change once the replacement is verified.[13][14][15]
+ADR 0011 is authoritative for the Native SDK/Zig executable, Rust static core, transport boundary, and staged cutover. ADR 0010 remains authoritative for embedded libmpv, one compositor-visible app window, local-file validation, and playback controls except for its superseded React/Tauri/WebView transport. ADR 0008 remains authoritative for conservative course and lesson identity. ADR 0009 requires the old frontend, Tauri shell, superseded packaging, and generated leftovers to be deleted in the cutover change once the replacement is verified.[13][14][15]
 
 ## Current Native SDK assessment
 
@@ -63,29 +62,29 @@ It is not yet a complete fit for media, strict binary composition, document view
 | State model | `UiApp` supplies typed messages, one update path, effects, fake execution, and replay hooks.[3][9] | Keep UI state in Zig and domain state in Rust. Do not mirror the whole database in the model. |
 | Large collections | The SDK exposes virtualized list behavior and fixed runtime budgets. Canvas image upload is limited to 1 MiB per image and packet transport is bounded.[2][7] | Page Library/search data from Rust. Keep only visible pages and selected detail in the model. Tile document images to fit declared SDK limits. |
 | Embedded media | `gpu_surface` accepts SDK draw packets or CPU RGBA pixels. It is not an app-owned libmpv render target. `adoptViewSurface` is macOS system-host only; Linux and Windows explicitly report no surface-adoption capability.[7][8] | Add an upstream `external_surface`/`media_surface` widget. Do not copy decoded video frames through the canvas image path. |
-| Async core integration | Effects cover a fixed set of subprocess, HTTP, file, clipboard, timer, clock, image, window, and audio operations. Results are drained on the UI thread and can be faked or journaled.[9] | Add a first-class external effect adapter for the Rust core. Do not spawn a CLI or poll the core from a timer. |
+| Async core integration | At the pinned revision, Native SDK implements bounded application-defined external effects with live/fake adapters and session record/replay, and melearner integrates that capability for the Rust core. Results drain on the UI thread and can be faked or journaled.[9] | Keep the existing integration and its live/fake/record/replay verification. Do not replace it with a CLI or timer polling. |
 | Automation | The live server exposes windows, views, semantic widgets, bounds, state, input commands, and deterministic canvas screenshots. Session replay verifies model fingerprints and canvas screenshot hashes.[4][5][10] | Reuse it. Extend snapshots with media-surface diagnostics. Use a deterministic placeholder for video in reference screenshots. |
 | OS accessibility | Semantic widget snapshots exist cross-platform, but `update_widget_accessibility_fn` is wired only by the macOS platform source. Linux and Windows expose labels for native controls but do not bridge the canvas widget tree to AT-SPI/UI Automation.[7][8] | Linux and Windows canvas accessibility are release blockers, not post-launch polish. |
 | Documents | Native SDK provides text/Markdown primitives and image decoding, but no PDF, DOCX, or general document surface was found.[2][7] | Build a melearner native document adapter. Never hide a WebView behind the document screen. |
-| Native-only binary | The public positioning says native UI has no browser or WebView in the binary.[2][6] The current desktop build still selects a `system` web engine: macOS links WebKit, Linux links `webkitgtk-6.0`, and Windows compiles `webview2_host.cpp`, even when `AppInfo.has_web_content` is false.[11] | Add a true `.none`/native-only host path and verify binary imports. Runtime non-use is insufficient. |
+| Native-only binary | The capability-driven manifest already supports `webview_layer = "exclude"`, and melearner declares it. Linux and Windows then compile out their WebKitGTK and WebView2 layers. macOS remains the gap because its host still unconditionally compiles and links WebKit.[11] | Extend the existing exclusion contract to macOS, retain explicit rejection of WebView declarations and creation, and verify all packaged binaries by import audit. Runtime non-use is insufficient. |
 | Packaging | macOS packaging creates an `.app`. Linux and Windows packaging currently creates structured artifact directories, not an AppImage/Flatpak/MSI installer. Desktop platform builds require a matching host OS.[6][11] | Keep packaging application-owned initially and build in a native OS CI matrix. Upstream installer support is useful but not a cutover blocker. |
 
 The Native SDK is pre-1.0 and its APIs still move.[6] Pin the exact source revision used by melearner. Do not build the application against an unpinned branch.
 
-## Required upstream Native SDK work
+## Required upstream work and implemented integration
 
-### 1. Native-only host mode
+### 1. Complete web-layer exclusion on macOS
 
-Add `WebEngine.none` and make it the default when the manifest declares no web capability or frontend. In that mode:
+Native SDK already has the capability-driven manifest contract `webview_layer = "exclude"`, which melearner uses. Linux and Windows honor it by compiling out their WebView host layers. Extend that same contract to macOS rather than introducing another web-engine mode:
 
 - macOS compiles an AppKit host without `WKWebView` code and does not link the WebKit framework;
-- Linux compiles a GTK4 host without WebKitGTK and does not require `webkitgtk-6.0` at build or runtime;
-- Windows compiles a Win32 host without WebView2 code and does not import or initialize WebView2;
-- CEF installation, assets, bridge code, navigation policy, and web commands are absent;
-- attempts to declare or create a WebView are compile-time or explicit runtime errors;
-- `native package` records `web_engine = .none` and does not stage web assets.
+- the existing Linux GTK4 exclusion continues to omit WebKitGTK and its build/runtime requirement;
+- the existing Windows Win32 exclusion continues to omit WebView2 code and imports;
+- attempts to declare or create a WebView while the layer is excluded remain compile-time or explicit runtime errors;
+- CEF installation, bridge code, navigation policy, web commands, and web assets remain absent; and
+- `native package` records `webview_layer = "exclude"` and stages no web assets.
 
-This should be capability-driven rather than a melearner-specific fork. The acceptance test is not merely "no WebView created." `otool -L`, `readelf`/`ldd`, and PE import inspection must show no WebKit, WebKitGTK, WebView2, or CEF dependency in a canvas-only packaged app.
+This remains a capability-driven Native SDK contract rather than a melearner-specific fork. The acceptance test is not merely "no WebView created." `otool -L`, `readelf`/`ldd`, and PE import inspection must show no WebKit, WebKitGTK, WebView2, or CEF dependency in a canvas-only packaged app on every target platform.
 
 ### 2. External media surface
 
@@ -105,20 +104,20 @@ The first implementation should retain the already proven OpenGL libmpv render-a
 
 Metal or Vulkan can replace OpenGL later, but that is not part of this cutover. A speculative renderer rewrite would combine two high-risk changes and discard the current cross-platform evidence.
 
-### 3. External asynchronous effects
+### Implemented: bounded external asynchronous effects
 
-Extend `UiApp` effects with an application-defined adapter rather than adding melearner operations to Native SDK itself. The adapter needs four modes:
+At the pinned Native SDK revision, `UiApp` already implements bounded application-defined external effects and melearner already integrates the adapter for Rust core operations. The implemented adapter provides four modes:
 
-| Mode | Required behavior |
+| Mode | Implemented behavior |
 | --- | --- |
 | Live | Submit/cancel Rust requests, drain ordered completions after a core wake, and map them to typed `Msg` values on the UI thread. |
 | Fake | Record requests without Rust, allow tests to inject outcomes, and expose overflow/rejection state. |
 | Record | Write bounded external-effect results into the existing session journal before the consuming wake event, preserving current ordering. |
 | Replay | Park matching requests and feed journaled outcomes without touching SQLite, files, PDFium, or libmpv. |
 
-The external result record should contain adapter ID, request key, outcome, schema version, and bounded bytes. Over-budget results must fail recording loudly, following the existing recorder contract. Bulk media frames are never effect payloads. Library/search responses are paged, PDF tiles use the image registry, and video is represented by deterministic metadata plus a placeholder during replay.
+The implemented external result record contains adapter ID, request key, outcome, schema version, and bounded bytes. Over-budget results fail recording loudly under the existing recorder contract. Bulk media frames are never effect payloads. Library/search responses are paged, PDF tiles use the image registry, and video is represented by deterministic metadata plus a placeholder during replay. This capability remains a required verification surface even though it is not an unresolved upstream blocker.
 
-### 4. Linux and Windows canvas accessibility
+### 3. Linux and Windows canvas accessibility
 
 Implement the existing `WidgetAccessibilitySnapshot` service on Linux and Windows:
 
@@ -128,15 +127,15 @@ Implement the existing `WidgetAccessibilitySnapshot` service on Linux and Window
 - virtualized rows report stable list position/count without materializing the full Library.
 - the external media surface has a role/name and does not swallow keyboard focus from surrounding controls.
 
-Automation semantics are necessary but do not prove screen-reader integration. Release verification must include VoiceOver, NVDA, and Orca smoke tests on installed packages.
+Automation semantics are necessary but do not prove screen-reader integration. Release verification must execute the installed-package VoiceOver, NVDA, and Orca gates defined by `fixtures/parity/accessibility-manifest-v1.json`.
 
-### 5. Packaging improvements that can follow in parallel
+### Packaging improvements that can follow in parallel
 
 Native SDK should eventually emit a Windows installer and Linux portable package rather than artifact directories. melearner should not wait for that work: its existing release workflows already contain AppImage, Arch package, MSI signing, and Windows libmpv dependency-staging knowledge.[16] Port that logic to the new binary first, then upstream general pieces that do not encode melearner-specific runtime libraries.
 
 ## Rust core design
 
-Create a dedicated crate at `crates/melearner-core` with `crate-type = ["staticlib", "rlib"]`. The `rlib` supports Rust tests and internal tools; the Native SDK executable links the `staticlib`. Move reusable code out of `src-tauri` instead of wrapping Tauri commands around the new ABI. The final crate has no `tauri`, `tauri-plugin-*`, Tokio UI runtime, JavaScript bridge, or WebView types.
+Use the dedicated crate at `crates/melearner-core` with `crate-type = ["staticlib", "rlib"]`. The `rlib` supports Rust tests, the existing Tauri Cargo crate dependency, and internal tools; the Native SDK executable links the `staticlib`. The Tauri crate already directly reuses `melearner_core::scanner`; keep that existing Rust reuse frozen and regression-tested until cutover. Core expansion is additive, but it must not redirect the transitional shell through the C ABI, native database ownership, Native SDK effects, or Native SDK UI. Do not decouple the existing scanner reuse before cutover and do not add another adapter. The final crate has no `tauri`, `tauri-plugin-*`, Tokio UI runtime, JavaScript bridge, or WebView types.
 
 The core should contain these modules:
 
@@ -269,37 +268,40 @@ Generate video thumbnails in process through libmpv's screenshot/render path. Do
 
 ## Cutover plan and gates
 
+Stages 0-5 add and verify the replacement while the Tauri app keeps its existing direct Rust reuse of the core scanner, implementation path, and release path. Its full regression suite must pass at every stage gate through Stage 6. No intermediate stage may redirect the transitional shell through the C ABI, native database ownership, Native SDK effects, or Native SDK UI. The existing scanner reuse does not need to be decoupled before ownership switches in the verified Stage 6 cutover.
+
 ### Stage 0: freeze behavior and fixtures
 
 Record the existing contract before changing ownership:
 
-1. Keep one deterministic fresh current-schema seed covering progress, notes, activity, missing Courses, marker identity, fingerprint matches, and ambiguous matches.
-2. Keep the existing scanner fixture set, including partial downloads, ignored folders, Unicode names, long paths, subtitles, duplicate markers, and duplicate fingerprints.
-3. Keep ADR 0010's codec corpus and installed-package verification scripts as the playback oracle.
-4. Capture automation-level flows for initial Library load, scan, search, course navigation, progress resume, notes, document open, and error recovery.
-5. Record package dependency manifests for each OS so removal of browser libraries can be proven later.
+1. Check in `fixtures/parity/fixture-manifest-v1.json`. It identifies every database, scanner, document, media, and load fixture by stable ID; records its path, SHA-256, schema/format version, generator and seed when generated, license/source when redistributed, expected row/count/result facts, and the tests that consume it. The existing `database-current.sql`, `oracle-v1.json`, and `scanner-v1.json` become entries rather than implicit inputs.
+2. Check in `fixtures/parity/screenshot-manifest-v1.json`. Deterministic non-video goldens run as fixed cases at 560x400, 1024x768, and 1440x900 logical pixels with scale 1.0, locale `en-US`, timezone UTC, checked-in fonts, fixed light/dark/cozy themes, and reduced motion both off and on. They use the reference software canvas presenter and a deterministic media placeholder. The semantic hash must match exactly; the pixel hash must match exactly when the same reference profile is used. OS-level media proof is separate and must meet a declared non-black/changing-frame pixel-variance threshold recorded in the manifest. Each case also records scenario ID, fixture ID, route/state, contrast, text scale, reference-profile ID, Native SDK revision, and expected hashes. A hash or threshold change requires a reviewed manifest change; tests do not rewrite goldens.
+3. Check in `packaging/reference-profiles-v1.json`. Each profile pins an immutable OS image ID and digest plus exact hardware allocations, including architecture, CPU model/count, RAM, GPU, and display. It also records the filesystem, graphics presenter, toolchain/runtime versions, and allowed repetitions. Only exact declared profiles enforce pixel hashes and responsiveness budgets; other runners provide non-gating diagnostics.
+4. Check in `fixtures/parity/accessibility-manifest-v1.json` as the versioned installed screen-reader gate. For each target it pins the immutable OS image ID and exact VoiceOver, NVDA, or Orca version; scripts root, scan, search, Course, Lesson, document, Player, notes, and settings flows; and records expected semantic role, name, state, value, action, list position/count, focus order/restoration, and action round-trips. Required evidence includes the installed package hash, OS and screen-reader versions, command transcript, semantic snapshots, focus/action logs, and captured screen-reader output. Every expectation has an objective pass/fail result, and any missing or mismatched required result fails the gate. Manual notes may supplement this evidence but cannot replace the scripted checks.
+5. Keep ADR 0010's playback behavior and this report's required codec corpus as the installed-package oracle.
+6. Capture automation-level flows for initial Library load, scan, search, Course navigation, Progress resume, notes, document open, and error recovery, and record package dependency manifests for each OS so browser-library removal can be proven later.
 
-Gate: the current implementation passes its tests and the fixtures are reproducible without personal Library data.
+Gate: the current implementation passes its tests, every manifest validates its schema and file hashes, and the fixtures are reproducible without personal Library data.
 
 ### Stage 1: prove Native SDK prerequisites upstream
 
-Implement native-only hosts, the media-surface widget, external effects, and Linux/Windows accessibility in `/home/efaz/Codes/native`. Build a small fixture app, not melearner, that:
+Extend `webview_layer = "exclude"` to the macOS host, and implement the media-surface widget and Linux/Windows accessibility in `/home/efaz/Codes/projects/native`. Build a small fixture app, not melearner, that:
 
 - has one canvas window and no WebView capability;
 - embeds a test libmpv render context through the proposed surface seam;
 - resizes, hides, restores, and fullscreens the surface;
 - exposes diagnostics in automation snapshots;
-- records and replays a fake external completion;
+- verifies the implemented melearner external-effect integration in live and fake modes, including bounded record/replay of an external completion;
 - is keyboard and screen-reader operable;
 - packages and starts on all three operating systems without a browser import.
 
-Gate: all four upstream blockers pass on packaged builds. Failure stops the overhaul.
+Gate: all three upstream blockers pass on packaged builds, and the implemented external-effect fake/record/replay verification remains green. Failure stops the overhaul.
 
-### Stage 2: extract and stabilize `melearner_core`
+### Stage 2: add and stabilize `melearner_core`
 
-Move current-schema database operations, scanner, identity, marker writing, search, progress/activity, notes, document adapters, and Player control behind a safe Rust interface and the versioned C ABI. Keep current marker behavior. Add Rust tests for the exact current schema, fresh creation, restart opening, every identity ambiguity, C ABI ownership, panic containment, queue pressure, and a Zig smoke client.
+Add current-schema database operations, identity, marker writing, search, Progress/activity, notes, document adapters, and Player control behind a safe Rust interface and the versioned C ABI for the final-native target. Keep the existing direct Tauri reuse of `melearner_core::scanner` unchanged and keep current marker behavior. Do not route the transitional shell through the C ABI, native database owner, Native SDK effects, or Native SDK UI. Add Rust tests for the exact current schema, fresh creation, restart opening, every identity ambiguity, C ABI ownership, panic containment, queue pressure, and a Zig smoke client.
 
-Gate: the core creates and reopens its distinct current database, never touches a sibling previous database, produces the expected scan/identity/search results for current fixtures, and passes sanitizer/ABI tests. No UI is needed for this gate.
+Gate: the core creates and reopens its distinct current database, never touches a sibling pre-native or obsolete-schema database, produces the expected scan/identity/search results for current fixtures, and passes sanitizer/ABI tests. No UI is needed for this gate.
 
 ### Stage 3: build a read-only Native SDK vertical slice
 
@@ -309,23 +311,23 @@ Gate: a 100,000-lesson fixture remains responsive through virtual lists; stale r
 
 ### Stage 4: mutations, stats, notes, and documents
 
-Add scan selection, progress/activity, stats, course access, notes, automatic marker writes, text/Markdown/HTML/DOCX normalization, PDF tiling, and external-open fallback. Keep every write in Rust transactions.
+Add scan selection, Progress/activity, stats, Course access, notes, automatic marker writes, text/Markdown/HTML/DOCX normalization, PDF tiling, and external-open fallback. Keep database writes in Rust transactions; attempt marker filesystem writes only after the scan transaction commits, and return their failures as warnings on the committed revision.
 
 Gate: the current-schema fixture remains valid, identity behavior exactly matches ADR 0008, stats match current outputs, and direct document formats pass installed-package smoke tests without network or WebView use.
 
 ### Stage 5: embedded playback
 
-Move the current native-player state machine and event extraction into `melearner_core`, connect it to the upstream media surface, and recreate controls in `.native` UI. Preserve tracks, chapters, subtitles, screenshots, coarse position updates, resume, visibility, and fail-closed surface attachment.
+Port the current native-player state machine and event extraction into `melearner_core` without redirecting the frozen Tauri Player, connect the new core to the upstream media surface, and recreate controls in `.native` UI. Preserve tracks, chapters, subtitles, screenshots, coarse position updates, resume, visibility, and fail-closed surface attachment.
 
-Gate: every ADR 0010 packaged visual test passes on Linux, macOS, and Windows. Diagnostics report a live render thread, nonzero frames and dimensions, and no render error. OS window inspection reports one melearner window. Process inspection reports no mpv, ffmpeg, or ffprobe child process.
+Gate: every packaged visual test in ADR 0010 and this report passes on Linux, macOS, and Windows, including software-decoded HEVC 10-bit. Diagnostics report a live render thread, nonzero frames and dimensions, and no render error. OS window inspection reports one melearner window. Process inspection reports no mpv, ffmpeg, or ffprobe child process.
 
 ### Stage 6: package, cut over, and delete
 
-Replace release workflows with the Native SDK/Cargo build matrix and package the in-process runtime libraries. The native package uses only its distinct current database path and leaves previous database files untouched. After all installed-package gates pass, remove Next.js, React, shadcn, Tauri, frontend assets, JavaScript bridges, Node scripts that no longer apply, old release jobs, and obsolete generated artifacts in the same cutover change.
+Replace release workflows with the Native SDK/Cargo build matrix and package the in-process runtime libraries. The native package uses only its distinct current database path and leaves pre-native and obsolete-schema database files untouched. After all installed-package gates pass, remove Next.js, React, shadcn, Tauri, frontend assets, JavaScript bridges, Node scripts that no longer apply, old release jobs, and obsolete generated artifacts in the same cutover change.
 
 Gate: source and binary scans find no Tauri, WebView, WebKit, WebView2, CEF, React, or browser-runtime path; all user-visible flows pass; the old shell is absent rather than dormant behind a flag.
 
-There is no shipped dual-stack fallback. Until Stage 6, the existing Tauri release remains the production line while the native app is an unreleased build target. The native app has no database rollback, restore, import, or compatibility path.
+There is no shipped dual-stack fallback. Until Stage 6, the existing Tauri release remains the production line with its frozen direct Rust scanner reuse while the native app is an unreleased build target. The native app has no pre-native database rollback, restore, import, or compatibility path; unchanged current native data follows the package lifecycle below.
 
 ## Codec and playback acceptance matrix
 
@@ -335,7 +337,7 @@ The discovery extension list is broader than the guaranteed codec corpus. A reco
 | --- | --- |
 | MP4 H.264/AAC | First frame, audio, seek, pause/resume, progress persistence |
 | MKV H.264 with multiple audio tracks | Track list and live switching without reload |
-| HEVC 10-bit | Visible playback or a named unsupported hardware/software decode failure on the clean test machine; no silent black surface |
+| HEVC 10-bit | Visible playback with hardware decoding disabled, using the packaged software decoder; failure blocks that platform release |
 | External SRT and VTT | Registration, selection, rendering, and Unicode text |
 | Chapters | Ordered list, current chapter, and selection |
 | Playback controls | Absolute/relative seek, volume, mute, rate, frame step, screenshot, fullscreen |
@@ -343,21 +345,103 @@ The discovery extension list is broader than the guaranteed codec corpus. A reco
 | Failures | Missing, outside-root, corrupt, unsupported, and detached-surface cases return typed errors |
 | Architecture | One app window, in-process libmpv, render-api surface, no normal-playback FFmpeg process |
 
-HEVC wording must be resolved before release: ADR 0010 currently lists the file as a pass case, so the preferred gate is successful visible playback on each clean-machine image. If hardware and bundled software decoding cannot guarantee that, update the ADR and product support statement explicitly rather than weakening the test silently.
+HEVC 10-bit is a required pass case. Production may use safe hardware acceleration only when libmpv can fall back to software, but package verification disables hardware decoding and must still produce changing visible frames on every supported clean-machine image. An unsupported-codec message, audio-only playback, a black surface, or a hardware-only pass fails the release gate.
 
 ## Packaging and release design
 
 Build on the target operating system because the current Native SDK build graph rejects a selected desktop platform that differs from the target host.[11]
 
-| Platform | Artifact | In-process runtime staging | Release checks |
-| --- | --- | --- | --- |
-| macOS | Signed/notarized `.app` in DMG | libmpv and transitive dylibs under `Contents/Frameworks`; PDFium alongside them; corrected install names/rpaths; sign libraries before app | `codesign --verify --deep --strict`, `spctl`, notarization, `otool -L`, clean-machine launch and playback |
-| Windows | Signed MSI | `melearner.exe`, `libmpv-2.dll`, its dependency closure, and PDFium DLL in the install directory; reuse the current staging assertions as a baseline | PE import scan, signature verification, install/uninstall, non-admin launch, clean-machine playback |
-| Linux | AppImage plus Arch package | AppImage bundles libmpv/PDFium and non-baseline dependencies with `$ORIGIN` RUNPATH; Arch package may depend on distro `mpv`/libmpv and PDFium if pinned packaging exists | `readelf`/`ldd`, AppImage extraction audit, Wayland and X11 launch, package install/remove, playback |
+### Codec runtime and inventory policy
 
-Do not bundle glibc, GPU drivers, or compositor libraries into the AppImage. Maintain an allowlist for expected system libraries and fail packaging on an unresolved dependency. Generate a machine-readable dependency manifest and checksums for every artifact.
+Every artifact carries one private, software-capable runtime assembled from the same release lock. It includes libmpv, the required shared FFmpeg libraries and their software H.264, AAC, and HEVC Main 10 decoders, the audio/render dependency closure, and the pinned PDF renderer. Hardware decoding is optional acceleration. The app must remain correct with hardware decoding disabled. No artifact contains or invokes `mpv`, `ffmpeg`, or `ffprobe` executables.
 
-The release CI matrix should have separate Linux, macOS, and Windows jobs that build Rust, build Zig, run core and headless UI tests, package, inspect binary imports, install the artifact, run Native SDK automation, run the media corpus, and upload logs/diagnostics on failure. Compile-only checks do not reopen Windows or macOS releases.
+`packaging/runtime-lock.json` is a checked-in source artifact owned and populated by issue #23. For every staged native file it records component name, exact version or commit, source URL, source checksum, build toolchain, configure flags, enabled codec/demuxer set, staged filename, linkage, SPDX license, notice/source location, artifact checksum, and the production signing identity reference where signing applies. Packaging generates an SPDX SBOM, `THIRD_PARTY_NOTICES`, the complete corresponding-source/build-script offer required by each redistributed license, and a load/import manifest. CI fails on an undeclared file, checksum drift, unresolved import, unexpected system lookup, or license without recorded approval.
+
+Issue #7 defines package policy; it is not an executable release recipe. Package implementation or publication remains blocked until issue #23 replaces every placeholder or floating value in `packaging/runtime-lock.json` and the signing configuration with exact versions/commits, source and artifact checksums, build toolchains and flags, enabled decoders, staged dependency filenames, approved license records, and production signing identity references.
+
+The release codec build uses shared LGPL-mode libmpv and FFmpeg: mpv is built with GPL features disabled, FFmpeg is built with `--disable-gpl --disable-nonfree`, and no GPL-only, AGPL, nonfree, or proprietary codec component is admitted without a new legal/architecture decision. The built-in FFmpeg HEVC decoder is required; an x265 encoder is not. The release record enumerates any relink, replacement, reverse-engineering exception, source, and notice obligations identified for the included licenses. Before publication, the maintainer records in `packaging/runtime-lock.json` and the release evidence the license and codec-patent review scope, declared distribution channels and regions, and approval reference for that release. A missing approval record blocks publication to the declared scope. This document states an engineering release requirement, is not legal advice, and does not assert that review or approval has already occurred.
+
+| Platform | Artifact | Private runtime location and baseline exclusions |
+| --- | --- | --- |
+| Linux | AppImage | Bundle the locked closure under the AppDir and resolve it with `$ORIGIN` RUNPATH. Do not bundle glibc, the kernel ABI, GPU drivers, or compositor libraries; all allowed host libraries are versioned in a baseline allowlist. |
+| Linux | Arch package | Install the same locked closure under `/usr/lib/melearner` with private RUNPATH. Do not load the host `mpv` package or an unpinned system libmpv/FFmpeg at runtime. |
+| macOS | Signed `.app` in DMG | Put libmpv, FFmpeg dylibs, PDF runtime, and non-system dependencies in `Contents/Frameworks`; rewrite install names to app-relative paths and reject package-manager prefixes. |
+| Windows | MSI | Put `melearner.exe`, libmpv, FFmpeg/runtime DLLs, PDF runtime, and the complete non-system DLL closure in the application directory; reject PATH or MSYS2 runtime resolution. |
+
+### Signing and publication rules
+
+- Every release publishes SHA-256 checksums, `packaging/runtime-lock.json`, the SPDX SBOM, and notices beside the curated artifacts. The checksum manifest, AppImage, and Arch package have detached signatures from the project release key; Arch package metadata consumes its package signature.
+- The macOS app signs every nested executable and dylib from the inside out with a Developer ID Application identity, hardened runtime, and secure timestamp. The final app and DMG are signed, submitted to Apple notarization, accepted, and stapled. `codesign --verify --deep --strict`, `spctl --assess`, staple validation, and clean-machine Gatekeeper launch must pass.
+- The Windows release signs the melearner executable and MSI with the production Authenticode identity and RFC 3161 timestamp, then verifies both signatures on a clean image. Third-party DLL signatures are preserved when present and every DLL is covered by the signed checksum manifest. Self-signed or test certificates are CI-only and can never publish a supported artifact.
+- CI never promotes an unsigned rebuild, replaces bytes under an existing version, or signs an artifact whose runtime lock, SBOM, license review, dependency audit, and clean-package evidence do not match.
+
+### Native package lifecycle
+
+These rules apply only between releases built under ADR 0011. A pre-native Tauri installation is not an upgrade source: the first native release uses its distinct native data path, never reads or removes pre-native databases/artifacts, and may require the user to remove the transitional application package separately. There is no downgrade support.
+
+| Artifact | Native-to-native update or upgrade | Remove behavior |
+| --- | --- | --- |
+| AppImage | No in-app updater. Download and verify the new signed AppImage, quit the running app, atomically replace the file at the user-selected stable path, then relaunch. Never patch a mounted/running image. | Delete the AppImage and any user-created desktop integration. |
+| Arch package | Upgrade only through `pacman -U` or the configured AUR helper after package-signature verification. The package manager atomically replaces owned program/runtime files and runs no data migration hook. | `pacman -R` removes only package-owned files. |
+| DMG | Quit melearner, mount the notarized DMG, and replace the signed app bundle in `/Applications`; there is no privileged helper or background updater. Gatekeeper verifies the replacement before launch. | Move the app bundle to Trash; there is no package receipt or data-removal script. |
+| MSI | Use one stable native-line `UpgradeCode`, a new `ProductCode` per release, and a versioned major upgrade. The MSI refuses while melearner is running, verifies the signed package, and replaces application files in place without custom data actions. | Apps & Features invokes MSI removal for installer-owned files only. |
+
+Native-to-native upgrades preserve the native database, settings, logs, and cached document/thumbnail data because they live outside package-owned locations. Uninstall/remove also retains them, and never deletes Course files or `.melearner-course.json` markers. Data deletion must be a separate explicit user action or manual directory removal. In-place native upgrades are permitted only while the exact current native schema is unchanged; a future schema replacement requires a new fresh data path and decision, not migration, backup, restore, rollback, or compatibility code.
+
+The release CI matrix has separate Linux, macOS, and Windows jobs that build Rust, build Zig, run core and headless UI tests, package, inspect binary imports, install the artifact, run Native SDK automation, run the media corpus, exercise the package lifecycle, and upload the evidence bundle. Compile-only checks do not reopen a platform release.
+
+## Deterministic responsiveness gates
+
+Budgets are product acceptance limits, not hang timeouts. They run against the installed artifact with networking disabled only on immutable profiles declared in `packaging/reference-profiles-v1.json`. A job whose image digest, hardware shape, display/presenter, filesystem, or pinned toolchain differs from its declared profile records diagnostics but cannot pass, fail, or rebaseline the release budget. Profile changes require a reviewed new manifest version rather than editing an accepted profile in place.
+
+The fixed release fixture is identified and hashed by `fixtures/parity/fixture-manifest-v1.json`; it contains 1,000 Courses, 100,000 Lessons, 84 activity days, paged notes, a 500-page PDF, H.264/AAC media, and HEVC Main 10 media on local storage. Screenshot cases and hashes come only from `fixtures/parity/screenshot-manifest-v1.json`. One run starts immediately after reference-image boot and four runs restart the app; every measured run must meet every budget.
+
+| Interaction | Measurement | Maximum budget |
+| --- | --- | --- |
+| Startup | Process creation to visible window that accepts and paints a focus command | 1,000 ms |
+| First usable Library | Process creation to first committed Course page with Search, Settings, and navigation accepting input; no startup rescan | 2,000 ms |
+| Library/Lesson paging | Accepted page request to painted replacement rows and restored keyed focus | 200 ms |
+| Search | Query submission after the fixed 100 ms debounce to painted first result or empty state | 200 ms |
+| Course navigation | Course activation to usable outline and selected resume Lesson shell | 250 ms |
+| Lesson navigation | Lesson activation to selected Lesson shell and stable controls; media/document content may remain loading | 100 ms |
+| Scan UI responsiveness | Input-probe round trip while the 100,000-Lesson scan runs; accepted progress event to painted status | 100 ms probe; 250 ms progress |
+| Document blocks/pages | Request to painted text/Markdown/HTML/DOCX block page | 200 ms |
+| PDF tiles | Scroll/zoom request to first painted visible tile, with remaining tiles progressive | 300 ms |
+| Player command acceptance | UI dispatch to request ID and pressed/busy feedback; non-decoding command to confirmed state | 50 ms acceptance; 150 ms state |
+| Player first frame | Accepted local load to first changing visible frame with audio initialization nonblocking | 2,000 ms H.264; 3,000 ms HEVC 10-bit software decode |
+| Player seek | Seek dispatch to request ID; accepted seek to first changing post-seek frame | 50 ms acceptance; 750 ms frame |
+| Resize | Platform resize event to committed layout and a correctly sized presented frame, including active video | 150 ms |
+| Shutdown | Close acceptance to process exit after Progress/database flush | 2,000 ms |
+
+The hard watchdog limits are deliberately looser: 30 seconds for startup/first Library, 300 seconds for the deterministic scan, 15 seconds for media load or seek, and 10 seconds for page/search/navigation/document/ordinary command/resize/shutdown phases. A budget miss fails acceptance and records timing without being labeled a hang. A hard timeout labels a hang, captures app/core/media thread stacks, process tree, open handles, last Model/event sequence, surface diagnostics, and logs, then terminates the process group.
+
+## Fault-injection requirements
+
+The fake external-effect adapter and installed-package diagnostic hooks must deterministically inject:
+
+- delayed, cancelled, reordered, duplicated, stale-revision, malformed UTF-8, oversized, queue-full, and panic outcomes at the C ABI/event seam;
+- unavailable roots, permission denial, path escape, files disappearing mid-scan, ambiguous marker/fingerprint matches, marker-write failure, read-only/full storage, SQLite busy, and corrupt current database;
+- malformed HTML/DOCX/PDF, PDF runtime absence, per-page decode failure, and tile-cache pressure;
+- missing runtime libraries, corrupt/unsupported media, detached/zero-size surfaces, delayed first frame, decoder failure, seek failure, renderer loss, and screenshot-write failure; and
+- a second launch during scan/playback plus close, resize, display-scale, suspend/resume, and accessibility-action races.
+
+Each case must prove that unrelated UI probes remain within budget, the expected typed state and safe actions appear, stale results do not enter the Model, no partial transaction becomes visible, retry succeeds after the fault is removed when the error is retryable, and shutdown leaves no child or helper process.
+
+## Clean-package evidence
+
+Every release candidate installs or stages each artifact on a newly provisioned target image with no developer checkout, compiler, mpv/FFmpeg executable, user-installed codec pack, PDF runtime, or preexisting melearner data. The image is taken offline after artifact acquisition. The run covers fresh install, cold launch, root selection, scan, paging, search, Course/Lesson navigation, notes, stats, documents, Player corpus, single-instance activation, accessibility, shutdown, native-to-native upgrade from the previous accepted native release when one exists, remove, and reinstall with retained native data.
+
+The uploaded evidence bundle contains:
+
+- artifact hash/signature/notarization result, fixture/screenshot/accessibility/reference-profile manifest versions, immutable OS image ID, CPU/RAM/GPU/display details, build provenance, `packaging/runtime-lock.json`, SBOM, notices, and dependency/import/load audits;
+- automation transcript, semantic snapshots, deterministic non-video screenshots, scripted accessibility-manifest results, pinned screen-reader versions and captured output, focus/action round-trip logs, per-interaction timing JSON, watchdog report, logs, process trees, and media-surface diagnostics;
+- OS-level H.264 and HEVC screenshots plus frame counters, dimensions, pixel-variance evidence, and a post-seek frame change with hardware decoding disabled;
+- install/upgrade/remove command logs and before/after inventories of package-owned files, processes, services, startup entries, user-data directories, and Course marker files; and
+- fault-injection results with the injected code, expected typed state, recovery action, retry result, and transaction/revision assertions.
+
+Manual screen-reader notes may supplement the accessibility evidence but cannot replace any scripted manifest check or required artifact.
+
+The first native release records native-to-native upgrade as not applicable and supplies the fresh install/remove/reinstall evidence. Missing evidence, a developer-machine-only pass, a host codec dependency, or an unsigned/unnotarized artifact fails the package gate.
 
 ## Deterministic test strategy
 
@@ -383,7 +467,7 @@ Use four tiers with different evidence. Do not ask one screenshot mechanism to p
 
 - journal external core outcomes that affect `Model`;
 - replay with no SQLite, filesystem, PDFium, or libmpv access;
-- compare model fingerprints and deterministic canvas screenshot hashes;
+- compare model fingerprints and the reviewed hashes in `fixtures/parity/screenshot-manifest-v1.json`;
 - keep scenarios bounded so document image payloads do not exceed the existing explicit journal budget;
 - never journal decoded video frames.
 
@@ -394,7 +478,7 @@ Use four tiers with different evidence. Do not ask one screenshot mechanism to p
 - capture an OS-level screenshot when proving the native child surface is visibly composited;
 - verify frame counters and dimensions increase after seek/resume rather than accepting a black rectangle;
 - inspect process trees and loaded libraries for sidecars and WebView runtimes;
-- run VoiceOver, NVDA, and Orca smoke scripts/manual checklists for the final package.
+- run the versioned VoiceOver, NVDA, and Orca installed-package scripts from `fixtures/parity/accessibility-manifest-v1.json`; manual notes may supplement but cannot replace them.
 
 Deterministic canvas screenshots deliberately exclude real video pixels. Codec decoding, color conversion, timing, and hardware output are not stable golden-image inputs. The native media surface is proven by diagnostics plus packaged visual evidence, while the surrounding UI remains pixel-deterministic.
 
@@ -402,7 +486,7 @@ Deterministic canvas screenshots deliberately exclude real video pixels. Codec d
 
 | Risk | Mitigation and stop condition |
 | --- | --- |
-| Upstream scope expands into an SDK fork | Land generic capabilities with SDK tests before melearner depends on them. Stop if native-only host or media surface cannot be accepted upstream. |
+| Upstream scope expands into an SDK fork | Land generic capabilities with SDK tests before melearner depends on them. Stop if macOS web-layer exclusion or the media surface cannot be accepted upstream. |
 | OpenGL is deprecated on macOS | Retain it only as the cutover's proven libmpv path; isolate behind the surface ABI so a Metal path can replace it later. Do not combine that replacement with the UI cutover. |
 | Zig/Rust memory or thread bugs | Opaque handles, explicit byte ownership, event release, panic barriers, one model thread, sanitizers, and ABI stress tests. |
 | Event queue floods during playback or scans | Coalesce nonterminal progress/position, preserve terminal events, reject new work with typed busy status, and expose overflow diagnostics. |
@@ -411,7 +495,7 @@ Deterministic canvas screenshots deliberately exclude real video pixels. Codec d
 | Linux GTK generation mismatch | SDK owns GTK4 widgets and GL context. Rust receives only the renderer callback seam, not a GTK3 widget. |
 | PDF/document work becomes a browser substitute | Use a finite native document AST and PDF tiles. Unsupported fidelity is disclosed with external-open; no active HTML execution. |
 | Packages work only on developer machines | Build/install on clean OS images, stage dependency closures, audit imports/rpaths, and require visual playback before release. |
-| Canvas UI is inaccessible on Linux/Windows | Treat AT-SPI/UI Automation bridges and real screen-reader smoke tests as Stage 1 and release gates. |
+| Canvas UI is inaccessible on Linux/Windows | Treat AT-SPI/UI Automation bridges and the versioned installed screen-reader manifest checks as Stage 1 and release gates. |
 | Native SDK API churn breaks the app | Pin a source revision and upgrade deliberately with the upstream fixture app and ABI/UI test suite. |
 
 ## Rejected alternatives
@@ -431,13 +515,13 @@ The overhaul may cut over only when all of these are true:
 1. Packaged canvas-only binaries have no WebView/browser dependency or runtime module on all three OSes.
 2. One in-window Native SDK media surface visibly renders libmpv on all three OSes and survives resize, hide/show, fullscreen, and destroy.
 3. The Rust static library creates and reopens only its distinct current database and matches all scan, identity, search, Progress, stats, and notes fixtures.
-4. Linux, macOS, and Windows installed packages pass the ADR 0010 codec and failure corpus with one user-visible window and no helper process.
+4. Linux, macOS, and Windows installed packages pass the codec and failure corpus, including visible software-decoded HEVC 10-bit, with one user-visible window and no helper process.
 5. Headless tests, fake core tests, record/replay, live automation, and screen-reader checks all pass.
 6. Document behavior has an accepted native implementation or an explicitly approved reduced scope; no WebView exception exists.
-7. AppImage, Arch package, MSI, and macOS signed/notarized artifacts pass clean-machine dependency and launch checks.
+7. AppImage, Arch package, MSI, and macOS signed/notarized artifacts pass runtime inventory, license, lifecycle, numeric budget, fault-injection, and clean-package evidence gates.
 8. The Tauri/React/Node implementation and stale packaging are deleted in the same verified cutover, leaving one architecture.
 
-The architecture is viable if Native SDK accepts the four foundation changes. It is not viable as a melearner-only overlay on the SDK as it exists today.
+The architecture is viable if Native SDK accepts the three foundation changes. It is not viable as a melearner-only overlay on the SDK as it exists today.
 
 ## Sources
 
@@ -446,15 +530,15 @@ The architecture is viable if Native SDK accepts the four foundation changes. It
 3. Native SDK, [App Model](https://native-sdk.dev/app-model).
 4. Native SDK, [Testing](https://native-sdk.dev/testing).
 5. Native SDK, [Automation](https://native-sdk.dev/automation).
-6. Native SDK, [Packaging](https://native-sdk.dev/packaging), and local `/home/efaz/Codes/native/README.md`.
-7. Native SDK local platform/runtime contracts: `/home/efaz/Codes/native/src/platform/types.zig`, `/home/efaz/Codes/native/src/runtime/effects.zig`, `/home/efaz/Codes/native/src/runtime/session_record.zig`, `/home/efaz/Codes/native/src/runtime/session_replay.zig`, and `/home/efaz/Codes/native/src/runtime/automation_snapshot.zig`.
-8. Native SDK desktop implementations: `/home/efaz/Codes/native/src/platform/macos/root.zig`, `/home/efaz/Codes/native/src/platform/linux/root.zig`, and `/home/efaz/Codes/native/src/platform/windows/root.zig`.
-9. Native SDK effect implementation, `/home/efaz/Codes/native/src/runtime/effects.zig`.
-10. Native SDK automation implementation: `/home/efaz/Codes/native/src/runtime/automation_commands.zig`, `/home/efaz/Codes/native/src/runtime/automation_snapshot.zig`, `/home/efaz/Codes/native/src/runtime/session_record.zig`, and `/home/efaz/Codes/native/src/runtime/session_replay.zig`.
-11. Native SDK build and package implementation: `/home/efaz/Codes/native/build/app.zig` and `/home/efaz/Codes/native/src/tooling/package.zig`.
-12. Native SDK examples: `/home/efaz/Codes/native/examples/notes` and `/home/efaz/Codes/native/examples/gpu-surface`.
-13. melearner playback decision and implementation: `/home/efaz/Codes/melearn/docs/adr/0010-embedded-libmpv-native-playback.md`, `/home/efaz/Codes/melearn/src-tauri/src/native_player.rs`, and `/home/efaz/Codes/melearn/src-tauri/src/native_player/surface/`.
-14. melearner identity decision and implementation: `/home/efaz/Codes/melearn/docs/adr/0008-durable-course-identity-uses-local-fingerprints.md`, `/home/efaz/Codes/melearn/lib/course-identity.ts`, `/home/efaz/Codes/melearn/lib/database.ts`, and `/home/efaz/Codes/melearn/src-tauri/src/scanner.rs`.
-15. melearner cleanup decision, `/home/efaz/Codes/melearn/docs/adr/0009-remove-stale-and-redundant-artifacts.md`.
-16. melearner packaging evidence: `/home/efaz/Codes/melearn/.github/workflows/release.yml` and `/home/efaz/Codes/melearn/.github/workflows/windows-msi.yml`.
-17. melearner current document behavior, `/home/efaz/Codes/melearn/components/content-viewer.tsx` and `/home/efaz/Codes/melearn/types/index.ts`.
+6. Native SDK, [Packaging](https://native-sdk.dev/packaging), and local `/home/efaz/Codes/projects/native/README.md`.
+7. Native SDK local platform/runtime contracts: `/home/efaz/Codes/projects/native/src/platform/types.zig`, `/home/efaz/Codes/projects/native/src/runtime/effects.zig`, `/home/efaz/Codes/projects/native/src/runtime/session_record.zig`, `/home/efaz/Codes/projects/native/src/runtime/session_replay.zig`, and `/home/efaz/Codes/projects/native/src/runtime/automation_snapshot.zig`.
+8. Native SDK desktop implementations: `/home/efaz/Codes/projects/native/src/platform/macos/root.zig`, `/home/efaz/Codes/projects/native/src/platform/linux/root.zig`, and `/home/efaz/Codes/projects/native/src/platform/windows/root.zig`.
+9. Native SDK effect implementation, `/home/efaz/Codes/projects/native/src/runtime/effects.zig`.
+10. Native SDK automation implementation: `/home/efaz/Codes/projects/native/src/runtime/automation_commands.zig`, `/home/efaz/Codes/projects/native/src/runtime/automation_snapshot.zig`, `/home/efaz/Codes/projects/native/src/runtime/session_record.zig`, and `/home/efaz/Codes/projects/native/src/runtime/session_replay.zig`.
+11. Native SDK build and package implementation: `/home/efaz/Codes/projects/native/build/app.zig` and `/home/efaz/Codes/projects/native/src/tooling/package.zig`.
+12. Native SDK examples: `/home/efaz/Codes/projects/native/examples/notes` and `/home/efaz/Codes/projects/native/examples/gpu-surface`.
+13. melearner playback decision and implementation: `/home/efaz/Codes/projects/melearn/docs/adr/0010-embedded-libmpv-native-playback.md`, `/home/efaz/Codes/projects/melearn/src-tauri/src/native_player.rs`, and `/home/efaz/Codes/projects/melearn/src-tauri/src/native_player/surface/`.
+14. melearner identity decision and implementation: `/home/efaz/Codes/projects/melearn/docs/adr/0008-durable-course-identity-uses-local-fingerprints.md`, `/home/efaz/Codes/projects/melearn/lib/course-identity.ts`, `/home/efaz/Codes/projects/melearn/lib/database.ts`, and `/home/efaz/Codes/projects/melearn/src-tauri/src/scanner.rs`.
+15. melearner cleanup decision, `/home/efaz/Codes/projects/melearn/docs/adr/0009-remove-stale-and-redundant-artifacts.md`.
+16. melearner packaging evidence: `/home/efaz/Codes/projects/melearn/.github/workflows/release.yml` and `/home/efaz/Codes/projects/melearn/.github/workflows/windows-msi.yml`.
+17. melearner current document behavior, `/home/efaz/Codes/projects/melearn/components/content-viewer.tsx` and `/home/efaz/Codes/projects/melearn/types/index.ts`.
