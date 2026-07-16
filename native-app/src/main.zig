@@ -27,6 +27,7 @@ const max_section_id_bytes = 128;
 const max_section_name_bytes = 512;
 const max_lesson_kind_bytes = 16;
 const max_search_result_key_bytes = "lesson/".len + max_lesson_id_bytes;
+const max_collapsed_sections = max_lessons;
 const max_library_message_bytes = 256;
 const max_course_message_bytes = 256;
 const max_search_message_bytes = 256;
@@ -150,6 +151,15 @@ pub const Lesson = struct {
     }
 };
 
+const CollapsedSection = struct {
+    id_storage: [max_section_id_bytes]u8 = [_]u8{0} ** max_section_id_bytes,
+    id_len: usize = 0,
+
+    fn id(section: *const CollapsedSection) []const u8 {
+        return section.id_storage[0..section.id_len];
+    }
+};
+
 pub const SearchResultType = enum {
     course,
     lesson,
@@ -270,6 +280,8 @@ pub const Model = struct {
     pending_lesson_page_offset: u64 = 0,
     lessons: [max_lessons]Lesson = undefined,
     lesson_count: usize = 0,
+    collapsed_sections: [max_collapsed_sections]CollapsedSection = undefined,
+    collapsed_section_count: usize = 0,
     selected_lesson: Lesson = .{},
     has_selected_lesson: bool = false,
     selected_lesson_offset: u64 = 0,
@@ -323,6 +335,8 @@ pub const Model = struct {
         "pending_lesson_page_offset",
         "lessons",
         "lesson_count",
+        "collapsed_sections",
+        "collapsed_section_count",
         "selected_lesson",
         "has_selected_lesson",
         "selected_lesson_offset",
@@ -534,6 +548,48 @@ pub const Model = struct {
     fn clearTargetLesson(model: *Model) void {
         model.target_lesson_id_len = 0;
         model.target_lesson_offset = 0;
+    }
+
+    fn sectionExpanded(model: *const Model, section_id: []const u8) bool {
+        for (model.collapsed_sections[0..model.collapsed_section_count]) |section| {
+            if (std.mem.eql(u8, section.id(), section_id)) return false;
+        }
+        return true;
+    }
+
+    fn setSectionExpanded(model: *Model, section_id: []const u8, expanded: bool) void {
+        for (model.collapsed_sections[0..model.collapsed_section_count], 0..) |section, index| {
+            if (!std.mem.eql(u8, section.id(), section_id)) continue;
+            if (!expanded) return;
+            std.mem.copyForwards(
+                CollapsedSection,
+                model.collapsed_sections[index .. model.collapsed_section_count - 1],
+                model.collapsed_sections[index + 1 .. model.collapsed_section_count],
+            );
+            model.collapsed_section_count -= 1;
+            return;
+        }
+        if (expanded) return;
+        if (model.collapsed_section_count == max_collapsed_sections) {
+            const evicted_id = model.collapsed_sections[0].id();
+            for (model.lessons[0..model.lesson_count]) |*lesson| {
+                if (std.mem.eql(u8, lesson.sectionId(), evicted_id)) lesson.section_expanded = true;
+            }
+            std.mem.copyForwards(
+                CollapsedSection,
+                model.collapsed_sections[0 .. max_collapsed_sections - 1],
+                model.collapsed_sections[1..max_collapsed_sections],
+            );
+            model.collapsed_section_count -= 1;
+        }
+        const section = &model.collapsed_sections[model.collapsed_section_count];
+        section.* = .{ .id_len = section_id.len };
+        @memcpy(section.id_storage[0..section_id.len], section_id);
+        model.collapsed_section_count += 1;
+    }
+
+    fn clearSectionDisclosure(model: *Model) void {
+        model.collapsed_section_count = 0;
     }
 
     fn clearSearchResults(model: *Model) void {
@@ -841,6 +897,7 @@ pub const Model = struct {
                 .last_position = source.lastPosition,
                 .completed = source.completed,
                 .starts_section = index == 0 or !std.mem.eql(u8, source.sectionId, page.rows[index - 1].sectionId),
+                .section_expanded = model.sectionExpanded(source.sectionId),
             };
             @memcpy(lessons[index].id_storage[0..source.id.len], source.id);
             @memcpy(lessons[index].section_id_storage[0..source.sectionId.len], source.sectionId);
@@ -868,6 +925,11 @@ pub const Model = struct {
                 return error.InvalidLessonPage;
             }
             lessons[target_index.?].selected = true;
+            const selected_section_id = lessons[target_index.?].sectionId();
+            model.setSectionExpanded(selected_section_id, true);
+            for (lessons[0..page.rows.len]) |*lesson| {
+                if (std.mem.eql(u8, lesson.sectionId(), selected_section_id)) lesson.section_expanded = true;
+            }
         } else if (model.has_selected_lesson) {
             for (lessons[0..page.rows.len]) |*lesson| {
                 if (std.mem.eql(u8, lesson.id(), model.selected_lesson.id())) {
@@ -1059,6 +1121,7 @@ pub const Msg = union(enum) {
     search_loaded: native_sdk.EffectExternalResult,
     open_course: []const u8,
     toggle_section: []const u8,
+    select_lesson: []const u8,
     open_lesson: []const u8,
     open_search,
     dismiss_search,
@@ -1210,6 +1273,7 @@ pub fn boot(model: *Model, effects: *Effects) void {
     model.course_access_request_id = 0;
     model.lesson_page_request_id = 0;
     model.course_count = 0;
+    model.clearSectionDisclosure();
     model.search_open = false;
     model.restore_search_focus = false;
     model.search_state = .inactive;
@@ -1357,6 +1421,28 @@ fn cancelSearchWork(model: *Model, effects: *Effects) void {
     model.search_query_request_id = 0;
     model.search_query_key = 0;
     model.active_search_query_id = 0;
+}
+
+fn selectLesson(model: *Model, lesson_id: []const u8) bool {
+    if (model.screen != .course or !model.courseReady()) return false;
+    const lesson = for (model.lessons[0..model.lesson_count], 0..) |*candidate, index| {
+        if (std.mem.eql(u8, candidate.id(), lesson_id)) {
+            model.selected_lesson_offset = model.lesson_page_offset + @as(u64, @intCast(index));
+            break candidate;
+        }
+    } else return false;
+    for (model.lessons[0..model.lesson_count]) |*candidate| {
+        candidate.selected = false;
+        candidate.restore_focus = false;
+        if (std.mem.eql(u8, candidate.sectionId(), lesson.sectionId())) {
+            candidate.section_expanded = true;
+        }
+    }
+    model.setSectionExpanded(lesson.sectionId(), true);
+    lesson.selected = true;
+    model.selected_lesson = lesson.*;
+    model.has_selected_lesson = true;
+    return true;
 }
 
 pub fn update(model: *Model, msg: Msg, effects: *Effects) void {
@@ -1585,9 +1671,12 @@ pub fn update(model: *Model, msg: Msg, effects: *Effects) void {
                 if (candidate.result_type == result_type and
                     std.mem.eql(u8, candidate.id(), result_id)) break candidate;
             } else return;
+            const same_course = model.selected_course.id_len != 0 and
+                std.mem.eql(u8, model.selected_course.id(), result.courseId());
             const preserve_selected_lesson = result_type == .course and
                 model.has_selected_lesson and
-                std.mem.eql(u8, model.selected_course.id(), result.courseId());
+                same_course;
+            if (!same_course) model.clearSectionDisclosure();
             model.selected_course = .{
                 .id_len = result.course_id_len,
                 .name_len = result.course_name_len,
@@ -1622,8 +1711,10 @@ pub fn update(model: *Model, msg: Msg, effects: *Effects) void {
             } else return;
             if (!course.available) return;
             cancelSearchWork(model, effects);
-            const reopening_selected_course = model.has_selected_lesson and
+            const same_course = model.selected_course.id_len != 0 and
                 std.mem.eql(u8, model.selected_course.id(), course.id());
+            const reopening_selected_course = model.has_selected_lesson and same_course;
+            if (!same_course) model.clearSectionDisclosure();
             model.selected_course = course.*;
             if (reopening_selected_course) {
                 model.setTargetLesson(model.selected_lesson.id(), model.selected_lesson_offset);
@@ -1652,28 +1743,16 @@ pub fn update(model: *Model, msg: Msg, effects: *Effects) void {
                 if (lesson.starts_section and std.mem.eql(u8, lesson.sectionId(), section_id)) break lesson;
             } else return;
             const expanded = !section.section_expanded;
+            model.setSectionExpanded(section_id, expanded);
             for (model.lessons[0..model.lesson_count]) |*lesson| {
                 if (std.mem.eql(u8, lesson.sectionId(), section_id)) lesson.section_expanded = expanded;
             }
         },
+        .select_lesson => |lesson_id| {
+            _ = selectLesson(model, lesson_id);
+        },
         .open_lesson => |lesson_id| {
-            if (model.screen != .course or !model.courseReady()) return;
-            const lesson = for (model.lessons[0..model.lesson_count], 0..) |*candidate, index| {
-                if (std.mem.eql(u8, candidate.id(), lesson_id)) {
-                    model.selected_lesson_offset = model.lesson_page_offset + @as(u64, @intCast(index));
-                    break candidate;
-                }
-            } else return;
-            for (model.lessons[0..model.lesson_count]) |*candidate| {
-                candidate.selected = false;
-                candidate.restore_focus = false;
-                if (std.mem.eql(u8, candidate.sectionId(), lesson.sectionId())) {
-                    candidate.section_expanded = true;
-                }
-            }
-            lesson.selected = true;
-            model.selected_lesson = lesson.*;
-            model.has_selected_lesson = true;
+            if (!selectLesson(model, lesson_id)) return;
             model.compact_course_page = .lesson;
         },
         .navigate_back => {

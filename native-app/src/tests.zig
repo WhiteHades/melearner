@@ -138,6 +138,56 @@ fn largeCourseModel() main.Model {
     return model;
 }
 
+fn lessonPageJson(arena: std.mem.Allocator, offset: u64, total: u64, count: usize, section_id: []const u8, section_name: []const u8) ![]const u8 {
+    if (count > core_adapter.lesson_page_size) return error.InvalidFixture;
+    const Row = struct {
+        id: []const u8,
+        courseId: []const u8,
+        sectionId: []const u8,
+        sectionName: []const u8,
+        name: []const u8,
+        kind: []const u8,
+        duration: i64,
+        fileSize: i64,
+        completed: bool,
+        watchedTime: i64,
+        lastPosition: f64,
+        order: i64,
+    };
+    var id_storage: [core_adapter.lesson_page_size][32]u8 = undefined;
+    var rows: [core_adapter.lesson_page_size]Row = undefined;
+    for (rows[0..count], 0..) |*row, index| {
+        const lesson_number = offset + @as(u64, @intCast(index)) + 1;
+        const id = try std.fmt.bufPrint(&id_storage[index], "lesson-{d}", .{lesson_number});
+        row.* = .{
+            .id = id,
+            .courseId = "course-1",
+            .sectionId = section_id,
+            .sectionName = section_name,
+            .name = id,
+            .kind = "video",
+            .duration = 120,
+            .fileSize = 1024,
+            .completed = false,
+            .watchedTime = 0,
+            .lastPosition = 0,
+            .order = @intCast(lesson_number - 1),
+        };
+    }
+
+    var body: std.Io.Writer.Allocating = .init(arena);
+    var json: std.json.Stringify = .{ .writer = &body.writer };
+    try json.write(.{
+        .revision = @as(u64, 8),
+        .courseId = "course-1",
+        .sectionId = @as(?[]const u8, null),
+        .offset = offset,
+        .total = total,
+        .rows = rows[0..count],
+    });
+    return body.written();
+}
+
 const LiveLibrary = struct {
     harness: *native_sdk.TestHarness(),
     app_state: *main.LibraryApp,
@@ -935,6 +985,130 @@ test "Course Section rows expose and own their expanded state" {
     try testing.expect(findByText(closed_tree.root, .text, "Lesson 1") == null);
 }
 
+test "collapsed Course Sections survive a Lesson page round trip" {
+    var effects = main.Effects.init(testing.allocator);
+    defer effects.deinit();
+    effects.executor = .fake;
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+
+    var model = largeCourseModel();
+    model.total_lessons = 21;
+    model.selected_course.lesson_count = 21;
+    main.update(&model, .{ .toggle_section = "section-1" }, &effects);
+    try testing.expect(!model.lessons[0].section_expanded);
+
+    main.update(&model, .next_lesson_page, &effects);
+    const next = effects.pendingExternalAt(0) orelse return error.TestUnexpectedResult;
+    try effects.feedExternalResult(next.request_id, .success, try lessonPageJson(
+        arena_state.allocator(),
+        20,
+        21,
+        1,
+        "section-2",
+        "Advanced",
+    ));
+    main.update(&model, effects.takeMsg().?, &effects);
+    try testing.expect(model.lessons[0].section_expanded);
+
+    main.update(&model, .previous_lesson_page, &effects);
+    const previous = effects.pendingExternalAt(0) orelse return error.TestUnexpectedResult;
+    try effects.feedExternalResult(previous.request_id, .success, try lessonPageJson(
+        arena_state.allocator(),
+        0,
+        21,
+        core_adapter.lesson_page_size,
+        "section-1",
+        "Foundations",
+    ));
+    main.update(&model, effects.takeMsg().?, &effects);
+    for (model.lessons[0..model.lesson_count]) |lesson| {
+        try testing.expect(!lesson.section_expanded);
+    }
+}
+
+test "collapsed Section eviction reconciles visible Lesson rows" {
+    var effects = main.Effects.init(testing.allocator);
+    defer effects.deinit();
+
+    var model = largeCourseModel();
+    for (model.lessons[0..model.lesson_count], 0..) |*lesson, index| {
+        var id_storage: [32]u8 = undefined;
+        const section_id = try std.fmt.bufPrint(&id_storage, "section-{d}", .{index + 1});
+        lesson.section_id_len = section_id.len;
+        lesson.section_name_len = section_id.len;
+        @memcpy(lesson.section_id_storage[0..section_id.len], section_id);
+        @memcpy(lesson.section_name_storage[0..section_id.len], section_id);
+        lesson.starts_section = true;
+    }
+    for (model.lessons[0..model.lesson_count]) |*lesson| {
+        main.update(&model, .{ .toggle_section = lesson.sectionId() }, &effects);
+    }
+    for (model.lessons[0..model.lesson_count]) |lesson| {
+        try testing.expect(!lesson.section_expanded);
+    }
+
+    const replacement = &model.lessons[model.lesson_count - 1];
+    replacement.section_id_len = "section-21".len;
+    replacement.section_name_len = "section-21".len;
+    @memcpy(replacement.section_id_storage[0.."section-21".len], "section-21");
+    @memcpy(replacement.section_name_storage[0.."section-21".len], "section-21");
+    replacement.section_expanded = true;
+    main.update(&model, .{ .toggle_section = "section-21" }, &effects);
+
+    try testing.expect(model.lessons[0].section_expanded);
+    try testing.expect(!replacement.section_expanded);
+}
+
+test "Course tree arrows select Lessons without opening detail or toggling Sections" {
+    var model = largeCourseModel();
+    model.canvas_width = 560;
+    const live = try LiveLibrary.start(model, geometry.SizeF.init(560, 400), .{});
+    defer live.stop();
+
+    var snapshot = live.harness.runtime.automationSnapshot("melearner");
+    const section = snapshotByNameAndRole(snapshot, "Foundations", "treeitem") orelse return error.TestUnexpectedResult;
+    var command_buffer: [128]u8 = undefined;
+    const focus_section = try std.fmt.bufPrint(&command_buffer, "widget-action {s} {d} focus", .{ main.canvas_label, section.id });
+    try live.harness.runtime.dispatchAutomationCommand(live.app, focus_section);
+
+    try live.harness.runtime.dispatchAutomationCommand(live.app, "widget-key " ++ main.canvas_label ++ " enter");
+    try testing.expect(!live.app_state.model.lessons[0].section_expanded);
+    try live.harness.runtime.dispatchAutomationCommand(live.app, "widget-key " ++ main.canvas_label ++ " enter");
+    try testing.expect(live.app_state.model.lessons[0].section_expanded);
+
+    try live.harness.runtime.dispatchAutomationCommand(live.app, "widget-key " ++ main.canvas_label ++ " arrowdown");
+    try testing.expectEqual(main.CompactCoursePage.outline, live.app_state.model.compact_course_page);
+    snapshot = live.harness.runtime.automationSnapshot("melearner");
+    const lesson = snapshotByNameAndRole(snapshot, "Lesson 1", "treeitem") orelse return error.TestUnexpectedResult;
+    try testing.expect(lesson.focused);
+    try testing.expect(lesson.selected);
+
+    try live.harness.runtime.dispatchAutomationCommand(live.app, "widget-key " ++ main.canvas_label ++ " arrowup");
+    snapshot = live.harness.runtime.automationSnapshot("melearner");
+    const focused_section = snapshotByNameAndRole(snapshot, "Foundations", "treeitem") orelse return error.TestUnexpectedResult;
+    try testing.expect(focused_section.focused);
+    try testing.expect(focused_section.expanded orelse false);
+
+    try live.harness.runtime.dispatchAutomationCommand(live.app, "widget-key " ++ main.canvas_label ++ " arrowdown");
+    try live.harness.runtime.dispatchAutomationCommand(live.app, "widget-key " ++ main.canvas_label ++ " enter");
+    try testing.expectEqual(main.CompactCoursePage.lesson, live.app_state.model.compact_course_page);
+}
+
+test "compact Lesson row clicks still open detail" {
+    var model = largeCourseModel();
+    model.canvas_width = 560;
+    const live = try LiveLibrary.start(model, geometry.SizeF.init(560, 400), .{});
+    defer live.stop();
+
+    const snapshot = live.harness.runtime.automationSnapshot("melearner");
+    const lesson = snapshotByNameAndRole(snapshot, "Lesson 1", "treeitem") orelse return error.TestUnexpectedResult;
+    var command_buffer: [128]u8 = undefined;
+    const click_lesson = try std.fmt.bufPrint(&command_buffer, "widget-click {s} {d}", .{ main.canvas_label, lesson.id });
+    try live.harness.runtime.dispatchAutomationCommand(live.app, click_lesson);
+    try testing.expectEqual(main.CompactCoursePage.lesson, live.app_state.model.compact_course_page);
+}
+
 test "compact Lesson Back restores focus and stale pages cannot replace its selection" {
     var effects = main.Effects.init(testing.allocator);
     defer effects.deinit();
@@ -1430,12 +1604,12 @@ test "Course navigation and search screenshots stay deterministic" {
     }
 
     try testing.expectEqualSlices(u64, &[_]u64{
-        6989406396576010989,
-        5833644193176711401,
+        3351006344256886441,
+        3994931452247643210,
         15439241892458306360,
         17601016577952864682,
-        5776370605640282519,
-        13543513569934783543,
+        9416479089960591688,
+        18272381210520527311,
         10455963579296583143,
         12771900024855511110,
     }, &screenshot_hashes);

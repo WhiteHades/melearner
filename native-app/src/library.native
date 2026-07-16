@@ -8,20 +8,24 @@
       <tree label="Course Sections and Lessons">
         <for each="lessonRows" key="id" as="lesson">
           <if test="{lesson.starts_section}">
-            <list-item global-key="{lesson.sectionId}" on-press="toggle_section:{lesson.sectionId}" on-toggle="toggle_section:{lesson.sectionId}" expanded="{lesson.section_expanded}" padding="8" gap="8" role="treeitem" label="{lesson.sectionName}">
-              <text size="sm" foreground="text_muted" grow="1">{lesson.sectionName}</text>
-              <badge variant="secondary">{lesson.sectionToggleLabel}</badge>
+            <list-item global-key="{lesson.sectionId}" on-submit="toggle_section:{lesson.sectionId}" on-toggle="toggle_section:{lesson.sectionId}" expanded="{lesson.section_expanded}" padding="0" role="treeitem" label="{lesson.sectionName}">
+              <row on-press="toggle_section:{lesson.sectionId}" padding="8" gap="8" grow="1" cross="center" label="{lesson.sectionName}">
+                <text size="sm" foreground="text_muted" grow="1">{lesson.sectionName}</text>
+                <badge variant="secondary">{lesson.sectionToggleLabel}</badge>
+              </row>
             </list-item>
           </if>
           <if test="{lesson.section_expanded}">
-            <list-item global-key="{lesson.id}" on-press="open_lesson:{lesson.id}" selected="{lesson.selected}" autofocus="{lesson.restore_focus}" padding="12" gap="8" role="treeitem" label="{lesson.name}">
-              <column gap="4" grow="1">
-                <row gap="8" cross="center">
-                  <text grow="1">{lesson.name}</text>
-                  <badge variant="secondary">{lesson.kindLabel}</badge>
-                </row>
-                <text size="sm" foreground="text_muted" label="{lesson.progressLine}"><span mono>{lesson.progressLine}</span></text>
-              </column>
+            <list-item global-key="{lesson.id}" on-press="select_lesson:{lesson.id}" on-submit="open_lesson:{lesson.id}" selected="{lesson.selected}" autofocus="{lesson.restore_focus}" padding="0" role="treeitem" label="{lesson.name}">
+              <row on-press="open_lesson:{lesson.id}" padding="12" gap="8" grow="1" cross="center" label="{lesson.name}">
+                <column gap="4" grow="1">
+                  <row gap="8" cross="center">
+                    <text grow="1">{lesson.name}</text>
+                    <badge variant="secondary">{lesson.kindLabel}</badge>
+                  </row>
+                  <text size="sm" foreground="text_muted" label="{lesson.progressLine}"><span mono>{lesson.progressLine}</span></text>
+                </column>
+              </row>
             </list-item>
           </if>
         </for>
