@@ -2,7 +2,7 @@
 
 ## Status
 
-Superseded for the final architecture by ADR 0011. Tauri asset URLs and WebView rendering remain historical constraints of the transitional production shell only; approved-root local access and the rejection of localhost/browser playback remain accepted.
+Superseded for the final architecture by ADR 0012. Tauri asset URLs and WebView rendering remain historical constraints of the transitional production shell only; approved-root local access and the rejection of localhost/browser playback remain accepted.
 
 Documents, images, and thumbnail assets load through Tauri asset URLs instead of a localhost media server. This keeps the app offline and direct while letting the WebView render files selected by the user.
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted for embedded libmpv, one in-window surface, local-file validation, controls, and no sidecar. ADR 0011 supersedes the final UI owner, React/Tauri/WebView transport, WebView-band layout, package/runtime inventory, and thumbnail/metadata helper-process policy. The implementation sections below continue to describe the transitional production shell until native package gates pass.
+Accepted for embedded libmpv, one in-window surface, local-file validation, controls, and no sidecar. ADR 0012 supersedes the final UI owner, React/Tauri/WebView and Native SDK/Zig/Rust transports, package/runtime inventory, and thumbnail/metadata helper-process policy. The implementation sections below continue to describe the transitional production shell until C++ package gates pass.
 
 ## Context
 
@@ -69,7 +69,7 @@ The current default surface is native, in-process, and render-api-first. A chang
 - Keep the React/shadcn UI as the transitional app and control layer.
 - In the transitional shell, keep FFmpeg out of ordinary playback and limit any executable use to existing thumbnail, metadata, or optional processing paths.
 
-The final native package follows ADR 0011's stronger rule: it contains and launches no `ffmpeg` or `ffprobe` executable for playback, thumbnails, metadata, or optional processing. Linked FFmpeg libraries remain part of the in-process libmpv codec runtime, and final thumbnail extraction runs in process.
+The final C++ package follows ADR 0012's stronger rule: it contains and launches no `ffmpeg` or `ffprobe` executable for playback, thumbnails, metadata, or optional processing. Linked FFmpeg libraries remain part of the in-process libmpv codec runtime, and final thumbnail extraction runs in process.
 
 ## Migration
 
@@ -102,5 +102,5 @@ Native playback is not accepted until these pass on packaged builds:
 - Player work should move through the native video engine instead of reintroducing a parallel browser-media engine.
 - Stale compatibility bridges, package dependencies, generated player files, and docs must be removed when the native path replaces them.
 - Cross-platform packaging must bundle or otherwise provide the correct libmpv dependencies for the end user.
-- In the transitional Arch shell, the `mpv` package is currently required because it provides `libmpv.so`; melearner must not launch the `mpv` executable as a sidecar. ADR 0011 supersedes that host-package dependency for final packages with a locked private runtime.
+- In the transitional Arch shell, the `mpv` package is currently required because it provides `libmpv.so`; melearner must not launch the `mpv` executable as a sidecar. ADR 0012 supersedes that host-package dependency for final packages with a locked private runtime.
 - The repo must not add a sidecar player path as the final architecture.

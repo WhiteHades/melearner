@@ -1,12 +1,12 @@
 # Design: melearner
 
-A locked visual system for the app. Every visual change should preserve the current product structure while applying this system; shell ownership follows ADR 0011.
+A locked visual system for the all-C++ Qt Widgets application. Every visual change preserves the product interaction contract and applies this system through native Qt controls and custom accessible widgets.
 
 ## Scope
 
-- The transitional production shell is React/shadcn/Radix inside Tauri. Its browser-responsive verification remains 320, 375, 414, 768, and desktop widths until cutover.
-- The final native shell is Native SDK `.native` views and Zig. Its supported content floor is 560x400 logical pixels, with compact at 560-767 px, standard at 768-1279 px, and wide at 1280 px or greater as specified in `docs/specs/fully-native-melearner.md`.
-- The visual language is shared, but a shell-specific implementation rule applies only to that shell. Do not turn transitional DOM, WebView, shadcn, or Radix constraints into final-native requirements.
+- The final application uses Qt 6.11 Widgets and C++23. It uses no QML, WebView, browser layout, or JavaScript UI.
+- The supported content floor is 560x400 logical pixels. Compact is 560-767 px, standard is 768-1279 px, and wide is 1280 px or greater.
+- Qt standard widgets provide familiar platform interaction. Custom drawing is limited to Course artwork, Progress traces, activity, document pages, and the in-window Player surface, each with explicit accessibility semantics.
 
 ## Register
 
@@ -22,7 +22,7 @@ Inspired by the Kami paper system: warm parchment surfaces, low-chroma ink, one 
 
 ## Typography
 
-- Use each shell's committed interface face: the existing web font stack during the transition and `native-app/src/fonts/melearner-ui.ttf` in the native shell.
+- Use the packaged melearner interface font where available and platform UI fallback fonts otherwise.
 - Keep headings roman, never italic.
 - Keep product labels compact and readable.
 - Use tabular numbers for progress, versions, counts, and time.
@@ -32,7 +32,7 @@ Inspired by the Kami paper system: warm parchment surfaces, low-chroma ink, one 
 - App background is warm paper, not pure white or pure black.
 - Cards lift one shade above the page with a 1px warm border.
 - Elevation should be a whisper shadow only; if a shadow is obvious, it is too strong.
-- Rounded corners stay consistent with existing shadcn/Radix primitives in the transitional shell and with the committed Native SDK design tokens in the final native shell.
+- Rounded corners use one compact Qt style token set. Native dialogs and menus retain platform conventions.
 
 ## Accent Rules
 
@@ -42,11 +42,10 @@ Inspired by the Kami paper system: warm parchment surfaces, low-chroma ink, one 
 
 ## Layout Rules
 
-- Preserve product routes, content, and information architecture. Preserve a shell's committed component structure only within that shell.
+- Preserve product routes, content, and information architecture.
 - Improve rhythm through spacing, borders, and surface contrast rather than reordering UI.
 - Avoid nested-card feeling by letting parent surfaces and child controls differ subtly.
-- Keep transitional browser behavior stable at 320, 375, 414, 768, and desktop widths.
-- Keep final-native behavior stable at 560x400, 768-wide, 1280-wide, and representative desktop/ultrawide viewports; widths below 560 are outside the final-native support contract.
+- Keep behavior stable at 560x400, 768-wide, 1280-wide, and representative desktop and ultrawide viewports. Widths below 560 are outside the support contract.
 
 ## Motion
 

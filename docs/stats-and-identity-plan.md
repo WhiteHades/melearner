@@ -1,6 +1,6 @@
 # Stats and Course Identity
 
-This document records the canonical stats and course-identity behavior and the resolved product decisions.
+This document records canonical stats and Learning activity behavior. ADR 0008 is the sole authority for Course identity, fingerprints, retained missing Courses, and marker files.
 
 ## Product Behavior
 
@@ -25,7 +25,7 @@ The app does not maintain a separate `course_stats` table. Aggregate stats are c
 
 ### Canonical snapshot fields
 
-The Rust `LibraryStats` response uses camelCase JSON and contains exactly:
+The C++ `LibraryStats` value contains exactly:
 
 - `revision`: current Library revision; requests for another revision fail as stale.
 - `totalCourses`: all retained Course rows in scope, including missing Courses.
@@ -51,56 +51,6 @@ The database fields named `watched_time` and `watched_seconds`, and the API fiel
 
 The activity heatmap remains a fixed 12-week window. It can be revisited only if configurability improves the learning UI without adding settings complexity.
 
-## Identity Model
+## Identity dependency
 
-Course identity is local-first and conservative:
-
-1. Exact course path match.
-2. One unambiguous marker identity match from `.melearner-course.json`.
-3. One unambiguous fingerprint match.
-4. New course.
-
-Lesson identity inside a resolved course uses:
-
-1. Exact lesson path.
-2. Relative path within the course.
-3. Section/name/type/file-size metadata only when unambiguous.
-4. New lesson.
-
-Ambiguous matches produce scan warnings and do not reuse progress. Assigning progress to the wrong course is worse than failing to match.
-
-## Storage Model
-
-Implemented fields and tables:
-
-- `courses.identity_id`: stable local identity associated with the course row
-- `courses.fingerprint`: non-absolute course content fingerprint
-- `courses.path`: latest known path
-- `courses.missing_since`: nullable timestamp for unavailable courses
-- `lessons.relative_path`: lesson path relative to its course root
-- `lesson_activity`: append-only daily progress events for heatmaps and history
-
-The primary fingerprint is derived from section names, lesson relative paths, lesson file sizes, and lesson file types. It excludes the absolute root path and course folder name.
-
-## Marker Files
-
-Marker files are automatic because durable identity should not require a user-visible implementation setting.
-
-Format:
-
-```json
-{
-  "version": 1,
-  "identityId": "course identity value"
-}
-```
-
-Rules:
-
-- Scanner reads `.melearner-course.json` if present.
-- Available scanned Courses get marker files after the database reconciliation transaction commits and the new Library revision is installed.
-- Sync matches marker identity before fingerprint matching.
-- Duplicate marker IDs in the same scan are ignored with warnings.
-- Existing marker files with a different identity are not overwritten.
-- Missing courses are skipped when writing markers.
-- Marker writes are nontransactional filesystem side effects. A write failure adds a warning to the committed scan result and does not roll back the new revision.
+Stats use the Course and Lesson rows retained by ADR 0008. Identity matching and marker writes happen before a new Library revision becomes visible. Stats do not implement another identity order, fingerprint, marker parser, or missing-Course policy.

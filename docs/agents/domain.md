@@ -5,11 +5,12 @@ How the engineering skills should consume this repo's domain documentation when 
 ## Before exploring, read these
 
 - `CONTEXT.md` at the repo root.
+- `PRODUCT.md` for users, purpose, product principles, and accessibility intent.
 - `docs/adr/` for architectural decisions that touch the area you are about to work in.
 - `DESIGN.md` before UI, layout, motion, visual-system, or component changes.
 - `docs/stats-and-identity-plan.md` before changing stats, heatmaps, storage breakdowns, or learning activity.
 - `docs/adr/0010-embedded-libmpv-native-playback.md` before changing playback, subtitles, player controls, or native player behavior.
-- `docs/adr/0011-native-sdk-zig-shell-with-rust-static-core.md`, `docs/specs/fully-native-melearner.md`, and `docs/research/native-sdk-overhaul.md` before changing the final native shell, core boundary, cutover, or packages.
+- `docs/adr/0012-all-cpp23-qt-widgets-application.md`, `docs/specs/fully-native-melearner.md`, `docs/specs/cpp23-implementation-plan.md`, and `docs/research/cpp23-qt-overhaul.md` before changing the final application, module seams, cutover, performance, or packages.
 - `docs/adr/0007-course-cards-do-not-generate-runtime-video-thumbnails.md` before changing course artwork, cards, or thumbnail behavior.
 - `docs/adr/0008-durable-course-identity-uses-local-fingerprints.md` before changing durable course identity behavior.
 - `docs/adr/0009-remove-stale-and-redundant-artifacts.md` before build, release, documentation, or cleanup work.
@@ -23,15 +24,20 @@ This is a single-context repo:
 ```text
 /
 |-- CONTEXT.md
+|-- PRODUCT.md
 |-- DESIGN.md
+|-- docs/specs/
+|   |-- fully-native-melearner.md
+|   `-- cpp23-implementation-plan.md
 |-- docs/stats-and-identity-plan.md
 |-- docs/adr/
-|-- crates/melearner-core/
-|-- native-app/
-`-- src-tauri/
+|-- cpp-app/
+|-- crates/melearner-core/  (superseded oracle before cutover)
+|-- native-app/             (superseded oracle before cutover)
+`-- src-tauri/              (transitional production before cutover)
 ```
 
-Two implementation scopes coexist until the ADR 0011 cutover. `src-tauri/` is the transitional production shell. `crates/melearner-core/` and `native-app/` contain the shared Rust crate and unreleased final-native line. The Tauri Cargo crate already directly reuses the core scanner; preserve and regression-test that frozen Rust reuse without requiring decoupling. Do not redirect the transitional shell through the C ABI, native database ownership, Native SDK effects, or Native SDK UI, and do not introduce another adapter. Do not apply React/WebView details as final-native contracts or final-native-only package rules to the transitional shell.
+Three implementation scopes coexist until the ADR 0012 cutover. `src-tauri/` is the transitional production shell. `crates/melearner-core/` and `native-app/` are frozen parity oracles from the superseded Native SDK line. `cpp-app/` is the unreleased final line. Keep the old scopes runnable only as required by parity gates. Do not route production through the C++ line before installed-package acceptance, and do not add compatibility adapters between data paths.
 
 ## Use the glossary's vocabulary
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted on 2026-07-16.
+Superseded by ADR 0012 on 2026-08-24.
 
 ## Context
 
@@ -48,4 +48,4 @@ The Tauri shell remains the production line during stages 1-6 and must pass its 
 - Native SDK foundation work and package evidence are release blockers, not optional follow-up work.
 - A failed platform package gate delays cutover; it does not justify a WebView, sidecar, or second-window exception.
 - Transitional ADR implementation notes remain readable until cutover but their status pointers identify which details are no longer the final direction.
-- The exact interaction contract is in `docs/specs/fully-native-melearner.md`; codec, package, acceptance, and evidence policy is in `docs/research/native-sdk-overhaul.md`.
+- This ADR remains historical. ADR 0012, `docs/specs/fully-native-melearner.md`, and `docs/research/cpp23-qt-overhaul.md` contain the current contract.

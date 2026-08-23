@@ -1,9 +1,10 @@
 # melearner Agent Guide
 
-## Native cutover policy
+## C++ cutover policy
 
-- The fully native line uses one current schema at a time. Do not add import, migration, backup, restore, rollback, or compatibility paths for pre-native databases, obsolete schemas, or obsolete artifacts.
-- An unchanged current native database survives native-to-native package replacement. A future schema replacement uses a new fresh data path and decision instead of compatibility code. Current `.melearner-course.json` markers are domain inputs, not previous-version artifacts.
+- The all-C++ line uses one current schema at a time. Do not add import, migration, backup, restore, rollback, or compatibility paths for Tauri, Native SDK, Rust, Zig, obsolete databases, schemas, or artifacts.
+- An unchanged current C++ database survives C++ package replacement. A future schema replacement uses a new fresh data path and decision. Current `.melearner-course.json` markers are domain inputs, not previous-version artifacts.
+- Before final cutover, use the old implementations only as frozen parity oracles. Do not add new product behavior to a superseded line unless it is required to expose or verify the C++ contract.
 - Delete deprecated versions, artifacts, features, functions, and fallback paths in the change that supersedes them. Do not retain legacy behavior as a fallback.
 
 ## Agent skills
@@ -22,7 +23,7 @@ This is a single-context repo with one root `CONTEXT.md` and ADRs under `docs/ad
 
 ### Product plans
 
-Stats, heatmaps, learning activity, and durable course identity behavior are tracked in `docs/stats-and-identity-plan.md`. Durable course identity decisions are recorded in `docs/adr/0008-durable-course-identity-uses-local-fingerprints.md`.
+Stats, heatmaps, and Learning activity are tracked in `docs/stats-and-identity-plan.md`. Durable Course identity and marker behavior are defined by `docs/adr/0008-durable-course-identity-uses-local-fingerprints.md`.
 
 ### Cleanup discipline
 

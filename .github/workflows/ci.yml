@@ -9,6 +9,19 @@ permissions:
   contents: read
 
 jobs:
+  cpp-plan:
+    name: c++ plan traceability
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: check canonical stories and ticket graph
+        run: |
+          python3 -m venv "$RUNNER_TEMP/cmake"
+          "$RUNNER_TEMP/cmake/bin/pip" install --disable-pip-version-check cmake==4.4.2
+          "$RUNNER_TEMP/cmake/bin/cmake" -P scripts/test-cpp-traceability.cmake
+
   core-abi:
     name: rust core abi
     runs-on: ubuntu-22.04
