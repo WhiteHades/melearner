@@ -8,6 +8,10 @@ const max_poll_attempts = 2_000;
 
 comptime {
     if (c.ML_ABI_VERSION != 2) @compileError("unexpected core ABI version");
+    if (c.ML_STATUS_TOO_LATE != 11) @compileError("unexpected too-late status");
+    if (c.ML_SCAN_PHASE_DISCOVERING != 1 or c.ML_SCAN_PHASE_WRITING_MARKERS != 5) {
+        @compileError("unexpected scan phase values");
+    }
     if (@sizeOf(c.ml_config_v2) != 16 + @sizeOf(usize) * 2) {
         @compileError("ml_config_v2 layout drift");
     }
@@ -23,8 +27,66 @@ comptime {
     {
         @compileError("Library stats request layout drift");
     }
+    if (@sizeOf(c.ml_library_state_request_v1) != 24 or
+        @offsetOf(c.ml_library_state_request_v1, "expected_revision") != 8 or
+        @offsetOf(c.ml_library_state_request_v1, "reserved") != 16)
+    {
+        @compileError("Library state request layout drift");
+    }
+    if (c.ML_EVENT_SETTINGS != 17 or c.ML_EVENT_APPEARANCE_UPDATED != 18 or
+        c.ML_APPEARANCE_LIGHT != 1 or c.ML_APPEARANCE_DARK != 2 or c.ML_APPEARANCE_COZY != 3)
+    {
+        @compileError("appearance settings constants drift");
+    }
+    if (c.ML_EVENT_DOCUMENT_OPENED != 19 or c.ML_EVENT_DOCUMENT_PAGE != 20 or
+        c.ML_EVENT_DOCUMENT_EXTERNAL_OPEN_READY != 21)
+    {
+        @compileError("document event constants drift");
+    }
+    if (@sizeOf(c.ml_settings_get_request_v1) != 16 or
+        @offsetOf(c.ml_settings_get_request_v1, "reserved") != 8)
+    {
+        @compileError("Settings get request layout drift");
+    }
+    if (@sizeOf(c.ml_settings_put_appearance_request_v1) != 24 or
+        @offsetOf(c.ml_settings_put_appearance_request_v1, "expected_revision") != 8 or
+        @offsetOf(c.ml_settings_put_appearance_request_v1, "appearance") != 16 or
+        @offsetOf(c.ml_settings_put_appearance_request_v1, "reserved") != 20)
+    {
+        @compileError("appearance update request layout drift");
+    }
+    if (@sizeOf(c.ml_document_open_request_v1) != 24 + @sizeOf(usize) * 2 or
+        @offsetOf(c.ml_document_open_request_v1, "expected_revision") != 8 or
+        @offsetOf(c.ml_document_open_request_v1, "reserved") != 16 or
+        @offsetOf(c.ml_document_open_request_v1, "lesson_id") != 24)
+    {
+        @compileError("document open request layout drift");
+    }
+    if (@sizeOf(c.ml_document_page_request_v1) != 32 + @sizeOf(usize) * 2 or
+        @offsetOf(c.ml_document_page_request_v1, "expected_revision") != 8 or
+        @offsetOf(c.ml_document_page_request_v1, "offset") != 16 or
+        @offsetOf(c.ml_document_page_request_v1, "limit") != 24 or
+        @offsetOf(c.ml_document_page_request_v1, "reserved") != 28 or
+        @offsetOf(c.ml_document_page_request_v1, "document_id") != 32)
+    {
+        @compileError("document page request layout drift");
+    }
+    if (@sizeOf(c.ml_document_external_open_request_v1) != 24 + @sizeOf(usize) * 2 or
+        @offsetOf(c.ml_document_external_open_request_v1, "lesson_id") != 24)
+    {
+        @compileError("document external-open request layout drift");
+    }
     if (@sizeOf(c.ml_library_scan_request_v1) != 16 + @sizeOf(usize) * 2) {
         @compileError("scan request layout drift");
+    }
+    if (@sizeOf(c.ml_library_scan_progress_snapshot_v1) != 48 or
+        @offsetOf(c.ml_library_scan_progress_snapshot_v1, "request_id") != 8 or
+        @offsetOf(c.ml_library_scan_progress_snapshot_v1, "processed") != 16 or
+        @offsetOf(c.ml_library_scan_progress_snapshot_v1, "phase") != 40 or
+        @offsetOf(c.ml_library_scan_progress_snapshot_v1, "total_known") != 44 or
+        @offsetOf(c.ml_library_scan_progress_snapshot_v1, "reserved") != 46)
+    {
+        @compileError("scan progress snapshot layout drift");
     }
     if (@sizeOf(c.ml_progress_put_request_v1) != 40 + @sizeOf(usize) * 2) {
         @compileError("progress request layout drift");
@@ -135,6 +197,63 @@ pub fn main(init: std.process.Init) !void {
     try expect(revision != 0);
     const initial_revision = revision;
     c.ml_core_release_event(core, &ready);
+
+    const missing_document = "missing-document";
+    var document_request = c.ml_document_open_request_v1{
+        .struct_size = @sizeOf(c.ml_document_open_request_v1),
+        .abi_version = c.ML_ABI_VERSION,
+        .expected_revision = revision,
+        .reserved = 0,
+        .lesson_id = missing_document.ptr,
+        .lesson_id_len = missing_document.len,
+    };
+    var document_request_id: u64 = 0;
+    try expectEqual(
+        @as(c.ml_status_t, c.ML_STATUS_OK),
+        c.ml_document_open_v1(core, &document_request, &document_request_id),
+    );
+    var document = try pollEvent(io, core);
+    try expectEqual(document_request_id, document.request_id);
+    try expectEqual(@as(c.ml_event_kind_t, c.ML_EVENT_DOCUMENT_OPENED), document.kind);
+    try expectEqual(@as(c.ml_status_t, c.ML_STATUS_NOT_FOUND), document.status);
+    try expectPayload(&document, "{\"error\":\"lessonNotFound\"}");
+    c.ml_core_release_event(core, &document);
+
+    var settings_request = c.ml_settings_get_request_v1{
+        .struct_size = @sizeOf(c.ml_settings_get_request_v1),
+        .abi_version = c.ML_ABI_VERSION,
+        .reserved = 0,
+    };
+    var settings_request_id: u64 = 0;
+    try expectEqual(
+        @as(c.ml_status_t, c.ML_STATUS_OK),
+        c.ml_settings_get_v1(core, &settings_request, &settings_request_id),
+    );
+    var settings = try pollEvent(io, core);
+    try expectEqual(settings_request_id, settings.request_id);
+    try expectEqual(@as(c.ml_event_kind_t, c.ML_EVENT_SETTINGS), settings.kind);
+    try expectEqual(@as(c.ml_status_t, c.ML_STATUS_OK), settings.status);
+    try expectPayload(&settings, "{\"revision\":1,\"appearance\":\"light\"}");
+    c.ml_core_release_event(core, &settings);
+
+    var appearance_request = c.ml_settings_put_appearance_request_v1{
+        .struct_size = @sizeOf(c.ml_settings_put_appearance_request_v1),
+        .abi_version = c.ML_ABI_VERSION,
+        .expected_revision = 1,
+        .appearance = c.ML_APPEARANCE_COZY,
+        .reserved = 0,
+    };
+    var appearance_request_id: u64 = 0;
+    try expectEqual(
+        @as(c.ml_status_t, c.ML_STATUS_OK),
+        c.ml_settings_put_appearance_v1(core, &appearance_request, &appearance_request_id),
+    );
+    var appearance = try pollEvent(io, core);
+    try expectEqual(appearance_request_id, appearance.request_id);
+    try expectEqual(@as(c.ml_event_kind_t, c.ML_EVENT_APPEARANCE_UPDATED), appearance.kind);
+    try expectEqual(@as(c.ml_status_t, c.ML_STATUS_OK), appearance.status);
+    try expectPayload(&appearance, "{\"revision\":2,\"appearance\":\"cozy\"}");
+    c.ml_core_release_event(core, &appearance);
 
     var scan_request = c.ml_library_scan_request_v1{
         .struct_size = @sizeOf(c.ml_library_scan_request_v1),
@@ -301,13 +420,22 @@ pub fn main(init: std.process.Init) !void {
     try expectEqual(activity_request_id, activity.request_id);
     try expectEqual(@as(c.ml_event_kind_t, c.ML_EVENT_ACTIVITY_DAY_PAGE), activity.kind);
     try expectEqual(@as(c.ml_status_t, c.ML_STATUS_OK), activity.status);
-    const expected_activity = try std.fmt.allocPrint(
-        init.gpa,
-        "{{\"revision\":{d},\"offset\":0,\"total\":0,\"rows\":[]}}",
-        .{revision},
-    );
-    defer init.gpa.free(expected_activity);
-    try expectPayload(&activity, expected_activity);
+    const ActivityPage = struct {
+        revision: u64,
+        throughDate: []const u8,
+        offset: u64,
+        total: u64,
+        rows: []const std.json.Value,
+    };
+    const activity_payload = activity.payload[0..activity.payload_len];
+    const parsed_activity = try std.json.parseFromSlice(ActivityPage, init.gpa, activity_payload, .{});
+    defer parsed_activity.deinit();
+    try expectEqual(revision, parsed_activity.value.revision);
+    try expect(parsed_activity.value.throughDate.len == 10);
+    try expect(parsed_activity.value.throughDate[4] == '-' and parsed_activity.value.throughDate[7] == '-');
+    try expectEqual(@as(u64, 0), parsed_activity.value.offset);
+    try expectEqual(@as(u64, 0), parsed_activity.value.total);
+    try expectEqual(@as(usize, 0), parsed_activity.value.rows.len);
     c.ml_core_release_event(core, &activity);
 
     var stats_request = c.ml_library_stats_request_v1{

@@ -16,12 +16,18 @@ use sqlx::{Connection, QueryBuilder, Row, Sqlite, SqliteConnection};
 
 use crate::schema;
 
+mod documents;
 mod notes;
 mod progress;
 mod reconciliation;
 mod search;
+mod settings;
 mod stats;
 
+pub(crate) use documents::{
+    DocumentExternalOpenInput, DocumentExternalOpenReady, DocumentOpenInput, DocumentOpened,
+    DocumentPage, DocumentPageInput,
+};
 pub(crate) use notes::{
     NoteDelete, NoteDeleteInput, NotePage, NotePageInput, NoteSaveInput, NoteSaved,
 };
@@ -31,6 +37,7 @@ pub(crate) use progress::{
 };
 pub(crate) use reconciliation::ReconcileResult;
 pub(crate) use search::{SearchIndexReady, SearchPage, SearchPageInput};
+pub(crate) use settings::{Appearance, AppearanceSettings};
 pub(crate) use stats::LibraryStats;
 
 const SQLITE_PROGRESS_INTERVAL: i32 = 1_000;
@@ -51,18 +58,25 @@ pub(crate) enum LibraryError {
     Database(String),
     InvalidActivityLookback { days: u32 },
     InvalidCourseAccess,
+    InvalidDocument,
     InvalidScan(String),
     InvalidPageSize { limit: u32 },
     InvalidOffset { offset: u64 },
     InvalidNote,
     InvalidProgress,
     InvalidSearchQuery,
+    SettingsRevisionExhausted,
     LessonNotFound,
+    DocumentDecodeFailed,
+    DocumentNotOpen,
+    DocumentUnavailable,
+    DocumentUnsupported,
     NoteNotFound,
     ResponseTooLarge { limit: usize },
     RevisionExhausted,
     StaleSearchIndex { expected: u64, actual: Option<u64> },
     StaleRevision { expected: u64, actual: u64 },
+    StaleSettingsRevision { expected: u64, actual: u64 },
 }
 impl std::fmt::Display for LibraryError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -74,6 +88,7 @@ impl std::fmt::Display for LibraryError {
                 write!(formatter, "invalid activity lookback {days}")
             }
             Self::InvalidCourseAccess => formatter.write_str("invalid course access"),
+            Self::InvalidDocument => formatter.write_str("invalid document request"),
             Self::InvalidScan(message) => formatter.write_str(message),
             Self::InvalidPageSize { limit } => {
                 write!(formatter, "invalid page size {limit}")
@@ -84,7 +99,14 @@ impl std::fmt::Display for LibraryError {
             Self::InvalidNote => formatter.write_str("invalid note"),
             Self::InvalidProgress => formatter.write_str("invalid lesson progress"),
             Self::InvalidSearchQuery => formatter.write_str("invalid search query"),
+            Self::SettingsRevisionExhausted => {
+                formatter.write_str("appearance settings revisions are exhausted")
+            }
             Self::LessonNotFound => formatter.write_str("lesson not found"),
+            Self::DocumentDecodeFailed => formatter.write_str("document decoding failed"),
+            Self::DocumentNotOpen => formatter.write_str("document is not open"),
+            Self::DocumentUnavailable => formatter.write_str("document is unavailable"),
+            Self::DocumentUnsupported => formatter.write_str("document format is unsupported"),
             Self::NoteNotFound => formatter.write_str("note not found"),
             Self::ResponseTooLarge { limit } => {
                 write!(formatter, "library response exceeds {limit} bytes")
@@ -100,6 +122,12 @@ impl std::fmt::Display for LibraryError {
                 write!(
                     formatter,
                     "stale library revision {expected}; current is {actual}"
+                )
+            }
+            Self::StaleSettingsRevision { expected, actual } => {
+                write!(
+                    formatter,
+                    "stale appearance settings revision {expected}; current is {actual}"
                 )
             }
         }
@@ -169,6 +197,13 @@ pub(crate) struct CoursePage {
     pub(crate) offset: u64,
     pub(crate) total: u64,
     pub(crate) rows: Vec<CourseSummary>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LibraryState {
+    pub(crate) revision: u64,
+    pub(crate) root_path: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -260,6 +295,8 @@ pub(crate) struct LibraryDatabase {
     library_path: Option<String>,
     lesson_order_indexes: HashMap<String, LessonOrderIndex>,
     search_index: Option<search::SearchIndex>,
+    appearance_settings: AppearanceSettings,
+    active_document: Option<documents::ActiveDocument>,
     #[cfg(test)]
     lesson_order_index_builds: usize,
     _ownership: File,
@@ -354,6 +391,13 @@ impl LibraryDatabase {
                 return Err(error);
             }
         };
+        let appearance_settings = match settings::load(&mut connection).await {
+            Ok(value) => value,
+            Err(error) => {
+                let _ = connection.close().await;
+                return Err(error);
+            }
+        };
 
         Ok(Self {
             connection,
@@ -361,6 +405,8 @@ impl LibraryDatabase {
             library_path,
             lesson_order_indexes: HashMap::new(),
             search_index: None,
+            appearance_settings,
+            active_document: None,
             #[cfg(test)]
             lesson_order_index_builds: 0,
             _ownership: ownership,
@@ -369,6 +415,14 @@ impl LibraryDatabase {
 
     pub(crate) fn revision(&self) -> u64 {
         self.revision
+    }
+
+    pub(crate) fn state(&self, expected_revision: u64) -> Result<LibraryState, LibraryError> {
+        self.require_revision(expected_revision)?;
+        Ok(LibraryState {
+            revision: self.revision,
+            root_path: self.library_path.clone(),
+        })
     }
 
     pub(crate) async fn close(self) -> Result<(), LibraryError> {

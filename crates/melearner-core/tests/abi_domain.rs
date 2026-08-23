@@ -36,6 +36,21 @@ fn event() -> ml_event_v1 {
     }
 }
 
+fn scan_progress() -> ml_library_scan_progress_snapshot_v1 {
+    ml_library_scan_progress_snapshot_v1 {
+        struct_size: size_of::<ml_library_scan_progress_snapshot_v1>() as u32,
+        abi_version: ML_ABI_VERSION,
+        request_id: 0,
+        processed: 0,
+        discovered: 0,
+        total: 0,
+        phase: 0,
+        total_known: 0,
+        cancellable: 0,
+        reserved: 0,
+    }
+}
+
 fn poll(core: *mut ml_core_t) -> ml_event_v1 {
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
@@ -82,6 +97,816 @@ fn seed_current_database(data_dir: &Path) {
                 .expect("seed progress database");
             connection.close().await.expect("close progress database");
         });
+}
+
+fn seed_document_database(
+    data_dir: &Path,
+    root: &Path,
+    lesson_id: &str,
+    relative_path: &str,
+    document: &Path,
+) {
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("build document seed runtime")
+        .block_on(async {
+            let options = SqliteConnectOptions::new()
+                .filename(data_dir.join("melearner-native.sqlite3"))
+                .foreign_keys(true)
+                .busy_timeout(Duration::from_secs(10));
+            let mut connection = SqliteConnection::connect_with(&options)
+                .await
+                .expect("open document database");
+            sqlx::query(
+                "INSERT INTO app_settings (key, value) VALUES ('libraryPath', ?1);
+                 INSERT INTO courses
+                   (id, identity_id, name, path, fingerprint, last_scanned_at)
+                 VALUES ('course-docs', 'identity-docs', 'Docs', ?2, 'docs-fingerprint', 'now');
+                 INSERT INTO sections (id, course_id, name, order_index)
+                 VALUES ('section-reading', 'course-docs', 'Reading', 0);
+                 INSERT INTO lessons
+                   (id, course_id, section_id, name, path, relative_path, type, file_size)
+                 VALUES
+                   (?3, 'course-docs', 'section-reading', 'Document', ?4,
+                    ?5, 'document', ?6)",
+            )
+            .bind(root.to_string_lossy().as_ref())
+            .bind(root.join("Course").to_string_lossy().as_ref())
+            .bind(lesson_id)
+            .bind(document.to_string_lossy().as_ref())
+            .bind(relative_path)
+            .bind(
+                i64::try_from(
+                    std::fs::metadata(document)
+                        .expect("document metadata")
+                        .len(),
+                )
+                .expect("document fixture size fits i64"),
+            )
+            .execute(&mut connection)
+            .await
+            .expect("seed document database");
+            connection.close().await.expect("close document database");
+        });
+}
+
+#[test]
+fn document_open_page_and_external_open_are_correlated_domain_events() {
+    let data_dir = tempfile::tempdir().expect("create ABI document state directory");
+    let library_root = data_dir.path().join("library");
+    let document_path = library_root.join("Course/Reading/guide.md");
+    std::fs::create_dir_all(document_path.parent().expect("document parent"))
+        .expect("create document fixture directory");
+    std::fs::write(
+        &document_path,
+        b"# Guide\n\nSelectable paragraph.\n\nSecond paragraph.",
+    )
+    .expect("write Markdown document fixture");
+    let state_dir = data_dir
+        .path()
+        .to_str()
+        .expect("temporary document state directory is UTF-8")
+        .as_bytes();
+
+    let mut core = ptr::null_mut();
+    assert_eq!(
+        unsafe { ml_core_create(&config(state_dir), &mut core) },
+        ML_STATUS_OK
+    );
+    ready_revision(core);
+    unsafe { ml_core_destroy(core) };
+    seed_document_database(
+        data_dir.path(),
+        &library_root,
+        "lesson-guide",
+        "Course/Reading/guide.md",
+        &document_path,
+    );
+
+    core = ptr::null_mut();
+    assert_eq!(
+        unsafe { ml_core_create(&config(state_dir), &mut core) },
+        ML_STATUS_OK
+    );
+    let revision = ready_revision(core);
+    let lesson_id = b"lesson-guide";
+    let open_request = ml_document_open_request_v1 {
+        struct_size: size_of::<ml_document_open_request_v1>() as u32,
+        abi_version: ML_ABI_VERSION,
+        expected_revision: revision,
+        reserved: 0,
+        lesson_id: lesson_id.as_ptr(),
+        lesson_id_len: lesson_id.len(),
+    };
+    let mut request_id = 0;
+    assert_eq!(
+        unsafe { ml_document_open_v1(core, &open_request, &mut request_id) },
+        ML_STATUS_OK
+    );
+    let mut opened = poll(core);
+    assert_eq!(opened.request_id, request_id);
+    assert_eq!(opened.kind, ML_EVENT_DOCUMENT_OPENED);
+    assert_eq!(opened.status, ML_STATUS_OK);
+    let opened_payload = unsafe { std::slice::from_raw_parts(opened.payload, opened.payload_len) };
+    let opened_json: serde_json::Value =
+        serde_json::from_slice(opened_payload).expect("parse opened document");
+    assert_eq!(opened_json["revision"], revision);
+    assert_eq!(opened_json["lessonId"], "lesson-guide");
+    assert_eq!(opened_json["documentId"], "lesson-guide");
+    assert_eq!(opened_json["format"], "markdown");
+    assert_eq!(opened_json["totalBlocks"], 3);
+    assert_eq!(opened_json["warnings"], serde_json::json!([]));
+    assert!(opened_json.get("path").is_none());
+    assert!(opened_json.get("canonicalPath").is_none());
+    unsafe { ml_core_release_event(core, &mut opened) };
+
+    let document_id = b"lesson-guide";
+    let page_request = ml_document_page_request_v1 {
+        struct_size: size_of::<ml_document_page_request_v1>() as u32,
+        abi_version: ML_ABI_VERSION,
+        expected_revision: revision,
+        offset: 0,
+        limit: 2,
+        reserved: 0,
+        document_id: document_id.as_ptr(),
+        document_id_len: document_id.len(),
+    };
+    assert_eq!(
+        unsafe { ml_document_page_v1(core, &page_request, &mut request_id) },
+        ML_STATUS_OK
+    );
+    let mut page = poll(core);
+    assert_eq!(page.request_id, request_id);
+    assert_eq!(page.kind, ML_EVENT_DOCUMENT_PAGE);
+    assert_eq!(page.status, ML_STATUS_OK);
+    let page_payload = unsafe { std::slice::from_raw_parts(page.payload, page.payload_len) };
+    let page_json: serde_json::Value =
+        serde_json::from_slice(page_payload).expect("parse document page");
+    assert_eq!(page_json["revision"], revision);
+    assert_eq!(page_json["documentId"], "lesson-guide");
+    assert_eq!(page_json["offset"], 0);
+    assert_eq!(page_json["total"], 3);
+    assert_eq!(
+        page_json["blocks"]
+            .as_array()
+            .expect("document blocks")
+            .len(),
+        2
+    );
+    assert_eq!(page_json["blocks"][0]["kind"], "heading");
+    assert_eq!(page_json["blocks"][0]["level"], 1);
+    assert_eq!(page_json["blocks"][0]["source"], "# Guide");
+    assert!(page_json.get("path").is_none());
+    unsafe { ml_core_release_event(core, &mut page) };
+
+    let external_request = ml_document_external_open_request_v1 {
+        struct_size: size_of::<ml_document_external_open_request_v1>() as u32,
+        abi_version: ML_ABI_VERSION,
+        expected_revision: revision,
+        reserved: 0,
+        lesson_id: lesson_id.as_ptr(),
+        lesson_id_len: lesson_id.len(),
+    };
+    assert_eq!(
+        unsafe { ml_document_external_open_v1(core, &external_request, &mut request_id) },
+        ML_STATUS_OK
+    );
+    let mut external = poll(core);
+    assert_eq!(external.request_id, request_id);
+    assert_eq!(external.kind, ML_EVENT_DOCUMENT_EXTERNAL_OPEN_READY);
+    assert_eq!(external.status, ML_STATUS_OK);
+    let external_payload =
+        unsafe { std::slice::from_raw_parts(external.payload, external.payload_len) };
+    let external_json: serde_json::Value =
+        serde_json::from_slice(external_payload).expect("parse external-open readiness");
+    assert_eq!(external_json["revision"], revision);
+    assert_eq!(external_json["lessonId"], "lesson-guide");
+    assert_eq!(
+        external_json["canonicalPath"],
+        std::fs::canonicalize(&document_path)
+            .expect("canonical document path")
+            .to_string_lossy()
+            .as_ref()
+    );
+    unsafe { ml_core_release_event(core, &mut external) };
+    unsafe { ml_core_destroy(core) };
+}
+
+#[test]
+fn document_requests_enforce_revision_and_the_approved_root() {
+    let data_dir = tempfile::tempdir().expect("create ABI unapproved-document state directory");
+    let library_root = data_dir.path().join("library");
+    std::fs::create_dir_all(library_root.join("Course/Reading"))
+        .expect("create approved document directory");
+    let outside_document = data_dir.path().join("outside.md");
+    std::fs::write(&outside_document, b"# Outside").expect("write outside document");
+    #[cfg(unix)]
+    let recorded_document = {
+        let link = library_root.join("Course/Reading/escape.md");
+        std::os::unix::fs::symlink(&outside_document, &link)
+            .expect("create escaping document symlink");
+        link
+    };
+    #[cfg(not(unix))]
+    let recorded_document = outside_document.clone();
+    let state_dir = data_dir
+        .path()
+        .to_str()
+        .expect("temporary document state directory is UTF-8")
+        .as_bytes();
+
+    let mut core = ptr::null_mut();
+    assert_eq!(
+        unsafe { ml_core_create(&config(state_dir), &mut core) },
+        ML_STATUS_OK
+    );
+    ready_revision(core);
+    unsafe { ml_core_destroy(core) };
+    seed_document_database(
+        data_dir.path(),
+        &library_root,
+        "lesson-outside",
+        "Course/Reading/escape.md",
+        &recorded_document,
+    );
+
+    core = ptr::null_mut();
+    assert_eq!(
+        unsafe { ml_core_create(&config(state_dir), &mut core) },
+        ML_STATUS_OK
+    );
+    let revision = ready_revision(core);
+    let lesson_id = b"lesson-outside";
+    let mut request = ml_document_open_request_v1 {
+        struct_size: size_of::<ml_document_open_request_v1>() as u32,
+        abi_version: ML_ABI_VERSION,
+        expected_revision: revision + 1,
+        reserved: 0,
+        lesson_id: lesson_id.as_ptr(),
+        lesson_id_len: lesson_id.len(),
+    };
+    let mut request_id = 0;
+    assert_eq!(
+        unsafe { ml_document_open_v1(core, &request, &mut request_id) },
+        ML_STATUS_OK
+    );
+    let mut stale = poll(core);
+    assert_eq!(stale.kind, ML_EVENT_DOCUMENT_OPENED);
+    assert_eq!(stale.status, ML_STATUS_STALE);
+    let stale_payload = unsafe { std::slice::from_raw_parts(stale.payload, stale.payload_len) };
+    let stale_json: serde_json::Value =
+        serde_json::from_slice(stale_payload).expect("parse stale document response");
+    assert_eq!(stale_json["error"], "staleRevision");
+    assert_eq!(stale_json["expected"], revision + 1);
+    assert_eq!(stale_json["actual"], revision);
+    unsafe { ml_core_release_event(core, &mut stale) };
+
+    request.expected_revision = revision;
+    assert_eq!(
+        unsafe { ml_document_open_v1(core, &request, &mut request_id) },
+        ML_STATUS_OK
+    );
+    let mut unavailable = poll(core);
+    assert_eq!(unavailable.kind, ML_EVENT_DOCUMENT_OPENED);
+    assert_eq!(unavailable.status, ML_STATUS_NOT_FOUND);
+    assert_eq!(
+        unsafe { std::slice::from_raw_parts(unavailable.payload, unavailable.payload_len) },
+        br#"{"error":"documentUnavailable"}"#
+    );
+    unsafe { ml_core_release_event(core, &mut unavailable) };
+
+    let document_id = b"lesson-outside";
+    let page_request = ml_document_page_request_v1 {
+        struct_size: size_of::<ml_document_page_request_v1>() as u32,
+        abi_version: ML_ABI_VERSION,
+        expected_revision: revision,
+        offset: 0,
+        limit: 20,
+        reserved: 0,
+        document_id: document_id.as_ptr(),
+        document_id_len: document_id.len(),
+    };
+    assert_eq!(
+        unsafe { ml_document_page_v1(core, &page_request, &mut request_id) },
+        ML_STATUS_OK
+    );
+    let mut not_open = poll(core);
+    assert_eq!(not_open.kind, ML_EVENT_DOCUMENT_PAGE);
+    assert_eq!(not_open.status, ML_STATUS_NOT_FOUND);
+    assert_eq!(
+        unsafe { std::slice::from_raw_parts(not_open.payload, not_open.payload_len) },
+        br#"{"error":"documentNotOpen"}"#
+    );
+    unsafe { ml_core_release_event(core, &mut not_open) };
+    unsafe { ml_core_destroy(core) };
+}
+
+#[test]
+fn pdf_is_not_parsed_and_remains_available_for_explicit_external_open() {
+    let data_dir = tempfile::tempdir().expect("create ABI PDF state directory");
+    let library_root = data_dir.path().join("library");
+    let pdf_path = library_root.join("Course/Reading/reference.pdf");
+    std::fs::create_dir_all(pdf_path.parent().expect("PDF parent"))
+        .expect("create PDF fixture directory");
+    std::fs::write(&pdf_path, b"%PDF-1.7\nnot a renderer fixture").expect("write PDF fixture");
+    let state_dir = data_dir
+        .path()
+        .to_str()
+        .expect("temporary PDF state directory is UTF-8")
+        .as_bytes();
+
+    let mut core = ptr::null_mut();
+    assert_eq!(
+        unsafe { ml_core_create(&config(state_dir), &mut core) },
+        ML_STATUS_OK
+    );
+    ready_revision(core);
+    unsafe { ml_core_destroy(core) };
+    seed_document_database(
+        data_dir.path(),
+        &library_root,
+        "lesson-pdf",
+        "Course/Reading/reference.pdf",
+        &pdf_path,
+    );
+
+    core = ptr::null_mut();
+    assert_eq!(
+        unsafe { ml_core_create(&config(state_dir), &mut core) },
+        ML_STATUS_OK
+    );
+    let revision = ready_revision(core);
+    let lesson_id = b"lesson-pdf";
+    let open_request = ml_document_open_request_v1 {
+        struct_size: size_of::<ml_document_open_request_v1>() as u32,
+        abi_version: ML_ABI_VERSION,
+        expected_revision: revision,
+        reserved: 0,
+        lesson_id: lesson_id.as_ptr(),
+        lesson_id_len: lesson_id.len(),
+    };
+    let mut request_id = 0;
+    assert_eq!(
+        unsafe { ml_document_open_v1(core, &open_request, &mut request_id) },
+        ML_STATUS_OK
+    );
+    let mut unsupported = poll(core);
+    assert_eq!(unsupported.kind, ML_EVENT_DOCUMENT_OPENED);
+    assert_eq!(unsupported.status, ML_STATUS_FAILED);
+    assert_eq!(
+        unsafe { std::slice::from_raw_parts(unsupported.payload, unsupported.payload_len) },
+        br#"{"error":"documentUnsupported"}"#
+    );
+    unsafe { ml_core_release_event(core, &mut unsupported) };
+
+    let external_request = ml_document_external_open_request_v1 {
+        struct_size: size_of::<ml_document_external_open_request_v1>() as u32,
+        abi_version: ML_ABI_VERSION,
+        expected_revision: revision,
+        reserved: 0,
+        lesson_id: lesson_id.as_ptr(),
+        lesson_id_len: lesson_id.len(),
+    };
+    assert_eq!(
+        unsafe { ml_document_external_open_v1(core, &external_request, &mut request_id) },
+        ML_STATUS_OK
+    );
+    let mut external = poll(core);
+    assert_eq!(external.kind, ML_EVENT_DOCUMENT_EXTERNAL_OPEN_READY);
+    assert_eq!(external.status, ML_STATUS_OK);
+    let external_payload =
+        unsafe { std::slice::from_raw_parts(external.payload, external.payload_len) };
+    let external_json: serde_json::Value =
+        serde_json::from_slice(external_payload).expect("parse PDF external-open readiness");
+    assert_eq!(external_json["lessonId"], "lesson-pdf");
+    assert_eq!(
+        external_json["canonicalPath"],
+        std::fs::canonicalize(&pdf_path)
+            .expect("canonical PDF path")
+            .to_string_lossy()
+            .as_ref()
+    );
+    unsafe { ml_core_release_event(core, &mut external) };
+    unsafe { ml_core_destroy(core) };
+}
+
+#[test]
+fn document_requests_validate_their_versioned_id_inputs() {
+    let data_dir = tempfile::tempdir().expect("create ABI document-validation state directory");
+    let state_dir = data_dir
+        .path()
+        .to_str()
+        .expect("temporary document state directory is UTF-8")
+        .as_bytes();
+    let mut core = ptr::null_mut();
+    assert_eq!(
+        unsafe { ml_core_create(&config(state_dir), &mut core) },
+        ML_STATUS_OK
+    );
+    let revision = ready_revision(core);
+    let id = b"lesson-document";
+    let invalid_utf8 = [0xff];
+    let mut request_id = u64::MAX;
+
+    let mut open = ml_document_open_request_v1 {
+        struct_size: size_of::<ml_document_open_request_v1>() as u32,
+        abi_version: ML_ABI_VERSION,
+        expected_revision: revision,
+        reserved: 0,
+        lesson_id: id.as_ptr(),
+        lesson_id_len: id.len(),
+    };
+    assert_eq!(
+        unsafe { ml_document_open_v1(core, ptr::null(), &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    assert_eq!(request_id, 0);
+    assert_eq!(
+        unsafe { ml_document_open_v1(core, &open, ptr::null_mut()) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    open.struct_size -= 1;
+    assert_eq!(
+        unsafe { ml_document_open_v1(core, &open, &mut request_id) },
+        ML_STATUS_ABI_MISMATCH
+    );
+    open.struct_size += 1;
+    open.reserved = 1;
+    assert_eq!(
+        unsafe { ml_document_open_v1(core, &open, &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    open.reserved = 0;
+    open.lesson_id = ptr::null();
+    assert_eq!(
+        unsafe { ml_document_open_v1(core, &open, &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    open.lesson_id = invalid_utf8.as_ptr();
+    open.lesson_id_len = invalid_utf8.len();
+    assert_eq!(
+        unsafe { ml_document_open_v1(core, &open, &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+
+    let mut page = ml_document_page_request_v1 {
+        struct_size: size_of::<ml_document_page_request_v1>() as u32,
+        abi_version: ML_ABI_VERSION,
+        expected_revision: revision,
+        offset: 0,
+        limit: 20,
+        reserved: 0,
+        document_id: id.as_ptr(),
+        document_id_len: id.len(),
+    };
+    assert_eq!(
+        unsafe { ml_document_page_v1(core, ptr::null(), &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    page.abi_version += 1;
+    assert_eq!(
+        unsafe { ml_document_page_v1(core, &page, &mut request_id) },
+        ML_STATUS_ABI_MISMATCH
+    );
+    page.abi_version = ML_ABI_VERSION;
+    page.reserved = 1;
+    assert_eq!(
+        unsafe { ml_document_page_v1(core, &page, &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    page.reserved = 0;
+    page.document_id_len = 0;
+    assert_eq!(
+        unsafe { ml_document_page_v1(core, &page, &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+
+    let mut external = ml_document_external_open_request_v1 {
+        struct_size: size_of::<ml_document_external_open_request_v1>() as u32,
+        abi_version: ML_ABI_VERSION,
+        expected_revision: revision,
+        reserved: 0,
+        lesson_id: id.as_ptr(),
+        lesson_id_len: id.len(),
+    };
+    assert_eq!(
+        unsafe { ml_document_external_open_v1(core, ptr::null(), &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    external.reserved = 1;
+    assert_eq!(
+        unsafe { ml_document_external_open_v1(core, &external, &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    external.reserved = 0;
+    external.lesson_id = ptr::dangling();
+    external.lesson_id_len = ML_MAX_EVENT_PAYLOAD_BYTES as usize + 1;
+    assert_eq!(
+        unsafe { ml_document_external_open_v1(core, &external, &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    unsafe { ml_core_destroy(core) };
+}
+
+#[test]
+fn library_state_distinguishes_a_fresh_unrooted_database() {
+    let data_dir = tempfile::tempdir().expect("create ABI state directory");
+    let state_dir = data_dir
+        .path()
+        .to_str()
+        .expect("temporary state directory is UTF-8")
+        .as_bytes();
+    let mut core = ptr::null_mut();
+    assert_eq!(
+        unsafe { ml_core_create(&config(state_dir), &mut core) },
+        ML_STATUS_OK
+    );
+    let revision = ready_revision(core);
+
+    let mut request = ml_library_state_request_v1 {
+        struct_size: size_of::<ml_library_state_request_v1>() as u32,
+        abi_version: ML_ABI_VERSION,
+        expected_revision: revision,
+        reserved: 0,
+    };
+    let mut request_id = 0;
+    assert_eq!(
+        unsafe { ml_library_state_v1(core, &request, &mut request_id) },
+        ML_STATUS_OK
+    );
+    let mut completed = poll(core);
+    assert_eq!(completed.request_id, request_id);
+    assert_eq!(completed.kind, ML_EVENT_LIBRARY_STATE);
+    assert_eq!(completed.status, ML_STATUS_OK);
+    let payload = unsafe { std::slice::from_raw_parts(completed.payload, completed.payload_len) };
+    assert_eq!(
+        payload,
+        format!(r#"{{"revision":{revision},"rootPath":null}}"#).as_bytes()
+    );
+    unsafe { ml_core_release_event(core, &mut completed) };
+
+    request.reserved = 1;
+    assert_eq!(
+        unsafe { ml_library_state_v1(core, &request, &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    unsafe { ml_core_destroy(core) };
+}
+
+#[test]
+fn appearance_settings_default_persist_and_do_not_advance_the_library_revision() {
+    let data_dir = tempfile::tempdir().expect("create ABI settings state directory");
+    let state_dir = data_dir
+        .path()
+        .to_str()
+        .expect("temporary settings state directory is UTF-8")
+        .as_bytes();
+    let mut core = ptr::null_mut();
+    assert_eq!(
+        unsafe { ml_core_create(&config(state_dir), &mut core) },
+        ML_STATUS_OK
+    );
+    let library_revision = ready_revision(core);
+
+    let get = ml_settings_get_request_v1 {
+        struct_size: size_of::<ml_settings_get_request_v1>() as u32,
+        abi_version: ML_ABI_VERSION,
+        reserved: 0,
+    };
+    let mut request_id = 0;
+    assert_eq!(
+        unsafe { ml_settings_get_v1(core, &get, &mut request_id) },
+        ML_STATUS_OK
+    );
+    let mut current = poll(core);
+    assert_eq!(current.request_id, request_id);
+    assert_eq!(current.kind, ML_EVENT_SETTINGS);
+    assert_eq!(current.status, ML_STATUS_OK);
+    assert_eq!(
+        unsafe { std::slice::from_raw_parts(current.payload, current.payload_len) },
+        br#"{"revision":1,"appearance":"light"}"#
+    );
+    unsafe { ml_core_release_event(core, &mut current) };
+
+    let put = ml_settings_put_appearance_request_v1 {
+        struct_size: size_of::<ml_settings_put_appearance_request_v1>() as u32,
+        abi_version: ML_ABI_VERSION,
+        expected_revision: 1,
+        appearance: ML_APPEARANCE_COZY,
+        reserved: 0,
+    };
+    assert_eq!(
+        unsafe { ml_settings_put_appearance_v1(core, &put, &mut request_id) },
+        ML_STATUS_OK
+    );
+    let mut updated = poll(core);
+    assert_eq!(updated.request_id, request_id);
+    assert_eq!(updated.kind, ML_EVENT_APPEARANCE_UPDATED);
+    assert_eq!(updated.status, ML_STATUS_OK);
+    assert_eq!(
+        unsafe { std::slice::from_raw_parts(updated.payload, updated.payload_len) },
+        br#"{"revision":2,"appearance":"cozy"}"#
+    );
+    unsafe { ml_core_release_event(core, &mut updated) };
+
+    let library_state = ml_library_state_request_v1 {
+        struct_size: size_of::<ml_library_state_request_v1>() as u32,
+        abi_version: ML_ABI_VERSION,
+        expected_revision: library_revision,
+        reserved: 0,
+    };
+    assert_eq!(
+        unsafe { ml_library_state_v1(core, &library_state, &mut request_id) },
+        ML_STATUS_OK
+    );
+    let mut state = poll(core);
+    assert_eq!(state.status, ML_STATUS_OK);
+    unsafe { ml_core_release_event(core, &mut state) };
+    unsafe { ml_core_destroy(core) };
+
+    core = ptr::null_mut();
+    assert_eq!(
+        unsafe { ml_core_create(&config(state_dir), &mut core) },
+        ML_STATUS_OK
+    );
+    ready_revision(core);
+    assert_eq!(
+        unsafe { ml_settings_get_v1(core, &get, &mut request_id) },
+        ML_STATUS_OK
+    );
+    let mut persisted = poll(core);
+    assert_eq!(persisted.kind, ML_EVENT_SETTINGS);
+    assert_eq!(
+        unsafe { std::slice::from_raw_parts(persisted.payload, persisted.payload_len) },
+        br#"{"revision":2,"appearance":"cozy"}"#
+    );
+    unsafe { ml_core_release_event(core, &mut persisted) };
+    unsafe { ml_core_destroy(core) };
+}
+
+#[test]
+fn appearance_settings_reject_invalid_and_stale_updates_without_changing_state() {
+    let data_dir = tempfile::tempdir().expect("create ABI settings state directory");
+    let state_dir = data_dir
+        .path()
+        .to_str()
+        .expect("temporary settings state directory is UTF-8")
+        .as_bytes();
+    let mut core = ptr::null_mut();
+    assert_eq!(
+        unsafe { ml_core_create(&config(state_dir), &mut core) },
+        ML_STATUS_OK
+    );
+    ready_revision(core);
+
+    let mut put = ml_settings_put_appearance_request_v1 {
+        struct_size: size_of::<ml_settings_put_appearance_request_v1>() as u32,
+        abi_version: ML_ABI_VERSION,
+        expected_revision: 1,
+        appearance: 0,
+        reserved: 0,
+    };
+    let mut request_id = u64::MAX;
+    assert_eq!(
+        unsafe { ml_settings_put_appearance_v1(core, &put, &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    assert_eq!(request_id, 0);
+    put.appearance = ML_APPEARANCE_DARK;
+    put.reserved = 1;
+    assert_eq!(
+        unsafe { ml_settings_put_appearance_v1(core, &put, &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    put.reserved = 0;
+    put.struct_size -= 1;
+    assert_eq!(
+        unsafe { ml_settings_put_appearance_v1(core, &put, &mut request_id) },
+        ML_STATUS_ABI_MISMATCH
+    );
+    put.struct_size += 1;
+    assert_eq!(
+        unsafe { ml_settings_put_appearance_v1(core, &put, &mut request_id) },
+        ML_STATUS_OK
+    );
+    let mut dark = poll(core);
+    assert_eq!(dark.status, ML_STATUS_OK);
+    unsafe { ml_core_release_event(core, &mut dark) };
+
+    put.appearance = ML_APPEARANCE_LIGHT;
+    assert_eq!(
+        unsafe { ml_settings_put_appearance_v1(core, &put, &mut request_id) },
+        ML_STATUS_OK
+    );
+    let mut stale = poll(core);
+    assert_eq!(stale.kind, ML_EVENT_APPEARANCE_UPDATED);
+    assert_eq!(stale.status, ML_STATUS_STALE);
+    let payload = unsafe { std::slice::from_raw_parts(stale.payload, stale.payload_len) };
+    let error: serde_json::Value =
+        serde_json::from_slice(payload).expect("parse stale Settings revision");
+    assert_eq!(error["error"], "staleSettingsRevision");
+    assert_eq!(error["expected"], 1);
+    assert_eq!(error["actual"], 2);
+    unsafe { ml_core_release_event(core, &mut stale) };
+
+    let mut get = ml_settings_get_request_v1 {
+        struct_size: size_of::<ml_settings_get_request_v1>() as u32,
+        abi_version: ML_ABI_VERSION,
+        reserved: 0,
+    };
+    request_id = u64::MAX;
+    assert_eq!(
+        unsafe { ml_settings_get_v1(core, ptr::null(), &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    assert_eq!(request_id, 0);
+    get.struct_size -= 1;
+    assert_eq!(
+        unsafe { ml_settings_get_v1(core, &get, &mut request_id) },
+        ML_STATUS_ABI_MISMATCH
+    );
+    get.struct_size += 1;
+    get.reserved = 1;
+    assert_eq!(
+        unsafe { ml_settings_get_v1(core, &get, &mut request_id) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    get.reserved = 0;
+    assert_eq!(
+        unsafe { ml_settings_get_v1(core, &get, ptr::null_mut()) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    assert_eq!(
+        unsafe { ml_settings_get_v1(core, &get, &mut request_id) },
+        ML_STATUS_OK
+    );
+    let mut unchanged = poll(core);
+    assert_eq!(
+        unsafe { std::slice::from_raw_parts(unchanged.payload, unchanged.payload_len) },
+        br#"{"revision":2,"appearance":"dark"}"#
+    );
+    unsafe { ml_core_release_event(core, &mut unchanged) };
+    unsafe { ml_core_destroy(core) };
+}
+
+#[test]
+fn appearance_update_rolls_back_when_its_completion_cannot_fit() {
+    let data_dir = tempfile::tempdir().expect("create ABI settings state directory");
+    let state_dir = data_dir
+        .path()
+        .to_str()
+        .expect("temporary settings state directory is UTF-8")
+        .as_bytes();
+    let mut small_config = config(state_dir);
+    small_config.max_event_payload_bytes = ML_MIN_EVENT_PAYLOAD_BYTES;
+    let mut core = ptr::null_mut();
+    assert_eq!(
+        unsafe { ml_core_create(&small_config, &mut core) },
+        ML_STATUS_OK
+    );
+    ready_revision(core);
+    let put = ml_settings_put_appearance_request_v1 {
+        struct_size: size_of::<ml_settings_put_appearance_request_v1>() as u32,
+        abi_version: ML_ABI_VERSION,
+        expected_revision: 1,
+        appearance: ML_APPEARANCE_DARK,
+        reserved: 0,
+    };
+    let mut request_id = 0;
+    assert_eq!(
+        unsafe { ml_settings_put_appearance_v1(core, &put, &mut request_id) },
+        ML_STATUS_OK
+    );
+    let mut rejected = poll(core);
+    assert_eq!(rejected.kind, ML_EVENT_APPEARANCE_UPDATED);
+    assert_eq!(rejected.status, ML_STATUS_FAILED);
+    assert_eq!(rejected.payload_schema_version, 0);
+    assert_eq!(rejected.payload_len, 0);
+    unsafe { ml_core_release_event(core, &mut rejected) };
+    unsafe { ml_core_destroy(core) };
+
+    core = ptr::null_mut();
+    assert_eq!(
+        unsafe { ml_core_create(&config(state_dir), &mut core) },
+        ML_STATUS_OK
+    );
+    ready_revision(core);
+    let get = ml_settings_get_request_v1 {
+        struct_size: size_of::<ml_settings_get_request_v1>() as u32,
+        abi_version: ML_ABI_VERSION,
+        reserved: 0,
+    };
+    assert_eq!(
+        unsafe { ml_settings_get_v1(core, &get, &mut request_id) },
+        ML_STATUS_OK
+    );
+    let mut unchanged = poll(core);
+    assert_eq!(
+        unsafe { std::slice::from_raw_parts(unchanged.payload, unchanged.payload_len) },
+        br#"{"revision":1,"appearance":"light"}"#
+    );
+    unsafe { ml_core_release_event(core, &mut unchanged) };
+    unsafe { ml_core_destroy(core) };
 }
 
 #[test]
@@ -467,6 +1292,10 @@ fn progress_and_activity_round_trip_through_the_versioned_abi() {
     let payload = unsafe { std::slice::from_raw_parts(page.payload, page.payload_len) };
     let result: serde_json::Value = serde_json::from_slice(payload).expect("parse activity page");
     assert_eq!(result["revision"], revision);
+    assert_eq!(
+        result["throughDate"].as_str().map(str::len),
+        Some("2026-07-23".len())
+    );
     let today = result["rows"]
         .as_array()
         .expect("activity rows are an array")
@@ -1308,6 +2137,24 @@ fn cancelling_an_active_scan_emits_one_event_and_leaves_no_writes() {
         unsafe { ml_library_scan_v1(core, &request, &mut request_id) },
         ML_STATUS_OK
     );
+
+    let mut progress = scan_progress();
+    assert_eq!(
+        unsafe { ml_library_scan_progress_v1(core, request_id, &mut progress) },
+        ML_STATUS_OK
+    );
+    assert_eq!(progress.request_id, request_id);
+    assert!((ML_SCAN_PHASE_DISCOVERING..=ML_SCAN_PHASE_WRITING_MARKERS).contains(&progress.phase));
+    assert!(progress.total_known <= 1);
+    assert!(progress.cancellable <= 1);
+    assert_eq!(progress.reserved, 0);
+
+    let mut duplicate_request_id = u64::MAX;
+    assert_eq!(
+        unsafe { ml_library_scan_v1(core, &request, &mut duplicate_request_id) },
+        ML_STATUS_BUSY
+    );
+    assert_eq!(duplicate_request_id, 0);
     assert_eq!(ml_core_cancel(core, request_id), ML_STATUS_OK);
 
     let mut cancelled = poll(core);
@@ -1315,6 +2162,12 @@ fn cancelling_an_active_scan_emits_one_event_and_leaves_no_writes() {
     assert_eq!(cancelled.kind, ML_EVENT_REQUEST_CANCELLED);
     assert_eq!(cancelled.status, ML_STATUS_CANCELLED);
     unsafe { ml_core_release_event(core, &mut cancelled) };
+    assert_eq!(
+        unsafe { ml_library_scan_progress_v1(core, request_id, &mut progress) },
+        ML_STATUS_NOT_FOUND
+    );
+    assert_eq!(progress.request_id, 0);
+    assert_eq!(progress.phase, 0);
 
     let page_request = ml_library_course_page_request_v1 {
         struct_size: size_of::<ml_library_course_page_request_v1>() as u32,

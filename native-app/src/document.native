@@ -1,0 +1,92 @@
+<panel background="scrim" on-press="dismiss_document" label="Document reader backdrop">
+  <column main="center" cross="center">
+    <dialog width="520" height="360" label="Document reader">
+      <column padding="20" gap="12">
+        <row gap="8" cross="center">
+          <column gap="4" grow="1">
+            <text size="sm" foreground="text_muted">{selectedLessonSection}</text>
+            <text size="heading">{selectedLessonName}</text>
+          </column>
+          <button size="sm" variant="ghost" on-press="dismiss_document" label="Close document reader">Close</button>
+        </row>
+        <separator />
+        <if test="{documentOpening}">
+          <column grow="1" gap="8" main="center" cross="center" label="Document loading">
+            <text>Opening document…</text>
+            <text size="sm" foreground="text_muted">Preparing bounded selectable text.</text>
+          </column>
+        </if>
+        <else>
+          <if test="{documentReady}">
+            <column grow="1" gap="12">
+              <row gap="8" cross="center">
+                <badge variant="secondary">{documentPageLabel}</badge>
+                <if test="{documentHasWarnings}">
+                  <text size="sm" foreground="text_muted" grow="1">{documentWarningLabel}</text>
+                </if>
+              </row>
+              <scroll grow="1" label="Document content">
+                <column gap="12" label="Selectable document blocks">
+                  <for each="documentRows" key="id" as="block">
+                    <if test="{block.rule}">
+                      <separator />
+                    </if>
+                    <else>
+                      <if test="{block.heading}">
+                        <text size="heading">{block.source}</text>
+                      </if>
+                      <else>
+                        <if test="{block.code}">
+                          <column padding="12" background="surface_subtle" radius="sm">
+                            <text label="{block.source}"><span mono>{block.source}</span></text>
+                          </column>
+                        </if>
+                        <else>
+                          <text>{block.source}</text>
+                        </else>
+                      </else>
+                    </else>
+                  </for>
+                </column>
+              </scroll>
+              <if test="{hasDocumentPagination}">
+                <row gap="8" main="end" cross="center" label="Document pages">
+                  <if test="{hasPreviousDocumentPage}">
+                    <button size="sm" variant="secondary" on-press="previous_document_page" label="Previous document page">Previous</button>
+                  </if>
+                  <if test="{hasNextDocumentPage}">
+                    <button size="sm" variant="secondary" on-press="next_document_page" label="Next document page">Next</button>
+                  </if>
+                </row>
+              </if>
+            </column>
+          </if>
+          <else>
+            <if test="{documentUnsupported}">
+              <column grow="1" gap="8" main="center" cross="center" label="Unsupported document">
+                <text>Native reading is unavailable</text>
+                <text size="sm" foreground="text_muted">{documentMessage}</text>
+                <button size="sm" variant="secondary" on-press="prepare_document_external_open">Validate for another application</button>
+              </column>
+            </if>
+            <else>
+              <if test="{documentExternalReady}">
+                <column grow="1" gap="8" main="center" cross="center" label="External document ready">
+                  <text>Document validated</text>
+                  <text size="sm" foreground="text_muted">{documentMessage}</text>
+                </column>
+              </if>
+              <else>
+                <column grow="1" gap="8" main="center" cross="center" label="Document error">
+                  <text>Document unavailable</text>
+                  <text size="sm" foreground="text_muted">{documentMessage}</text>
+                  <button size="sm" variant="secondary" on-press="retry_document">Retry</button>
+                </column>
+              </else>
+            </else>
+          </else>
+        </else>
+      </column>
+    </dialog>
+  </column>
+</panel>

@@ -58,6 +58,29 @@ typedef struct ml_event_v1 {
   size_t payload_len;
 } ml_event_v1;
 
+typedef struct ml_library_state_request_v1 {
+  uint32_t struct_size;
+  uint32_t abi_version;
+  uint64_t expected_revision;
+  uint64_t reserved;
+} ml_library_state_request_v1;
+
+typedef struct ml_settings_get_request_v1 {
+  uint32_t struct_size;
+  uint32_t abi_version;
+  uint64_t reserved;
+} ml_settings_get_request_v1;
+
+typedef uint32_t ml_appearance_t;
+
+typedef struct ml_settings_put_appearance_request_v1 {
+  uint32_t struct_size;
+  uint32_t abi_version;
+  uint64_t expected_revision;
+  ml_appearance_t appearance;
+  uint32_t reserved;
+} ml_settings_put_appearance_request_v1;
+
 typedef struct ml_library_course_page_request_v1 {
   uint32_t struct_size;
   uint32_t abi_version;
@@ -94,6 +117,21 @@ typedef struct ml_library_scan_request_v1 {
   const uint8_t *root_path;
   size_t root_path_len;
 } ml_library_scan_request_v1;
+
+typedef uint32_t ml_scan_phase_t;
+
+typedef struct ml_library_scan_progress_snapshot_v1 {
+  uint32_t struct_size;
+  uint32_t abi_version;
+  uint64_t request_id;
+  uint64_t processed;
+  uint64_t discovered;
+  uint64_t total;
+  ml_scan_phase_t phase;
+  uint8_t total_known;
+  uint8_t cancellable;
+  uint16_t reserved;
+} ml_library_scan_progress_snapshot_v1;
 
 typedef struct ml_progress_put_request_v1 {
   uint32_t struct_size;
@@ -179,6 +217,35 @@ typedef struct ml_notes_delete_request_v1 {
   size_t note_id_len;
 } ml_notes_delete_request_v1;
 
+typedef struct ml_document_open_request_v1 {
+  uint32_t struct_size;
+  uint32_t abi_version;
+  uint64_t expected_revision;
+  uint64_t reserved;
+  const uint8_t *lesson_id;
+  size_t lesson_id_len;
+} ml_document_open_request_v1;
+
+typedef struct ml_document_page_request_v1 {
+  uint32_t struct_size;
+  uint32_t abi_version;
+  uint64_t expected_revision;
+  uint64_t offset;
+  uint32_t limit;
+  uint32_t reserved;
+  const uint8_t *document_id;
+  size_t document_id_len;
+} ml_document_page_request_v1;
+
+typedef struct ml_document_external_open_request_v1 {
+  uint32_t struct_size;
+  uint32_t abi_version;
+  uint64_t expected_revision;
+  uint64_t reserved;
+  const uint8_t *lesson_id;
+  size_t lesson_id_len;
+} ml_document_external_open_request_v1;
+
 #define ML_STATUS_OK 0
 
 #define ML_STATUS_INVALID_ARGUMENT 1
@@ -200,6 +267,8 @@ typedef struct ml_notes_delete_request_v1 {
 #define ML_STATUS_NOT_FOUND 9
 
 #define ML_STATUS_STALE 10
+
+#define ML_STATUS_TOO_LATE 11
 
 #define ML_EVENT_CORE_READY 1
 
@@ -230,6 +299,34 @@ typedef struct ml_notes_delete_request_v1 {
 #define ML_EVENT_COURSE_ACCESSED 14
 
 #define ML_EVENT_LIBRARY_STATS 15
+
+#define ML_EVENT_LIBRARY_STATE 16
+
+#define ML_EVENT_SETTINGS 17
+
+#define ML_EVENT_APPEARANCE_UPDATED 18
+
+#define ML_EVENT_DOCUMENT_OPENED 19
+
+#define ML_EVENT_DOCUMENT_PAGE 20
+
+#define ML_EVENT_DOCUMENT_EXTERNAL_OPEN_READY 21
+
+#define ML_APPEARANCE_LIGHT 1
+
+#define ML_APPEARANCE_DARK 2
+
+#define ML_APPEARANCE_COZY 3
+
+#define ML_SCAN_PHASE_DISCOVERING 1
+
+#define ML_SCAN_PHASE_CLASSIFYING 2
+
+#define ML_SCAN_PHASE_RECONCILING 3
+
+#define ML_SCAN_PHASE_COMMITTING 4
+
+#define ML_SCAN_PHASE_WRITING_MARKERS 5
 
 uint32_t ml_abi_version(void);
 
@@ -307,6 +404,47 @@ void ml_core_release_event(struct ml_core_t *core, struct ml_event_v1 *event);
 ml_status_t ml_core_cancel(struct ml_core_t *core, uint64_t request_id);
 
 /**
+ * Submits one asynchronous committed Library-state request.
+ *
+ * # Safety
+ *
+ * `request` must point to a readable `ml_library_state_request_v1`, and
+ * `out_request_id` must point to writable `u64` storage. Both pointers are
+ * borrowed only for this call.
+ */
+ml_status_t ml_library_state_v1(struct ml_core_t *core,
+                                const struct ml_library_state_request_v1 *request,
+                                uint64_t *out_request_id);
+
+/**
+ * Submits one asynchronous appearance-settings request.
+ *
+ * # Safety
+ *
+ * `request` must point to a readable `ml_settings_get_request_v1`, and
+ * `out_request_id` must point to writable `u64` storage. Both pointers are
+ * borrowed only for this call.
+ */
+ml_status_t ml_settings_get_v1(struct ml_core_t *core,
+                               const struct ml_settings_get_request_v1 *request,
+                               uint64_t *out_request_id);
+
+/**
+ * Submits one asynchronous typed appearance update.
+ *
+ * A successful update advances only the independent Settings revision.
+ *
+ * # Safety
+ *
+ * `request` must point to a readable
+ * `ml_settings_put_appearance_request_v1`, and `out_request_id` must point to
+ * writable `u64` storage. Both pointers are borrowed only for this call.
+ */
+ml_status_t ml_settings_put_appearance_v1(struct ml_core_t *core,
+                                          const struct ml_settings_put_appearance_request_v1 *request,
+                                          uint64_t *out_request_id);
+
+/**
  * Submits one asynchronous Library course-page request.
  *
  * # Safety
@@ -359,6 +497,22 @@ ml_status_t ml_library_lesson_page_v1(struct ml_core_t *core,
 ml_status_t ml_library_scan_v1(struct ml_core_t *core,
                                const struct ml_library_scan_request_v1 *request,
                                uint64_t *out_request_id);
+
+/**
+ * Returns one coherent snapshot for an active Library scan.
+ *
+ * This synchronous read does not enqueue an event, consume event capacity, or
+ * wake the caller. `ML_STATUS_NOT_FOUND` means the request is unknown or its
+ * terminal event already won.
+ *
+ * # Safety
+ *
+ * `out_progress` must point to writable `ml_library_scan_progress_snapshot_v1`
+ * storage whose versioned prefix is initialized by the caller.
+ */
+ml_status_t ml_library_scan_progress_v1(struct ml_core_t *core,
+                                        uint64_t request_id,
+                                        struct ml_library_scan_progress_snapshot_v1 *out_progress);
 
 /**
  * Submits one asynchronous Lesson Progress update.
@@ -471,5 +625,52 @@ ml_status_t ml_notes_save_v1(struct ml_core_t *core,
 ml_status_t ml_notes_delete_v1(struct ml_core_t *core,
                                const struct ml_notes_delete_request_v1 *request,
                                uint64_t *out_request_id);
+
+/**
+ * Opens and normalizes one approved-root document Lesson asynchronously.
+ *
+ * PDF and unsupported formats return a terminal unsupported result; callers
+ * may then request explicit external-open readiness.
+ *
+ * # Safety
+ *
+ * `request` must point to a readable `ml_document_open_request_v1`. Its
+ * Lesson ID bytes must remain readable for this call. `out_request_id` must
+ * point to writable `u64` storage. The Lesson ID is copied before return.
+ */
+ml_status_t ml_document_open_v1(struct ml_core_t *core,
+                                const struct ml_document_open_request_v1 *request,
+                                uint64_t *out_request_id);
+
+/**
+ * Loads one bounded block page from the currently open document.
+ *
+ * # Safety
+ *
+ * `request` must point to a readable `ml_document_page_request_v1`. Its
+ * Document ID bytes must remain readable for this call. `out_request_id`
+ * must point to writable `u64` storage. The Document ID is copied before
+ * return.
+ */
+ml_status_t ml_document_page_v1(struct ml_core_t *core,
+                                const struct ml_document_page_request_v1 *request,
+                                uint64_t *out_request_id);
+
+/**
+ * Validates one document Lesson for an explicit default-application action.
+ *
+ * The completion carries the canonical approved-root path. This request does
+ * not launch an application itself.
+ *
+ * # Safety
+ *
+ * `request` must point to a readable
+ * `ml_document_external_open_request_v1`. Its Lesson ID bytes must remain
+ * readable for this call. `out_request_id` must point to writable `u64`
+ * storage. The Lesson ID is copied before return.
+ */
+ml_status_t ml_document_external_open_v1(struct ml_core_t *core,
+                                         const struct ml_document_external_open_request_v1 *request,
+                                         uint64_t *out_request_id);
 
 #endif  /* MELEARNER_CORE_H */

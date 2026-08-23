@@ -1,0 +1,53 @@
+<panel background="scrim" on-press="dismiss_settings" label="Settings backdrop">
+  <column main="center" cross="center">
+    <dialog width="560" height="360" label="Settings">
+      <column padding="20" gap="12">
+        <row gap="8" cross="center">
+          <column gap="4" grow="1">
+            <text size="heading">Settings</text>
+            <text size="sm" foreground="text_muted">Local preferences for this Library.</text>
+          </column>
+          <button size="sm" variant="ghost" on-press="dismiss_settings" label="Close Settings">Close</button>
+        </row>
+        <separator />
+        <scroll grow="1" label="Settings content">
+          <column gap="16">
+            <column gap="8">
+              <text>Library root</text>
+              <text size="sm" foreground="text_muted" label="{settingsRootLabel}"><span mono>{settingsRootLabel}</span></text>
+              <row gap="8">
+                <button size="sm" variant="secondary" on-press="settings_rescan" disabled="{rootActionBusy}">Rescan</button>
+                <button size="sm" variant="secondary" on-press="settings_choose_root" disabled="{rootActionBusy}">Change folder</button>
+              </row>
+            </column>
+            <separator />
+            <column gap="8">
+              <text>Appearance</text>
+              <radio-group gap="12" label="Appearance">
+                <radio checked="{lightAppearance}" on-toggle="select_light_appearance" text="Light" disabled="{settingsSaving}" />
+                <radio checked="{darkAppearance}" on-toggle="select_dark_appearance" text="Dark" disabled="{settingsSaving}" />
+                <radio checked="{cozyAppearance}" on-toggle="select_cozy_appearance" text="Cozy" disabled="{settingsSaving}" />
+              </radio-group>
+              <if test="{settingsSaving}">
+                <text size="sm" foreground="text_muted">Saving appearance…</text>
+              </if>
+              <if test="{settingsFailed}">
+                <text size="sm" foreground="destructive">{settingsMessage}</text>
+              </if>
+            </column>
+            <separator />
+            <column gap="6">
+              <text>System preferences</text>
+              <text size="sm" foreground="text_muted">{contrastStatus}</text>
+              <text size="sm" foreground="text_muted">{motionStatus}</text>
+            </column>
+            <column gap="4">
+              <text size="sm" foreground="text_muted">Runtime</text>
+              <text size="sm" foreground="text_muted"><span mono>{runtimeInfo}</span></text>
+            </column>
+          </column>
+        </scroll>
+      </column>
+    </dialog>
+  </column>
+</panel>

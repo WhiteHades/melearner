@@ -1,0 +1,271 @@
+{
+  "version": 1,
+  "fixtures": [
+    {
+      "id": "current-native-database",
+      "category": "database",
+      "path": "fixtures/parity/database-current.sql",
+      "sha256": "348be55432ed14bfe58fbfd123ba485fd71d10d25be0456ab7543878c8346ab6",
+      "formatVersion": "current-native-schema",
+      "generator": null,
+      "seed": null,
+      "source": {
+        "kind": "repository-authored",
+        "license": "MIT"
+      },
+      "expected": {
+        "courses": 3,
+        "sections": 4,
+        "lessons": 4,
+        "subtitles": 2,
+        "notes": 2,
+        "activityRows": 3,
+        "settings": 1
+      },
+      "tests": [
+        "lib/database-sqlite-fixture.test.mjs",
+        "crates/melearner-core/src/coordinator.rs",
+        "crates/melearner-core/src/library.rs",
+        "crates/melearner-core/src/library/stats.rs",
+        "crates/melearner-core/tests/abi_domain.rs"
+      ]
+    },
+    {
+      "id": "parity-oracle",
+      "category": "cross-domain",
+      "path": "fixtures/parity/oracle-v1.json",
+      "sha256": "3e36d705ae3d738a6fbf9193283875bda23d374b8d774db93d15492698ec86f9",
+      "formatVersion": "1",
+      "generator": null,
+      "seed": null,
+      "source": {
+        "kind": "repository-authored",
+        "license": "MIT"
+      },
+      "expected": {
+        "persistedIdentityRows": 3,
+        "documentBehaviors": 6,
+        "mediaPlaybackCases": 5,
+        "uiFlows": 8
+      },
+      "tests": [
+        "lib/parity-fixtures.test.mjs",
+        "crates/melearner-core/src/library/reconciliation.rs"
+      ]
+    },
+    {
+      "id": "h264-aac-mp4",
+      "category": "media",
+      "path": "fixtures/parity/media/Systems 日本語/01 H264 AAC.mp4",
+      "sha256": "ca3861d477f4dc44d0e546405033eb1881ab74322ccf9f0953702b8ad7d5a4b6",
+      "formatVersion": "iso-bmff-h264-high-aac-lc",
+      "generator": {
+        "path": "scripts/generate-media-corpus.sh",
+        "tool": "ffmpeg",
+        "version": "n8.1.2",
+        "sha256": "beebb38dea2eb4792fc8cecd2cad72412362ee5607683114e19ebaefb16591f0"
+      },
+      "seed": "lavfi-testsrc2-320x180-10fps-2s+sine-440hz",
+      "source": {
+        "kind": "deterministic-generated",
+        "license": "MIT"
+      },
+      "expected": {
+        "durationSeconds": 2,
+        "video": "h264-high-yuv420p",
+        "audio": "aac-lc-mono",
+        "pathCases": [
+          "unicode",
+          "spaces"
+        ]
+      },
+      "tests": [
+        "scripts/generate-media-corpus.sh",
+        "crates/melearner-core/src/player.rs"
+      ]
+    },
+    {
+      "id": "h264-multi-audio-chapters",
+      "category": "media",
+      "path": "fixtures/parity/media/02 Multi audio chapters.mkv",
+      "sha256": "ca1a34ec19424b0ff45236e6964ccfd05409c67d1d462d6b3b78a6b019cc6cda",
+      "formatVersion": "matroska-h264-high-aac-lc",
+      "generator": {
+        "path": "scripts/generate-media-corpus.sh",
+        "tool": "ffmpeg",
+        "version": "n8.1.2",
+        "sha256": "beebb38dea2eb4792fc8cecd2cad72412362ee5607683114e19ebaefb16591f0"
+      },
+      "seed": "lavfi-testsrc2-320x180-10fps-2s+sine-440hz+sine-660hz",
+      "source": {
+        "kind": "deterministic-generated",
+        "license": "MIT"
+      },
+      "expected": {
+        "videoTracks": 1,
+        "audioTracks": 2,
+        "audioLanguages": [
+          "eng",
+          "jpn"
+        ],
+        "chapters": 2
+      },
+      "tests": [
+        "scripts/generate-media-corpus.sh",
+        "crates/melearner-core/src/player.rs"
+      ]
+    },
+    {
+      "id": "hevc-main10",
+      "category": "media",
+      "path": "fixtures/parity/media/03 HEVC Main 10.mkv",
+      "sha256": "ccb2ea5b5657544b3ab4e59862943b8842c22f013ff7fffb3d3e096cde6011e6",
+      "formatVersion": "matroska-hevc-main10",
+      "generator": {
+        "path": "scripts/generate-media-corpus.sh",
+        "tool": "ffmpeg",
+        "version": "n8.1.2",
+        "sha256": "beebb38dea2eb4792fc8cecd2cad72412362ee5607683114e19ebaefb16591f0"
+      },
+      "seed": "lavfi-testsrc2-320x180-10fps-2s-yuv420p10le",
+      "source": {
+        "kind": "deterministic-generated",
+        "license": "MIT"
+      },
+      "expected": {
+        "video": "hevc-main10-yuv420p10le",
+        "decode": "visible-software-decode-required"
+      },
+      "tests": [
+        "scripts/generate-media-corpus.sh",
+        "crates/melearner-core/src/player.rs"
+      ]
+    },
+    {
+      "id": "external-subtitle-srt",
+      "category": "media-subtitle",
+      "path": "fixtures/parity/media/01 H264 AAC.en.srt",
+      "sha256": "574c5b8073daead36a209bd21a65a9d3454cfde9d1c29d79a883114e05ba2b9b",
+      "formatVersion": "subrip",
+      "generator": null,
+      "seed": null,
+      "source": {
+        "kind": "repository-authored",
+        "license": "MIT"
+      },
+      "expected": {
+        "language": "en",
+        "cues": 2
+      },
+      "tests": [
+        "crates/melearner-core/src/player.rs"
+      ]
+    },
+    {
+      "id": "external-subtitle-vtt",
+      "category": "media-subtitle",
+      "path": "fixtures/parity/media/01 H264 AAC.ja.vtt",
+      "sha256": "d83a4c223d6684e3b5658c5ae369b6878ec2e21d4a5ab9309e8bd90db183b282",
+      "formatVersion": "webvtt",
+      "generator": null,
+      "seed": null,
+      "source": {
+        "kind": "repository-authored",
+        "license": "MIT"
+      },
+      "expected": {
+        "language": "ja",
+        "cues": 2
+      },
+      "tests": [
+        "crates/melearner-core/src/player.rs"
+      ]
+    },
+    {
+      "id": "media-chapter-metadata",
+      "category": "media-metadata",
+      "path": "fixtures/parity/media/chapters.ffmeta",
+      "sha256": "bbe2b6850795551c5da0011d6199de9729de4bb4ccc8a4a9b8d83f0620dc90fb",
+      "formatVersion": "ffmetadata-1",
+      "generator": null,
+      "seed": null,
+      "source": {
+        "kind": "repository-authored",
+        "license": "MIT"
+      },
+      "expected": {
+        "chapters": 2,
+        "durationMilliseconds": 2000
+      },
+      "tests": [
+        "scripts/generate-media-corpus.sh"
+      ]
+    },
+    {
+      "id": "corrupt-media",
+      "category": "media-failure",
+      "path": "fixtures/parity/media/corrupt-media.bin",
+      "sha256": "b2b5a4dca09c270d104473bf57dd977e3ee1d93da83a883dcd2255e8c1e63f91",
+      "formatVersion": "intentionally-invalid-media",
+      "generator": null,
+      "seed": null,
+      "source": {
+        "kind": "repository-authored",
+        "license": "MIT"
+      },
+      "expected": {
+        "failure": "media_corrupt"
+      },
+      "tests": [
+        "crates/melearner-core/src/player.rs"
+      ]
+    },
+    {
+      "id": "scanner-contract",
+      "category": "scanner",
+      "path": "fixtures/parity/scanner-v1.json",
+      "sha256": "564c4f58115cdbbc1511a91f86af4ff97e00ce2c0d5afd3b6e0a13f34a2aa407",
+      "formatVersion": "1",
+      "generator": null,
+      "seed": null,
+      "source": {
+        "kind": "repository-authored",
+        "license": "MIT"
+      },
+      "expected": {
+        "inputFiles": 14,
+        "courses": 3,
+        "learningPaths": 6,
+        "errorCases": 2
+      },
+      "tests": [
+        "crates/melearner-core/src/scanner.rs"
+      ]
+    },
+    {
+      "id": "responsiveness-watchdog-app",
+      "category": "load",
+      "path": "fixtures/parity/watchdog-app.mjs",
+      "sha256": "93f4752569fff1f8d1e7ad610464c06cc2e8d17a57815a6f4470fd72faafad5d",
+      "formatVersion": "watchdog-line-protocol-1",
+      "generator": null,
+      "seed": null,
+      "source": {
+        "kind": "repository-authored",
+        "license": "MIT"
+      },
+      "expected": {
+        "phases": [
+          "startup",
+          "command",
+          "resize",
+          "shutdown"
+        ],
+        "hangCases": 4
+      },
+      "tests": [
+        "scripts/responsiveness-watchdog.test.mjs"
+      ]
+    }
+  ]
+}

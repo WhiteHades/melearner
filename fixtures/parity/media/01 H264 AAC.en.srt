@@ -1,0 +1,7 @@
+1
+00:00:00,000 --> 00:00:00,900
+Welcome to the fixture.
+
+2
+00:00:01,000 --> 00:00:01,900
+English subtitle track.

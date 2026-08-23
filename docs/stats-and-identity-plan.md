@@ -45,7 +45,7 @@ When a root is configured, every aggregate uses the same selected-root Course sc
 
 ### Canonical activity fields
 
-The 12-week heatmap requests an 84-day `ActivityDayPage` with `revision`, `offset`, `total`, and `rows`. Each returned active date row has `date`, `watchedSeconds`, `lessonsTouched`, and `completions`, ordered oldest to newest. The UI fills dates with no row as zero-valued cells; it does not infer extra activity.
+The 12-week heatmap requests an 84-day `ActivityDayPage` with `revision`, `throughDate`, `offset`, `total`, and `rows`. `throughDate` is the UTC date captured by the database transaction and anchors the returned window. Each returned active date row has `date`, `watchedSeconds`, `lessonsTouched`, and `completions`, ordered oldest to newest. The UI fills dates with no row as zero-valued cells; it does not infer extra activity.
 
 The database fields named `watched_time` and `watched_seconds`, and the API field `watchedSeconds`, are position-derived Progress. A Progress write replaces `lessons.watched_time`; `lesson_activity.watched_seconds` records only `max(new watched_time - previous watched_time, 0)`. A completion-state change records an activity row even when that delta is zero, and `completions` counts only transitions into completed. These fields do not measure wall-clock time spent playing. melearner does not maintain a separate played-time clock.
 

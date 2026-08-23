@@ -1,0 +1,96 @@
+<template name="notes-content">
+  <column grow="1" gap="12">
+    <if test="{notesLoading}">
+      <column grow="1" main="center" cross="center">
+        <text size="sm" foreground="text_muted">Loading notes…</text>
+      </column>
+    </if>
+    <else>
+      <if test="{notesFailed}">
+        <column gap="8" label="Notes error">
+          <alert text="{notesMessage}" />
+          <button size="sm" variant="secondary" on-press="retry_notes" label="Retry loading notes">Retry</button>
+        </column>
+      </if>
+      <else>
+        <if test="{notesEditing}">
+          <column grow="1" gap="8">
+            <textarea text="{notesDraftText}" on-input="note_edited" grow="1" autofocus="true" placeholder="Write a note about this Lesson…" label="Lesson note" />
+            <if test="{notesDraftInvalid}">
+              <text size="sm" foreground="destructive">Enter up to 2,000 characters of note text.</text>
+            </if>
+            <row gap="8" main="end">
+              <button size="sm" variant="ghost" on-press="cancel_note_edit" disabled="{notesBusy}">Cancel</button>
+              <button size="sm" variant="primary" on-press="save_note" disabled="{notesDraftInvalid}" label="Save note">Save</button>
+            </row>
+          </column>
+        </if>
+        <else>
+          <row gap="8" cross="center">
+            <text size="sm" foreground="text_muted" grow="1">Notes at this Lesson's timeline positions</text>
+            <button size="sm" variant="primary" on-press="new_note">New note</button>
+          </row>
+          <if test="{notesEmpty}">
+            <column grow="1" main="center" cross="center" gap="4">
+              <text>No notes yet</text>
+              <text size="sm" foreground="text_muted">Capture a thought without leaving the Lesson.</text>
+            </column>
+          </if>
+          <else>
+            <scroll grow="1" label="Lesson notes">
+              <column gap="8" role="list">
+                <for each="noteRows" key="id" as="note">
+                  <list-item padding="10" autofocus="{note.restore_focus}" label="{note.text}">
+                    <column gap="6" grow="1">
+                      <row gap="8" cross="center">
+                        <text size="sm" foreground="text_muted" grow="1">{note.timestampLabel}</text>
+                        <button size="sm" variant="ghost" on-press="edit_note:{note.id}" label="Edit note">Edit</button>
+                        <button size="sm" variant="ghost" on-press="delete_note:{note.id}" label="Delete note">Delete</button>
+                      </row>
+                      <text wrap="true">{note.text}</text>
+                    </column>
+                  </list-item>
+                </for>
+              </column>
+            </scroll>
+          </else>
+          <row gap="8" main="end" label="Note pages">
+            <if test="{hasPreviousNotesPage}">
+              <button size="sm" variant="secondary" on-press="previous_notes_page">Previous</button>
+            </if>
+            <if test="{hasNextNotesPage}">
+              <button size="sm" variant="secondary" on-press="next_notes_page">Next</button>
+            </if>
+          </row>
+        </else>
+      </else>
+    </else>
+  </column>
+</template>
+
+<stack>
+  <if test="{notesWide}">
+    <column width="400" padding="16" gap="12" background="surface" label="Lesson notes">
+      <row gap="8" cross="center">
+        <text size="heading" grow="1">Lesson notes</text>
+        <button size="sm" variant="ghost" on-press="dismiss_notes" label="Close Lesson notes">Close</button>
+      </row>
+      <use template="notes-content" />
+    </column>
+  </if>
+  <else>
+    <panel background="scrim" on-press="dismiss_notes" label="Lesson notes backdrop">
+      <column main="center" cross="center">
+        <dialog width="520" height="360" label="Lesson notes">
+          <column padding="16" gap="12">
+            <row gap="8" cross="center">
+              <text size="heading" grow="1">Lesson notes</text>
+              <button size="sm" variant="ghost" on-press="dismiss_notes" label="Close Lesson notes">Close</button>
+            </row>
+            <use template="notes-content" />
+          </column>
+        </dialog>
+      </column>
+    </panel>
+  </else>
+</stack>

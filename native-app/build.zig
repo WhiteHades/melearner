@@ -29,6 +29,7 @@ pub fn build(b: *std.Build) void {
     }) |module| {
         module.addIncludePath(b.path("../include"));
         module.addObjectFile(core_library);
+        module.linkSystemLibrary("mpv", .{});
         inline for (.{ "c", "gcc_s", "util", "rt", "pthread", "m", "dl" }) |library| {
             module.linkSystemLibrary(library, .{});
         }

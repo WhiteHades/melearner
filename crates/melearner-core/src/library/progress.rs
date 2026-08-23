@@ -66,6 +66,7 @@ pub(crate) struct ActivityDay {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ActivityDayPage {
     pub(crate) revision: u64,
+    pub(crate) through_date: String,
     pub(crate) offset: u64,
     pub(crate) total: u64,
     pub(crate) rows: Vec<ActivityDay>,
@@ -316,15 +317,20 @@ impl LibraryDatabase {
         })?;
         let lookback = format!("-{} days", input.lookback_days - 1);
         let mut transaction = self.connection.begin().await?;
+        let through_date: String = sqlx::query_scalar("SELECT date('now')")
+            .fetch_one(&mut *transaction)
+            .await?;
         let total: i64 = sqlx::query_scalar(
             "SELECT COUNT(*)
              FROM (
                  SELECT activity_date
                  FROM lesson_activity
-                 WHERE activity_date >= date('now', ?1)
+                 WHERE activity_date >= date(?1, ?2)
+                   AND activity_date <= ?1
                  GROUP BY activity_date
              )",
         )
+        .bind(&through_date)
         .bind(&lookback)
         .fetch_one(&mut *transaction)
         .await?;
@@ -334,11 +340,13 @@ impl LibraryDatabase {
                     COUNT(DISTINCT lesson_id) AS lessons_touched,
                     SUM(completed) AS completions
              FROM lesson_activity
-             WHERE activity_date >= date('now', ?1)
+             WHERE activity_date >= date(?1, ?2)
+               AND activity_date <= ?1
              GROUP BY activity_date
              ORDER BY activity_date ASC
-             LIMIT ?2 OFFSET ?3",
+             LIMIT ?3 OFFSET ?4",
         )
+        .bind(&through_date)
         .bind(&lookback)
         .bind(i64::from(input.limit))
         .bind(offset)
@@ -357,6 +365,7 @@ impl LibraryDatabase {
         }
         Ok(ActivityDayPage {
             revision: self.revision,
+            through_date,
             offset: input.offset,
             total: nonnegative(total)?,
             rows,
@@ -398,6 +407,15 @@ async fn apply_progress(
     .bind(input.last_position)
     .bind(input.completed)
     .bind(&input.lesson_id)
+    .execute(&mut **transaction)
+    .await?;
+
+    sqlx::query(
+        "UPDATE courses
+         SET last_accessed = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+         WHERE id = ?1",
+    )
+    .bind(&course_id)
     .execute(&mut **transaction)
     .await?;
 
@@ -596,7 +614,7 @@ mod tests {
             let (_temp, mut library) = progress_fixture().await;
             let revision = library.revision();
             let cancelled = MutationControl::new();
-            assert!(cancelled.cancel());
+            assert_eq!(cancelled.cancel(), crate::MutationCancel::Accepted);
 
             for input in [
                 course_access_input(revision + 1, "course"),
@@ -721,6 +739,7 @@ mod tests {
                 .await
                 .expect("load activity");
             assert_eq!(page.revision, library.revision());
+            assert_eq!(page.through_date.len(), 10);
             assert_eq!(page.total, 1);
             assert_eq!(page.rows.len(), 1);
             assert_eq!(page.rows[0].watched_seconds, 15);
@@ -737,6 +756,12 @@ mod tests {
             assert_eq!(lesson.get::<i64, _>("watched_time"), 12);
             assert_eq!(lesson.get::<f64, _>("last_position"), 12.0);
             assert!(lesson.get::<bool, _>("completed"));
+            let last_accessed: Option<String> =
+                sqlx::query_scalar("SELECT last_accessed FROM courses WHERE id = 'course'")
+                    .fetch_one(&mut library.connection)
+                    .await
+                    .expect("load progress Course access");
+            assert!(last_accessed.is_some());
 
             assert!(matches!(
                 library
@@ -784,7 +809,7 @@ mod tests {
             let (_temp, mut library) = progress_fixture().await;
             let revision = library.revision();
             let cancelled = MutationControl::new();
-            assert!(cancelled.cancel());
+            assert_eq!(cancelled.cancel(), crate::MutationCancel::Accepted);
 
             assert!(
                 library
@@ -866,6 +891,15 @@ mod tests {
                 .await
                 .expect("load unchanged progress"),
                 0
+            );
+            assert_eq!(
+                sqlx::query_scalar::<_, Option<String>>(
+                    "SELECT last_accessed FROM courses WHERE id = 'course'"
+                )
+                .fetch_one(&mut library.connection)
+                .await
+                .expect("load unchanged Course access"),
+                None
             );
         });
     }
@@ -1011,6 +1045,7 @@ mod tests {
 
             assert_eq!(page.total, 84);
             assert_eq!(page.rows.len(), 84);
+            assert_eq!(page.through_date, today);
             assert_eq!(
                 page.rows.last().map(|day| day.date.as_str()),
                 Some(today.as_str())

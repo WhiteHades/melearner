@@ -591,7 +591,7 @@ mod tests {
             let (_temp, mut library) = notes_fixture().await;
             let revision = library.revision();
             let cancelled = MutationControl::new();
-            assert!(cancelled.cancel());
+            assert_eq!(cancelled.cancel(), crate::MutationCancel::Accepted);
 
             for input in [
                 save_input(revision + 1, "lesson", None, 1.0, "note"),

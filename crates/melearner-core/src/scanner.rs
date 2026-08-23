@@ -15,7 +15,7 @@ use std::hash::Hasher;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
-use crate::MutationControl;
+use crate::{MutationControl, ScanControl, ScanPhase};
 
 const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mkv", "webm", "mov", "avi", "m4v"];
 const AUDIO_EXTENSIONS: &[&str] = &["mp3", "wav", "aac", "m4a", "flac", "ogg"];
@@ -1040,11 +1040,34 @@ pub(crate) fn scan_library_checked_in_root(
     captured_root: &CapabilityDir,
     control: &MutationControl,
 ) -> Result<CapturedScan, ScanError> {
+    scan_library_checked_in_root_internal(root, captured_root, control, None)
+}
+
+pub(crate) fn scan_library_checked_in_root_with_progress(
+    root: &Path,
+    captured_root: &CapabilityDir,
+    control: &ScanControl,
+) -> Result<CapturedScan, ScanError> {
+    scan_library_checked_in_root_internal(root, captured_root, control.mutation(), Some(control))
+}
+
+fn scan_library_checked_in_root_internal(
+    root: &Path,
+    captured_root: &CapabilityDir,
+    control: &MutationControl,
+    progress: Option<&ScanControl>,
+) -> Result<CapturedScan, ScanError> {
     require_active(control)?;
     require_utf8_path(root)?;
     verify_captured_root(root, captured_root)?;
     let entries = read_dir_sorted(root, control)?;
-    let result = scan_valid_root(root.to_path_buf(), captured_root, entries, control)?;
+    let result = scan_valid_root(
+        root.to_path_buf(),
+        captured_root,
+        entries,
+        control,
+        progress,
+    )?;
     verify_captured_root(root, captured_root)?;
     Ok(result)
 }
@@ -1092,12 +1115,22 @@ fn scan_valid_root(
     root_dir: &CapabilityDir,
     entries: Vec<std::fs::DirEntry>,
     control: &MutationControl,
+    progress: Option<&ScanControl>,
 ) -> Result<CapturedScan, ScanError> {
     require_active(control)?;
+    if let Some(progress) = progress {
+        progress.set_progress(ScanPhase::Discovering, 0, 0, None);
+    }
     let mut warnings = Vec::new();
     match read_course_marker_in_dir(root_dir, &root) {
         Ok(Some(_)) => {
+            if let Some(progress) = progress {
+                progress.set_progress(ScanPhase::Classifying, 0, 1, Some(1));
+            }
             let (course, course_warnings) = scan_course_with_control(&root, root_dir, control)?;
+            if let Some(progress) = progress {
+                progress.set_progress(ScanPhase::Classifying, 1, 1, Some(1));
+            }
             extend_warnings(&mut warnings, course_warnings);
             return captured_single_course(course, warnings, root_dir);
         }
@@ -1107,12 +1140,23 @@ fn scan_valid_root(
 
     let mut root_files_exist = false;
     let mut subdirs: Vec<PathBuf> = Vec::new();
+    let mut processed_entries = 0_u64;
+    let mut discovered_candidates = 0_u64;
     let root_paths = entries.iter().map(|entry| entry.path()).collect::<Vec<_>>();
     let root_download_sidecars = download_sidecar_targets(&root_paths, control)?;
 
     for entry in entries {
         require_active(control)?;
         let path = entry.path();
+        processed_entries = processed_entries.saturating_add(1);
+        if let Some(progress) = progress {
+            progress.set_progress(
+                ScanPhase::Discovering,
+                processed_entries,
+                discovered_candidates,
+                None,
+            );
+        }
         let Some(entry_type) = safe_entry_type(&entry, &root, &mut warnings)? else {
             continue;
         };
@@ -1147,24 +1191,51 @@ fn scan_valid_root(
                 continue;
             }
             subdirs.push(path);
+            discovered_candidates = discovered_candidates.saturating_add(1);
+            if let Some(progress) = progress {
+                progress.set_progress(
+                    ScanPhase::Discovering,
+                    processed_entries,
+                    discovered_candidates,
+                    None,
+                );
+            }
         }
     }
 
     if root_files_exist && subdirs.is_empty() {
+        if let Some(progress) = progress {
+            progress.set_progress(ScanPhase::Classifying, 0, 1, Some(1));
+        }
         let (course, course_warnings) = scan_course_with_control(&root, root_dir, control)?;
+        if let Some(progress) = progress {
+            progress.set_progress(ScanPhase::Classifying, 1, 1, Some(1));
+        }
         extend_warnings(&mut warnings, course_warnings);
         return captured_single_course(course, warnings, root_dir);
     }
 
     if root_files_exist && !subdirs.is_empty() {
+        if let Some(progress) = progress {
+            progress.set_progress(ScanPhase::Classifying, 0, 1, Some(1));
+        }
         let (course, course_warnings) = scan_course_with_control(&root, root_dir, control)?;
+        if let Some(progress) = progress {
+            progress.set_progress(ScanPhase::Classifying, 1, 1, Some(1));
+        }
         extend_warnings(&mut warnings, course_warnings);
         push_warning(&mut warnings, "mixed content at root level".to_string());
         return captured_single_course(course, warnings, root_dir);
     }
 
     if should_scan_root_as_single_course(&subdirs, control)? {
+        if let Some(progress) = progress {
+            progress.set_progress(ScanPhase::Classifying, 0, 1, Some(1));
+        }
         let (course, course_warnings) = scan_course_with_control(&root, root_dir, control)?;
+        if let Some(progress) = progress {
+            progress.set_progress(ScanPhase::Classifying, 1, 1, Some(1));
+        }
         if !course.sections.is_empty() {
             extend_warnings(&mut warnings, course_warnings);
             return captured_single_course(course, warnings, root_dir);
@@ -1172,9 +1243,20 @@ fn scan_valid_root(
         extend_warnings(&mut warnings, course_warnings);
     }
 
+    let candidate_count = u64::try_from(subdirs.len())
+        .map_err(|_| ScanError::Invalid("scan candidate count exceeds u64".to_string()))?;
+    if let Some(progress) = progress {
+        progress.set_progress(
+            ScanPhase::Classifying,
+            0,
+            candidate_count,
+            Some(candidate_count),
+        );
+    }
     let scanned = subdirs
         .iter()
-        .map(|dir| {
+        .enumerate()
+        .map(|(index, dir)| {
             require_active(control)?;
             let relative_path = dir.strip_prefix(&root).map_err(|_| {
                 ScanError::Invalid(format!(
@@ -1188,6 +1270,17 @@ fn scan_valid_root(
                 std::panic::catch_unwind(|| scan_course_with_control(dir, &course_dir, control))
                     .map_err(|_| format!("skipped course after scanner panic: {}", dir.display()))
                     .map_err(ScanError::Invalid)?;
+            if let Some(progress) = progress {
+                let processed = u64::try_from(index + 1).map_err(|_| {
+                    ScanError::Invalid("processed scan count exceeds u64".to_string())
+                })?;
+                progress.set_progress(
+                    ScanPhase::Classifying,
+                    processed,
+                    candidate_count,
+                    Some(candidate_count),
+                );
+            }
             Ok(scanned.map(|(course, warnings)| (course, warnings, course_dir)))
         })
         .collect::<Result<Vec<_>, ScanError>>()?;
@@ -1298,7 +1391,7 @@ mod tests {
         let root = temp_root("cancelled-scan");
         touch(&root.join("Course/01 Intro/01 welcome.mp4"));
         let control = MutationControl::new();
-        assert!(control.cancel());
+        assert_eq!(control.cancel(), crate::MutationCancel::Accepted);
 
         assert!(matches!(
             scan_library_checked_with_control(&root, &control),
@@ -1306,6 +1399,33 @@ mod tests {
         ));
         assert!(!root.join("Course").join(COURSE_MARKER_FILE_NAME).exists());
 
+        cleanup(&root);
+    }
+
+    #[test]
+    fn checked_scan_reports_bounded_candidate_classification_progress() {
+        let root = temp_root("scan-progress");
+        touch(&root.join("Course 1/01 Intro/01 welcome.mp4"));
+        touch(&root.join("Course 2/01 Intro/01 welcome.mp4"));
+        let captured = CapabilityDir::open_ambient_dir(&root, ambient_authority())
+            .expect("capture library root");
+        let mutation = std::sync::Arc::new(MutationControl::new());
+        let control = ScanControl::new(mutation);
+
+        let result = scan_library_checked_in_root_with_progress(&root, &captured, &control)
+            .expect("scan with progress");
+
+        assert_eq!(result.result.courses.len(), 2);
+        assert_eq!(
+            control.snapshot(),
+            crate::ScanProgressSnapshot {
+                phase: ScanPhase::Classifying,
+                processed: 2,
+                discovered: 2,
+                total: Some(2),
+                cancellable: true,
+            }
+        );
         cleanup(&root);
     }
 

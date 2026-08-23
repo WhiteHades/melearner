@@ -1,7 +1,9 @@
 #![allow(non_camel_case_types)]
 
 mod coordinator;
+mod document;
 mod library;
+mod player;
 pub mod scanner;
 pub mod schema;
 
@@ -22,8 +24,9 @@ use coordinator::{
     SubmitError,
 };
 use library::{
-    ActivityPageInput, CourseAccessInput, LibraryError, NoteDeleteInput, NotePageInput,
-    NoteSaveInput, ProgressInput, SearchPageInput,
+    ActivityPageInput, Appearance, CourseAccessInput, DocumentExternalOpenInput, DocumentOpenInput,
+    DocumentPageInput, LibraryError, NoteDeleteInput, NotePageInput, NoteSaveInput, ProgressInput,
+    SearchPageInput,
 };
 
 pub const ML_ABI_VERSION: u32 = 2;
@@ -45,6 +48,7 @@ pub const ML_STATUS_CANCELLED: ml_status_t = 7;
 pub const ML_STATUS_FAILED: ml_status_t = 8;
 pub const ML_STATUS_NOT_FOUND: ml_status_t = 9;
 pub const ML_STATUS_STALE: ml_status_t = 10;
+pub const ML_STATUS_TOO_LATE: ml_status_t = 11;
 
 pub type ml_event_kind_t = u32;
 pub const ML_EVENT_CORE_READY: ml_event_kind_t = 1;
@@ -62,6 +66,24 @@ pub const ML_EVENT_NOTE_SAVED: ml_event_kind_t = 12;
 pub const ML_EVENT_NOTE_DELETED: ml_event_kind_t = 13;
 pub const ML_EVENT_COURSE_ACCESSED: ml_event_kind_t = 14;
 pub const ML_EVENT_LIBRARY_STATS: ml_event_kind_t = 15;
+pub const ML_EVENT_LIBRARY_STATE: ml_event_kind_t = 16;
+pub const ML_EVENT_SETTINGS: ml_event_kind_t = 17;
+pub const ML_EVENT_APPEARANCE_UPDATED: ml_event_kind_t = 18;
+pub const ML_EVENT_DOCUMENT_OPENED: ml_event_kind_t = 19;
+pub const ML_EVENT_DOCUMENT_PAGE: ml_event_kind_t = 20;
+pub const ML_EVENT_DOCUMENT_EXTERNAL_OPEN_READY: ml_event_kind_t = 21;
+
+pub type ml_appearance_t = u32;
+pub const ML_APPEARANCE_LIGHT: ml_appearance_t = 1;
+pub const ML_APPEARANCE_DARK: ml_appearance_t = 2;
+pub const ML_APPEARANCE_COZY: ml_appearance_t = 3;
+
+pub type ml_scan_phase_t = u32;
+pub const ML_SCAN_PHASE_DISCOVERING: ml_scan_phase_t = 1;
+pub const ML_SCAN_PHASE_CLASSIFYING: ml_scan_phase_t = 2;
+pub const ML_SCAN_PHASE_RECONCILING: ml_scan_phase_t = 3;
+pub const ML_SCAN_PHASE_COMMITTING: ml_scan_phase_t = 4;
+pub const ML_SCAN_PHASE_WRITING_MARKERS: ml_scan_phase_t = 5;
 
 pub type ml_wake_fn = Option<unsafe extern "C" fn(context: *mut c_void)>;
 
@@ -98,6 +120,33 @@ pub struct ml_library_stats_request_v1 {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+pub struct ml_library_state_request_v1 {
+    pub struct_size: u32,
+    pub abi_version: u32,
+    pub expected_revision: u64,
+    pub reserved: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ml_settings_get_request_v1 {
+    pub struct_size: u32,
+    pub abi_version: u32,
+    pub reserved: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ml_settings_put_appearance_request_v1 {
+    pub struct_size: u32,
+    pub abi_version: u32,
+    pub expected_revision: u64,
+    pub appearance: ml_appearance_t,
+    pub reserved: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
 pub struct ml_library_lesson_page_request_v1 {
     pub struct_size: u32,
     pub abi_version: u32,
@@ -119,6 +168,21 @@ pub struct ml_library_scan_request_v1 {
     pub expected_revision: u64,
     pub root_path: *const u8,
     pub root_path_len: usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ml_library_scan_progress_snapshot_v1 {
+    pub struct_size: u32,
+    pub abi_version: u32,
+    pub request_id: u64,
+    pub processed: u64,
+    pub discovered: u64,
+    pub total: u64,
+    pub phase: ml_scan_phase_t,
+    pub total_known: u8,
+    pub cancellable: u8,
+    pub reserved: u16,
 }
 
 #[repr(C)]
@@ -219,6 +283,41 @@ pub struct ml_notes_delete_request_v1 {
     pub reserved: u64,
     pub note_id: *const u8,
     pub note_id_len: usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ml_document_open_request_v1 {
+    pub struct_size: u32,
+    pub abi_version: u32,
+    pub expected_revision: u64,
+    pub reserved: u64,
+    pub lesson_id: *const u8,
+    pub lesson_id_len: usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ml_document_page_request_v1 {
+    pub struct_size: u32,
+    pub abi_version: u32,
+    pub expected_revision: u64,
+    pub offset: u64,
+    pub limit: u32,
+    pub reserved: u32,
+    pub document_id: *const u8,
+    pub document_id_len: usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ml_document_external_open_request_v1 {
+    pub struct_size: u32,
+    pub abi_version: u32,
+    pub expected_revision: u64,
+    pub reserved: u64,
+    pub lesson_id: *const u8,
+    pub lesson_id_len: usize,
 }
 
 #[repr(C)]
@@ -389,6 +488,7 @@ enum PendingRequest {
     Domain {
         event_kind: ml_event_kind_t,
         mutation_control: Option<Arc<MutationControl>>,
+        scan_control: Option<Arc<ScanControl>>,
     },
     #[cfg(feature = "abi-test-hooks")]
     Test { payload: Vec<u8> },
@@ -401,6 +501,46 @@ const MUTATION_COMMITTING: u8 = 2;
 #[derive(Debug)]
 pub(crate) struct MutationControl {
     state: AtomicU8,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub(crate) enum ScanPhase {
+    Discovering = ML_SCAN_PHASE_DISCOVERING,
+    Classifying = ML_SCAN_PHASE_CLASSIFYING,
+    Reconciling = ML_SCAN_PHASE_RECONCILING,
+    Committing = ML_SCAN_PHASE_COMMITTING,
+    WritingMarkers = ML_SCAN_PHASE_WRITING_MARKERS,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ScanProgressSnapshot {
+    pub(crate) phase: ScanPhase,
+    pub(crate) processed: u64,
+    pub(crate) discovered: u64,
+    pub(crate) total: Option<u64>,
+    pub(crate) cancellable: bool,
+}
+
+#[derive(Debug)]
+struct ScanProgressState {
+    phase: ScanPhase,
+    processed: u64,
+    discovered: u64,
+    total: Option<u64>,
+}
+
+#[derive(Debug)]
+pub(crate) struct ScanControl {
+    mutation: Arc<MutationControl>,
+    progress: Mutex<ScanProgressState>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MutationCancel {
+    Accepted,
+    TooLate,
+    AlreadyCancelled,
 }
 
 impl MutationControl {
@@ -425,15 +565,74 @@ impl MutationControl {
             .is_ok()
     }
 
-    fn cancel(&self) -> bool {
-        self.state
-            .compare_exchange(
-                MUTATION_ACTIVE,
-                MUTATION_CANCELLED,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            )
-            .is_ok()
+    fn is_active(&self) -> bool {
+        self.state.load(Ordering::Acquire) == MUTATION_ACTIVE
+    }
+
+    fn cancel(&self) -> MutationCancel {
+        match self.state.compare_exchange(
+            MUTATION_ACTIVE,
+            MUTATION_CANCELLED,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => MutationCancel::Accepted,
+            Err(MUTATION_COMMITTING) => MutationCancel::TooLate,
+            Err(MUTATION_CANCELLED) => MutationCancel::AlreadyCancelled,
+            Err(_) => unreachable!("MutationControl contains an unknown state"),
+        }
+    }
+}
+
+impl ScanControl {
+    pub(crate) fn new(mutation: Arc<MutationControl>) -> Self {
+        Self {
+            mutation,
+            progress: Mutex::new(ScanProgressState {
+                phase: ScanPhase::Discovering,
+                processed: 0,
+                discovered: 0,
+                total: None,
+            }),
+        }
+    }
+
+    pub(crate) fn mutation(&self) -> &MutationControl {
+        &self.mutation
+    }
+
+    pub(crate) fn set_progress(
+        &self,
+        phase: ScanPhase,
+        processed: u64,
+        discovered: u64,
+        total: Option<u64>,
+    ) {
+        *lock(&self.progress) = ScanProgressState {
+            phase,
+            processed,
+            discovered,
+            total,
+        };
+    }
+
+    pub(crate) fn begin_commit(&self, course_count: u64) -> bool {
+        if !self.mutation.begin_commit() {
+            return false;
+        }
+        self.set_progress(ScanPhase::Committing, 0, course_count, None);
+        true
+    }
+
+    pub(crate) fn snapshot(&self) -> ScanProgressSnapshot {
+        let progress = lock(&self.progress);
+        ScanProgressSnapshot {
+            phase: progress.phase,
+            processed: progress.processed,
+            discovered: progress.discovered,
+            total: progress.total,
+            cancellable: self.mutation.is_active(),
+        }
     }
 }
 
@@ -532,8 +731,22 @@ impl CoreState {
         &mut self,
         event_kind: ml_event_kind_t,
         mutation_control: Option<Arc<MutationControl>>,
+        scan_control: Option<Arc<ScanControl>>,
     ) -> Result<u64, ml_status_t> {
         if self.starting || self.outstanding() >= self.event_queue_capacity {
+            return Err(ML_STATUS_BUSY);
+        }
+        if event_kind == ML_EVENT_LIBRARY_SCAN
+            && self.pending_requests.values().any(|pending| {
+                matches!(
+                    pending,
+                    PendingRequest::Domain {
+                        event_kind: ML_EVENT_LIBRARY_SCAN,
+                        ..
+                    }
+                )
+            })
+        {
             return Err(ML_STATUS_BUSY);
         }
         let request_id = self.next_request_id();
@@ -542,6 +755,7 @@ impl CoreState {
             PendingRequest::Domain {
                 event_kind,
                 mutation_control,
+                scan_control,
             },
         );
         Ok(request_id)
@@ -750,13 +964,30 @@ unsafe fn submit_domain_request(
             }
             | DomainRequest::DeleteNote {
                 max_payload_bytes, ..
+            }
+            | DomainRequest::PutAppearance {
+                max_payload_bytes, ..
+            }
+            | DomainRequest::OpenDocument {
+                max_payload_bytes, ..
+            }
+            | DomainRequest::DocumentPage {
+                max_payload_bytes, ..
+            }
+            | DomainRequest::DocumentExternalOpen {
+                max_payload_bytes, ..
             } => *max_payload_bytes = state.max_event_payload_bytes,
             _ => {}
         }
-        let request_id = match state.reserve_domain_request(event_kind, mutation_control) {
-            Ok(request_id) => request_id,
-            Err(status) => return (status, None),
+        let scan_control = match &request {
+            DomainRequest::Scan { control, .. } => Some(Arc::clone(control)),
+            _ => None,
         };
+        let request_id =
+            match state.reserve_domain_request(event_kind, mutation_control, scan_control) {
+                Ok(request_id) => request_id,
+                Err(status) => return (status, None),
+            };
         let domain = lock(&core.domain);
         let submitted = match domain.as_ref() {
             Some(domain) => domain.try_submit(
@@ -887,6 +1118,13 @@ fn encode_domain_result(
     max_payload_bytes: usize,
 ) -> (ml_status_t, u32, Vec<u8>) {
     match result {
+        Ok(DomainResponse::LibraryState(state)) => {
+            encode_json(ML_STATUS_OK, &state, max_payload_bytes)
+        }
+        Ok(DomainResponse::AppearanceSettings(settings))
+        | Ok(DomainResponse::AppearanceUpdated(settings)) => {
+            encode_json(ML_STATUS_OK, &settings, max_payload_bytes)
+        }
         Ok(DomainResponse::CoursePage(page)) => encode_json(ML_STATUS_OK, &page, max_payload_bytes),
         Ok(DomainResponse::LibraryStats(stats)) => {
             encode_json(ML_STATUS_OK, &stats, max_payload_bytes)
@@ -912,6 +1150,15 @@ fn encode_domain_result(
         }
         Ok(DomainResponse::NoteDeleted(deleted)) => {
             encode_json(ML_STATUS_OK, &deleted, max_payload_bytes)
+        }
+        Ok(DomainResponse::DocumentOpened(opened)) => {
+            encode_json(ML_STATUS_OK, &opened, max_payload_bytes)
+        }
+        Ok(DomainResponse::DocumentPage(page)) => {
+            encode_json(ML_STATUS_OK, &page, max_payload_bytes)
+        }
+        Ok(DomainResponse::DocumentExternalOpenReady(ready)) => {
+            encode_json(ML_STATUS_OK, &ready, max_payload_bytes)
         }
         Err(DomainError::Library(LibraryError::InvalidPageSize { limit })) => encode_json(
             ML_STATUS_INVALID_ARGUMENT,
@@ -957,6 +1204,11 @@ fn encode_domain_result(
             &serde_json::json!({"error": "invalidSearchQuery"}),
             max_payload_bytes,
         ),
+        Err(DomainError::Library(LibraryError::InvalidDocument)) => encode_json(
+            ML_STATUS_INVALID_ARGUMENT,
+            &serde_json::json!({"error": "invalidDocument"}),
+            max_payload_bytes,
+        ),
         Err(DomainError::Library(LibraryError::LessonNotFound)) => encode_json(
             ML_STATUS_NOT_FOUND,
             &serde_json::json!({"error": "lessonNotFound"}),
@@ -970,6 +1222,26 @@ fn encode_domain_result(
         Err(DomainError::Library(LibraryError::NoteNotFound)) => encode_json(
             ML_STATUS_NOT_FOUND,
             &serde_json::json!({"error": "noteNotFound"}),
+            max_payload_bytes,
+        ),
+        Err(DomainError::Library(LibraryError::DocumentNotOpen)) => encode_json(
+            ML_STATUS_NOT_FOUND,
+            &serde_json::json!({"error": "documentNotOpen"}),
+            max_payload_bytes,
+        ),
+        Err(DomainError::Library(LibraryError::DocumentUnavailable)) => encode_json(
+            ML_STATUS_NOT_FOUND,
+            &serde_json::json!({"error": "documentUnavailable"}),
+            max_payload_bytes,
+        ),
+        Err(DomainError::Library(LibraryError::DocumentUnsupported)) => encode_json(
+            ML_STATUS_FAILED,
+            &serde_json::json!({"error": "documentUnsupported"}),
+            max_payload_bytes,
+        ),
+        Err(DomainError::Library(LibraryError::DocumentDecodeFailed)) => encode_json(
+            ML_STATUS_FAILED,
+            &serde_json::json!({"error": "documentDecodeFailed"}),
             max_payload_bytes,
         ),
         Err(DomainError::Library(LibraryError::StaleSearchIndex { expected, actual })) => {
@@ -992,6 +1264,17 @@ fn encode_domain_result(
             }),
             max_payload_bytes,
         ),
+        Err(DomainError::Library(LibraryError::StaleSettingsRevision { expected, actual })) => {
+            encode_json(
+                ML_STATUS_STALE,
+                &serde_json::json!({
+                    "error": "staleSettingsRevision",
+                    "expected": expected,
+                    "actual": actual,
+                }),
+                max_payload_bytes,
+            )
+        }
         Err(DomainError::Library(LibraryError::Cancelled)) => (ML_STATUS_CANCELLED, 0, Vec::new()),
         Err(DomainError::Library(LibraryError::InvalidScan(_))) => encode_json(
             ML_STATUS_INVALID_ARGUMENT,
@@ -1001,6 +1284,11 @@ fn encode_domain_result(
         Err(DomainError::Library(LibraryError::RevisionExhausted)) => encode_json(
             ML_STATUS_FAILED,
             &serde_json::json!({"error": "revisionExhausted"}),
+            max_payload_bytes,
+        ),
+        Err(DomainError::Library(LibraryError::SettingsRevisionExhausted)) => encode_json(
+            ML_STATUS_FAILED,
+            &serde_json::json!({"error": "settingsRevisionExhausted"}),
             max_payload_bytes,
         ),
         Err(DomainError::Library(LibraryError::ResponseTooLarge { .. })) => {
@@ -1106,16 +1394,58 @@ fn library_revision_allocator_exhausts_instead_of_reusing_values() {
 #[test]
 fn mutation_cancellation_and_commit_gate_are_mutually_exclusive() {
     let cancelled = MutationControl::new();
-    assert!(cancelled.cancel());
+    assert_eq!(cancelled.cancel(), MutationCancel::Accepted);
     assert!(cancelled.is_cancelled());
     assert!(!cancelled.begin_commit());
-    assert!(!cancelled.cancel());
+    assert_eq!(cancelled.cancel(), MutationCancel::AlreadyCancelled);
 
     let committing = MutationControl::new();
     assert!(committing.begin_commit());
     assert!(!committing.is_cancelled());
-    assert!(!committing.cancel());
+    assert_eq!(committing.cancel(), MutationCancel::TooLate);
     assert!(!committing.begin_commit());
+}
+
+#[cfg(test)]
+#[test]
+fn scan_progress_snapshots_are_coherent_and_commit_disables_cancellation() {
+    let mutation = Arc::new(MutationControl::new());
+    let scan = ScanControl::new(Arc::clone(&mutation));
+    assert_eq!(
+        scan.snapshot(),
+        ScanProgressSnapshot {
+            phase: ScanPhase::Discovering,
+            processed: 0,
+            discovered: 0,
+            total: None,
+            cancellable: true,
+        }
+    );
+
+    scan.set_progress(ScanPhase::Classifying, 3, 5, Some(5));
+    assert_eq!(
+        scan.snapshot(),
+        ScanProgressSnapshot {
+            phase: ScanPhase::Classifying,
+            processed: 3,
+            discovered: 5,
+            total: Some(5),
+            cancellable: true,
+        }
+    );
+
+    assert!(scan.begin_commit(4));
+    assert_eq!(
+        scan.snapshot(),
+        ScanProgressSnapshot {
+            phase: ScanPhase::Committing,
+            processed: 0,
+            discovered: 4,
+            total: None,
+            cancellable: false,
+        }
+    );
+    assert_eq!(mutation.cancel(), MutationCancel::TooLate);
 }
 
 #[cfg(test)]
@@ -1467,7 +1797,11 @@ pub extern "C" fn ml_core_cancel(core: *mut ml_core_t, request_id: u64) -> ml_st
             Some(PendingRequest::Domain {
                 mutation_control: Some(control),
                 ..
-            }) if !control.cancel() => return Action::status(ML_STATUS_NOT_FOUND),
+            }) => match control.cancel() {
+                MutationCancel::Accepted => {}
+                MutationCancel::TooLate => return Action::status(ML_STATUS_TOO_LATE),
+                MutationCancel::AlreadyCancelled => return Action::status(ML_STATUS_NOT_FOUND),
+            },
             Some(_) => {}
             None => return Action::status(ML_STATUS_NOT_FOUND),
         }
@@ -1479,6 +1813,157 @@ pub extern "C" fn ml_core_cancel(core: *mut ml_core_t, request_id: u64) -> ml_st
             Vec::new(),
         );
         state.complete_reserved(request_id, event)
+    })
+}
+
+#[unsafe(no_mangle)]
+/// Submits one asynchronous committed Library-state request.
+///
+/// # Safety
+///
+/// `request` must point to a readable `ml_library_state_request_v1`, and
+/// `out_request_id` must point to writable `u64` storage. Both pointers are
+/// borrowed only for this call.
+pub unsafe extern "C" fn ml_library_state_v1(
+    core: *mut ml_core_t,
+    request: *const ml_library_state_request_v1,
+    out_request_id: *mut u64,
+) -> ml_status_t {
+    ffi_status(|| {
+        if out_request_id.is_null() {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        unsafe { *out_request_id = 0 };
+        if request.is_null() {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        let request = unsafe { *request };
+        let status = valid_output(
+            request.struct_size,
+            request.abi_version,
+            size_of::<ml_library_state_request_v1>(),
+        );
+        if status != ML_STATUS_OK {
+            return status;
+        }
+        if request.reserved != 0 {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        unsafe {
+            submit_domain_request(
+                core,
+                ML_EVENT_LIBRARY_STATE,
+                DomainRequest::LibraryState {
+                    expected_revision: request.expected_revision,
+                },
+                None,
+                out_request_id,
+            )
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
+/// Submits one asynchronous appearance-settings request.
+///
+/// # Safety
+///
+/// `request` must point to a readable `ml_settings_get_request_v1`, and
+/// `out_request_id` must point to writable `u64` storage. Both pointers are
+/// borrowed only for this call.
+pub unsafe extern "C" fn ml_settings_get_v1(
+    core: *mut ml_core_t,
+    request: *const ml_settings_get_request_v1,
+    out_request_id: *mut u64,
+) -> ml_status_t {
+    ffi_status(|| {
+        if out_request_id.is_null() {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        unsafe { *out_request_id = 0 };
+        if request.is_null() {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        let request = unsafe { *request };
+        let status = valid_output(
+            request.struct_size,
+            request.abi_version,
+            size_of::<ml_settings_get_request_v1>(),
+        );
+        if status != ML_STATUS_OK {
+            return status;
+        }
+        if request.reserved != 0 {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        unsafe {
+            submit_domain_request(
+                core,
+                ML_EVENT_SETTINGS,
+                DomainRequest::AppearanceSettings,
+                None,
+                out_request_id,
+            )
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
+/// Submits one asynchronous typed appearance update.
+///
+/// A successful update advances only the independent Settings revision.
+///
+/// # Safety
+///
+/// `request` must point to a readable
+/// `ml_settings_put_appearance_request_v1`, and `out_request_id` must point to
+/// writable `u64` storage. Both pointers are borrowed only for this call.
+pub unsafe extern "C" fn ml_settings_put_appearance_v1(
+    core: *mut ml_core_t,
+    request: *const ml_settings_put_appearance_request_v1,
+    out_request_id: *mut u64,
+) -> ml_status_t {
+    ffi_status(|| {
+        if out_request_id.is_null() {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        unsafe { *out_request_id = 0 };
+        if request.is_null() {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        let request = unsafe { *request };
+        let status = valid_output(
+            request.struct_size,
+            request.abi_version,
+            size_of::<ml_settings_put_appearance_request_v1>(),
+        );
+        if status != ML_STATUS_OK {
+            return status;
+        }
+        if request.reserved != 0 {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        let appearance = match request.appearance {
+            ML_APPEARANCE_LIGHT => Appearance::Light,
+            ML_APPEARANCE_DARK => Appearance::Dark,
+            ML_APPEARANCE_COZY => Appearance::Cozy,
+            _ => return ML_STATUS_INVALID_ARGUMENT,
+        };
+        let control = Arc::new(MutationControl::new());
+        unsafe {
+            submit_domain_request(
+                core,
+                ML_EVENT_APPEARANCE_UPDATED,
+                DomainRequest::PutAppearance {
+                    expected_revision: request.expected_revision,
+                    appearance,
+                    max_payload_bytes: 0,
+                    control: Arc::clone(&control),
+                },
+                Some(control),
+                out_request_id,
+            )
+        }
     })
 }
 
@@ -1679,7 +2164,8 @@ pub unsafe extern "C" fn ml_library_scan_v1(
                 Ok(root_path) => root_path,
                 Err(status) => return status,
             };
-        let control = Arc::new(MutationControl::new());
+        let mutation = Arc::new(MutationControl::new());
+        let control = Arc::new(ScanControl::new(Arc::clone(&mutation)));
         unsafe {
             submit_domain_request(
                 core,
@@ -1688,12 +2174,80 @@ pub unsafe extern "C" fn ml_library_scan_v1(
                     expected_revision: request.expected_revision,
                     root_path,
                     max_payload_bytes: 0,
-                    control: Arc::clone(&control),
+                    control,
                 },
-                Some(control),
+                Some(mutation),
                 out_request_id,
             )
         }
+    })
+}
+
+#[unsafe(no_mangle)]
+/// Returns one coherent snapshot for an active Library scan.
+///
+/// This synchronous read does not enqueue an event, consume event capacity, or
+/// wake the caller. `ML_STATUS_NOT_FOUND` means the request is unknown or its
+/// terminal event already won.
+///
+/// # Safety
+///
+/// `out_progress` must point to writable `ml_library_scan_progress_snapshot_v1`
+/// storage whose versioned prefix is initialized by the caller.
+pub unsafe extern "C" fn ml_library_scan_progress_v1(
+    core: *mut ml_core_t,
+    request_id: u64,
+    out_progress: *mut ml_library_scan_progress_snapshot_v1,
+) -> ml_status_t {
+    if request_id == 0 {
+        return ML_STATUS_INVALID_ARGUMENT;
+    }
+    ffi_core_status(core, false, |state| {
+        if out_progress.is_null() {
+            return Action::status(ML_STATUS_INVALID_ARGUMENT);
+        }
+        let out_progress = unsafe { &mut *out_progress };
+        let status = valid_output(
+            out_progress.struct_size,
+            out_progress.abi_version,
+            size_of::<ml_library_scan_progress_snapshot_v1>(),
+        );
+        if status != ML_STATUS_OK {
+            return Action::status(status);
+        }
+        let struct_size = out_progress.struct_size;
+        let abi_version = out_progress.abi_version;
+        *out_progress = ml_library_scan_progress_snapshot_v1 {
+            struct_size,
+            abi_version,
+            request_id: 0,
+            processed: 0,
+            discovered: 0,
+            total: 0,
+            phase: 0,
+            total_known: 0,
+            cancellable: 0,
+            reserved: 0,
+        };
+        let Some(PendingRequest::Domain {
+            event_kind: ML_EVENT_LIBRARY_SCAN,
+            scan_control: Some(control),
+            ..
+        }) = state.pending_requests.get(&request_id)
+        else {
+            return Action::status(ML_STATUS_NOT_FOUND);
+        };
+        let snapshot = control.snapshot();
+        out_progress.request_id = request_id;
+        out_progress.processed = snapshot.processed;
+        out_progress.discovered = snapshot.discovered;
+        if let Some(total) = snapshot.total {
+            out_progress.total = total;
+            out_progress.total_known = 1;
+        }
+        out_progress.phase = snapshot.phase as ml_scan_phase_t;
+        out_progress.cancellable = u8::from(snapshot.cancellable);
+        Action::status(ML_STATUS_OK)
     })
 }
 
@@ -2181,6 +2735,184 @@ pub unsafe extern "C" fn ml_notes_delete_v1(
                     control: Arc::clone(&control),
                 },
                 Some(control),
+                out_request_id,
+            )
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
+/// Opens and normalizes one approved-root document Lesson asynchronously.
+///
+/// PDF and unsupported formats return a terminal unsupported result; callers
+/// may then request explicit external-open readiness.
+///
+/// # Safety
+///
+/// `request` must point to a readable `ml_document_open_request_v1`. Its
+/// Lesson ID bytes must remain readable for this call. `out_request_id` must
+/// point to writable `u64` storage. The Lesson ID is copied before return.
+pub unsafe extern "C" fn ml_document_open_v1(
+    core: *mut ml_core_t,
+    request: *const ml_document_open_request_v1,
+    out_request_id: *mut u64,
+) -> ml_status_t {
+    ffi_status(|| {
+        if out_request_id.is_null() {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        unsafe { *out_request_id = 0 };
+        if request.is_null() {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        let request = unsafe { *request };
+        let status = valid_output(
+            request.struct_size,
+            request.abi_version,
+            size_of::<ml_document_open_request_v1>(),
+        );
+        if status != ML_STATUS_OK {
+            return status;
+        }
+        if request.reserved != 0 {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        let lesson_id =
+            match unsafe { copy_required_string(request.lesson_id, request.lesson_id_len) } {
+                Ok(lesson_id) => lesson_id,
+                Err(status) => return status,
+            };
+        unsafe {
+            submit_domain_request(
+                core,
+                ML_EVENT_DOCUMENT_OPENED,
+                DomainRequest::OpenDocument {
+                    input: DocumentOpenInput {
+                        expected_revision: request.expected_revision,
+                        lesson_id,
+                    },
+                    max_payload_bytes: 0,
+                },
+                None,
+                out_request_id,
+            )
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
+/// Loads one bounded block page from the currently open document.
+///
+/// # Safety
+///
+/// `request` must point to a readable `ml_document_page_request_v1`. Its
+/// Document ID bytes must remain readable for this call. `out_request_id`
+/// must point to writable `u64` storage. The Document ID is copied before
+/// return.
+pub unsafe extern "C" fn ml_document_page_v1(
+    core: *mut ml_core_t,
+    request: *const ml_document_page_request_v1,
+    out_request_id: *mut u64,
+) -> ml_status_t {
+    ffi_status(|| {
+        if out_request_id.is_null() {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        unsafe { *out_request_id = 0 };
+        if request.is_null() {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        let request = unsafe { *request };
+        let status = valid_output(
+            request.struct_size,
+            request.abi_version,
+            size_of::<ml_document_page_request_v1>(),
+        );
+        if status != ML_STATUS_OK {
+            return status;
+        }
+        if request.reserved != 0 {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        let document_id =
+            match unsafe { copy_required_string(request.document_id, request.document_id_len) } {
+                Ok(document_id) => document_id,
+                Err(status) => return status,
+            };
+        unsafe {
+            submit_domain_request(
+                core,
+                ML_EVENT_DOCUMENT_PAGE,
+                DomainRequest::DocumentPage {
+                    input: DocumentPageInput {
+                        expected_revision: request.expected_revision,
+                        document_id,
+                        offset: request.offset,
+                        limit: request.limit,
+                    },
+                    max_payload_bytes: 0,
+                },
+                None,
+                out_request_id,
+            )
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
+/// Validates one document Lesson for an explicit default-application action.
+///
+/// The completion carries the canonical approved-root path. This request does
+/// not launch an application itself.
+///
+/// # Safety
+///
+/// `request` must point to a readable
+/// `ml_document_external_open_request_v1`. Its Lesson ID bytes must remain
+/// readable for this call. `out_request_id` must point to writable `u64`
+/// storage. The Lesson ID is copied before return.
+pub unsafe extern "C" fn ml_document_external_open_v1(
+    core: *mut ml_core_t,
+    request: *const ml_document_external_open_request_v1,
+    out_request_id: *mut u64,
+) -> ml_status_t {
+    ffi_status(|| {
+        if out_request_id.is_null() {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        unsafe { *out_request_id = 0 };
+        if request.is_null() {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        let request = unsafe { *request };
+        let status = valid_output(
+            request.struct_size,
+            request.abi_version,
+            size_of::<ml_document_external_open_request_v1>(),
+        );
+        if status != ML_STATUS_OK {
+            return status;
+        }
+        if request.reserved != 0 {
+            return ML_STATUS_INVALID_ARGUMENT;
+        }
+        let lesson_id =
+            match unsafe { copy_required_string(request.lesson_id, request.lesson_id_len) } {
+                Ok(lesson_id) => lesson_id,
+                Err(status) => return status,
+            };
+        unsafe {
+            submit_domain_request(
+                core,
+                ML_EVENT_DOCUMENT_EXTERNAL_OPEN_READY,
+                DomainRequest::DocumentExternalOpen {
+                    input: DocumentExternalOpenInput {
+                        expected_revision: request.expected_revision,
+                        lesson_id,
+                    },
+                    max_payload_bytes: 0,
+                },
+                None,
                 out_request_id,
             )
         }

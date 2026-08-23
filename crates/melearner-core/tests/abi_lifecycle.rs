@@ -266,6 +266,46 @@ fn public_v2_layout_is_pinned() {
         16 + size_of::<usize>()
     );
 
+    assert_eq!(size_of::<ml_library_scan_progress_snapshot_v1>(), 48);
+    assert_eq!(
+        align_of::<ml_library_scan_progress_snapshot_v1>(),
+        align_of::<u64>()
+    );
+    assert_eq!(
+        offset_of!(ml_library_scan_progress_snapshot_v1, struct_size),
+        0
+    );
+    assert_eq!(
+        offset_of!(ml_library_scan_progress_snapshot_v1, abi_version),
+        4
+    );
+    assert_eq!(
+        offset_of!(ml_library_scan_progress_snapshot_v1, request_id),
+        8
+    );
+    assert_eq!(
+        offset_of!(ml_library_scan_progress_snapshot_v1, processed),
+        16
+    );
+    assert_eq!(
+        offset_of!(ml_library_scan_progress_snapshot_v1, discovered),
+        24
+    );
+    assert_eq!(offset_of!(ml_library_scan_progress_snapshot_v1, total), 32);
+    assert_eq!(offset_of!(ml_library_scan_progress_snapshot_v1, phase), 40);
+    assert_eq!(
+        offset_of!(ml_library_scan_progress_snapshot_v1, total_known),
+        44
+    );
+    assert_eq!(
+        offset_of!(ml_library_scan_progress_snapshot_v1, cancellable),
+        45
+    );
+    assert_eq!(
+        offset_of!(ml_library_scan_progress_snapshot_v1, reserved),
+        46
+    );
+
     assert_eq!(
         size_of::<ml_progress_put_request_v1>(),
         40 + size_of::<usize>() * 2
@@ -306,6 +346,48 @@ fn public_v2_layout_is_pinned() {
     assert_eq!(
         offset_of!(ml_course_access_request_v1, course_id_len),
         24 + size_of::<usize>()
+    );
+
+    assert_eq!(size_of::<ml_library_state_request_v1>(), 24);
+    assert_eq!(align_of::<ml_library_state_request_v1>(), align_of::<u64>());
+    assert_eq!(offset_of!(ml_library_state_request_v1, struct_size), 0);
+    assert_eq!(offset_of!(ml_library_state_request_v1, abi_version), 4);
+    assert_eq!(
+        offset_of!(ml_library_state_request_v1, expected_revision),
+        8
+    );
+    assert_eq!(offset_of!(ml_library_state_request_v1, reserved), 16);
+
+    assert_eq!(size_of::<ml_settings_get_request_v1>(), 16);
+    assert_eq!(align_of::<ml_settings_get_request_v1>(), align_of::<u64>());
+    assert_eq!(offset_of!(ml_settings_get_request_v1, struct_size), 0);
+    assert_eq!(offset_of!(ml_settings_get_request_v1, abi_version), 4);
+    assert_eq!(offset_of!(ml_settings_get_request_v1, reserved), 8);
+
+    assert_eq!(size_of::<ml_settings_put_appearance_request_v1>(), 24);
+    assert_eq!(
+        align_of::<ml_settings_put_appearance_request_v1>(),
+        align_of::<u64>()
+    );
+    assert_eq!(
+        offset_of!(ml_settings_put_appearance_request_v1, struct_size),
+        0
+    );
+    assert_eq!(
+        offset_of!(ml_settings_put_appearance_request_v1, abi_version),
+        4
+    );
+    assert_eq!(
+        offset_of!(ml_settings_put_appearance_request_v1, expected_revision),
+        8
+    );
+    assert_eq!(
+        offset_of!(ml_settings_put_appearance_request_v1, appearance),
+        16
+    );
+    assert_eq!(
+        offset_of!(ml_settings_put_appearance_request_v1, reserved),
+        20
     );
 
     let activity_alignment = align_of::<u64>();
@@ -585,6 +667,39 @@ fn public_abi_returns_limits_and_accepts_prefix_only_event_initialization() {
     assert_eq!(
         unsafe { ml_core_get_limits_v1(core, ptr::null_mut()) },
         ML_STATUS_INVALID_ARGUMENT
+    );
+
+    let mut progress = ml_library_scan_progress_snapshot_v1 {
+        struct_size: size_of::<ml_library_scan_progress_snapshot_v1>() as u32,
+        abi_version: ML_ABI_VERSION,
+        request_id: u64::MAX,
+        processed: u64::MAX,
+        discovered: u64::MAX,
+        total: u64::MAX,
+        phase: u32::MAX,
+        total_known: u8::MAX,
+        cancellable: u8::MAX,
+        reserved: u16::MAX,
+    };
+    assert_eq!(
+        unsafe { ml_library_scan_progress_v1(core, 42, &mut progress) },
+        ML_STATUS_NOT_FOUND
+    );
+    assert_eq!(progress.request_id, 0);
+    assert_eq!(progress.phase, 0);
+    assert_eq!(progress.reserved, 0);
+    assert_eq!(
+        unsafe { ml_library_scan_progress_v1(core, 0, &mut progress) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    assert_eq!(
+        unsafe { ml_library_scan_progress_v1(core, 42, ptr::null_mut()) },
+        ML_STATUS_INVALID_ARGUMENT
+    );
+    progress.struct_size -= 1;
+    assert_eq!(
+        unsafe { ml_library_scan_progress_v1(core, 42, &mut progress) },
+        ML_STATUS_ABI_MISMATCH
     );
 
     assert_eq!(ml_core_cancel(core, 0), ML_STATUS_INVALID_ARGUMENT);

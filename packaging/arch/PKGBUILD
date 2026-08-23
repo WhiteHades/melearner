@@ -5,7 +5,7 @@ pkgdesc="local course learner"
 arch=("x86_64")
 url="https://github.com/WhiteHades/melearner"
 license=("MIT")
-depends=("webkit2gtk-4.1" "gtk3" "libayatana-appindicator" "ffmpeg" "mpv" "libglvnd" "xdg-utils")
+depends=("fontconfig" "freetype2" "glibc" "libglvnd" "libx11" "wayland")
 provides=("melearner=${pkgver}")
 conflicts=("melearner")
 options=("!strip")
@@ -13,10 +13,10 @@ source=()
 sha256sums=()
 
 package() {
-  local repo_root="${startdir}/../.."
+  if [[ -z "${MELEARNER_NATIVE_APPDIR:-}" || ! -x "${MELEARNER_NATIVE_APPDIR}/usr/bin/melearner" ]]; then
+    error "MELEARNER_NATIVE_APPDIR must point to an audited native package stage"
+    return 1
+  fi
 
-  install -Dm755 "${repo_root}/src-tauri/target/release/melearner" "${pkgdir}/usr/bin/melearner"
-  install -Dm644 "${startdir}/io.github.whitehades.melearner.desktop" "${pkgdir}/usr/share/applications/io.github.whitehades.melearner.desktop"
-  install -Dm644 "${repo_root}/src-tauri/icons/icon.svg" "${pkgdir}/usr/share/icons/hicolor/scalable/apps/io.github.whitehades.melearner.svg"
-  install -Dm644 "${repo_root}/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+  cp -a "${MELEARNER_NATIVE_APPDIR}/usr" "${pkgdir}/usr"
 }

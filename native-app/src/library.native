@@ -54,6 +54,16 @@
           <badge variant="secondary">{selectedLessonKind}</badge>
           <text size="sm" foreground="text_muted" label="{selectedLessonProgress}"><span mono>{selectedLessonProgress}</span></text>
         </row>
+        <row gap="8" cross="center">
+          <button size="sm" variant="secondary" on-press="toggle_lesson_completion" disabled="{progressSaving}" label="{completionActionLabel}">{completionActionLabel}</button>
+          <button size="sm" variant="secondary" on-press="open_notes" autofocus="{restore_notes_focus}" label="Open Lesson notes">Notes</button>
+          <if test="{progressSaving}">
+            <status-bar>Saving Progress…</status-bar>
+          </if>
+        </row>
+        <if test="{progressFailed}">
+          <alert text="{progressMessage}" />
+        </if>
       </column>
       <separator />
       <column grow="1" gap="8" main="center" cross="center" label="Read-only Lesson placeholder">
@@ -90,10 +100,15 @@
       </if>
       <else>
         <if test="{libraryEmpty}">
-          <column grow="1" padding="32" gap="8" main="center" cross="center" label="Empty Library state">
-            <text size="sm" foreground="text_muted">Library</text>
-            <text size="heading">Your Library is empty</text>
-            <text size="sm" foreground="text_muted">Course folders you add will appear here.</text>
+          <column grow="1">
+            <row padding="16" main="end">
+              <button size="sm" variant="secondary" on-press="open_settings" autofocus="{restore_settings_focus}" label="Open Settings">Settings</button>
+            </row>
+            <column grow="1" padding="32" gap="8" main="center" cross="center" label="Empty Library state">
+              <text size="sm" foreground="text_muted">Library</text>
+              <text size="heading">Your Library is empty</text>
+              <text size="sm" foreground="text_muted">Course folders you add will appear here.</text>
+            </column>
           </column>
         </if>
         <else>
@@ -101,6 +116,8 @@
             <row cross="center" gap="12">
               <text size="heading" grow="1">Library</text>
               <button size="sm" variant="secondary" on-press="open_search" autofocus="{restore_search_focus}" label="Search Library">Search</button>
+              <button size="sm" variant="secondary" on-press="open_stats" autofocus="{restore_stats_focus}" label="Open learning ledger">Learning ledger</button>
+              <button size="sm" variant="secondary" on-press="open_settings" autofocus="{restore_settings_focus}" label="Open Settings">Settings</button>
               <text size="sm" foreground="text_muted" label="{courseTotalLabel}"><span mono>{courseTotalLabel}</span></text>
             </row>
             <scroll grow="1" label="Courses">

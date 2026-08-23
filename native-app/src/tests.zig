@@ -2,6 +2,8 @@ const std = @import("std");
 const native_sdk = @import("native_sdk");
 const core_adapter = @import("core_adapter.zig");
 const main = @import("main.zig");
+const root_model = @import("root.zig");
+const settings_model = @import("settings.zig");
 
 const canvas = native_sdk.canvas;
 const geometry = native_sdk.geometry;
@@ -20,10 +22,49 @@ fn buildMarkupTree(arena: std.mem.Allocator, model: *const main.Model) !main.Lib
     return ui.finalizeWithTokens(try view.build(&ui, model), main.tokensFromModel(model));
 }
 
+fn bootWithCommittedRoot(model: *main.Model, effects: *main.Effects, revision: u64) !void {
+    main.boot(model, effects);
+    const state_request = effects.pendingExternalAt(0).?;
+    try testing.expectEqual(core_adapter.library_state_key, state_request.key);
+    try testing.expectEqual(@intFromEnum(core_adapter.Operation.load_library_state), state_request.kind);
+    const payload = try std.fmt.allocPrint(
+        testing.allocator,
+        "{{\"revision\":{d},\"rootPath\":\"/courses\"}}",
+        .{revision},
+    );
+    defer testing.allocator.free(payload);
+    try effects.feedExternalResult(state_request.request_id, .success, payload);
+    main.update(model, effects.takeMsg().?, effects);
+    try completeSettingsLoad(model, effects, "light");
+}
+
+fn completeSettingsLoad(model: *main.Model, effects: *main.Effects, appearance: []const u8) !void {
+    const request = for (0..native_sdk.max_effects) |index| {
+        const candidate = effects.pendingExternalAt(index) orelse continue;
+        if (candidate.key == core_adapter.settings_get_key) break candidate;
+    } else return error.SettingsRequestNotFound;
+    const payload = try std.fmt.allocPrint(
+        testing.allocator,
+        "{{\"revision\":1,\"appearance\":\"{s}\"}}",
+        .{appearance},
+    );
+    defer testing.allocator.free(payload);
+    try effects.feedExternalResult(request.request_id, .success, payload);
+    main.update(model, effects.takeMsg().?, effects);
+}
+
 fn findByText(widget: canvas.Widget, kind: canvas.WidgetKind, value: []const u8) ?canvas.Widget {
     if (widget.kind == kind and std.mem.eql(u8, widget.text, value)) return widget;
     for (widget.children) |child| {
         if (findByText(child, kind, value)) |found| return found;
+    }
+    return null;
+}
+
+fn findByLabel(widget: canvas.Widget, value: []const u8) ?canvas.Widget {
+    if (std.mem.eql(u8, widget.semantics.label, value)) return widget;
+    for (widget.children) |child| {
+        if (findByLabel(child, value)) |found| return found;
     }
     return null;
 }
@@ -263,10 +304,93 @@ test "the first native frame identifies the Library opening state" {
 }
 
 test "static native UI copy stays English-only" {
-    var iterator = std.unicode.Utf8Iterator{ .bytes = main.library_markup, .i = 0 };
-    while (iterator.nextCodepoint()) |codepoint| {
-        try testing.expect(codepoint <= 0x7F or codepoint == 0x2026);
+    for ([_][]const u8{ main.library_markup, main.onboarding_markup, main.stats_markup, main.notes_markup, main.settings_markup }) |source| {
+        var iterator = std.unicode.Utf8Iterator{ .bytes = source, .i = 0 };
+        while (iterator.nextCodepoint()) |codepoint| {
+            try testing.expect(codepoint <= 0x7F or codepoint == 0x2026);
+        }
     }
+}
+
+test "appearance settings apply immediately and adopt the independent saved revision" {
+    var effects = main.Effects.init(testing.allocator);
+    defer effects.deinit();
+    effects.executor = .fake;
+    var model = main.Model{
+        .navigation = .{ .route = .library },
+        .root = .{ .state = .ready },
+        .library_state = .empty,
+        .library_revision = 9,
+        .settings = .{ .state = .loading, .get_request_id = 41 },
+    };
+
+    main.update(&model, .{ .settings_loaded = .{
+        .request_id = 41,
+        .key = core_adapter.settings_get_key,
+        .adapter_id = core_adapter.adapter_id,
+        .kind = @intFromEnum(core_adapter.Operation.load_settings),
+        .schema_version = core_adapter.schema_version,
+        .outcome = .ok,
+        .bytes = "{\"revision\":3,\"appearance\":\"dark\"}",
+    } }, &effects);
+    try testing.expectEqual(@as(u64, 3), model.settings.revision);
+    try testing.expect(model.darkAppearance());
+
+    main.update(&model, .open_settings, &effects);
+    main.update(&model, .select_cozy_appearance, &effects);
+    try testing.expect(model.cozyAppearance());
+    try testing.expectEqual(@as(u64, 9), model.library_revision);
+    try testing.expectEqualDeep(
+        canvas.Color.rgb8(38, 33, 28),
+        main.tokensFromModel(&model).colors.background,
+    );
+    const request = effects.pendingExternalAt(0) orelse return error.TestUnexpectedResult;
+    try testing.expectEqual(core_adapter.settings_put_appearance_key, request.key);
+    try testing.expectEqual(@intFromEnum(core_adapter.Operation.put_appearance), request.kind);
+    var expected = [_]u8{0} ** core_adapter.settings_put_appearance_request_bytes;
+    std.mem.writeInt(u64, expected[0..8], 3, .little);
+    std.mem.writeInt(u32, expected[8..12], 3, .little);
+    try testing.expectEqualSlices(u8, &expected, request.payload);
+
+    try effects.feedExternalResult(
+        request.request_id,
+        .success,
+        "{\"revision\":4,\"appearance\":\"cozy\"}",
+    );
+    main.update(&model, effects.takeMsg().?, &effects);
+    try testing.expectEqual(@as(u64, 4), model.settings.revision);
+    try testing.expectEqual(@as(u64, 9), model.library_revision);
+    try testing.expectEqual(settings_model.Appearance.cozy, model.settings.confirmed);
+
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const tree = try buildTree(arena_state.allocator(), &model);
+    try testing.expect(findByText(tree.root, .text, "Settings") != null);
+    try testing.expect(findByLabel(tree.root, "Appearance") != null);
+}
+
+test "a failed appearance save rolls the optimistic theme back" {
+    var effects = main.Effects.init(testing.allocator);
+    defer effects.deinit();
+    effects.executor = .fake;
+    var model = main.Model{
+        .navigation = .{ .route = .library },
+        .root = .{ .state = .ready },
+        .settings = .{
+            .state = .ready,
+            .revision = 2,
+            .selected = .dark,
+            .confirmed = .dark,
+        },
+    };
+    main.update(&model, .open_settings, &effects);
+    main.update(&model, .select_light_appearance, &effects);
+    const request = effects.pendingExternalAt(0) orelse return error.TestUnexpectedResult;
+    try effects.feedExternalResult(request.request_id, .failure, "database unavailable");
+    main.update(&model, effects.takeMsg().?, &effects);
+    try testing.expect(model.darkAppearance());
+    try testing.expect(model.settingsFailed());
+    try testing.expectEqualStrings("database unavailable", model.settingsMessage());
 }
 
 test "the native app registers renderable Latin Cyrillic and Japanese course text without changing the system theme" {
@@ -297,11 +421,19 @@ test "the native app registers renderable Latin Cyrillic and Japanese course tex
         try testing.expect(path.slice().len != 0);
     }
 
-    const model = main.Model{ .appearance = .{
-        .color_scheme = .dark,
-        .high_contrast = true,
-        .reduce_motion = true,
-    } };
+    const model = main.Model{
+        .appearance = .{
+            .color_scheme = .dark,
+            .high_contrast = true,
+            .reduce_motion = true,
+        },
+        .settings = .{
+            .state = .ready,
+            .revision = 1,
+            .selected = .dark,
+            .confirmed = .dark,
+        },
+    };
     var expected = canvas.DesignTokens.theme(.{
         .color_scheme = .dark,
         .contrast = .high,
@@ -336,7 +468,12 @@ test "the native theme follows the warm-paper and graphite token contract" {
     try testing.expectEqual(@as(u32, 200), light.motion.normal_ms);
     try testing.expectEqual(@as(u32, 250), light.motion.slow_ms);
 
-    const dark = main.tokensFromModel(&main.Model{ .appearance = .{ .color_scheme = .dark } });
+    const dark = main.tokensFromModel(&main.Model{ .settings = .{
+        .state = .ready,
+        .revision = 1,
+        .selected = .dark,
+        .confirmed = .dark,
+    } });
     try testing.expectEqualDeep(canvas.Color.rgb8(16, 17, 19), dark.colors.background);
     try testing.expectEqualDeep(canvas.Color.rgb8(23, 23, 25), dark.colors.surface);
     try testing.expectEqualDeep(canvas.Color.rgb8(36, 35, 33), dark.colors.surface_subtle);
@@ -391,7 +528,7 @@ test "the app startup options install and select the course-content font" {
     try testing.expectEqual(@as(usize, 0), harness.runtime.dispatchErrors().len);
 }
 
-test "Library boot uses the versioned Rust-core effect and renders an empty page" {
+test "Library boot loads the committed root before rendering an empty page" {
     var effects = main.Effects.init(testing.allocator);
     defer effects.deinit();
     effects.executor = .fake;
@@ -399,12 +536,23 @@ test "Library boot uses the versioned Rust-core effect and renders an empty page
     var model = main.Model{};
     main.boot(&model, &effects);
 
+    const state_request = effects.pendingExternalAt(0).?;
+    try testing.expectEqual(core_adapter.library_state_key, state_request.key);
+    try testing.expectEqual(core_adapter.adapter_id, state_request.adapter_id);
+    try testing.expectEqual(@intFromEnum(core_adapter.Operation.load_library_state), state_request.kind);
+    try testing.expectEqual(core_adapter.schema_version, state_request.schema_version);
+    try testing.expectEqualSlices(u8, &([_]u8{0} ** core_adapter.library_state_request_bytes), state_request.payload);
+    try effects.feedExternalResult(state_request.request_id, .success,
+        \\{"revision":1,"rootPath":"/courses"}
+    );
+    main.update(&model, effects.takeMsg().?, &effects);
+    try completeSettingsLoad(&model, &effects, "light");
+
     const request = effects.pendingExternalAt(0).?;
     try testing.expectEqual(core_adapter.library_page_key, request.key);
-    try testing.expectEqual(core_adapter.adapter_id, request.adapter_id);
-    try testing.expectEqual(@intFromEnum(core_adapter.Operation.load_library_page), request.kind);
-    try testing.expectEqual(core_adapter.schema_version, request.schema_version);
-    try testing.expectEqualSlices(u8, &([_]u8{0} ** core_adapter.library_page_request_bytes), request.payload);
+    var expected_page = [_]u8{0} ** core_adapter.library_page_request_bytes;
+    std.mem.writeInt(u64, expected_page[0..8], 1, .little);
+    try testing.expectEqualSlices(u8, &expected_page, request.payload);
 
     try effects.feedExternalResult(request.request_id, .success,
         \\{"revision":1,"offset":0,"total":0,"rows":[]}
@@ -418,13 +566,113 @@ test "Library boot uses the versioned Rust-core effect and renders an empty page
     try testing.expect(findByText(tree.root, .text, "Your Library is empty") != null);
 }
 
-test "a populated Rust-core page is copied into the native Library model" {
+test "a fresh native database enters onboarding without requesting a Library page" {
     var effects = main.Effects.init(testing.allocator);
     defer effects.deinit();
     effects.executor = .fake;
 
     var model = main.Model{};
     main.boot(&model, &effects);
+    const request = effects.pendingExternalAt(0).?;
+    try effects.feedExternalResult(request.request_id, .success,
+        \\{"revision":1,"rootPath":null}
+    );
+    main.update(&model, effects.takeMsg().?, &effects);
+    try completeSettingsLoad(&model, &effects, "light");
+
+    try testing.expectEqual(main.Route.onboarding, model.navigation.route);
+    try testing.expectEqualStrings("", model.root.committed());
+    try testing.expect(model.root.first_run);
+    try testing.expect(effects.pendingExternalAt(0) == null);
+
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const tree = try buildTree(arena_state.allocator(), &model);
+    try testing.expect(findByText(tree.root, .text, "Bring your Courses together") != null);
+    try testing.expect(findByText(tree.root, .button, "Choose root folder") != null);
+}
+
+test "onboarding picker scan and canonical root reload form one committed flow" {
+    var effects = main.Effects.init(testing.allocator);
+    defer effects.deinit();
+    effects.executor = .fake;
+
+    var model = main.Model{};
+    main.boot(&model, &effects);
+    const state_request = effects.pendingExternalAt(0).?;
+    try effects.feedExternalResult(state_request.request_id, .success,
+        \\{"revision":1,"rootPath":null}
+    );
+    main.update(&model, effects.takeMsg().?, &effects);
+    try completeSettingsLoad(&model, &effects, "light");
+
+    main.update(&model, .choose_root, &effects);
+    const picker = effects.pendingDirectoryAt(0).?;
+    try effects.feedDirectoryResult(picker.key, .selected, "/courses/../Courses");
+    main.update(&model, effects.takeMsg().?, &effects);
+
+    const scan = effects.pendingExternalAt(0).?;
+    try testing.expectEqual(core_adapter.library_scan_key, scan.key);
+    try testing.expectEqual(@intFromEnum(core_adapter.Operation.scan_library), scan.kind);
+    var expected_scan: [core_adapter.library_scan_request_header_bytes + "/courses/../Courses".len]u8 = undefined;
+    std.mem.writeInt(u64, expected_scan[0..8], 1, .little);
+    @memcpy(expected_scan[8..], "/courses/../Courses");
+    try testing.expectEqualSlices(u8, &expected_scan, scan.payload);
+
+    try effects.fireTimer(main.root_scan_progress_timer_key);
+    main.update(&model, effects.takeMsg().?, &effects);
+    const progress = effects.pendingExternalAt(1).?;
+    try testing.expectEqual(core_adapter.library_scan_progress_key, progress.key);
+    var progress_bytes = [_]u8{0} ** core_adapter.scan_progress_result_bytes;
+    std.mem.writeInt(u32, progress_bytes[0..4], 2, .little);
+    progress_bytes[4] = 1;
+    progress_bytes[5] = 1;
+    std.mem.writeInt(u64, progress_bytes[8..16], 4, .little);
+    std.mem.writeInt(u64, progress_bytes[16..24], 10, .little);
+    std.mem.writeInt(u64, progress_bytes[24..32], 10, .little);
+    try effects.feedExternalResult(progress.request_id, .success, &progress_bytes);
+    main.update(&model, effects.takeMsg().?, &effects);
+    try testing.expectEqual(root_model.ScanPhase.classifying, model.root.scan_phase);
+    var scan_arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer scan_arena.deinit();
+    const scan_tree = try buildTree(scan_arena.allocator(), &model);
+    try testing.expect(findByText(
+        scan_tree.root,
+        .text,
+        "Classifying learning items: 4 of 10",
+    ) != null);
+    try testing.expect(findByText(scan_tree.root, .button, "Cancel scan") != null);
+
+    try effects.feedExternalResult(scan.request_id, .success,
+        \\{"revision":2,"courseCount":0,"warnings":[]}
+    );
+    main.update(&model, effects.takeMsg().?, &effects);
+    const refreshed_state = effects.pendingExternalAt(0).?;
+    try testing.expectEqual(core_adapter.library_state_key, refreshed_state.key);
+    try effects.feedExternalResult(refreshed_state.request_id, .success,
+        \\{"revision":2,"rootPath":"/Courses"}
+    );
+    main.update(&model, effects.takeMsg().?, &effects);
+
+    const page = effects.pendingExternalAt(0).?;
+    try effects.feedExternalResult(page.request_id, .success,
+        \\{"revision":2,"offset":0,"total":0,"rows":[]}
+    );
+    main.update(&model, effects.takeMsg().?, &effects);
+
+    try testing.expectEqual(main.Route.library, model.navigation.route);
+    try testing.expectEqualStrings("/Courses", model.root.committed());
+    try testing.expectEqual(@as(u64, 2), model.library_revision);
+    try testing.expect(model.libraryEmpty());
+}
+
+test "a populated Rust-core page is copied into the native Library model" {
+    var effects = main.Effects.init(testing.allocator);
+    defer effects.deinit();
+    effects.executor = .fake;
+
+    var model = main.Model{};
+    try bootWithCommittedRoot(&model, &effects, 7);
     const request = effects.pendingExternalAt(0).?;
     try effects.feedExternalResult(request.request_id, .success,
         \\{"revision":7,"offset":0,"total":1,"rows":[{"id":"course-1","name":"Systems","missingSince":null,"lessonCount":10,"completedLessonCount":4,"progressPercent":40}]}
@@ -447,13 +695,364 @@ test "a populated Rust-core page is copied into the native Library model" {
     try testing.expect(findByText(compiled.root, .text, "Systems") != null);
 }
 
+test "the inline learning ledger loads complete revision-gated Library stats" {
+    var effects = main.Effects.init(testing.allocator);
+    defer effects.deinit();
+    effects.executor = .fake;
+    var clock = native_sdk.TestClock{};
+    clock.setWallMs(1_784_764_800_000);
+    effects.clock = clock.clock();
+
+    var model = populatedLibraryModel();
+    model.total_courses = 3;
+    main.update(&model, .open_stats, &effects);
+
+    const stats_request = effects.pendingExternalAt(0).?;
+    const activity_request = effects.pendingExternalAt(1).?;
+    try testing.expectEqual(core_adapter.library_stats_key, stats_request.key);
+    try testing.expectEqual(core_adapter.adapter_id, stats_request.adapter_id);
+    try testing.expectEqual(@intFromEnum(core_adapter.Operation.load_library_stats), stats_request.kind);
+    try testing.expectEqual(core_adapter.schema_version, stats_request.schema_version);
+    try testing.expectEqualSlices(u8, &[_]u8{ 7, 0, 0, 0, 0, 0, 0, 0 }, stats_request.payload);
+    try testing.expectEqual(core_adapter.activity_page_key, activity_request.key);
+    try testing.expectEqual(@intFromEnum(core_adapter.Operation.load_activity_page), activity_request.kind);
+    try testing.expectEqualSlices(u8, &[_]u8{ 7, 0, 0, 0, 0, 0, 0, 0 }, activity_request.payload);
+
+    try effects.feedExternalResult(stats_request.request_id, .success,
+        \\{"revision":7,"totalCourses":3,"availableCourses":1,"missingCourses":2,"sections":4,"lessons":4,"completedLessons":2,"completionPercent":50,"bytes":5246976,"watchedSeconds":620,"totalSeconds":1200,"mediaTypes":[{"type":"video","lessons":3,"bytes":5242880,"completed":1,"watchedSeconds":620},{"type":"document","lessons":1,"bytes":4096,"completed":1,"watchedSeconds":0}],"topCourses":[{"id":"course-marker","name":"Systems","lessons":2,"completedLessons":1,"bytes":1052672,"watchedSeconds":320},{"id":"course-missing","name":"Archived Course","lessons":1,"completedLessons":1,"bytes":2097152,"watchedSeconds":300},{"id":"course-copy","name":"Copied Course","lessons":1,"completedLessons":0,"bytes":2097152,"watchedSeconds":0}]}
+    );
+    main.update(&model, effects.takeMsg().?, &effects);
+    try testing.expect(model.statsLoading());
+    try effects.feedExternalResult(activity_request.request_id, .success,
+        \\{"revision":7,"throughDate":"2026-07-23","offset":0,"total":3,"rows":[{"date":"2026-05-01","watchedSeconds":60,"lessonsTouched":1,"completions":0},{"date":"2026-07-22","watchedSeconds":620,"lessonsTouched":2,"completions":1},{"date":"2026-07-23","watchedSeconds":30,"lessonsTouched":1,"completions":0}]}
+    );
+    main.update(&model, effects.takeMsg().?, &effects);
+
+    try testing.expect(model.statsReady());
+    try testing.expectEqual(@as(usize, 2), model.stats.media_count);
+    try testing.expectEqual(@as(usize, 3), model.stats.course_count);
+    try testing.expectEqual(@as(usize, 84), model.stats.activity_count);
+
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const tree = try buildTree(arena_state.allocator(), &model);
+    try testing.expect(findByText(tree.root, .text, "Learning ledger") != null);
+    try testing.expect(findByText(tree.root, .text, "2 of 4 Lessons completed") != null);
+    try testing.expect(findByText(tree.root, .text, "620 of 1,200 seconds watched") != null);
+    try testing.expect(findByText(tree.root, .text, "Video: 1 of 3 completed") != null);
+    try testing.expect(findByText(tree.root, .text, "Systems: 1 of 2 completed") != null);
+    const tree_activity_grid = findByLabel(
+        tree.root,
+        "Learning activity for the last 12 weeks",
+    ) orelse return error.TestUnexpectedResult;
+    try testing.expectEqual(@as(usize, 84), tree_activity_grid.children.len);
+
+    {
+        const live = try LiveLibrary.start(model, geometry.SizeF.init(960, 680), .{});
+        defer live.stop();
+        const snapshot = live.harness.runtime.automationSnapshot("melearner");
+        try testing.expect(snapshotByName(snapshot, "Learning ledger") != null);
+        try testing.expect((snapshotByNameAndRole(
+            snapshot,
+            "Close learning ledger",
+            "button",
+        ) orelse return error.TestUnexpectedResult).focused);
+        _ = snapshotByNameAndRole(
+            snapshot,
+            "Learning activity for the last 12 weeks",
+            "grid",
+        ) orelse return error.TestUnexpectedResult;
+        _ = snapshotByNameAndRole(
+            snapshot,
+            "2026-07-22: 620 seconds watched, 2 Lessons touched, 1 completions",
+            "gridcell",
+        ) orelse return error.TestUnexpectedResult;
+        try testing.expectEqual(@as(u64, 3847501631756729177), try screenshotHash(&live.harness.runtime));
+
+        try live.harness.runtime.dispatchAutomationCommand(
+            live.app,
+            "widget-key " ++ main.canvas_label ++ " enter",
+        );
+        const restored = live.harness.runtime.automationSnapshot("melearner");
+        try testing.expect((snapshotByNameAndRole(
+            restored,
+            "Open learning ledger",
+            "button",
+        ) orelse return error.TestUnexpectedResult).focused);
+    }
+
+    const compact = try LiveLibrary.start(model, geometry.SizeF.init(560, 400), .{});
+    defer compact.stop();
+    const compact_snapshot = compact.harness.runtime.automationSnapshot("melearner");
+    const details = snapshotByName(compact_snapshot, "Learning ledger details") orelse return error.TestUnexpectedResult;
+    try testing.expect(details.scroll.present);
+    try testing.expect(details.scroll.content_extent > details.scroll.viewport_extent);
+    try testing.expectEqual(@as(u64, 10770426364265630560), try screenshotHash(&compact.harness.runtime));
+}
+
+test "the learning ledger rejects stale or incomplete canonical data" {
+    var effects = main.Effects.init(testing.allocator);
+    defer effects.deinit();
+    effects.executor = .fake;
+    var clock = native_sdk.TestClock{};
+    clock.setWallMs(1_784_764_800_000);
+    effects.clock = clock.clock();
+
+    var model = populatedLibraryModel();
+    main.update(&model, .open_stats, &effects);
+    const request = effects.pendingExternalAt(0).?;
+    try effects.feedExternalResult(request.request_id, .success,
+        \\{"revision":6,"totalCourses":21,"availableCourses":1,"missingCourses":20,"sections":1,"lessons":1,"completedLessons":0,"completionPercent":0,"bytes":1,"watchedSeconds":0,"totalSeconds":1,"mediaTypes":[],"topCourses":[]}
+    );
+    main.update(&model, effects.takeMsg().?, &effects);
+
+    try testing.expect(model.statsFailed());
+    try testing.expectEqualStrings("The learning ledger returned invalid data.", model.statsMessage());
+    main.update(&model, effects.takeMsg().?, &effects);
+
+    main.update(&model, .open_stats, &effects);
+    const retry = effects.pendingExternalAt(0).?;
+    try effects.feedExternalResult(retry.request_id, .success,
+        \\{"revision":7,"totalCourses":21}
+    );
+    main.update(&model, effects.takeMsg().?, &effects);
+    try testing.expect(model.statsFailed());
+    try testing.expectEqual(@as(usize, 0), model.stats.media_count);
+    try testing.expectEqual(@as(usize, 0), model.stats.course_count);
+    main.update(&model, effects.takeMsg().?, &effects);
+
+    main.update(&model, .open_stats, &effects);
+    const aggregate_retry = effects.pendingExternalAt(0).?;
+    try effects.feedExternalResult(aggregate_retry.request_id, .success,
+        \\{"revision":7,"totalCourses":21,"availableCourses":1,"missingCourses":20,"sections":1,"lessons":1,"completedLessons":0,"completionPercent":0,"bytes":1,"watchedSeconds":0,"totalSeconds":1,"mediaTypes":[],"topCourses":[]}
+    );
+    main.update(&model, effects.takeMsg().?, &effects);
+    try testing.expect(model.statsFailed());
+    try testing.expectEqualStrings("The learning ledger returned invalid data.", model.statsMessage());
+}
+
+test "closing the learning ledger cancels its active request and ignores the result" {
+    var effects = main.Effects.init(testing.allocator);
+    defer effects.deinit();
+    effects.executor = .fake;
+    var clock = native_sdk.TestClock{};
+    clock.setWallMs(1_784_764_800_000);
+    effects.clock = clock.clock();
+
+    var model = populatedLibraryModel();
+    main.update(&model, .open_stats, &effects);
+    const cancelled = effects.pendingExternalAt(0).?;
+    main.update(&model, .dismiss_stats, &effects);
+    try testing.expect(!model.statsOpen());
+    try testing.expectEqual(main.StatsState.inactive, model.stats.state);
+    try testing.expectEqual(@as(u64, 0), model.stats.snapshot_request_id);
+    try testing.expectEqual(@as(u64, 0), model.stats.activity_request_id);
+
+    main.update(&model, .{ .stats_loaded = .{
+        .request_id = cancelled.request_id,
+        .key = cancelled.key,
+        .adapter_id = cancelled.adapter_id,
+        .kind = cancelled.kind,
+        .schema_version = cancelled.schema_version,
+        .outcome = .ok,
+        .bytes =
+        \\{"revision":7,"totalCourses":21,"availableCourses":1,"missingCourses":20,"sections":1,"lessons":1,"completedLessons":0,"completionPercent":0,"bytes":1,"watchedSeconds":0,"totalSeconds":1,"mediaTypes":[],"topCourses":[]}
+        ,
+    } }, &effects);
+    try testing.expect(!model.statsOpen());
+    try testing.expectEqual(main.StatsState.inactive, model.stats.state);
+}
+
+test "Lesson completion commits through Progress and invalidates revision-bound projections" {
+    var effects = main.Effects.init(testing.allocator);
+    defer effects.deinit();
+    effects.executor = .fake;
+
+    var model = largeCourseModel();
+    model.lessons[0].watched_time = 340;
+    model.lessons[0].last_position = 338.5;
+    model.search_index_revision = 8;
+    model.stats = .{ .state = .ready, .revision = 8 };
+    main.update(&model, .{ .select_lesson = "lesson-1" }, &effects);
+
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const before = try buildTree(arena_state.allocator(), &model);
+    try testing.expect(findByText(before.root, .button, "Mark complete") != null);
+
+    main.update(&model, .toggle_lesson_completion, &effects);
+    try testing.expect(model.progressSaving());
+    _ = arena_state.reset(.retain_capacity);
+    const saving = try buildTree(arena_state.allocator(), &model);
+    try testing.expect((findByText(saving.root, .button, "Mark complete") orelse
+        return error.TestUnexpectedResult).state.disabled);
+    try testing.expect(findByText(saving.root, .status_bar, "Saving Progress…") != null);
+    const request = effects.pendingExternalAt(0).?;
+    try testing.expectEqual(core_adapter.progress_put_key, request.key);
+    try testing.expectEqual(@intFromEnum(core_adapter.Operation.put_progress), request.kind);
+    try testing.expectEqual(
+        core_adapter.progress_put_request_header_bytes + "lesson-1".len,
+        request.payload.len,
+    );
+    try testing.expectEqual(@as(u64, 8), std.mem.readInt(u64, request.payload[0..8], .little));
+    try testing.expectEqual(@as(u64, 340), std.mem.readInt(u64, request.payload[8..16], .little));
+    try testing.expectEqual(
+        @as(f64, 338.5),
+        @as(f64, @bitCast(std.mem.readInt(u64, request.payload[16..24], .little))),
+    );
+    try testing.expectEqual(@as(u8, 1), request.payload[24]);
+    try testing.expectEqualStrings("lesson-1", request.payload[core_adapter.progress_put_request_header_bytes..]);
+
+    try effects.feedExternalResult(request.request_id, .success,
+        \\{"revision":9,"lessonId":"lesson-1","watchedTime":340,"lastPosition":338.5,"completed":true}
+    );
+    main.update(&model, effects.takeMsg().?, &effects);
+
+    try testing.expectEqual(@as(u64, 9), model.library_revision);
+    try testing.expect(model.selected_lesson.completed);
+    try testing.expect(model.lessons[0].completed);
+    try testing.expectEqual(@as(u64, 42_001), model.selected_course.completed_lesson_count);
+    try testing.expectEqual(@as(u64, 0), model.search_index_revision);
+    try testing.expectEqual(main.StatsState.inactive, model.stats.state);
+
+    _ = arena_state.reset(.retain_capacity);
+    const after = try buildTree(arena_state.allocator(), &model);
+    try testing.expect(findByText(after.root, .button, "Mark incomplete") != null);
+}
+
+test "failed Lesson completion leaves the selected projection unchanged" {
+    var effects = main.Effects.init(testing.allocator);
+    defer effects.deinit();
+    effects.executor = .fake;
+
+    var model = largeCourseModel();
+    main.update(&model, .{ .select_lesson = "lesson-1" }, &effects);
+    main.update(&model, .toggle_lesson_completion, &effects);
+    const request = effects.pendingExternalAt(0).?;
+    try effects.feedExternalResult(request.request_id, .failure, "The Library changed before Progress could be saved.");
+    main.update(&model, effects.takeMsg().?, &effects);
+
+    try testing.expect(model.progressFailed());
+    try testing.expectEqual(@as(u64, 8), model.library_revision);
+    try testing.expect(!model.selected_lesson.completed);
+    try testing.expect(!model.lessons[0].completed);
+    try testing.expectEqual(@as(u64, 42_000), model.selected_course.completed_lesson_count);
+
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const failed = try buildTree(arena_state.allocator(), &model);
+    try testing.expect(findByText(
+        failed.root,
+        .alert,
+        "The Library changed before Progress could be saved.",
+    ) != null);
+}
+
+test "Lesson notes create edit and delete through revision-gated effects" {
+    var effects = main.Effects.init(testing.allocator);
+    defer effects.deinit();
+    effects.executor = .fake;
+
+    var model = largeCourseModel();
+    model.selected_lesson = model.lessons[0];
+    model.lessons[0].selected = true;
+    model.has_selected_lesson = true;
+
+    main.update(&model, .open_notes, &effects);
+    const first_page = effects.pendingExternalAt(0) orelse return error.TestUnexpectedResult;
+    try testing.expectEqual(core_adapter.notes_list_key, first_page.key);
+    try testing.expectEqual(@intFromEnum(core_adapter.Operation.load_notes), first_page.kind);
+    try testing.expectEqualStrings(
+        "lesson-1",
+        first_page.payload[core_adapter.notes_list_request_header_bytes..],
+    );
+    try effects.feedExternalResult(first_page.request_id, .success,
+        \\{"revision":8,"lessonId":"lesson-1","offset":0,"total":1,"rows":[{"id":"note-1","lessonId":"lesson-1","timestamp":12.5,"text":"First note","createdAt":"2026-07-23T10:00:00Z"}]}
+    );
+    main.update(&model, effects.takeMsg().?, &effects);
+    try testing.expect(model.notesReady());
+    try testing.expectEqual(@as(usize, 1), model.notes.row_count);
+
+    main.update(&model, .new_note, &effects);
+    main.update(&model, .{ .note_edited = .{ .insert_text = "  Remember this.  " } }, &effects);
+    main.update(&model, .save_note, &effects);
+    const save = effects.pendingExternalAt(0) orelse return error.TestUnexpectedResult;
+    try testing.expectEqual(core_adapter.note_save_key, save.key);
+    try testing.expectEqual(@intFromEnum(core_adapter.Operation.save_note), save.kind);
+    const save_text_start = core_adapter.note_save_request_header_bytes + "lesson-1".len;
+    try testing.expectEqualStrings("Remember this.", save.payload[save_text_start..]);
+    try effects.feedExternalResult(save.request_id, .success,
+        \\{"revision":9,"id":"note-2","lessonId":"lesson-1","timestamp":0.0,"text":"Remember this.","createdAt":"2026-07-23T10:01:00Z"}
+    );
+    main.update(&model, effects.takeMsg().?, &effects);
+    try testing.expectEqual(@as(u64, 9), model.library_revision);
+    const refreshed = effects.pendingExternalAt(0) orelse return error.TestUnexpectedResult;
+    try effects.feedExternalResult(refreshed.request_id, .success,
+        \\{"revision":9,"lessonId":"lesson-1","offset":0,"total":2,"rows":[{"id":"note-2","lessonId":"lesson-1","timestamp":0.0,"text":"Remember this.","createdAt":"2026-07-23T10:01:00Z"},{"id":"note-1","lessonId":"lesson-1","timestamp":12.5,"text":"First note","createdAt":"2026-07-23T10:00:00Z"}]}
+    );
+    main.update(&model, effects.takeMsg().?, &effects);
+    try testing.expectEqualStrings("Remember this.", model.notes.rows[0].text());
+
+    main.update(&model, .{ .edit_note = "note-2" }, &effects);
+    try testing.expectEqualStrings("Remember this.", model.notesDraftText());
+    main.update(&model, .{ .note_edited = .clear }, &effects);
+    main.update(&model, .{ .note_edited = .{ .insert_text = "Revised note" } }, &effects);
+    main.update(&model, .save_note, &effects);
+    const edit = effects.pendingExternalAt(0) orelse return error.TestUnexpectedResult;
+    try effects.feedExternalResult(edit.request_id, .success,
+        \\{"revision":10,"id":"note-2","lessonId":"lesson-1","timestamp":0.0,"text":"Revised note","createdAt":"2026-07-23T10:01:00Z"}
+    );
+    main.update(&model, effects.takeMsg().?, &effects);
+    const edited_page = effects.pendingExternalAt(0) orelse return error.TestUnexpectedResult;
+    try effects.feedExternalResult(edited_page.request_id, .success,
+        \\{"revision":10,"lessonId":"lesson-1","offset":0,"total":1,"rows":[{"id":"note-2","lessonId":"lesson-1","timestamp":0.0,"text":"Revised note","createdAt":"2026-07-23T10:01:00Z"}]}
+    );
+    main.update(&model, effects.takeMsg().?, &effects);
+
+    main.update(&model, .{ .delete_note = "note-2" }, &effects);
+    const deletion = effects.pendingExternalAt(0) orelse return error.TestUnexpectedResult;
+    try testing.expectEqual(core_adapter.note_delete_key, deletion.key);
+    try effects.feedExternalResult(deletion.request_id, .success,
+        \\{"revision":11,"noteId":"note-2"}
+    );
+    main.update(&model, effects.takeMsg().?, &effects);
+    const empty_page = effects.pendingExternalAt(0) orelse return error.TestUnexpectedResult;
+    try effects.feedExternalResult(empty_page.request_id, .success,
+        \\{"revision":11,"lessonId":"lesson-1","offset":0,"total":0,"rows":[]}
+    );
+    main.update(&model, effects.takeMsg().?, &effects);
+    try testing.expect(model.notesEmpty());
+    try testing.expectEqual(@as(u64, 11), model.library_revision);
+}
+
+test "notes reject whitespace-only drafts and restore the Lesson action on close" {
+    var effects = main.Effects.init(testing.allocator);
+    defer effects.deinit();
+    effects.executor = .fake;
+
+    var model = largeCourseModel();
+    model.selected_lesson = model.lessons[0];
+    model.has_selected_lesson = true;
+    try model.notes.begin(model.selected_lesson.id());
+    model.notes.state = .empty;
+    model.notes.beginNew(0);
+    model.notes.draft.set("\u{00a0}\u{2003}");
+    main.update(&model, .save_note, &effects);
+    try testing.expect(effects.pendingExternalAt(0) == null);
+
+    model.notes.cancelEdit();
+    main.update(&model, .dismiss_notes, &effects);
+    try testing.expect(!model.notesOpen());
+    try testing.expect(model.restore_notes_focus);
+}
+
 test "opening a Course records access before loading its Lessons" {
     var effects = main.Effects.init(testing.allocator);
     defer effects.deinit();
     effects.executor = .fake;
 
     var model = main.Model{};
-    main.boot(&model, &effects);
+    try bootWithCommittedRoot(&model, &effects, 7);
     const library_request = effects.pendingExternalAt(0).?;
     try effects.feedExternalResult(library_request.request_id, .success,
         \\{"revision":7,"offset":0,"total":1,"rows":[{"id":"course-1","name":"Systems","missingSince":null,"lessonCount":1,"completedLessonCount":0,"progressPercent":0}]}
@@ -551,13 +1150,108 @@ test "Course access loads and selects the exact bounded resume Lesson page" {
     try testing.expectEqual(@as(u64, 20), model.selected_lesson_offset);
 }
 
+test "selecting a Document loads a bounded selectable page through the typed adapter" {
+    var effects = main.Effects.init(testing.allocator);
+    defer effects.deinit();
+    effects.executor = .fake;
+
+    var model = largeCourseModel();
+    model.lessons[0].kind_len = "document".len;
+    @memcpy(model.lessons[0].kind_storage[0.."document".len], "document");
+
+    main.update(&model, .{ .select_lesson = "lesson-1" }, &effects);
+    const open = effects.pendingExternalAt(0) orelse return error.TestUnexpectedResult;
+    try testing.expectEqual(core_adapter.document_open_key, open.key);
+    try testing.expectEqual(@intFromEnum(core_adapter.Operation.open_document), open.kind);
+    try testing.expectEqualStrings("lesson-1", open.payload[core_adapter.document_open_request_header_bytes..]);
+
+    try effects.feedExternalResult(open.request_id, .success,
+        \\{"revision":8,"lessonId":"lesson-1","documentId":"lesson-1","format":"markdown","totalBlocks":2,"warnings":[]}
+    );
+    main.update(&model, effects.takeMsg().?, &effects);
+    const page = effects.pendingExternalAt(0) orelse return error.TestUnexpectedResult;
+    try testing.expectEqual(core_adapter.document_page_key, page.key);
+    try testing.expectEqual(@intFromEnum(core_adapter.Operation.load_document_page), page.kind);
+
+    try effects.feedExternalResult(page.request_id, .success,
+        \\{"revision":8,"documentId":"lesson-1","offset":0,"total":2,"blocks":[{"id":0,"kind":"heading","level":1,"source":"# Guide"},{"id":1,"kind":"paragraph","level":0,"source":"Selectable body."}]}
+    );
+    main.update(&model, effects.takeMsg().?, &effects);
+
+    try testing.expect(model.documentReady());
+    try testing.expectEqualStrings("Selectable body.", model.document.rows[1].source());
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const tree = try buildTree(arena_state.allocator(), &model);
+    try testing.expect(findByLabel(tree.root, "Document reader") != null);
+    try testing.expect(findByText(tree.root, .text, "Selectable body.") != null);
+    try canvas.expectLayoutAuditSweepClean(testing.allocator, tree.root, .{
+        .tokens = main.tokensFromModel(&model),
+        .min_size = geometry.SizeF.init(560, 400),
+        .default_size = geometry.SizeF.init(960, 680),
+        .large_size = geometry.SizeF.init(1920, 1080),
+    });
+    try canvas.expectA11yAuditSweepClean(testing.allocator, tree.root, .{
+        .tokens = main.tokensFromModel(&model),
+        .min_size = geometry.SizeF.init(560, 400),
+        .default_size = geometry.SizeF.init(960, 680),
+        .large_size = geometry.SizeF.init(1920, 1080),
+    });
+
+    model.document.total_blocks = 9;
+    model.document.row_count = @intCast(core_adapter.document_page_size);
+    main.update(&model, .next_document_page, &effects);
+    const next_page = effects.pendingExternalAt(0) orelse return error.TestUnexpectedResult;
+    try testing.expectEqual(core_adapter.document_page_key, next_page.key);
+    try testing.expectEqual(core_adapter.document_page_size, std.mem.readInt(
+        u64,
+        next_page.payload[8..16],
+        .little,
+    ));
+
+    main.update(&model, .dismiss_search, &effects);
+    try testing.expect(!model.documentOpen());
+    try testing.expectEqual(main.CompactCoursePage.outline, model.compact_course_page);
+}
+
+test "unsupported Documents stop at the validated external-open handle" {
+    var effects = main.Effects.init(testing.allocator);
+    defer effects.deinit();
+    effects.executor = .fake;
+
+    var model = largeCourseModel();
+    model.lessons[0].kind_len = "document".len;
+    @memcpy(model.lessons[0].kind_storage[0.."document".len], "document");
+    main.update(&model, .{ .select_lesson = "lesson-1" }, &effects);
+    const open = effects.pendingExternalAt(0) orelse return error.TestUnexpectedResult;
+    try effects.feedExternalResult(open.request_id, .failure,
+        \\{"error":"documentUnsupported"}
+    );
+    main.update(&model, effects.takeMsg().?, &effects);
+    try testing.expect(model.documentUnsupported());
+
+    main.update(&model, .prepare_document_external_open, &effects);
+    const external = effects.pendingExternalAt(0) orelse return error.TestUnexpectedResult;
+    try testing.expectEqual(core_adapter.document_external_open_key, external.key);
+    try testing.expectEqual(@intFromEnum(core_adapter.Operation.prepare_document_external_open), external.kind);
+    try effects.feedExternalResult(external.request_id, .success,
+        \\{"revision":8,"lessonId":"lesson-1","canonicalPath":"/courses/lesson.pdf"}
+    );
+    main.update(&model, effects.takeMsg().?, &effects);
+    try testing.expect(model.documentExternalReady());
+    try testing.expectEqualStrings(
+        "/courses/lesson.pdf",
+        model.document.external_path_storage[0..model.document.external_path_len],
+    );
+}
+
 test "missing Courses remain visible without dispatching access" {
     var effects = main.Effects.init(testing.allocator);
     defer effects.deinit();
     effects.executor = .fake;
 
     var model = main.Model{};
-    main.boot(&model, &effects);
+    try bootWithCommittedRoot(&model, &effects, 7);
     const request = effects.pendingExternalAt(0).?;
     try effects.feedExternalResult(request.request_id, .success,
         \\{"revision":7,"offset":0,"total":1,"rows":[{"id":"course-missing","name":"Archived Systems","missingSince":"2026-07-15T10:00:00.000Z","lessonCount":1,"completedLessonCount":0,"progressPercent":0}]}
@@ -730,7 +1424,7 @@ test "a stale Library request result is discarded while the current request rema
     effects.executor = .fake;
 
     var model = main.Model{};
-    main.boot(&model, &effects);
+    try bootWithCommittedRoot(&model, &effects, 7);
     const request = effects.pendingExternalAt(0).?;
     main.update(&model, .{ .library_loaded = .{
         .request_id = request.request_id + 1,
@@ -757,7 +1451,7 @@ test "a malformed current Library page remains an honest error" {
     effects.executor = .fake;
 
     var model = main.Model{};
-    main.boot(&model, &effects);
+    try bootWithCommittedRoot(&model, &effects, 7);
     const request = effects.pendingExternalAt(0).?;
     try effects.feedExternalResult(request.request_id, .success,
         \\{"revision":7,"offset":20,"total":21,"rows":[{"id":"course-21","name":"Course 21","missingSince":null,"lessonCount":1,"completedLessonCount":0,"progressPercent":0}]}
@@ -796,22 +1490,28 @@ test "the live adapter creates and reopens only the fresh native database" {
     const state_dir_len = try tmp.dir.realPath(testing.io, &state_dir_buffer);
     const state_dir = state_dir_buffer[0..state_dir_len];
 
-    try expectLiveEmptyPage(state_dir);
+    try expectLiveOnboarding(state_dir);
     try tmp.dir.access(testing.io, "melearner-native.sqlite3", .{});
     var previous_database: [64]u8 = undefined;
     try testing.expectEqualStrings(
         "previous database sentinel",
         try tmp.dir.readFile(testing.io, "melearner.db", &previous_database),
     );
-    try expectLiveEmptyPage(state_dir);
+    try expectLiveOnboarding(state_dir);
 }
 
 test "the live adapter rebuilds and queries the bounded native search index" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
+    try tmp.dir.createDirPath(testing.io, "courses");
     var state_dir_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const state_dir_len = try tmp.dir.realPath(testing.io, &state_dir_buffer);
     const state_dir = state_dir_buffer[0..state_dir_len];
+    var root_dir = try tmp.dir.openDir(testing.io, "courses", .{});
+    defer root_dir.close(testing.io);
+    var root_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const root_len = try root_dir.realPath(testing.io, &root_buffer);
+    const root_path = root_buffer[0..root_len];
 
     const adapter = try core_adapter.CoreAdapter.create(testing.allocator, testing.io, state_dir);
     defer adapter.destroy();
@@ -822,6 +1522,17 @@ test "the live adapter rebuilds and queries the bounded native search index" {
     var model = main.Model{};
     main.boot(&model, &effects);
     main.update(&model, try waitForEffectMsg(&effects), &effects);
+    try testing.expectEqual(main.Route.onboarding, model.navigation.route);
+    model.root.validation = .picking;
+    main.update(&model, .{ .root_picked = .{
+        .key = 10_000,
+        .outcome = .selected,
+        .path = root_path,
+    } }, &effects);
+    var scan_messages: usize = 0;
+    while (!model.libraryEmpty() and scan_messages < 20) : (scan_messages += 1) {
+        main.update(&model, try waitForEffectMsg(&effects), &effects);
+    }
     try testing.expect(model.libraryEmpty());
 
     main.update(&model, .open_search, &effects);
@@ -1500,6 +2211,12 @@ test "keyboard focus opens the first available Course" {
     try testing.expect((snapshotByNameAndRole(snapshot, "Search Library", "button") orelse return error.TestUnexpectedResult).focused);
     try live.harness.runtime.dispatchAutomationCommand(live.app, "widget-key " ++ main.canvas_label ++ " tab");
     snapshot = live.harness.runtime.automationSnapshot("melearner");
+    try testing.expect((snapshotByNameAndRole(snapshot, "Open learning ledger", "button") orelse return error.TestUnexpectedResult).focused);
+    try live.harness.runtime.dispatchAutomationCommand(live.app, "widget-key " ++ main.canvas_label ++ " tab");
+    snapshot = live.harness.runtime.automationSnapshot("melearner");
+    try testing.expect((snapshotByNameAndRole(snapshot, "Open Settings", "button") orelse return error.TestUnexpectedResult).focused);
+    try live.harness.runtime.dispatchAutomationCommand(live.app, "widget-key " ++ main.canvas_label ++ " tab");
+    snapshot = live.harness.runtime.automationSnapshot("melearner");
     try testing.expect((snapshotByName(snapshot, "Courses") orelse return error.TestUnexpectedResult).focused);
     try live.harness.runtime.dispatchAutomationCommand(live.app, "widget-key " ++ main.canvas_label ++ " tab");
     snapshot = live.harness.runtime.automationSnapshot("melearner");
@@ -1530,7 +2247,12 @@ test "light and dark Library screenshots and semantic snapshots stay determinist
             .{},
             .{ .color_scheme = .dark },
         }, 0..) |appearance, scheme_index| {
-            const live = try LiveLibrary.start(populatedLibraryModel(), case.size, appearance);
+            var model = populatedLibraryModel();
+            model.settings.state = .ready;
+            model.settings.revision = 1;
+            model.settings.selected = if (appearance.color_scheme == .dark) .dark else .light;
+            model.settings.confirmed = model.settings.selected;
+            const live = try LiveLibrary.start(model, case.size, appearance);
             defer live.stop();
             const snapshot = live.harness.runtime.automationSnapshot("melearner");
             const library = snapshotByName(snapshot, "Library Courses") orelse return error.TestUnexpectedResult;
@@ -1546,12 +2268,12 @@ test "light and dark Library screenshots and semantic snapshots stay determinist
     }
 
     try testing.expectEqualSlices(u64, &[_]u64{
-        9708422609027202112,
-        2301313746157295371,
-        11939615121557138468,
-        11541238420278536206,
-        15635631435211064495,
-        15068470137857644819,
+        881544881418905536,
+        17632313548522146872,
+        5410067146098721811,
+        12134866573915969839,
+        5713737015434867347,
+        9734711175620847136,
     }, &screenshot_hashes);
 }
 
@@ -1596,7 +2318,12 @@ test "Course navigation and search screenshots stay deterministic" {
             .{},
             .{ .color_scheme = .dark },
         }, 0..) |appearance, scheme_index| {
-            const live = try LiveLibrary.start(model, size, appearance);
+            var themed_model = model;
+            themed_model.settings.state = .ready;
+            themed_model.settings.revision = 1;
+            themed_model.settings.selected = if (appearance.color_scheme == .dark) .dark else .light;
+            themed_model.settings.confirmed = themed_model.settings.selected;
+            const live = try LiveLibrary.start(themed_model, size, appearance);
             defer live.stop();
             const result_index = case_index * 2 + scheme_index;
             screenshot_hashes[result_index] = try screenshotHash(&live.harness.runtime);
@@ -1606,10 +2333,10 @@ test "Course navigation and search screenshots stay deterministic" {
     try testing.expectEqualSlices(u64, &[_]u64{
         3351006344256886441,
         3994931452247643210,
-        15439241892458306360,
-        17601016577952864682,
-        9416479089960591688,
-        18272381210520527311,
+        17983978113243567896,
+        12903980528101723262,
+        2350188832924899231,
+        1311342144512526288,
         10455963579296583143,
         12771900024855511110,
     }, &screenshot_hashes);
@@ -1636,7 +2363,7 @@ fn expectSameTree(expected: canvas.Widget, actual: canvas.Widget) !void {
     }
 }
 
-fn expectLiveEmptyPage(state_dir: []const u8) !void {
+fn expectLiveOnboarding(state_dir: []const u8) !void {
     const adapter = try core_adapter.CoreAdapter.create(testing.allocator, testing.io, state_dir);
     errdefer adapter.destroy();
     var effects = main.Effects.init(testing.allocator);
@@ -1646,7 +2373,8 @@ fn expectLiveEmptyPage(state_dir: []const u8) !void {
     var model = main.Model{};
     main.boot(&model, &effects);
     main.update(&model, try waitForEffectMsg(&effects), &effects);
-    try testing.expect(model.libraryEmpty());
+    try testing.expectEqual(main.Route.onboarding, model.navigation.route);
+    try testing.expect(model.root.first_run);
 
     effects.deinit();
     adapter.destroy();

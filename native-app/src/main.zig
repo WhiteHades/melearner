@@ -1,6 +1,11 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const core_adapter = @import("core_adapter.zig");
+const document_model = @import("document.zig");
+const root_model = @import("root.zig");
+const stats_model = @import("stats.zig");
+const notes_model = @import("notes.zig");
+const settings_model = @import("settings.zig");
 const native_sdk = @import("native_sdk");
 const runner = @import("runner");
 
@@ -31,6 +36,9 @@ const max_collapsed_sections = max_lessons;
 const max_library_message_bytes = 256;
 const max_course_message_bytes = 256;
 const max_search_message_bytes = 256;
+const root_picker_key: u64 = 10_000;
+pub const root_scan_progress_timer_key: u64 = 10_001;
+const root_scan_progress_interval_ms: u64 = 150;
 
 const shell_views = [_]native_sdk.ShellView{
     .{ .label = canvas_label, .kind = .gpu_surface, .fill = true, .role = "Library canvas", .accessibility_label = "melearner Library", .gpu_backend = .metal, .gpu_pixel_format = .bgra8_unorm, .gpu_present_mode = .timer, .gpu_alpha_mode = .@"opaque", .gpu_color_space = .srgb, .gpu_vsync = true },
@@ -230,6 +238,17 @@ pub const Screen = enum {
     course,
 };
 
+pub const Route = enum {
+    onboarding,
+    library,
+    course,
+    lesson,
+};
+
+pub const NavigationModel = struct {
+    route: Route = .library,
+};
+
 pub const CourseState = enum {
     inactive,
     accessing,
@@ -254,9 +273,29 @@ pub const SearchState = enum {
     failed,
 };
 
+pub const ProgressState = enum {
+    inactive,
+    saving,
+    failed,
+};
+
+pub const StatsMediaRow = stats_model.MediaRow;
+pub const StatsCourseRow = stats_model.CourseRow;
+pub const StatsActivityRow = stats_model.ActivityRow;
+pub const StatsState = stats_model.State;
+pub const StatsModel = stats_model.Model;
+pub const Note = notes_model.Note;
+pub const NotesState = notes_model.State;
+pub const NotesModel = notes_model.Model;
+pub const SettingsModel = settings_model.Model;
+pub const DocumentBlock = document_model.Block;
+pub const DocumentModel = document_model.Model;
+
 pub const Model = struct {
     appearance: native_sdk.Appearance = .{},
     canvas_width: f32 = window_width,
+    navigation: NavigationModel = .{},
+    root: root_model.Model = .{},
     library_state: LibraryState = .opening,
     library_revision: u64 = 0,
     total_courses: u64 = 0,
@@ -290,8 +329,19 @@ pub const Model = struct {
     target_lesson_offset: u64 = 0,
     course_message_storage: [max_course_message_bytes]u8 = [_]u8{0} ** max_course_message_bytes,
     course_message_len: usize = 0,
+    progress_state: ProgressState = .inactive,
+    progress_request_id: u64 = 0,
+    progress_lesson_id_storage: [max_lesson_id_bytes]u8 = [_]u8{0} ** max_lesson_id_bytes,
+    progress_lesson_id_len: usize = 0,
+    progress_watched_time: u64 = 0,
+    progress_last_position: f64 = 0,
+    progress_completed: bool = false,
+    progress_message_storage: [max_course_message_bytes]u8 = [_]u8{0} ** max_course_message_bytes,
+    progress_message_len: usize = 0,
     search_open: bool = false,
     restore_search_focus: bool = false,
+    restore_stats_focus: bool = false,
+    restore_notes_focus: bool = false,
     search_state: SearchState = .inactive,
     search_query_buffer: canvas.TextBuffer(core_adapter.max_search_query_bytes) = .{},
     search_index_revision: u64 = 0,
@@ -308,10 +358,17 @@ pub const Model = struct {
     search_result_count: usize = 0,
     search_message_storage: [max_search_message_bytes]u8 = [_]u8{0} ** max_search_message_bytes,
     search_message_len: usize = 0,
+    stats: StatsModel = .{},
+    notes: NotesModel = .{},
+    settings: SettingsModel = .{},
+    document: DocumentModel = .{},
+    restore_settings_focus: bool = false,
 
     pub const view_unbound = .{
         "appearance",
         "canvas_width",
+        "navigation",
+        "root",
         "library_state",
         "library_revision",
         "total_courses",
@@ -345,8 +402,18 @@ pub const Model = struct {
         "target_lesson_offset",
         "course_message_storage",
         "course_message_len",
+        "progress_state",
+        "progress_request_id",
+        "progress_lesson_id_storage",
+        "progress_lesson_id_len",
+        "progress_watched_time",
+        "progress_last_position",
+        "progress_completed",
+        "progress_message_storage",
+        "progress_message_len",
         "search_open",
         "restore_search_focus",
+        "restore_notes_focus",
         "search_state",
         "search_query_buffer",
         "search_index_revision",
@@ -363,13 +430,76 @@ pub const Model = struct {
         "search_result_count",
         "search_message_storage",
         "search_message_len",
+        "stats",
+        "notes",
+        "settings",
+        "document",
+        "restore_settings_focus",
         "libraryReady",
         "courseReady",
         "showCourse",
+        "showOnboarding",
+        "rootRequired",
+        "statsOpen",
+        "notesOpen",
+        "notesReady",
+        "settingsOpen",
+        "selectedLessonDocument",
+        "documentOpen",
     };
 
     pub fn showLibrary(model: *const Model) bool {
         return model.screen == .library;
+    }
+
+    pub fn showOnboarding(model: *const Model) bool {
+        return model.navigation.route == .onboarding or model.root.state == .failed;
+    }
+
+    pub fn rootLoading(model: *const Model) bool {
+        return model.root.state == .loading;
+    }
+
+    pub fn rootRequired(model: *const Model) bool {
+        return model.root.state == .required;
+    }
+
+    pub fn rootFailed(model: *const Model) bool {
+        return model.root.state == .failed;
+    }
+
+    pub fn rootPicking(model: *const Model) bool {
+        return model.root.validation == .picking;
+    }
+
+    pub fn rootScanning(model: *const Model) bool {
+        return model.root.validation == .scanning or
+            model.root.validation == .cancelling or
+            model.root.validation == .committing;
+    }
+
+    pub fn rootCancelling(model: *const Model) bool {
+        return model.root.validation == .cancelling;
+    }
+
+    pub fn rootCommitting(model: *const Model) bool {
+        return model.root.validation == .committing;
+    }
+
+    pub fn rootScanFailed(model: *const Model) bool {
+        return model.root.validation == .failed;
+    }
+
+    pub fn rootMessage(model: *const Model) []const u8 {
+        return model.root.message();
+    }
+
+    pub fn rootScanProgressLabel(model: *const Model, arena: std.mem.Allocator) []const u8 {
+        return model.root.progressLabel(arena);
+    }
+
+    pub fn rootScanCancellable(model: *const Model) bool {
+        return model.root.scan_cancellable and model.root.validation == .scanning;
     }
 
     pub fn showCourse(model: *const Model) bool {
@@ -459,6 +589,80 @@ pub const Model = struct {
         return if (model.has_selected_lesson) model.selected_lesson.progressLine(arena) else "Choose a Lesson from the outline.";
     }
 
+    pub fn selectedLessonDocument(model: *const Model) bool {
+        return model.has_selected_lesson and
+            std.mem.eql(u8, model.selected_lesson.kind_storage[0..model.selected_lesson.kind_len], "document");
+    }
+
+    pub fn documentOpening(model: *const Model) bool {
+        return model.document.state == .opening or model.document.state == .loading;
+    }
+
+    pub fn documentOpen(model: *const Model) bool {
+        return model.document.state != .inactive;
+    }
+
+    pub fn documentReady(model: *const Model) bool {
+        return model.document.state == .ready;
+    }
+
+    pub fn documentUnsupported(model: *const Model) bool {
+        return model.document.state == .unsupported;
+    }
+
+    pub fn documentExternalReady(model: *const Model) bool {
+        return model.document.state == .external_ready;
+    }
+
+    pub fn documentRows(model: *const Model, arena: std.mem.Allocator) []const DocumentBlock {
+        return model.document.blockRows(arena);
+    }
+
+    pub fn documentMessage(model: *const Model) []const u8 {
+        return model.document.message();
+    }
+
+    pub fn documentPageLabel(model: *const Model, arena: std.mem.Allocator) []const u8 {
+        return model.document.pageLabel(arena);
+    }
+
+    pub fn documentWarningLabel(model: *const Model, arena: std.mem.Allocator) []const u8 {
+        return model.document.warningLabel(arena);
+    }
+
+    pub fn documentHasWarnings(model: *const Model) bool {
+        return model.document.warning_count != 0;
+    }
+
+    pub fn hasPreviousDocumentPage(model: *const Model) bool {
+        return model.document.hasPreviousPage();
+    }
+
+    pub fn hasNextDocumentPage(model: *const Model) bool {
+        return model.document.hasNextPage();
+    }
+
+    pub fn hasDocumentPagination(model: *const Model) bool {
+        return model.document.hasPreviousPage() or model.document.hasNextPage();
+    }
+
+    pub fn completionActionLabel(model: *const Model) []const u8 {
+        if (!model.has_selected_lesson) return "Mark complete";
+        return if (model.selected_lesson.completed) "Mark incomplete" else "Mark complete";
+    }
+
+    pub fn progressSaving(model: *const Model) bool {
+        return model.progress_state == .saving;
+    }
+
+    pub fn progressFailed(model: *const Model) bool {
+        return model.progress_state == .failed;
+    }
+
+    pub fn progressMessage(model: *const Model) []const u8 {
+        return model.progress_message_storage[0..model.progress_message_len];
+    }
+
     pub fn courseMessage(model: *const Model) []const u8 {
         return model.course_message_storage[0..model.course_message_len];
     }
@@ -533,6 +737,125 @@ pub const Model = struct {
             return std.fmt.allocPrint(arena, "{d} of {d} results", .{ first, model.total_search_results }) catch "";
         }
         return std.fmt.allocPrint(arena, "{d}–{d} of {d} results", .{ first, last, model.total_search_results }) catch "";
+    }
+
+    pub fn statsLoading(model: *const Model) bool {
+        return model.stats.state == .loading;
+    }
+
+    pub fn statsOpen(model: *const Model) bool {
+        return model.stats.open;
+    }
+
+    pub fn statsReady(model: *const Model) bool {
+        return model.stats.state == .ready;
+    }
+
+    pub fn statsFailed(model: *const Model) bool {
+        return model.stats.state == .failed;
+    }
+
+    pub fn statsMessage(model: *const Model) []const u8 {
+        return model.stats.message();
+    }
+
+    pub fn statsCourseLine(model: *const Model, arena: std.mem.Allocator) []const u8 {
+        return model.stats.courseLine(arena);
+    }
+
+    pub fn statsStructureLine(model: *const Model, arena: std.mem.Allocator) []const u8 {
+        return model.stats.structureLine(arena);
+    }
+
+    pub fn statsProgressLine(model: *const Model, arena: std.mem.Allocator) []const u8 {
+        return model.stats.progressLine(arena);
+    }
+
+    pub fn statsPercentLine(model: *const Model, arena: std.mem.Allocator) []const u8 {
+        return model.stats.percentLine(arena);
+    }
+
+    pub fn statsTimeLine(model: *const Model, arena: std.mem.Allocator) []const u8 {
+        return model.stats.timeLine(arena);
+    }
+
+    pub fn statsStorageLine(model: *const Model, arena: std.mem.Allocator) []const u8 {
+        return model.stats.storageLine(arena);
+    }
+
+    pub fn statsMediaRows(model: *const Model, arena: std.mem.Allocator) []const StatsMediaRow {
+        _ = arena;
+        return model.stats.media_rows[0..model.stats.media_count];
+    }
+
+    pub fn statsCourseRows(model: *const Model, arena: std.mem.Allocator) []const StatsCourseRow {
+        _ = arena;
+        return model.stats.course_rows[0..model.stats.course_count];
+    }
+
+    pub fn statsActivityCells(model: *const Model, arena: std.mem.Allocator) []const StatsActivityRow {
+        _ = arena;
+        return model.stats.activity_cells[0..model.stats.activity_count];
+    }
+
+    pub fn statsActivityLine(model: *const Model, arena: std.mem.Allocator) []const u8 {
+        return model.stats.activityLine(arena);
+    }
+
+    pub fn notesOpen(model: *const Model) bool {
+        return model.notes.open;
+    }
+
+    pub fn notesWide(model: *const Model) bool {
+        return model.notes.open and model.canvas_width >= 1_200;
+    }
+
+    pub fn notesLoading(model: *const Model) bool {
+        return model.notes.state == .loading;
+    }
+
+    pub fn notesEmpty(model: *const Model) bool {
+        return model.notes.state == .empty;
+    }
+
+    pub fn notesReady(model: *const Model) bool {
+        return model.notes.state == .ready;
+    }
+
+    pub fn notesFailed(model: *const Model) bool {
+        return model.notes.state == .failed;
+    }
+
+    pub fn notesBusy(model: *const Model) bool {
+        return model.notes.state == .saving or model.notes.state == .deleting;
+    }
+
+    pub fn notesEditing(model: *const Model) bool {
+        return model.notes.editing;
+    }
+
+    pub fn noteRows(model: *const Model, arena: std.mem.Allocator) []const Note {
+        return model.notes.noteRows(arena);
+    }
+
+    pub fn notesMessage(model: *const Model) []const u8 {
+        return model.notes.message();
+    }
+
+    pub fn notesDraftText(model: *const Model) []const u8 {
+        return model.notes.draftText();
+    }
+
+    pub fn notesDraftInvalid(model: *const Model) bool {
+        return !model.notes.draftValid();
+    }
+
+    pub fn hasPreviousNotesPage(model: *const Model) bool {
+        return model.notes.hasPreviousPage();
+    }
+
+    pub fn hasNextNotesPage(model: *const Model) bool {
+        return model.notes.hasNextPage();
     }
 
     fn targetLessonId(model: *const Model) []const u8 {
@@ -614,6 +937,24 @@ pub const Model = struct {
         model.active_search_query_id = 0;
         model.search_result_count = 0;
         model.total_search_results = 0;
+    }
+
+    fn setStatsFailure(model: *Model, message: []const u8) void {
+        model.stats.setFailure(message);
+    }
+
+    fn setProgressFailure(model: *Model, message: []const u8) void {
+        const value = if (message.len == 0 or
+            message.len > max_course_message_bytes or
+            !std.unicode.utf8ValidateSlice(message))
+            "Progress could not be saved."
+        else
+            message;
+        @memcpy(model.progress_message_storage[0..value.len], value);
+        model.progress_message_len = value.len;
+        model.progress_state = .failed;
+        model.progress_request_id = 0;
+        model.progress_lesson_id_len = 0;
     }
 
     pub fn courseTotalLabel(model: *const Model, arena: std.mem.Allocator) []const u8 {
@@ -1083,7 +1424,141 @@ pub const Model = struct {
         model.search_message_len = 0;
         model.search_state = if (page.total == 0) .empty else .results;
     }
+
+    fn loadStats(model: *Model, bytes: []const u8) !void {
+        try model.stats.load(bytes, model.library_revision, model.total_courses);
+    }
+
+    fn applyProgressUpdate(model: *Model, bytes: []const u8) !void {
+        const Payload = struct {
+            revision: u64,
+            lessonId: []const u8,
+            watchedTime: u64,
+            lastPosition: f64,
+            completed: bool,
+        };
+        const parsed = try std.json.parseFromSlice(Payload, std.heap.page_allocator, bytes, .{
+            .ignore_unknown_fields = true,
+        });
+        defer parsed.deinit();
+        const update_value = parsed.value;
+        if (update_value.revision <= model.library_revision or
+            !std.mem.eql(u8, update_value.lessonId, model.progress_lesson_id_storage[0..model.progress_lesson_id_len]) or
+            update_value.watchedTime != model.progress_watched_time or
+            !std.math.isFinite(update_value.lastPosition) or
+            update_value.lastPosition != model.progress_last_position or
+            update_value.completed != model.progress_completed)
+        {
+            return error.InvalidProgressUpdate;
+        }
+
+        const lesson = for (model.lessons[0..model.lesson_count]) |*candidate| {
+            if (std.mem.eql(u8, candidate.id(), update_value.lessonId)) break candidate;
+        } else return error.InvalidProgressUpdate;
+        const was_completed = lesson.completed;
+        if (was_completed != update_value.completed) {
+            if (update_value.completed) {
+                if (model.selected_course.completed_lesson_count >= model.selected_course.lesson_count) {
+                    return error.InvalidProgressUpdate;
+                }
+                model.selected_course.completed_lesson_count += 1;
+            } else {
+                if (model.selected_course.completed_lesson_count == 0) return error.InvalidProgressUpdate;
+                model.selected_course.completed_lesson_count -= 1;
+            }
+        }
+
+        lesson.watched_time = update_value.watchedTime;
+        lesson.last_position = update_value.lastPosition;
+        lesson.completed = update_value.completed;
+        if (model.has_selected_lesson and std.mem.eql(u8, model.selected_lesson.id(), update_value.lessonId)) {
+            model.selected_lesson = lesson.*;
+        }
+        model.selected_course.progress_percent = completionPercent(
+            model.selected_course.completed_lesson_count,
+            model.selected_course.lesson_count,
+        );
+        for (model.courses[0..model.course_count]) |*course| {
+            if (!std.mem.eql(u8, course.id(), model.selected_course.id())) continue;
+            course.completed_lesson_count = model.selected_course.completed_lesson_count;
+            course.progress_percent = model.selected_course.progress_percent;
+            break;
+        }
+        model.library_revision = update_value.revision;
+        model.search_index_revision = 0;
+        model.search_index_request_id = 0;
+        model.search_query_request_id = 0;
+        model.clearSearchResults();
+        model.stats = .{};
+        model.progress_state = .inactive;
+        model.progress_request_id = 0;
+        model.progress_lesson_id_len = 0;
+        model.progress_message_len = 0;
+    }
+
+    pub fn settingsOpen(model: *const Model) bool {
+        return model.settings.open;
+    }
+
+    pub fn lightAppearance(model: *const Model) bool {
+        return model.settings.selected == .light;
+    }
+
+    pub fn darkAppearance(model: *const Model) bool {
+        return model.settings.selected == .dark;
+    }
+
+    pub fn cozyAppearance(model: *const Model) bool {
+        return model.settings.selected == .cozy;
+    }
+
+    pub fn settingsSaving(model: *const Model) bool {
+        return model.settings.state == .loading or model.settings.state == .saving;
+    }
+
+    pub fn settingsFailed(model: *const Model) bool {
+        return model.settings.state == .failed;
+    }
+
+    pub fn settingsMessage(model: *const Model) []const u8 {
+        return model.settings.message();
+    }
+
+    pub fn settingsRootLabel(model: *const Model) []const u8 {
+        const root = model.root.committed();
+        return if (root.len == 0) "No Library root selected" else root;
+    }
+
+    pub fn rootActionBusy(model: *const Model) bool {
+        return model.root.validation == .picking or
+            model.root.validation == .scanning or
+            model.root.validation == .cancelling or
+            model.root.validation == .committing;
+    }
+
+    pub fn contrastStatus(model: *const Model) []const u8 {
+        return if (model.appearance.high_contrast)
+            "High contrast: enabled by the operating system"
+        else
+            "High contrast: standard";
+    }
+
+    pub fn motionStatus(model: *const Model) []const u8 {
+        return if (model.appearance.reduce_motion)
+            "Reduced motion: enabled by the operating system"
+        else
+            "Reduced motion: standard";
+    }
+
+    pub fn runtimeInfo(_: *const Model) []const u8 {
+        return "Native SDK · Rust core ABI 2";
+    }
 };
+
+fn completionPercent(completed: u64, total: u64) u32 {
+    if (total == 0) return 0;
+    return @intCast((@as(u128, completed) * 100 + total / 2) / total);
+}
 
 fn validRequiredText(value: []const u8, max_bytes: usize) bool {
     return value.len != 0 and
@@ -1114,17 +1589,56 @@ fn staleSearchIndex(bytes: []const u8) bool {
 
 pub const Msg = union(enum) {
     appearance_changed: native_sdk.Appearance,
+    settings_loaded: native_sdk.EffectExternalResult,
+    appearance_saved: native_sdk.EffectExternalResult,
+    root_state_loaded: native_sdk.EffectExternalResult,
+    root_picked: native_sdk.EffectDirectoryResult,
+    root_scanned: native_sdk.EffectExternalResult,
+    root_scan_cancelled: native_sdk.EffectExternalResult,
+    root_scan_progress_tick: native_sdk.EffectTimer,
+    root_scan_progress_loaded: native_sdk.EffectExternalResult,
     library_loaded: native_sdk.EffectExternalResult,
+    stats_loaded: native_sdk.EffectExternalResult,
+    activity_loaded: native_sdk.EffectExternalResult,
+    progress_updated: native_sdk.EffectExternalResult,
+    notes_loaded: native_sdk.EffectExternalResult,
+    note_saved: native_sdk.EffectExternalResult,
+    note_deleted: native_sdk.EffectExternalResult,
     course_accessed: native_sdk.EffectExternalResult,
     lessons_loaded: native_sdk.EffectExternalResult,
     search_indexed: native_sdk.EffectExternalResult,
     search_loaded: native_sdk.EffectExternalResult,
+    document_opened: native_sdk.EffectExternalResult,
+    document_page_loaded: native_sdk.EffectExternalResult,
+    document_external_open_ready: native_sdk.EffectExternalResult,
     open_course: []const u8,
     toggle_section: []const u8,
     select_lesson: []const u8,
     open_lesson: []const u8,
+    dismiss_document,
     open_search,
     dismiss_search,
+    open_stats,
+    dismiss_stats,
+    open_settings,
+    dismiss_settings,
+    select_light_appearance,
+    select_dark_appearance,
+    select_cozy_appearance,
+    settings_rescan,
+    settings_choose_root,
+    toggle_lesson_completion,
+    open_notes,
+    dismiss_notes,
+    new_note,
+    edit_note: []const u8,
+    note_edited: canvas.TextInputEvent,
+    save_note,
+    cancel_note_edit,
+    delete_note: []const u8,
+    retry_notes,
+    previous_notes_page,
+    next_notes_page,
     search_edited: canvas.TextInputEvent,
     open_search_result: []const u8,
     navigate_back,
@@ -1136,15 +1650,38 @@ pub const Msg = union(enum) {
     next_lesson_page,
     previous_search_page,
     next_search_page,
+    retry_document,
+    previous_document_page,
+    next_document_page,
+    prepare_document_external_open,
+    choose_root,
+    retry_root,
+    retry_scan,
+    cancel_scan,
 
-    pub const view_unbound = .{ "appearance_changed", "library_loaded", "course_accessed", "lessons_loaded", "search_indexed", "search_loaded", "canvas_resized" };
+    pub const view_unbound = .{ "appearance_changed", "settings_loaded", "appearance_saved", "root_state_loaded", "root_picked", "root_scanned", "root_scan_cancelled", "root_scan_progress_tick", "root_scan_progress_loaded", "library_loaded", "stats_loaded", "activity_loaded", "progress_updated", "notes_loaded", "note_saved", "note_deleted", "course_accessed", "lessons_loaded", "search_indexed", "search_loaded", "document_opened", "document_page_loaded", "document_external_open_ready", "canvas_resized" };
 };
 
 pub const LibraryUi = canvas.Ui(Msg);
 pub const library_markup = @embedFile("library.native");
+pub const onboarding_markup = @embedFile("onboarding.native");
+pub const stats_markup = @embedFile("stats.native");
+pub const notes_markup = @embedFile("notes.native");
+pub const settings_markup = @embedFile("settings.native");
+pub const document_markup = @embedFile("document.native");
 pub const CompiledLibraryView = canvas.CompiledMarkupView(Model, Msg, library_markup);
+pub const CompiledOnboardingView = canvas.CompiledMarkupView(Model, Msg, onboarding_markup);
+pub const CompiledStatsView = canvas.CompiledMarkupView(Model, Msg, stats_markup);
+pub const CompiledNotesView = canvas.CompiledMarkupView(Model, Msg, notes_markup);
+pub const CompiledSettingsView = canvas.CompiledMarkupView(Model, Msg, settings_markup);
+pub const CompiledDocumentView = canvas.CompiledMarkupView(Model, Msg, document_markup);
 const library_fragments = [_]canvas.MarkupFragment{
     CompiledLibraryView.fragment("src/library.native"),
+    CompiledOnboardingView.fragment("src/onboarding.native"),
+    CompiledStatsView.fragment("src/stats.native"),
+    CompiledNotesView.fragment("src/notes.native"),
+    CompiledSettingsView.fragment("src/settings.native"),
+    CompiledDocumentView.fragment("src/document.native"),
 };
 
 const dev_markup_reload = builtin.mode == .Debug;
@@ -1159,9 +1696,9 @@ pub const app_fonts = [_]LibraryApp.FontRegistration{.{
 }};
 
 pub fn tokensFromModel(model: *const Model) canvas.DesignTokens {
-    const color_scheme: canvas.ColorScheme = switch (model.appearance.color_scheme) {
+    const color_scheme: canvas.ColorScheme = switch (model.settings.selected) {
         .light => .light,
-        .dark => .dark,
+        .dark, .cozy => .dark,
     };
     var tokens = canvas.DesignTokens.theme(.{
         .color_scheme = color_scheme,
@@ -1169,7 +1706,7 @@ pub fn tokensFromModel(model: *const Model) canvas.DesignTokens {
         .reduce_motion = model.appearance.reduce_motion,
     });
     if (!model.appearance.high_contrast) {
-        tokens.colors = switch (color_scheme) {
+        tokens.colors = switch (model.settings.selected) {
             .light => (canvas.ColorTokenOverrides{
                 .background = canvas.Color.rgb8(245, 244, 237),
                 .surface = canvas.Color.rgb8(250, 249, 245),
@@ -1200,6 +1737,21 @@ pub fn tokensFromModel(model: *const Model) canvas.DesignTokens {
                 .focus_ring = canvas.Color.rgb8(158, 184, 220),
                 .disabled = canvas.Color.rgb8(34, 34, 34),
             }).apply(tokens.colors),
+            .cozy => (canvas.ColorTokenOverrides{
+                .background = canvas.Color.rgb8(38, 33, 28),
+                .surface = canvas.Color.rgb8(47, 40, 33),
+                .surface_subtle = canvas.Color.rgb8(62, 52, 42),
+                .surface_pressed = canvas.Color.rgb8(73, 62, 49),
+                .text = canvas.Color.rgb8(244, 232, 207),
+                .text_muted = canvas.Color.rgb8(193, 175, 145),
+                .border = canvas.Color.rgb8(78, 66, 53),
+                .accent = canvas.Color.rgb8(213, 166, 91),
+                .accent_text = canvas.Color.rgb8(38, 33, 28),
+                .destructive = canvas.Color.rgb8(221, 119, 106),
+                .destructive_text = canvas.Color.rgb8(45, 23, 19),
+                .focus_ring = canvas.Color.rgb8(213, 166, 91),
+                .disabled = canvas.Color.rgb8(57, 49, 41),
+            }).apply(tokens.colors),
         };
     }
     tokens.typography.font_id = primary_font_id;
@@ -1216,17 +1768,55 @@ pub fn tokensFromModel(model: *const Model) canvas.DesignTokens {
 }
 
 pub fn rootView(ui: *LibraryUi, model: *const Model) LibraryUi.Node {
-    var content = CompiledLibraryView.build(ui, model);
+    var content = if (model.showOnboarding())
+        CompiledOnboardingView.build(ui, model)
+    else if (model.statsOpen())
+        CompiledStatsView.build(ui, model)
+    else
+        CompiledLibraryView.build(ui, model);
     content.widget.layout.grow = 1;
     content.widget.layout.max_size.width = content_max_width;
-    return ui.row(.{
+    var base = if (model.notesWide()) blk: {
+        var notes = CompiledNotesView.build(ui, model);
+        notes.widget.layout.min_size.width = 400;
+        notes.widget.layout.max_size.width = 400;
+        break :blk ui.row(.{
+            .grow = 1,
+            .main = .center,
+            .style_tokens = .{ .background = .background },
+        }, .{ content, notes });
+    } else if (model.notesOpen()) blk: {
+        const notes = CompiledNotesView.build(ui, model);
+        break :blk ui.stack(.{
+            .grow = 1,
+            .style_tokens = .{ .background = .background },
+        }, .{ content, notes });
+    } else ui.row(.{
         .grow = 1,
         .main = .center,
         .style_tokens = .{ .background = .background },
     }, .{content});
+    if (model.settings.open) {
+        const settings = CompiledSettingsView.build(ui, model);
+        base = ui.stack(.{
+            .grow = 1,
+            .style_tokens = .{ .background = .background },
+        }, .{ base, settings });
+    }
+    if (model.documentOpen()) {
+        const document = CompiledDocumentView.build(ui, model);
+        base = ui.stack(.{
+            .grow = 1,
+            .style_tokens = .{ .background = .background },
+        }, .{ base, document });
+    }
+    return base;
 }
 
 pub fn navigationDepth(model: *const Model) usize {
+    if (model.documentOpen()) return 4;
+    if (model.settings.open) return 3;
+    if (model.notes.open) return 3;
     if (model.screen == .library) return 0;
     if (model.canvas_width < course_split_breakpoint and model.compact_course_page == .lesson) return 2;
     return 1;
@@ -1264,6 +1854,8 @@ pub fn appOptions() LibraryApp.Options {
 }
 
 pub fn boot(model: *Model, effects: *Effects) void {
+    model.navigation = .{};
+    model.root = .{};
     model.screen = .library;
     model.course_state = .inactive;
     model.library_revision = 0;
@@ -1276,6 +1868,8 @@ pub fn boot(model: *Model, effects: *Effects) void {
     model.clearSectionDisclosure();
     model.search_open = false;
     model.restore_search_focus = false;
+    model.restore_stats_focus = false;
+    model.restore_notes_focus = false;
     model.search_state = .inactive;
     model.search_query_buffer.clear();
     model.search_index_revision = 0;
@@ -1285,7 +1879,129 @@ pub fn boot(model: *Model, effects: *Effects) void {
     model.desired_search_query_id = 0;
     model.active_search_query_id = 0;
     model.clearSearchResults();
-    requestLibraryPage(model, effects, 0, 0);
+    model.stats = .{};
+    model.notes = .{};
+    model.settings = .{};
+    model.document = .{};
+    model.restore_settings_focus = false;
+    model.progress_state = .inactive;
+    model.progress_request_id = 0;
+    model.progress_lesson_id_len = 0;
+    model.progress_message_len = 0;
+    requestRootState(model, effects, 0);
+    requestSettings(model, effects);
+}
+
+fn requestSettings(model: *Model, effects: *Effects) void {
+    model.settings.state = .loading;
+    model.settings.get_request_id = effects.external(.{
+        .key = core_adapter.settings_get_key,
+        .adapter_id = core_adapter.adapter_id,
+        .kind = @intFromEnum(core_adapter.Operation.load_settings),
+        .schema_version = core_adapter.schema_version,
+        .payload = "",
+        .on_result = Effects.externalMsg(.settings_loaded),
+    }) catch {
+        model.settings.failLoad("The appearance settings service could not start.");
+        return;
+    };
+}
+
+fn requestAppearanceSave(
+    model: *Model,
+    effects: *Effects,
+    appearance: settings_model.Appearance,
+) void {
+    if (!model.settings.beginSave(appearance)) return;
+    var payload_storage: [core_adapter.settings_put_appearance_request_bytes]u8 = undefined;
+    const payload = core_adapter.encodeSettingsPutAppearanceRequest(
+        &payload_storage,
+        model.settings.revision,
+        @intFromEnum(appearance),
+    ) catch {
+        model.settings.failSave("The appearance setting was invalid.");
+        return;
+    };
+    model.settings.put_request_id = effects.external(.{
+        .key = core_adapter.settings_put_appearance_key,
+        .adapter_id = core_adapter.adapter_id,
+        .kind = @intFromEnum(core_adapter.Operation.put_appearance),
+        .schema_version = core_adapter.schema_version,
+        .payload = payload,
+        .on_result = Effects.externalMsg(.appearance_saved),
+    }) catch {
+        model.settings.failSave("The appearance settings service could not start.");
+        return;
+    };
+}
+
+fn requestRootState(model: *Model, effects: *Effects, expected_revision: u64) void {
+    var payload_storage: [core_adapter.library_state_request_bytes]u8 = undefined;
+    const payload = core_adapter.encodeLibraryStateRequest(&payload_storage, expected_revision);
+    model.root.state = .loading;
+    model.root.state_request_id = effects.external(.{
+        .key = core_adapter.library_state_key,
+        .adapter_id = core_adapter.adapter_id,
+        .kind = @intFromEnum(core_adapter.Operation.load_library_state),
+        .schema_version = core_adapter.schema_version,
+        .payload = payload,
+        .on_result = Effects.externalMsg(.root_state_loaded),
+    }) catch {
+        model.root.setFailure("The Library root service could not start.");
+        return;
+    };
+}
+
+fn requestLibraryScan(model: *Model, effects: *Effects) void {
+    var payload_storage: [core_adapter.library_scan_request_header_bytes + core_adapter.max_root_path_bytes]u8 = undefined;
+    const payload = core_adapter.encodeLibraryScanRequest(
+        &payload_storage,
+        model.library_revision,
+        model.root.candidate(),
+    ) catch {
+        model.root.setScanFailure("The selected root folder is invalid.");
+        return;
+    };
+    model.root.validation = .scanning;
+    model.root.scan_phase = .none;
+    model.root.scan_cancellable = true;
+    model.root.scan_request_id = effects.external(.{
+        .key = core_adapter.library_scan_key,
+        .adapter_id = core_adapter.adapter_id,
+        .kind = @intFromEnum(core_adapter.Operation.scan_library),
+        .schema_version = core_adapter.schema_version,
+        .payload = payload,
+        .on_result = Effects.externalMsg(.root_scanned),
+    }) catch {
+        model.root.setScanFailure("The Library scan could not start.");
+        return;
+    };
+    effects.startTimer(.{
+        .key = root_scan_progress_timer_key,
+        .interval_ms = root_scan_progress_interval_ms,
+        .mode = .repeating,
+        .on_fire = Effects.timerMsg(.root_scan_progress_tick),
+    });
+}
+
+fn requestScanProgress(model: *Model, effects: *Effects) void {
+    if (model.root.scan_request_id == 0 or model.root.scan_progress_request_id != 0) return;
+    model.root.scan_progress_request_id = effects.external(.{
+        .key = core_adapter.library_scan_progress_key,
+        .adapter_id = core_adapter.adapter_id,
+        .kind = @intFromEnum(core_adapter.Operation.load_library_scan_progress),
+        .schema_version = core_adapter.schema_version,
+        .payload = "",
+        .on_result = Effects.externalMsg(.root_scan_progress_loaded),
+    }) catch return;
+}
+
+fn stopScanProgress(model: *Model, effects: *Effects) void {
+    effects.cancelTimer(root_scan_progress_timer_key);
+    if (model.root.scan_progress_request_id != 0) {
+        effects.cancel(core_adapter.library_scan_progress_key);
+        model.root.scan_progress_request_id = 0;
+    }
 }
 
 fn requestLibraryPage(model: *Model, effects: *Effects, expected_revision: u64, offset: u64) void {
@@ -1304,6 +2020,48 @@ fn requestLibraryPage(model: *Model, effects: *Effects, expected_revision: u64, 
         model.setFailure("The Library service could not start.");
         return;
     };
+}
+
+fn requestStats(model: *Model, effects: *Effects) void {
+    var stats_payload_storage: [core_adapter.library_stats_request_bytes]u8 = undefined;
+    const stats_payload = core_adapter.encodeLibraryStatsRequest(&stats_payload_storage, model.library_revision) catch {
+        model.setStatsFailure("The learning ledger request was invalid.");
+        return;
+    };
+    var activity_payload_storage: [core_adapter.activity_page_request_bytes]u8 = undefined;
+    const activity_payload = core_adapter.encodeActivityPageRequest(&activity_payload_storage, model.library_revision) catch {
+        model.setStatsFailure("The learning activity request was invalid.");
+        return;
+    };
+    model.stats.beginLoad();
+    model.stats.snapshot_request_id = effects.external(.{
+        .key = core_adapter.library_stats_key,
+        .adapter_id = core_adapter.adapter_id,
+        .kind = @intFromEnum(core_adapter.Operation.load_library_stats),
+        .schema_version = core_adapter.schema_version,
+        .payload = stats_payload,
+        .on_result = Effects.externalMsg(.stats_loaded),
+    }) catch {
+        model.setStatsFailure("The learning ledger could not start.");
+        return;
+    };
+    model.stats.activity_request_id = effects.external(.{
+        .key = core_adapter.activity_page_key,
+        .adapter_id = core_adapter.adapter_id,
+        .kind = @intFromEnum(core_adapter.Operation.load_activity_page),
+        .schema_version = core_adapter.schema_version,
+        .payload = activity_payload,
+        .on_result = Effects.externalMsg(.activity_loaded),
+    }) catch {
+        failStats(model, effects, "Learning activity could not start.");
+        return;
+    };
+}
+
+fn failStats(model: *Model, effects: *Effects, message: []const u8) void {
+    if (model.stats.snapshot_request_id != 0) effects.cancel(core_adapter.library_stats_key);
+    if (model.stats.activity_request_id != 0) effects.cancel(core_adapter.activity_page_key);
+    model.setStatsFailure(message);
 }
 
 fn requestCourseAccess(model: *Model, effects: *Effects) void {
@@ -1354,6 +2112,235 @@ fn requestLessonPage(model: *Model, effects: *Effects, offset: u64) void {
         model.setCourseFailure("The Lesson service could not start.");
         return;
     };
+}
+
+fn cancelDocument(model: *Model, effects: *Effects) void {
+    if (model.document.open_request_id != 0) effects.cancel(core_adapter.document_open_key);
+    if (model.document.page_request_id != 0) effects.cancel(core_adapter.document_page_key);
+    if (model.document.external_request_id != 0) effects.cancel(core_adapter.document_external_open_key);
+    model.document.close();
+}
+
+fn requestDocumentOpen(model: *Model, effects: *Effects) void {
+    if (!model.selectedLessonDocument() or model.library_revision == 0) {
+        cancelDocument(model, effects);
+        return;
+    }
+    cancelDocument(model, effects);
+    model.document.begin(model.library_revision, model.selected_lesson.id()) catch {
+        model.document.setFailure("The document request was invalid.");
+        return;
+    };
+    var payload_storage: [core_adapter.document_open_request_header_bytes + core_adapter.max_lesson_id_bytes]u8 = undefined;
+    const payload = core_adapter.encodeDocumentOpenRequest(
+        &payload_storage,
+        model.library_revision,
+        model.selected_lesson.id(),
+    ) catch {
+        model.document.setFailure("The document request was invalid.");
+        return;
+    };
+    model.document.open_request_id = effects.external(.{
+        .key = core_adapter.document_open_key,
+        .adapter_id = core_adapter.adapter_id,
+        .kind = @intFromEnum(core_adapter.Operation.open_document),
+        .schema_version = core_adapter.schema_version,
+        .payload = payload,
+        .on_result = Effects.externalMsg(.document_opened),
+    }) catch {
+        model.document.setFailure("The document reader could not start.");
+        return;
+    };
+}
+
+fn requestDocumentPage(model: *Model, effects: *Effects, offset: u64) void {
+    var payload_storage: [core_adapter.document_page_request_header_bytes + core_adapter.max_lesson_id_bytes]u8 = undefined;
+    const payload = core_adapter.encodeDocumentPageRequest(
+        &payload_storage,
+        model.library_revision,
+        offset,
+        model.document.documentId(),
+    ) catch {
+        model.document.setFailure("The document page request was invalid.");
+        return;
+    };
+    model.document.state = .loading;
+    model.document.pending_offset = offset;
+    model.document.page_request_id = effects.external(.{
+        .key = core_adapter.document_page_key,
+        .adapter_id = core_adapter.adapter_id,
+        .kind = @intFromEnum(core_adapter.Operation.load_document_page),
+        .schema_version = core_adapter.schema_version,
+        .payload = payload,
+        .on_result = Effects.externalMsg(.document_page_loaded),
+    }) catch {
+        model.document.setFailure("The document page could not load.");
+        return;
+    };
+}
+
+fn requestDocumentExternalOpen(model: *Model, effects: *Effects) void {
+    if (!model.selectedLessonDocument() or model.document.external_request_id != 0) return;
+    var payload_storage: [core_adapter.document_external_open_request_header_bytes + core_adapter.max_lesson_id_bytes]u8 = undefined;
+    const payload = core_adapter.encodeDocumentExternalOpenRequest(
+        &payload_storage,
+        model.library_revision,
+        model.selected_lesson.id(),
+    ) catch {
+        model.document.setFailure("External open validation could not start.");
+        return;
+    };
+    model.document.external_request_id = effects.external(.{
+        .key = core_adapter.document_external_open_key,
+        .adapter_id = core_adapter.adapter_id,
+        .kind = @intFromEnum(core_adapter.Operation.prepare_document_external_open),
+        .schema_version = core_adapter.schema_version,
+        .payload = payload,
+        .on_result = Effects.externalMsg(.document_external_open_ready),
+    }) catch {
+        model.document.setFailure("External open validation could not start.");
+        return;
+    };
+}
+
+fn requestProgress(model: *Model, effects: *Effects) void {
+    if (model.library_revision == 0 or !model.has_selected_lesson) return;
+    const lesson_id = model.selected_lesson.id();
+    const completed = !model.selected_lesson.completed;
+    var payload_storage: [core_adapter.progress_put_request_header_bytes + max_lesson_id_bytes]u8 = undefined;
+    const payload = core_adapter.encodeProgressPutRequest(
+        &payload_storage,
+        model.library_revision,
+        model.selected_lesson.watched_time,
+        model.selected_lesson.last_position,
+        completed,
+        lesson_id,
+    ) catch {
+        model.setProgressFailure("The Progress request was invalid.");
+        return;
+    };
+    model.progress_state = .saving;
+    model.progress_lesson_id_len = lesson_id.len;
+    @memcpy(model.progress_lesson_id_storage[0..lesson_id.len], lesson_id);
+    model.progress_watched_time = model.selected_lesson.watched_time;
+    model.progress_last_position = model.selected_lesson.last_position;
+    model.progress_completed = completed;
+    model.progress_message_len = 0;
+    model.progress_request_id = effects.external(.{
+        .key = core_adapter.progress_put_key,
+        .adapter_id = core_adapter.adapter_id,
+        .kind = @intFromEnum(core_adapter.Operation.put_progress),
+        .schema_version = core_adapter.schema_version,
+        .payload = payload,
+        .on_result = Effects.externalMsg(.progress_updated),
+    }) catch {
+        model.setProgressFailure("Progress could not start saving.");
+        return;
+    };
+}
+
+fn requestNotesPage(model: *Model, effects: *Effects, offset: u64) void {
+    var payload_storage: [core_adapter.notes_list_request_header_bytes + core_adapter.max_lesson_id_bytes]u8 = undefined;
+    const payload = core_adapter.encodeNotesListRequest(
+        &payload_storage,
+        model.library_revision,
+        offset,
+        model.notes.lessonId(),
+    ) catch {
+        model.notes.setFailure("The notes request was invalid.");
+        return;
+    };
+    model.notes.state = .loading;
+    model.notes.pending_offset = offset;
+    model.notes.list_request_id = effects.external(.{
+        .key = core_adapter.notes_list_key,
+        .adapter_id = core_adapter.adapter_id,
+        .kind = @intFromEnum(core_adapter.Operation.load_notes),
+        .schema_version = core_adapter.schema_version,
+        .payload = payload,
+        .on_result = Effects.externalMsg(.notes_loaded),
+    }) catch {
+        model.notes.setFailure("Loading notes could not start.");
+        return;
+    };
+}
+
+fn requestNoteSave(model: *Model, effects: *Effects) void {
+    if (!model.notes.editing or !model.notes.draftValid()) return;
+    var payload_storage: [
+        core_adapter.note_save_request_header_bytes +
+            core_adapter.max_lesson_id_bytes +
+            core_adapter.max_note_id_bytes +
+            core_adapter.max_note_text_bytes
+    ]u8 = undefined;
+    const payload = core_adapter.encodeNoteSaveRequest(
+        &payload_storage,
+        model.library_revision,
+        model.notes.editing_timestamp,
+        model.notes.lessonId(),
+        model.notes.editingId(),
+        model.notes.trimmedDraft(),
+    ) catch {
+        model.notes.setFailure("The note is invalid.");
+        return;
+    };
+    model.notes.state = .saving;
+    model.notes.mutation_request_id = effects.external(.{
+        .key = core_adapter.note_save_key,
+        .adapter_id = core_adapter.adapter_id,
+        .kind = @intFromEnum(core_adapter.Operation.save_note),
+        .schema_version = core_adapter.schema_version,
+        .payload = payload,
+        .on_result = Effects.externalMsg(.note_saved),
+    }) catch {
+        model.notes.setFailure("Saving the note could not start.");
+        return;
+    };
+}
+
+fn requestNoteDelete(model: *Model, effects: *Effects, note_id: []const u8) void {
+    if (!model.notes.beginDelete(note_id)) return;
+    var payload_storage: [
+        core_adapter.note_delete_request_header_bytes +
+            core_adapter.max_note_id_bytes
+    ]u8 = undefined;
+    const payload = core_adapter.encodeNoteDeleteRequest(
+        &payload_storage,
+        model.library_revision,
+        note_id,
+    ) catch {
+        model.notes.setFailure("The note could not be deleted.");
+        return;
+    };
+    model.notes.mutation_request_id = effects.external(.{
+        .key = core_adapter.note_delete_key,
+        .adapter_id = core_adapter.adapter_id,
+        .kind = @intFromEnum(core_adapter.Operation.delete_note),
+        .schema_version = core_adapter.schema_version,
+        .payload = payload,
+        .on_result = Effects.externalMsg(.note_deleted),
+    }) catch {
+        model.notes.setFailure("Deleting the note could not start.");
+        return;
+    };
+}
+
+fn closeNotes(model: *Model, effects: *Effects) void {
+    if (model.notes.list_request_id != 0) effects.cancel(core_adapter.notes_list_key);
+    if (model.notes.mutation_request_id != 0) {
+        const key = if (model.notes.state == .deleting)
+            core_adapter.note_delete_key
+        else
+            core_adapter.note_save_key;
+        effects.cancel(key);
+    }
+    model.notes.close();
+}
+
+fn adoptNoteMutationRevision(model: *Model, revision: u64) void {
+    model.library_revision = revision;
+    model.search_index_revision = 0;
+    model.stats.revision = 0;
 }
 
 fn requestSearchIndex(model: *Model, effects: *Effects) void {
@@ -1448,6 +2435,174 @@ fn selectLesson(model: *Model, lesson_id: []const u8) bool {
 pub fn update(model: *Model, msg: Msg, effects: *Effects) void {
     switch (msg) {
         .appearance_changed => |appearance| model.appearance = appearance,
+        .settings_loaded => |result| {
+            if (result.request_id != model.settings.get_request_id) return;
+            if (result.key != core_adapter.settings_get_key or
+                result.adapter_id != core_adapter.adapter_id or
+                result.kind != @intFromEnum(core_adapter.Operation.load_settings) or
+                result.schema_version != core_adapter.schema_version)
+            {
+                model.settings.failLoad("Appearance settings returned an unexpected response.");
+                return;
+            }
+            switch (result.outcome) {
+                .ok => model.settings.load(result.bytes) catch
+                    model.settings.failLoad("Appearance settings returned invalid data."),
+                .failed => model.settings.failLoad(result.bytes),
+                .cancelled => model.settings.failLoad("Loading appearance settings was cancelled."),
+                .adapter_unavailable, .submit_failed => model.settings.failLoad("Appearance settings are unavailable."),
+            }
+        },
+        .appearance_saved => |result| {
+            if (result.request_id != model.settings.put_request_id) return;
+            if (result.key != core_adapter.settings_put_appearance_key or
+                result.adapter_id != core_adapter.adapter_id or
+                result.kind != @intFromEnum(core_adapter.Operation.put_appearance) or
+                result.schema_version != core_adapter.schema_version)
+            {
+                model.settings.failSave("Appearance settings returned an unexpected response.");
+                return;
+            }
+            switch (result.outcome) {
+                .ok => model.settings.applySaved(result.bytes) catch
+                    model.settings.failSave("Appearance settings returned invalid data."),
+                .failed => model.settings.failSave(result.bytes),
+                .cancelled => model.settings.failSave("Saving appearance settings was cancelled."),
+                .adapter_unavailable, .submit_failed => model.settings.failSave("Appearance settings are unavailable."),
+            }
+        },
+        .root_picked => |result| {
+            if (result.key != root_picker_key or model.root.validation != .picking) return;
+            switch (result.outcome) {
+                .selected => {
+                    model.root.setCandidate(result.path) catch {
+                        model.root.setScanFailure("The selected root folder is invalid.");
+                        return;
+                    };
+                    requestLibraryScan(model, effects);
+                },
+                .cancelled => model.root.validation = .idle,
+                .failed, .rejected => model.root.setScanFailure("The root folder picker is unavailable."),
+            }
+        },
+        .root_scanned => |result| {
+            if (result.request_id != model.root.scan_request_id) return;
+            stopScanProgress(model, effects);
+            model.root.scan_request_id = 0;
+            if (result.key != core_adapter.library_scan_key or
+                result.adapter_id != core_adapter.adapter_id or
+                result.kind != @intFromEnum(core_adapter.Operation.scan_library) or
+                result.schema_version != core_adapter.schema_version)
+            {
+                model.root.setScanFailure("The Library scan returned an unexpected response.");
+                return;
+            }
+            switch (result.outcome) {
+                .ok => {
+                    const revision = model.root.loadScanResult(result.bytes, model.library_revision) catch {
+                        model.root.setScanFailure("The Library scan returned invalid data.");
+                        return;
+                    };
+                    model.library_revision = revision;
+                    requestRootState(model, effects, revision);
+                },
+                .failed => {
+                    if (std.mem.eql(u8, result.bytes, core_adapter.scan_cancelled_message)) {
+                        model.root.validation = .idle;
+                        model.root.scan_cancel_request_id = 0;
+                        model.root.message_len = 0;
+                    } else {
+                        model.root.setScanFailure(result.bytes);
+                    }
+                },
+                .cancelled => {
+                    model.root.validation = .idle;
+                    model.root.message_len = 0;
+                },
+                .adapter_unavailable, .submit_failed => model.root.setScanFailure("The Library scan service is unavailable."),
+            }
+        },
+        .root_scan_cancelled => |result| {
+            if (result.request_id != model.root.scan_cancel_request_id) return;
+            model.root.scan_cancel_request_id = 0;
+            if (result.key != core_adapter.library_scan_cancel_key or
+                result.adapter_id != core_adapter.adapter_id or
+                result.kind != @intFromEnum(core_adapter.Operation.cancel_library_scan) or
+                result.schema_version != core_adapter.schema_version)
+            {
+                model.root.validation = .scanning;
+                return;
+            }
+            if (result.outcome != .ok) {
+                model.root.validation = .scanning;
+                return;
+            }
+            const CancelPayload = struct {
+                outcome: enum { accepted, tooLate },
+            };
+            const parsed = std.json.parseFromSlice(
+                CancelPayload,
+                std.heap.page_allocator,
+                result.bytes,
+                .{},
+            ) catch {
+                model.root.validation = .scanning;
+                return;
+            };
+            defer parsed.deinit();
+            model.root.validation = switch (parsed.value.outcome) {
+                .accepted => .cancelling,
+                .tooLate => .committing,
+            };
+        },
+        .root_scan_progress_tick => |timer| {
+            if (timer.outcome != .fired) return;
+            requestScanProgress(model, effects);
+        },
+        .root_scan_progress_loaded => |result| {
+            if (result.request_id != model.root.scan_progress_request_id) return;
+            model.root.scan_progress_request_id = 0;
+            if (model.root.scan_request_id == 0 or
+                result.key != core_adapter.library_scan_progress_key or
+                result.adapter_id != core_adapter.adapter_id or
+                result.kind != @intFromEnum(core_adapter.Operation.load_library_scan_progress) or
+                result.schema_version != core_adapter.schema_version or
+                result.outcome != .ok)
+            {
+                return;
+            }
+            model.root.applyScanProgress(result.bytes) catch return;
+        },
+        .root_state_loaded => |result| {
+            if (result.request_id != model.root.state_request_id) return;
+            model.root.state_request_id = 0;
+            if (result.key != core_adapter.library_state_key or
+                result.adapter_id != core_adapter.adapter_id or
+                result.kind != @intFromEnum(core_adapter.Operation.load_library_state) or
+                result.schema_version != core_adapter.schema_version)
+            {
+                model.root.setFailure("The Library root service returned an unexpected response.");
+                return;
+            }
+            switch (result.outcome) {
+                .ok => {
+                    const revision = model.root.loadState(result.bytes) catch {
+                        model.root.setFailure("The Library root service returned invalid data.");
+                        return;
+                    };
+                    model.library_revision = revision;
+                    if (model.root.state == .required) {
+                        model.navigation.route = .onboarding;
+                    } else {
+                        model.navigation.route = .library;
+                        requestLibraryPage(model, effects, revision, 0);
+                    }
+                },
+                .failed => model.root.setFailure(result.bytes),
+                .cancelled => model.root.setFailure("Loading the Library root was cancelled."),
+                .adapter_unavailable, .submit_failed => model.root.setFailure("The Library root service is unavailable."),
+            }
+        },
         .library_loaded => |result| {
             if (model.screen != .library or result.request_id != model.library_request_id) return;
             model.library_request_id = 0;
@@ -1460,11 +2615,182 @@ pub fn update(model: *Model, msg: Msg, effects: *Effects) void {
                 return;
             }
             switch (result.outcome) {
-                .ok => model.loadCoursePage(result.bytes) catch
-                    model.setFailure("The Library service returned invalid data."),
+                .ok => {
+                    model.loadCoursePage(result.bytes) catch {
+                        model.setFailure("The Library service returned invalid data.");
+                        return;
+                    };
+                    if (model.stats.revision != 0 and model.stats.revision != model.library_revision) {
+                        model.stats = .{};
+                    }
+                },
                 .failed => model.setFailure(result.bytes),
                 .cancelled => model.setFailure("Opening the Library was cancelled."),
                 .adapter_unavailable, .submit_failed => model.setFailure("The Library service is unavailable."),
+            }
+        },
+        .stats_loaded => |result| {
+            if (!model.stats.open or
+                model.stats.state != .loading or
+                result.request_id != model.stats.snapshot_request_id) return;
+            model.stats.snapshot_request_id = 0;
+            if (result.key != core_adapter.library_stats_key or
+                result.adapter_id != core_adapter.adapter_id or
+                result.kind != @intFromEnum(core_adapter.Operation.load_library_stats) or
+                result.schema_version != core_adapter.schema_version)
+            {
+                failStats(model, effects, "The learning ledger returned an unexpected response.");
+                return;
+            }
+            switch (result.outcome) {
+                .ok => model.loadStats(result.bytes) catch
+                    failStats(model, effects, "The learning ledger returned invalid data."),
+                .failed => failStats(model, effects, result.bytes),
+                .cancelled => failStats(model, effects, "Loading the learning ledger was cancelled."),
+                .adapter_unavailable, .submit_failed => failStats(model, effects, "The learning ledger is unavailable."),
+            }
+        },
+        .activity_loaded => |result| {
+            if (!model.stats.open or
+                model.stats.state != .loading or
+                result.request_id != model.stats.activity_request_id) return;
+            model.stats.activity_request_id = 0;
+            if (result.key != core_adapter.activity_page_key or
+                result.adapter_id != core_adapter.adapter_id or
+                result.kind != @intFromEnum(core_adapter.Operation.load_activity_page) or
+                result.schema_version != core_adapter.schema_version)
+            {
+                failStats(model, effects, "Learning activity returned an unexpected response.");
+                return;
+            }
+            switch (result.outcome) {
+                .ok => model.stats.loadActivity(
+                    result.bytes,
+                    model.library_revision,
+                ) catch failStats(model, effects, "Learning activity returned invalid data."),
+                .failed => failStats(model, effects, result.bytes),
+                .cancelled => failStats(model, effects, "Loading learning activity was cancelled."),
+                .adapter_unavailable, .submit_failed => failStats(model, effects, "Learning activity is unavailable."),
+            }
+        },
+        .progress_updated => |result| {
+            if (model.progress_state != .saving or result.request_id != model.progress_request_id) return;
+            model.progress_request_id = 0;
+            if (result.key != core_adapter.progress_put_key or
+                result.adapter_id != core_adapter.adapter_id or
+                result.kind != @intFromEnum(core_adapter.Operation.put_progress) or
+                result.schema_version != core_adapter.schema_version)
+            {
+                model.setProgressFailure("Progress returned an unexpected response.");
+                return;
+            }
+            if (model.screen != .course) {
+                model.progress_state = .inactive;
+                model.progress_lesson_id_len = 0;
+                model.progress_message_len = 0;
+                return;
+            }
+            switch (result.outcome) {
+                .ok => {
+                    model.applyProgressUpdate(result.bytes) catch {
+                        model.setProgressFailure("Progress returned invalid data.");
+                        return;
+                    };
+                    if (model.selectedLessonDocument()) requestDocumentOpen(model, effects);
+                },
+                .failed => model.setProgressFailure(result.bytes),
+                .cancelled => model.setProgressFailure("Saving Progress was cancelled."),
+                .adapter_unavailable, .submit_failed => model.setProgressFailure("Progress is unavailable."),
+            }
+        },
+        .notes_loaded => |result| {
+            if (!model.notes.open or result.request_id != model.notes.list_request_id) return;
+            model.notes.list_request_id = 0;
+            if (result.key != core_adapter.notes_list_key or
+                result.adapter_id != core_adapter.adapter_id or
+                result.kind != @intFromEnum(core_adapter.Operation.load_notes) or
+                result.schema_version != core_adapter.schema_version)
+            {
+                model.notes.setFailure("Notes returned an unexpected response.");
+                return;
+            }
+            switch (result.outcome) {
+                .ok => model.notes.loadPage(
+                    result.bytes,
+                    model.library_revision,
+                    model.notes.lessonId(),
+                ) catch model.notes.setFailure("Notes returned invalid data."),
+                .failed => model.notes.setFailure(result.bytes),
+                .cancelled => model.notes.setFailure("Loading notes was cancelled."),
+                .adapter_unavailable, .submit_failed => model.notes.setFailure("Notes are unavailable."),
+            }
+        },
+        .note_saved => |result| {
+            if (!model.notes.open or
+                model.notes.state != .saving or
+                result.request_id != model.notes.mutation_request_id) return;
+            model.notes.mutation_request_id = 0;
+            if (result.key != core_adapter.note_save_key or
+                result.adapter_id != core_adapter.adapter_id or
+                result.kind != @intFromEnum(core_adapter.Operation.save_note) or
+                result.schema_version != core_adapter.schema_version)
+            {
+                model.notes.setFailure("Saving the note returned an unexpected response.");
+                return;
+            }
+            switch (result.outcome) {
+                .ok => {
+                    const revision = model.notes.savedRevision(
+                        result.bytes,
+                        model.library_revision,
+                    ) catch {
+                        model.notes.setFailure("Saving the note returned invalid data.");
+                        return;
+                    };
+                    adoptNoteMutationRevision(model, revision);
+                    if (model.selectedLessonDocument()) requestDocumentOpen(model, effects);
+                    model.notes.finishSave();
+                    requestNotesPage(model, effects, model.notes.offset);
+                },
+                .failed => model.notes.setFailure(result.bytes),
+                .cancelled => model.notes.setFailure("Saving the note was cancelled."),
+                .adapter_unavailable, .submit_failed => model.notes.setFailure("Saving the note is unavailable."),
+            }
+        },
+        .note_deleted => |result| {
+            if (!model.notes.open or
+                model.notes.state != .deleting or
+                result.request_id != model.notes.mutation_request_id) return;
+            model.notes.mutation_request_id = 0;
+            if (result.key != core_adapter.note_delete_key or
+                result.adapter_id != core_adapter.adapter_id or
+                result.kind != @intFromEnum(core_adapter.Operation.delete_note) or
+                result.schema_version != core_adapter.schema_version)
+            {
+                model.notes.setFailure("Deleting the note returned an unexpected response.");
+                return;
+            }
+            switch (result.outcome) {
+                .ok => {
+                    const revision = model.notes.deletedRevision(
+                        result.bytes,
+                        model.library_revision,
+                    ) catch {
+                        model.notes.setFailure("Deleting the note returned invalid data.");
+                        return;
+                    };
+                    adoptNoteMutationRevision(model, revision);
+                    if (model.selectedLessonDocument()) requestDocumentOpen(model, effects);
+                    model.notes.finishDelete();
+                    const next_offset = if (model.notes.row_count == 1 and model.notes.offset != 0)
+                        model.notes.offset - core_adapter.lesson_page_size
+                    else
+                        model.notes.offset;
+                    requestNotesPage(model, effects, next_offset);
+                },
+                .failed => model.notes.setFailure(result.bytes),
+                .cancelled => model.notes.setFailure("Deleting the note was cancelled."),
+                .adapter_unavailable, .submit_failed => model.notes.setFailure("Deleting the note is unavailable."),
             }
         },
         .course_accessed => |result| {
@@ -1509,11 +2835,85 @@ pub fn update(model: *Model, msg: Msg, effects: *Effects) void {
                 return;
             }
             switch (result.outcome) {
-                .ok => model.loadLessonPage(result.bytes) catch
-                    model.setCourseFailure("The Lesson service returned invalid data."),
+                .ok => {
+                    model.loadLessonPage(result.bytes) catch {
+                        model.setCourseFailure("The Lesson service returned invalid data.");
+                        return;
+                    };
+                    if (model.selectedLessonDocument()) requestDocumentOpen(model, effects);
+                },
                 .failed => model.setCourseFailure(result.bytes),
                 .cancelled => model.setCourseFailure("Loading the Lessons was cancelled."),
                 .adapter_unavailable, .submit_failed => model.setCourseFailure("The Lesson service is unavailable."),
+            }
+        },
+        .document_opened => |result| {
+            if (!model.selectedLessonDocument() or
+                result.request_id != model.document.open_request_id) return;
+            model.document.open_request_id = 0;
+            if (result.key != core_adapter.document_open_key or
+                result.adapter_id != core_adapter.adapter_id or
+                result.kind != @intFromEnum(core_adapter.Operation.open_document) or
+                result.schema_version != core_adapter.schema_version)
+            {
+                model.document.setFailure("The document reader returned an unexpected response.");
+                return;
+            }
+            switch (result.outcome) {
+                .ok => {
+                    model.document.loadOpened(result.bytes) catch {
+                        model.document.setFailure("The document reader returned invalid data.");
+                        return;
+                    };
+                    requestDocumentPage(model, effects, 0);
+                },
+                .failed => {
+                    if (!model.document.markUnsupported(result.bytes)) {
+                        model.document.setFailure(result.bytes);
+                    }
+                },
+                .cancelled => model.document.setFailure("Opening the document was cancelled."),
+                .adapter_unavailable, .submit_failed => model.document.setFailure("The document reader is unavailable."),
+            }
+        },
+        .document_page_loaded => |result| {
+            if (!model.selectedLessonDocument() or
+                result.request_id != model.document.page_request_id) return;
+            model.document.page_request_id = 0;
+            if (result.key != core_adapter.document_page_key or
+                result.adapter_id != core_adapter.adapter_id or
+                result.kind != @intFromEnum(core_adapter.Operation.load_document_page) or
+                result.schema_version != core_adapter.schema_version)
+            {
+                model.document.setFailure("The document page returned an unexpected response.");
+                return;
+            }
+            switch (result.outcome) {
+                .ok => model.document.loadPage(result.bytes) catch
+                    model.document.setFailure("The document page returned invalid data."),
+                .failed => model.document.setFailure(result.bytes),
+                .cancelled => model.document.setFailure("Loading the document page was cancelled."),
+                .adapter_unavailable, .submit_failed => model.document.setFailure("The document reader is unavailable."),
+            }
+        },
+        .document_external_open_ready => |result| {
+            if (!model.selectedLessonDocument() or
+                result.request_id != model.document.external_request_id) return;
+            model.document.external_request_id = 0;
+            if (result.key != core_adapter.document_external_open_key or
+                result.adapter_id != core_adapter.adapter_id or
+                result.kind != @intFromEnum(core_adapter.Operation.prepare_document_external_open) or
+                result.schema_version != core_adapter.schema_version)
+            {
+                model.document.setFailure("External open validation returned an unexpected response.");
+                return;
+            }
+            switch (result.outcome) {
+                .ok => model.document.loadExternalReady(result.bytes) catch
+                    model.document.setFailure("External open validation returned invalid data."),
+                .failed => model.document.setFailure(result.bytes),
+                .cancelled => model.document.setFailure("External open validation was cancelled."),
+                .adapter_unavailable, .submit_failed => model.document.setFailure("External open validation is unavailable."),
             }
         },
         .search_indexed => |result| {
@@ -1625,7 +3025,126 @@ pub fn update(model: *Model, msg: Msg, effects: *Effects) void {
                 requestSearchPage(model, effects, model.desired_search_query_id, 0);
             }
         },
+        .open_stats => {
+            if (model.screen != .library or !model.libraryReady()) return;
+            model.restore_stats_focus = false;
+            model.stats.open = true;
+            if (model.stats.state == .ready and model.stats.revision == model.library_revision) return;
+            if (model.stats.snapshot_request_id == 0 and model.stats.activity_request_id == 0) {
+                requestStats(model, effects);
+            }
+        },
+        .dismiss_stats => {
+            if (!model.stats.open) return;
+            model.stats.open = false;
+            model.restore_stats_focus = true;
+            if (model.stats.snapshot_request_id != 0) {
+                effects.cancel(core_adapter.library_stats_key);
+                model.stats.snapshot_request_id = 0;
+            }
+            if (model.stats.activity_request_id != 0) {
+                effects.cancel(core_adapter.activity_page_key);
+                model.stats.activity_request_id = 0;
+            }
+            model.stats.state = .inactive;
+        },
+        .open_settings => {
+            if (model.showOnboarding() or model.settings.open) return;
+            model.settings.open = true;
+            model.restore_settings_focus = false;
+            if (model.settings.revision == 0 and model.settings.get_request_id == 0) {
+                requestSettings(model, effects);
+            }
+        },
+        .dismiss_settings => {
+            if (!model.settings.open) return;
+            model.settings.open = false;
+            model.restore_settings_focus = true;
+        },
+        .select_light_appearance => requestAppearanceSave(model, effects, .light),
+        .select_dark_appearance => requestAppearanceSave(model, effects, .dark),
+        .select_cozy_appearance => requestAppearanceSave(model, effects, .cozy),
+        .settings_rescan => {
+            if (!model.settings.open or model.rootActionBusy() or model.root.committed().len == 0) return;
+            model.settings.open = false;
+            model.restore_settings_focus = true;
+            model.root.setCandidate(model.root.committed()) catch {
+                model.root.setScanFailure("The current Library root is invalid.");
+                return;
+            };
+            requestLibraryScan(model, effects);
+        },
+        .settings_choose_root => {
+            if (!model.settings.open or model.rootActionBusy()) return;
+            model.settings.open = false;
+            model.restore_settings_focus = true;
+            model.root.validation = .picking;
+            effects.chooseDirectory(.{
+                .key = root_picker_key,
+                .on_result = Effects.directoryMsg(.root_picked),
+            });
+        },
+        .open_notes => {
+            if (model.screen != .course or
+                !model.courseReady() or
+                !model.has_selected_lesson or
+                model.notes.open) return;
+            model.restore_notes_focus = false;
+            model.notes.begin(model.selected_lesson.id()) catch return;
+            requestNotesPage(model, effects, 0);
+        },
+        .dismiss_notes => {
+            if (!model.notes.open) return;
+            closeNotes(model, effects);
+            model.restore_notes_focus = true;
+        },
+        .new_note => {
+            if (!model.notes.open or model.notes.state == .loading) return;
+            model.notes.beginNew(if (model.has_selected_lesson)
+                model.selected_lesson.last_position
+            else
+                0);
+        },
+        .edit_note => |note_id| {
+            if (!model.notes.open or model.notes.state != .ready) return;
+            _ = model.notes.beginEdit(note_id);
+        },
+        .note_edited => |edit| {
+            if (!model.notes.open or !model.notes.editing or model.notesBusy()) return;
+            model.notes.draft.apply(edit);
+        },
+        .save_note => {
+            if (!model.notes.open or model.notesBusy()) return;
+            requestNoteSave(model, effects);
+        },
+        .cancel_note_edit => {
+            if (!model.notes.open) return;
+            model.notes.cancelEdit();
+        },
+        .delete_note => |note_id| {
+            if (!model.notes.open or model.notes.state != .ready) return;
+            requestNoteDelete(model, effects, note_id);
+        },
+        .retry_notes => {
+            if (!model.notes.open or model.notes.state != .failed) return;
+            requestNotesPage(model, effects, model.notes.offset);
+        },
+        .previous_notes_page => {
+            if (!model.notes.hasPreviousPage()) return;
+            requestNotesPage(model, effects, model.notes.offset - core_adapter.lesson_page_size);
+        },
+        .next_notes_page => {
+            if (!model.notes.hasNextPage()) return;
+            requestNotesPage(model, effects, model.notes.offset + core_adapter.lesson_page_size);
+        },
         .dismiss_search => {
+            if (model.documentOpen()) {
+                cancelDocument(model, effects);
+                if (model.canvas_width < course_split_breakpoint) {
+                    model.compact_course_page = .outline;
+                }
+                return;
+            }
             if (!model.search_open) return;
             model.search_open = false;
             model.restore_search_focus = true;
@@ -1696,6 +3215,7 @@ pub fn update(model: *Model, msg: Msg, effects: *Effects) void {
                 model.clearTargetLesson();
             }
             cancelSearchWork(model, effects);
+            cancelDocument(model, effects);
             model.restore_search_focus = false;
             model.screen = .course;
             model.compact_course_page = if (result_type == .lesson) .lesson else .outline;
@@ -1711,6 +3231,7 @@ pub fn update(model: *Model, msg: Msg, effects: *Effects) void {
             } else return;
             if (!course.available) return;
             cancelSearchWork(model, effects);
+            cancelDocument(model, effects);
             const same_course = model.selected_course.id_len != 0 and
                 std.mem.eql(u8, model.selected_course.id(), course.id());
             const reopening_selected_course = model.has_selected_lesson and same_course;
@@ -1749,14 +3270,46 @@ pub fn update(model: *Model, msg: Msg, effects: *Effects) void {
             }
         },
         .select_lesson => |lesson_id| {
-            _ = selectLesson(model, lesson_id);
+            if (model.notes.open and
+                (!model.has_selected_lesson or
+                    !std.mem.eql(u8, model.selected_lesson.id(), lesson_id)))
+            {
+                closeNotes(model, effects);
+            }
+            if (selectLesson(model, lesson_id)) requestDocumentOpen(model, effects);
         },
         .open_lesson => |lesson_id| {
+            if (model.notes.open and
+                (!model.has_selected_lesson or
+                    !std.mem.eql(u8, model.selected_lesson.id(), lesson_id)))
+            {
+                closeNotes(model, effects);
+            }
             if (!selectLesson(model, lesson_id)) return;
+            requestDocumentOpen(model, effects);
             model.compact_course_page = .lesson;
+        },
+        .dismiss_document => {
+            if (!model.documentOpen()) return;
+            cancelDocument(model, effects);
+            if (model.canvas_width < course_split_breakpoint) {
+                model.compact_course_page = .outline;
+            }
+        },
+        .toggle_lesson_completion => {
+            if (model.screen != .course or
+                !model.courseReady() or
+                !model.has_selected_lesson or
+                model.progress_state == .saving) return;
+            requestProgress(model, effects);
         },
         .navigate_back => {
             if (model.screen != .course) return;
+            if (model.notes.open) {
+                closeNotes(model, effects);
+                model.restore_notes_focus = true;
+                return;
+            }
             if (model.canvas_width < course_split_breakpoint and model.compact_course_page == .lesson) {
                 model.compact_course_page = .outline;
                 for (model.lessons[0..model.lesson_count]) |*lesson| {
@@ -1766,6 +3319,7 @@ pub fn update(model: *Model, msg: Msg, effects: *Effects) void {
             }
             effects.cancel(core_adapter.course_access_key);
             effects.cancel(core_adapter.lesson_page_key);
+            cancelDocument(model, effects);
             model.screen = .library;
             model.restore_course_focus = true;
             model.course_state = .inactive;
@@ -1828,6 +3382,61 @@ pub fn update(model: *Model, msg: Msg, effects: *Effects) void {
                 model.desired_search_query_id,
                 model.search_offset + core_adapter.search_page_size,
             );
+        },
+        .retry_document => {
+            if (!model.selectedLessonDocument() or model.document.state != .failed) return;
+            requestDocumentOpen(model, effects);
+        },
+        .previous_document_page => {
+            if (!model.document.hasPreviousPage()) return;
+            requestDocumentPage(model, effects, model.document.offset - core_adapter.document_page_size);
+        },
+        .next_document_page => {
+            if (!model.document.hasNextPage()) return;
+            requestDocumentPage(model, effects, model.document.offset + core_adapter.document_page_size);
+        },
+        .prepare_document_external_open => {
+            if (!model.documentUnsupported()) return;
+            requestDocumentExternalOpen(model, effects);
+        },
+        .choose_root => {
+            if (model.root.validation == .picking or
+                model.root.validation == .scanning or
+                model.root.validation == .cancelling)
+            {
+                return;
+            }
+            model.root.validation = .picking;
+            effects.chooseDirectory(.{
+                .key = root_picker_key,
+                .on_result = Effects.directoryMsg(.root_picked),
+            });
+        },
+        .retry_root => {
+            if (model.root.state_request_id != 0) return;
+            requestRootState(model, effects, model.library_revision);
+        },
+        .retry_scan => {
+            if (model.root.candidate().len == 0 or model.root.scan_request_id != 0) return;
+            requestLibraryScan(model, effects);
+        },
+        .cancel_scan => {
+            if (model.root.validation != .scanning or
+                !model.root.scan_cancellable or
+                model.root.scan_request_id == 0) return;
+            model.root.validation = .cancelling;
+            model.root.scan_cancel_request_id = effects.external(.{
+                .key = core_adapter.library_scan_cancel_key,
+                .adapter_id = core_adapter.adapter_id,
+                .kind = @intFromEnum(core_adapter.Operation.cancel_library_scan),
+                .schema_version = core_adapter.schema_version,
+                .payload = "",
+                .on_result = Effects.externalMsg(.root_scan_cancelled),
+            }) catch {
+                model.root.scan_cancel_request_id = 0;
+                model.root.validation = .scanning;
+                return;
+            };
         },
     }
 }

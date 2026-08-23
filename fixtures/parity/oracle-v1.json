@@ -62,7 +62,7 @@
     "playbackCases": [
       { "id": "h264-aac-mp4", "container": "mp4", "video": "h264", "audio": "aac", "expected": "play" },
       { "id": "h264-multi-audio-mkv", "container": "mkv", "video": "h264", "audioTracks": 2, "expected": "play-and-switch" },
-      { "id": "hevc-10bit", "container": "mkv", "video": "hevc-main10", "expected": "play-or-named-decode-error" },
+      { "id": "hevc-10bit", "container": "mkv", "video": "hevc-main10", "expected": "play-visible-software-decode" },
       { "id": "external-srt-vtt", "container": "mp4", "subtitles": ["srt", "vtt"], "expected": "register-select-render" },
       { "id": "chapters", "container": "mkv", "chapters": 2, "expected": "ordered-selectable" }
     ],

@@ -4,6 +4,7 @@
     .display_name = "melearner",
     .description = "A local-first course learner.",
     .version = "0.1.0",
+    .icons = .{"assets/icon.png"},
     .platforms = .{"linux"},
     .capabilities = .{ "native_views", "gpu_surfaces", "shortcuts" },
     .shortcuts = .{

@@ -191,7 +191,9 @@ The waker fires only on an empty-to-nonempty queue transition. It calls the Nati
 
 The queue is bounded and loss behavior is typed:
 
-- replaceable player-position and scan-progress events coalesce by operation;
+- replaceable player-position events coalesce by operation; scan progress uses
+  a fixed-size synchronous snapshot query so polling never consumes the
+  request's reserved terminal-event capacity;
 - terminal request results, errors, file-loaded/end-file, and identity warnings are never silently dropped;
 - when pressure remains, new submissions return `ML_STATUS_BUSY` rather than allocating without bound;
 - one explicit overflow event reports coalesced/dropped nonterminal counts;

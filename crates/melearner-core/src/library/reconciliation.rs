@@ -9,9 +9,10 @@ use sqlx::{Connection, QueryBuilder, Row, Sqlite, Transaction};
 use super::{LibraryDatabase, LibraryError, child_path_range, natural_cmp};
 use crate::scanner::{
     CapturedScan, CourseData, FileEntry, FileType, ScanError, ScanResult,
-    ensure_course_marker_in_dir, scan_library_checked_in_root, verify_captured_root,
+    ensure_course_marker_in_dir, scan_library_checked_in_root,
+    scan_library_checked_in_root_with_progress, verify_captured_root,
 };
-use crate::{MutationControl, next_library_revision};
+use crate::{MutationControl, ScanControl, ScanPhase, next_library_revision};
 
 const WRITE_BATCH_SIZE: usize = 500;
 const WARNING_LIMIT: usize = 64;
@@ -145,12 +146,48 @@ struct LessonMatchState<'a> {
 }
 
 impl LibraryDatabase {
+    #[cfg(test)]
     pub(crate) async fn scan_and_reconcile(
         &mut self,
         expected_revision: u64,
         root_path: &str,
         max_payload_bytes: usize,
         control: &MutationControl,
+    ) -> Result<ReconcileResult, LibraryError> {
+        self.scan_and_reconcile_internal(
+            expected_revision,
+            root_path,
+            max_payload_bytes,
+            control,
+            None,
+        )
+        .await
+    }
+
+    pub(crate) async fn scan_and_reconcile_with_progress(
+        &mut self,
+        expected_revision: u64,
+        root_path: &str,
+        max_payload_bytes: usize,
+        control: &ScanControl,
+    ) -> Result<ReconcileResult, LibraryError> {
+        self.scan_and_reconcile_internal(
+            expected_revision,
+            root_path,
+            max_payload_bytes,
+            control.mutation(),
+            Some(control),
+        )
+        .await
+    }
+
+    async fn scan_and_reconcile_internal(
+        &mut self,
+        expected_revision: u64,
+        root_path: &str,
+        max_payload_bytes: usize,
+        control: &MutationControl,
+        progress: Option<&ScanControl>,
     ) -> Result<ReconcileResult, LibraryError> {
         self.require_revision(expected_revision)?;
         require_active(control)?;
@@ -173,15 +210,27 @@ impl LibraryDatabase {
                     root.display()
                 ))
             })?;
-        let captured_scan = scan_library_checked_in_root(&root, &marker_root, control)
-            .map_err(library_scan_error)?;
+        let captured_scan = match progress {
+            Some(progress) => {
+                scan_library_checked_in_root_with_progress(&root, &marker_root, progress)
+            }
+            None => scan_library_checked_in_root(&root, &marker_root, control),
+        }
+        .map_err(library_scan_error)?;
         require_active(control)?;
+        if let Some(progress) = progress {
+            let course_count = u64::try_from(captured_scan.result.courses.len()).map_err(|_| {
+                LibraryError::InvalidScan("scan course count exceeds u64".to_string())
+            })?;
+            progress.set_progress(ScanPhase::Reconciling, 0, course_count, None);
+        }
         self.reconcile_scan(
             expected_revision,
             &canonical_root,
             captured_scan,
             max_payload_bytes,
             control,
+            progress,
             &marker_root,
         )
         .await
@@ -194,6 +243,7 @@ impl LibraryDatabase {
         captured_scan: CapturedScan,
         max_payload_bytes: usize,
         control: &MutationControl,
+        progress: Option<&ScanControl>,
         marker_root: &CapabilityDir,
     ) -> Result<ReconcileResult, LibraryError> {
         self.require_revision(expected_revision)?;
@@ -227,10 +277,17 @@ impl LibraryDatabase {
                 return Err(rollback_error(transaction, error).await);
             }
         };
+        let marker_count = match u64::try_from(plan.marker_writes.len()) {
+            Ok(marker_count) => marker_count,
+            Err(_) => {
+                return Err(rollback_error(
+                    transaction,
+                    LibraryError::InvalidScan("marker write count exceeds u64".to_string()),
+                )
+                .await);
+            }
+        };
 
-        if control.is_cancelled() || !control.begin_commit() {
-            return Err(rollback_error(transaction, LibraryError::Cancelled).await);
-        }
         let Some(next_revision) = next_library_revision() else {
             return Err(rollback_error(transaction, LibraryError::RevisionExhausted).await);
         };
@@ -251,6 +308,13 @@ impl LibraryDatabase {
         if let Err(error) = verify_captured_root(Path::new(root_path), marker_root) {
             return Err(rollback_error(transaction, library_scan_error(error)).await);
         }
+        let began_commit = match progress {
+            Some(progress) => progress.begin_commit(plan.course_count),
+            None => control.begin_commit(),
+        };
+        if control.is_cancelled() || !began_commit {
+            return Err(rollback_error(transaction, LibraryError::Cancelled).await);
+        }
         transaction.commit().await?;
 
         self.revision = next_revision.get();
@@ -263,6 +327,15 @@ impl LibraryDatabase {
         }
 
         let mut warnings = plan.warnings;
+        if let Some(progress) = progress {
+            progress.set_progress(
+                ScanPhase::WritingMarkers,
+                0,
+                marker_count,
+                Some(marker_count),
+            );
+        }
+        let mut markers_processed = 0_u64;
         for (marker, marker_dir) in plan.marker_writes.into_iter().zip(marker_dirs) {
             if let Err(error) = ensure_course_marker_in_dir(
                 &marker_dir,
@@ -275,6 +348,15 @@ impl LibraryDatabase {
                         "Could not write marker for \"{}\": {error}",
                         marker.course_name
                     ),
+                );
+            }
+            markers_processed = markers_processed.saturating_add(1);
+            if let Some(progress) = progress {
+                progress.set_progress(
+                    ScanPhase::WritingMarkers,
+                    markers_processed,
+                    marker_count,
+                    Some(marker_count),
                 );
             }
         }
@@ -2080,7 +2162,7 @@ mod tests {
             let initial_revision = library.revision();
 
             let cancelled = MutationControl::new();
-            assert!(cancelled.cancel());
+            assert_eq!(cancelled.cancel(), crate::MutationCancel::Accepted);
             assert!(matches!(
                 library
                     .scan_and_reconcile(
@@ -2121,6 +2203,42 @@ mod tests {
                 0
             );
             assert!(!root.path().join("Course/.melearner-course.json").exists());
+        });
+    }
+
+    #[test]
+    fn scan_progress_finishes_after_every_planned_marker_write() {
+        block_on(async {
+            let data = tempfile::tempdir().expect("create state directory");
+            let root = tempfile::tempdir().expect("create library root");
+            touch(&root.path().join("Course/01 Intro/01 lesson.mp4"));
+            let mut library = open_test_library(data.path()).await;
+            let initial_revision = library.revision();
+            let mutation = Arc::new(MutationControl::new());
+            let control = ScanControl::new(mutation);
+
+            let result = library
+                .scan_and_reconcile_with_progress(
+                    initial_revision,
+                    root_text(root.path()),
+                    usize::MAX,
+                    &control,
+                )
+                .await
+                .expect("scan and reconcile with progress");
+
+            assert!(result.revision > initial_revision);
+            assert_eq!(
+                control.snapshot(),
+                crate::ScanProgressSnapshot {
+                    phase: ScanPhase::WritingMarkers,
+                    processed: 1,
+                    discovered: 1,
+                    total: Some(1),
+                    cancellable: false,
+                }
+            );
+            assert!(root.path().join("Course/.melearner-course.json").exists());
         });
     }
 
@@ -2204,6 +2322,7 @@ mod tests {
                     captured,
                     usize::MAX,
                     &MutationControl::new(),
+                    None,
                     &root_dir,
                 )
                 .await

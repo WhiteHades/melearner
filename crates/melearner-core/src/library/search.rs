@@ -893,7 +893,7 @@ mod tests {
                 Err(LibraryError::StaleRevision { .. })
             ));
             let cancelled = MutationControl::new();
-            assert!(cancelled.cancel());
+            assert_eq!(cancelled.cancel(), crate::MutationCancel::Accepted);
             assert!(matches!(
                 fixture
                     .library

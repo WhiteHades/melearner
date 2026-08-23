@@ -7,16 +7,28 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::thread::{self, JoinHandle};
 
-use crate::MutationControl;
 use crate::library::{
-    ActivityDayPage, ActivityPageInput, CourseAccess, CourseAccessInput, CoursePage, LessonPage,
-    LibraryDatabase, LibraryError, LibraryStats, NoteDelete, NoteDeleteInput, NotePage,
-    NotePageInput, NoteSaveInput, NoteSaved, ProgressInput, ProgressUpdate, ReconcileResult,
-    SearchIndexReady, SearchPage, SearchPageInput,
+    ActivityDayPage, ActivityPageInput, Appearance, AppearanceSettings, CourseAccess,
+    CourseAccessInput, CoursePage, DocumentExternalOpenInput, DocumentExternalOpenReady,
+    DocumentOpenInput, DocumentOpened, DocumentPage, DocumentPageInput, LessonPage,
+    LibraryDatabase, LibraryError, LibraryState, LibraryStats, NoteDelete, NoteDeleteInput,
+    NotePage, NotePageInput, NoteSaveInput, NoteSaved, ProgressInput, ProgressUpdate,
+    ReconcileResult, SearchIndexReady, SearchPage, SearchPageInput,
 };
+use crate::{MutationControl, ScanControl};
 
 #[derive(Debug)]
 pub(crate) enum DomainRequest {
+    LibraryState {
+        expected_revision: u64,
+    },
+    AppearanceSettings,
+    PutAppearance {
+        expected_revision: u64,
+        appearance: Appearance,
+        max_payload_bytes: usize,
+        control: Arc<MutationControl>,
+    },
     CoursePage {
         expected_revision: u64,
         offset: u64,
@@ -36,7 +48,7 @@ pub(crate) enum DomainRequest {
         expected_revision: u64,
         root_path: String,
         max_payload_bytes: usize,
-        control: Arc<MutationControl>,
+        control: Arc<ScanControl>,
     },
     PutProgress {
         input: ProgressInput,
@@ -73,6 +85,18 @@ pub(crate) enum DomainRequest {
         max_payload_bytes: usize,
         control: Arc<MutationControl>,
     },
+    OpenDocument {
+        input: DocumentOpenInput,
+        max_payload_bytes: usize,
+    },
+    DocumentPage {
+        input: DocumentPageInput,
+        max_payload_bytes: usize,
+    },
+    DocumentExternalOpen {
+        input: DocumentExternalOpenInput,
+        max_payload_bytes: usize,
+    },
     #[cfg(test)]
     LongQuery {
         entered: mpsc::Sender<()>,
@@ -83,6 +107,9 @@ pub(crate) enum DomainRequest {
 
 #[derive(Debug)]
 pub(crate) enum DomainResponse {
+    LibraryState(LibraryState),
+    AppearanceSettings(AppearanceSettings),
+    AppearanceUpdated(AppearanceSettings),
     CoursePage(CoursePage),
     LibraryStats(LibraryStats),
     LessonPage(LessonPage),
@@ -95,6 +122,9 @@ pub(crate) enum DomainResponse {
     NotePage(NotePage),
     NoteSaved(NoteSaved),
     NoteDeleted(NoteDelete),
+    DocumentOpened(DocumentOpened),
+    DocumentPage(DocumentPage),
+    DocumentExternalOpenReady(DocumentExternalOpenReady),
 }
 
 #[derive(Debug)]
@@ -223,6 +253,22 @@ impl DomainState {
 
     async fn execute(&mut self, request: DomainRequest) -> Result<DomainResponse, DomainError> {
         match request {
+            DomainRequest::LibraryState { expected_revision } => Ok(DomainResponse::LibraryState(
+                self.library.state(expected_revision)?,
+            )),
+            DomainRequest::AppearanceSettings => Ok(DomainResponse::AppearanceSettings(
+                self.library.appearance_settings(),
+            )),
+            DomainRequest::PutAppearance {
+                expected_revision,
+                appearance,
+                max_payload_bytes,
+                control,
+            } => Ok(DomainResponse::AppearanceUpdated(
+                self.library
+                    .put_appearance(expected_revision, appearance, max_payload_bytes, &control)
+                    .await?,
+            )),
             DomainRequest::CoursePage {
                 expected_revision,
                 offset,
@@ -259,7 +305,12 @@ impl DomainState {
                 control,
             } => Ok(DomainResponse::Scan(
                 self.library
-                    .scan_and_reconcile(expected_revision, &root_path, max_payload_bytes, &control)
+                    .scan_and_reconcile_with_progress(
+                        expected_revision,
+                        &root_path,
+                        max_payload_bytes,
+                        &control,
+                    )
                     .await?,
             )),
             DomainRequest::PutProgress {
@@ -314,6 +365,26 @@ impl DomainState {
             } => Ok(DomainResponse::NoteDeleted(
                 self.library
                     .delete_note(input, max_payload_bytes, &control)
+                    .await?,
+            )),
+            DomainRequest::OpenDocument {
+                input,
+                max_payload_bytes,
+            } => Ok(DomainResponse::DocumentOpened(
+                self.library.open_document(input, max_payload_bytes).await?,
+            )),
+            DomainRequest::DocumentPage {
+                input,
+                max_payload_bytes,
+            } => Ok(DomainResponse::DocumentPage(
+                self.library.document_page(input, max_payload_bytes)?,
+            )),
+            DomainRequest::DocumentExternalOpen {
+                input,
+                max_payload_bytes,
+            } => Ok(DomainResponse::DocumentExternalOpenReady(
+                self.library
+                    .document_external_open(input, max_payload_bytes)
                     .await?,
             )),
             #[cfg(test)]
