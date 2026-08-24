@@ -22,6 +22,33 @@ jobs:
           "$RUNNER_TEMP/cmake/bin/pip" install --disable-pip-version-check cmake==4.4.2
           "$RUNNER_TEMP/cmake/bin/cmake" -P scripts/test-cpp-traceability.cmake
 
+  cpp-fixtures:
+    name: c++ parity fixtures (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: enable native msvc tools
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: install cmake 4.4.2
+        run: python -m pip install --disable-pip-version-check cmake==4.4.2
+
+      - name: compile and test deterministic parity fixtures
+        run: |
+          cmake --version
+          cmake -DCPP_PARITY_FULL_MATERIALIZATION=ON -P scripts/test-cpp-parity-fixtures.cmake
+
   core-abi:
     name: rust core abi
     runs-on: ubuntu-22.04

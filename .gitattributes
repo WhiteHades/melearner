@@ -1,0 +1,23 @@
+.gitattributes text eol=lf
+.github/workflows/ci.yml text eol=lf
+.gitignore text eol=lf
+
+cpp-app/tests/fixtures/*.cpp text eol=lf
+cpp-app/tests/fixtures/*.hpp text eol=lf
+cpp-app/tests/fixtures/*.manifest text eol=lf
+scripts/test-cpp-parity-fixtures.cmake text eol=lf
+scripts/generate-media-corpus.sh text eol=lf
+
+fixtures/parity/*.json text eol=lf
+fixtures/parity/*.sql text eol=lf
+fixtures/parity/*.mjs text eol=lf
+
+fixtures/parity/documents/** -text
+"fixtures/parity/documents/Systems 日本語/utf8-text.txt" text eol=lf
+fixtures/parity/documents/active-remote.html text eol=lf
+fixtures/parity/documents/representative.md text eol=lf
+
+fixtures/parity/media/** -text
+fixtures/parity/media/*.srt text eol=lf
+fixtures/parity/media/*.vtt text eol=lf
+fixtures/parity/media/*.ffmeta text eol=lf

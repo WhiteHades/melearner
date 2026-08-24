@@ -1,0 +1,13 @@
+<!doctype html>
+<html><head>
+<style>body { display: none; }</style>
+<script>fixtureMustNotRun()</script>
+<link rel="stylesheet" href="https://example.invalid/remote.css">
+</head><body>
+<h2>Safe heading</h2>
+<p onclick="fixtureMustNotRun()">Text with <strong>emphasis</strong>.</p>
+<a href="javascript:fixtureMustNotRun()">unsafe link text</a>
+<iframe src="https://example.invalid/frame"></iframe>
+<img src="https://example.invalid/tracker.png" alt="remote fixture">
+<marquee>unsupported but readable</marquee>
+</body></html>
