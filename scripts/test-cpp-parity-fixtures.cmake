@@ -63,8 +63,13 @@ if(cxx_filename_lower MATCHES "^cl(\\.exe)?$")
 else()
   set(native_msvc FALSE)
   set(executable_suffix "")
+  if(CMAKE_HOST_APPLE)
+    set(cxx_standard_flag -std=c++2b)
+  else()
+    set(cxx_standard_flag -std=c++23)
+  endif()
   set(common_flags
-    -std=c++23
+    ${cxx_standard_flag}
     -Wall
     -Wextra
     -Wpedantic

@@ -85,8 +85,8 @@
     "cmake": [
       {
         "path": "scripts/test-cpp-parity-fixtures.cmake",
-        "bytes": 4567,
-        "sha256": "38be8f75b83c8535dcfdf66e95ad1124d8fd9df18097b4bae0c95e5466913de1"
+        "bytes": 4695,
+        "sha256": "18f8262f2df6f6ed2ecfeed8e2c3381a876aa6c78828ee64e5fd5c58e51cdcd9"
       }
     ],
     "lineEndings": [
