@@ -25,17 +25,17 @@ EOF
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --build-dir)
-      [[ $# -ge 2 ]] || { usage >&2; exit 2; }
+      [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || { usage >&2; exit 2; }
       build_dir="$2"
       shift 2
       ;;
     --legal-root)
-      [[ $# -ge 2 ]] || { usage >&2; exit 2; }
+      [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || { usage >&2; exit 2; }
       legal_root="$2"
       shift 2
       ;;
     --output)
-      [[ $# -ge 2 ]] || { usage >&2; exit 2; }
+      [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || { usage >&2; exit 2; }
       output="$2"
       shift 2
       ;;
@@ -55,13 +55,20 @@ if [[ "$(uname -s)" != Linux ]]; then
   exit 1
 fi
 
-for tool in cmake tar zstd file readelf patchelf; do
+if [[ -n "${DESTDIR:-}" ]]; then
+  echo "DESTDIR must be empty; the packager manages its own staging directory" >&2
+  exit 1
+fi
+
+for tool in cmake tar zstd file readelf patchelf awk grep mktemp ln; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     echo "required packaging tool is missing: $tool" >&2
     exit 1
   fi
 done
-if ! tar --help 2>/dev/null | grep -q -- '--zstd'; then
+# Read the producer completely. grep -q in a pipe can cause SIGPIPE under pipefail.
+tar_help="$(tar --help)"
+if [[ "$tar_help" != *--zstd* ]]; then
   echo "tar does not support --zstd" >&2
   exit 1
 fi
@@ -84,8 +91,9 @@ if [[ ! -d "$legal_root" ]]; then
   exit 1
 fi
 
-cache_contents="$(cmake -LA -N "$build_dir" 2>/dev/null)"
-project_version="$(awk -F= '$1 == "CMAKE_PROJECT_VERSION:STATIC" { print $2; exit }' <<<"$cache_contents")"
+# -LA omits STATIC cache entries, including CMAKE_PROJECT_VERSION. Do not source
+# the cache as shell code. Multiple matching entries also fail the exact check.
+project_version="$(awk -F= '$1 == "CMAKE_PROJECT_VERSION:STATIC" { print $2 }' "$build_dir/CMakeCache.txt")"
 if [[ "$project_version" != "$version" ]]; then
   echo "CMake build version must be $version, got ${project_version:-missing}; reconfigure the release build" >&2
   exit 1
@@ -102,13 +110,17 @@ if [[ -e "$output" || -L "$output" ]]; then
 fi
 output_dir="$(dirname -- "$output")"
 
-package_root="$repo_root/.tmp/cpp-package"
-mkdir -p -- "$package_root"
-work_dir="$(mktemp -d "$package_root/work.XXXXXX")"
+# Stage on the output filesystem so publication can use an atomic, no-clobber
+# hard link. A preflight existence check followed by mv can overwrite a racer.
+mkdir -p -- "$output_dir"
+work_dir="$(mktemp -d "$output_dir/.melearner-package.XXXXXX")"
 cleanup() {
   rm -rf -- "$work_dir"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 
 stage_dir="$work_dir/melearner-${version}"
 cmake \
@@ -132,16 +144,25 @@ tar \
   --mtime='UTC 1970-01-01' \
   "melearner-${version}"
 test -s "$archive_tmp"
-if ! tar --zstd --list --file "$archive_tmp" | grep -Fxq "melearner-${version}/usr/bin/melearner"; then
+# A corrupt/truncated listing must fail even if it already mentioned the binary.
+# Save the full listing once rather than making tar race two early-exiting greps.
+archive_list="$work_dir/archive.list"
+if ! tar --zstd --list --file "$archive_tmp" >"$archive_list"; then
+  echo "cannot read the complete archive listing" >&2
+  exit 1
+fi
+if ! grep -Fxq "melearner-${version}/usr/bin/melearner" "$archive_list"; then
   echo "archive is missing the melearner executable" >&2
   exit 1
 fi
-if tar --zstd --list --file "$archive_tmp" | grep -Eq '(^/|(^|/)\.\.)'; then
+if grep -Eq '(^/|(^|/)\.\.(/|$))' "$archive_list"; then
   echo "archive contains an unsafe path" >&2
   exit 1
 fi
-mkdir -p -- "$output_dir"
-mv -- "$archive_tmp" "$output"
+if ! ln -T -- "$archive_tmp" "$output"; then
+  echo "could not publish archive without overwriting output: $output" >&2
+  exit 1
+fi
 
 printf 'Created diagnostic C++ Linux archive: %s\n' "$output"
 printf 'Release-qualified: false; AppImage and Arch acceptance remain separate gates.\n'
