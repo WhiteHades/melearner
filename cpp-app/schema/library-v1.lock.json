@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "schemaId": "melearner-cpp-library-v1",
+  "userVersion": 1,
+  "ddlSha256": "1fe403f82f06b83aadee35204ef4076ccd5cd226950dcb1ec70aeb4059122256",
+  "status": "provisional-until-schema-review"
+}
