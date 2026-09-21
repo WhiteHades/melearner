@@ -46,6 +46,13 @@ unset LD_LIBRARY_PATH LD_PRELOAD LD_AUDIT
 
 cmake --preset linux-release 2>&1 | tee "$log_dir/configure.log"
 cmake --build --preset linux-release --parallel 2 2>&1 | tee "$log_dir/build.log"
+# CTest also plays media. Start the null sink before any player test runs.
+unset PULSE_SERVER PULSE_RUNTIME_PATH PULSE_CLIENTCONFIG
+pulseaudio --start --exit-idle-time=-1 --log-target="file:$log_dir/pulse.log"
+pulse_started=true
+pactl load-module module-null-sink sink_name=melearner_ci >"$log_dir/pulse-module.txt"
+pactl set-default-sink melearner_ci
+
 ctest --preset linux-release --no-tests=error --output-junit "$log_dir/ctest.xml" \
   2>&1 | tee "$log_dir/ctest.log"
 
@@ -56,12 +63,6 @@ installed_version="$(QT_QPA_PLATFORM=offscreen "$install_prefix/bin/melearner" -
 printf '%s\n' "$installed_version" | tee "$log_dir/installed-version.txt"
 [[ "$installed_version" == *" 0.1.0" ]] || { echo "Unexpected installed version" >&2; exit 1; }
 
-# A null sink lets libmpv exercise audio without a physical sound device.
-unset PULSE_SERVER PULSE_RUNTIME_PATH PULSE_CLIENTCONFIG
-pulseaudio --start --exit-idle-time=-1 --log-target="file:$log_dir/pulse.log"
-pulse_started=true
-pactl load-module module-null-sink sink_name=melearner_ci >"$log_dir/pulse-module.txt"
-pactl set-default-sink melearner_ci
 export LIBGL_ALWAYS_SOFTWARE=1
 export MELEARNER_TEST_SCREENSHOTS="$log_dir/screenshots"
 for test in playback_render main_playback; do
