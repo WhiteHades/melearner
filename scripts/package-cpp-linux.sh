@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+version="0.1.0"
+build_dir="${repo_root}/build/cpp-release"
+legal_root="${repo_root}/packaging"
+output="${repo_root}/dist/melearner-${version}-linux-x86_64.tar.zst"
+
+usage() {
+  cat <<'EOF'
+usage: scripts/package-cpp-linux.sh [options]
+
+Create the diagnostic C++ Linux runtime archive. The archive is not an
+AppImage or Arch package and is never marked release-qualified.
+
+Options:
+  --build-dir <path>  configured CMake release build (default: build/cpp-release)
+  --legal-root <path> legal inputs (default: packaging)
+  --output <path>     output archive (default: dist/melearner-0.1.0-linux-x86_64.tar.zst)
+  -h, --help          show this help
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --build-dir)
+      [[ $# -ge 2 ]] || { usage >&2; exit 2; }
+      build_dir="$2"
+      shift 2
+      ;;
+    --legal-root)
+      [[ $# -ge 2 ]] || { usage >&2; exit 2; }
+      legal_root="$2"
+      shift 2
+      ;;
+    --output)
+      [[ $# -ge 2 ]] || { usage >&2; exit 2; }
+      output="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [[ "$(uname -s)" != Linux ]]; then
+  echo "C++ Linux packaging is only supported on Linux" >&2
+  exit 1
+fi
+
+for tool in cmake tar zstd file readelf patchelf; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "required packaging tool is missing: $tool" >&2
+    exit 1
+  fi
+done
+if ! tar --help 2>/dev/null | grep -q -- '--zstd'; then
+  echo "tar does not support --zstd" >&2
+  exit 1
+fi
+
+if [[ "$build_dir" != /* ]]; then
+  build_dir="$repo_root/$build_dir"
+fi
+if [[ "$legal_root" != /* ]]; then
+  legal_root="$repo_root/$legal_root"
+fi
+if [[ "$output" != /* ]]; then
+  output="$repo_root/$output"
+fi
+if [[ ! -d "$build_dir" || ! -f "$build_dir/CMakeCache.txt" ]]; then
+  echo "configured CMake build directory is missing: $build_dir" >&2
+  exit 1
+fi
+if [[ ! -d "$legal_root" ]]; then
+  echo "legal input directory is missing: $legal_root" >&2
+  exit 1
+fi
+
+cache_contents="$(cmake -LA -N "$build_dir" 2>/dev/null)"
+project_version="$(awk -F= '$1 == "CMAKE_PROJECT_VERSION:STATIC" { print $2; exit }' <<<"$cache_contents")"
+if [[ "$project_version" != "$version" ]]; then
+  echo "CMake build version must be $version, got ${project_version:-missing}; reconfigure the release build" >&2
+  exit 1
+fi
+
+expected_name="melearner-${version}-linux-x86_64.tar.zst"
+if [[ "$(basename -- "$output")" != "$expected_name" ]]; then
+  echo "output filename must be $expected_name" >&2
+  exit 1
+fi
+if [[ -e "$output" || -L "$output" ]]; then
+  echo "refusing to overwrite output: $output" >&2
+  exit 1
+fi
+output_dir="$(dirname -- "$output")"
+
+package_root="$repo_root/.tmp/cpp-package"
+mkdir -p -- "$package_root"
+work_dir="$(mktemp -d "$package_root/work.XXXXXX")"
+cleanup() {
+  rm -rf -- "$work_dir"
+}
+trap cleanup EXIT
+
+stage_dir="$work_dir/melearner-${version}"
+cmake \
+  -DMELEARNER_SOURCE_DIR="$repo_root" \
+  -DMELEARNER_BUILD_DIR="$build_dir" \
+  -DMELEARNER_STAGE_DIR="$stage_dir" \
+  -DMELEARNER_LEGAL_ROOT="$legal_root" \
+  -DMELEARNER_VERSION="$version" \
+  -P "$repo_root/scripts/stage-cpp-linux.cmake"
+
+archive_tmp="$work_dir/${expected_name}.partial"
+tar \
+  --create \
+  --zstd \
+  --file "$archive_tmp" \
+  --directory "$work_dir" \
+  --numeric-owner \
+  --owner=0 \
+  --group=0 \
+  --sort=name \
+  --mtime='UTC 1970-01-01' \
+  "melearner-${version}"
+test -s "$archive_tmp"
+if ! tar --zstd --list --file "$archive_tmp" | grep -Fxq "melearner-${version}/usr/bin/melearner"; then
+  echo "archive is missing the melearner executable" >&2
+  exit 1
+fi
+if tar --zstd --list --file "$archive_tmp" | grep -Eq '(^/|(^|/)\.\.)'; then
+  echo "archive contains an unsafe path" >&2
+  exit 1
+fi
+mkdir -p -- "$output_dir"
+mv -- "$archive_tmp" "$output"
+
+printf 'Created diagnostic C++ Linux archive: %s\n' "$output"
+printf 'Release-qualified: false; AppImage and Arch acceptance remain separate gates.\n'
