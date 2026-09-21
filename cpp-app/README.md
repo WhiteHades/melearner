@@ -54,11 +54,3 @@ bash scripts/test-cpp-linux-packaging.sh
 ```
 
 The Python tests require Linux, Python 3.10 or newer, CMake 3.20 or newer, a C compiler, GNU tar with zstd, and readelf. The archive tests configure a real disposable CMake project and use real tar/zstd, but substitute the application staging step. The runtime tests compile small ELF libraries and a loader using the production RPATH values, move the package directory, and load the plugin without `LD_LIBRARY_PATH`. They also run the production ELF audit function against real dependency records. These tests do not run patchelf or the complete Qt runtime stager. The shell preflight test requires the production CMake 4.4+ and packaging prerequisites.
-
-## Linux continuous integration
-
-GitHub Actions is disabled at repository level at the owner's request to avoid hosted-runner charges. Do not re-enable it without explicit approval. Run verification locally and record the commands and results with each change.
-
-The retained `c++ linux` workflow defines tooling and application checks but cannot run while Actions is disabled. Its tooling job runs the installer, archive, runtime, and staging-preflight regressions. Its application job builds the actual Qt application in an Arch container as an unprivileged user, runs CTest with empty test discovery treated as an error, checks the version of a temporary source installation, and invokes both playback test executables on Xvfb with Mesa software rendering and a null audio sink. The main-window playback test includes normal and doubled text sizes.
-
-The workflow retains test logs, the resolved toolchain versions, CTest XML, and playback screenshots for seven days. The Arch container uses rolling development dependencies, not a pinned release runtime. A successful run does not qualify an AppImage or Arch package, Wayland, hardware decoding, macOS, or Windows. Installed-package acceptance and the final cleanup requirement remain pending until their own checks pass.
