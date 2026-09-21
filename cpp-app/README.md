@@ -42,3 +42,21 @@ python3 scripts/test-cpp-linux-installer.py
 ```
 
 This requires Linux, Bash, and Python 3.9 or newer. Build tools and install destinations are isolated fixtures; when CTest is available, three cases also exercise real empty, failing, and passing CTest suites. A pass does not compile the Qt application, exercise live playback, or qualify release packages.
+
+## Diagnostic packaging regression tests
+
+The diagnostic archive is not an AppImage or an Arch package. Its metadata keeps `releaseQualified` false. The packager reads the configured version directly from the CMake cache, validates the complete archive listing, rejects `DESTDIR`, and publishes without replacing an existing or concurrently created destination. Temporary staging stays on the output filesystem and is removed on exit.
+
+```sh
+python3 scripts/test-cpp-linux-archive.py
+python3 scripts/test-cpp-linux-runtime.py
+bash scripts/test-cpp-linux-packaging.sh
+```
+
+The Python tests require Linux, Python 3.10 or newer, CMake 3.20 or newer, a C compiler, GNU tar with zstd, and readelf. The archive tests configure a real disposable CMake project and use real tar/zstd, but substitute the application staging step. The runtime tests compile small ELF libraries and a loader using the production RPATH values, move the package directory, and load the plugin without `LD_LIBRARY_PATH`. They also run the production ELF audit function against real dependency records. These tests do not run patchelf or the complete Qt runtime stager. The shell preflight test requires the production CMake 4.4+ and packaging prerequisites.
+
+## Linux continuous integration
+
+The `c++ linux` workflow runs on pull requests and pushes to `main` and `feat/cpp-desktop`. Its tooling job runs the installer, archive, runtime, and staging-preflight regressions. Its application job builds the actual Qt application in an Arch container as an unprivileged user, runs CTest with empty test discovery treated as an error, checks the version of a temporary source installation, and invokes both playback test executables on Xvfb with Mesa software rendering and a null audio sink. The main-window playback test includes normal and doubled text sizes.
+
+The workflow retains test logs, the resolved toolchain versions, CTest XML, and playback screenshots for seven days. The Arch container uses rolling development dependencies, not a pinned release runtime. A successful run does not qualify an AppImage or Arch package, Wayland, hardware decoding, macOS, or Windows. Installed-package acceptance and the final cleanup requirement remain pending until their own checks pass.

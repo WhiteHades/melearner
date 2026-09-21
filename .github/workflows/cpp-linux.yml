@@ -1,0 +1,84 @@
+name: c++ linux
+
+on:
+  push:
+    branches: [main, feat/cpp-desktop]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cpp-linux-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tooling:
+    name: linux installer and packaging regressions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: install test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential ninja-build pkg-config zstd patchelf
+          python -m pip install --disable-pip-version-check cmake==4.4.2
+      - name: run installer and packaging tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .tmp/cpp-ci
+          for script in scripts/install-cpp-linux.sh scripts/package-cpp-linux.sh scripts/ci-cpp-linux.sh; do
+            bash -n "$script"
+          done
+          python3 scripts/test-cpp-linux-installer.py 2>&1 | tee .tmp/cpp-ci/installer.log
+          python3 scripts/test-cpp-linux-archive.py 2>&1 | tee .tmp/cpp-ci/archive.log
+          python3 scripts/test-cpp-linux-runtime.py 2>&1 | tee .tmp/cpp-ci/runtime.log
+          bash scripts/test-cpp-linux-packaging.sh 2>&1 | tee .tmp/cpp-ci/staging-preflight.log
+      - name: preserve tooling results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpp-linux-tooling-${{ github.sha }}
+          path: .tmp/cpp-ci/
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
+
+  application:
+    name: qt application build and x11 software playback
+    needs: tooling
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    timeout-minutes: 30
+    steps:
+      # This is a rolling development test environment, not the release runtime lock.
+      - name: install native toolchain
+        run: |
+          pacman -Syu --noconfirm --needed git cmake ninja pkgconf qt6-base qt6-webengine \
+            sqlite mpv libzip md4c python xorg-server-xvfb xorg-xauth mesa \
+            pulseaudio dbus ttf-dejavu
+      - uses: actions/checkout@v4
+      - name: build and verify as an unprivileged user
+        shell: bash
+        run: |
+          set -euo pipefail
+          useradd --create-home --shell /bin/bash builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          runuser -u builder -- dbus-run-session -- bash scripts/ci-cpp-linux.sh
+      - name: preserve application results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpp-linux-application-${{ github.sha }}
+          path: |
+            .tmp/cpp-ci/
+            build/cpp-release/Testing/Temporary/LastTest.log
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
