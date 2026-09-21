@@ -8,7 +8,7 @@ if [[ "$(uname -s)" != Linux || "$EUID" == 0 ]]; then
   echo "Run C++ Linux CI on Linux as an unprivileged user" >&2
   exit 1
 fi
-for tool in cmake ctest ninja c++ pkg-config python3 xvfb-run timeout pulseaudio pactl; do
+for tool in cmake ctest ninja c++ pkg-config python3 xvfb-run timeout pulseaudio pactl ffmpeg; do
   command -v "$tool" >/dev/null || { echo "Missing CI tool: $tool" >&2; exit 1; }
 done
 
@@ -40,6 +40,8 @@ unset LD_LIBRARY_PATH LD_PRELOAD LD_AUDIT
 {
   cmake --version
   c++ --version
+  printf 'Available CPUs: '; nproc
+  if [[ -r /sys/fs/cgroup/cpu.max ]]; then cat /sys/fs/cgroup/cpu.max; fi
   pkg-config --modversion Qt6Widgets Qt6Pdf sqlite3 mpv libzip md4c
   if command -v pacman >/dev/null; then pacman -Q; fi
 } >"$log_dir/toolchain.txt" 2>&1
@@ -63,7 +65,16 @@ installed_version="$(QT_QPA_PLATFORM=offscreen "$install_prefix/bin/melearner" -
 printf '%s\n' "$installed_version" | tee "$log_dir/installed-version.txt"
 [[ "$installed_version" == *" 0.1.0" ]] || { echo "Unexpected installed version" >&2; exit 1; }
 
+# Keep the software renderer's worker pool bounded on shared CI runners.
 export LIBGL_ALWAYS_SOFTWARE=1
+export LP_NUM_THREADS=2
+# Independent decoder output distinguishes corpus content from display defects.
+ffmpeg -hide_banner -loglevel error -y \
+  -i 'fixtures/parity/media/Systems 日本語/01 H264 AAC.mp4' \
+  -frames:v 1 "$log_dir/screenshots/reference-h264.png"
+ffmpeg -hide_banner -loglevel error -y \
+  -i 'fixtures/parity/media/03 HEVC Main 10.mkv' \
+  -frames:v 1 "$log_dir/screenshots/reference-hevc.png"
 export MELEARNER_TEST_SCREENSHOTS="$log_dir/screenshots"
 playback_failed=false
 for test in playback_render main_playback; do

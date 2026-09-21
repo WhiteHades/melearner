@@ -31,13 +31,18 @@ private slots:
     QSignalSpy errors(&player, &melearner::Player::commandFailed);
     QSignalSpy fatal(&player, &melearner::Player::fatalError);
     QSignalSpy decoders(&player, &melearner::Player::decoderChanged);
-    connect(&player, &melearner::Player::commandFailed, this,
+    connect(&player, &melearner::Player::commandFailed, &video,
       [](melearner::Player::RequestId id, const QString& code, const QString& message) {
         qWarning().noquote() << "Player command failed:" << id << code << message;
       });
-    connect(&player, &melearner::Player::playbackEnded, this,
+    connect(&player, &melearner::Player::playbackEnded, &video,
       [](const QString&, bool failed) { qInfo() << "Playback ended; failed:" << failed; });
     QSignalSpy positions(&player, &melearner::Player::positionChanged);
+    QSignalSpy commands(&player, &melearner::Player::commandFinished);
+    const auto hasReply = [](const QSignalSpy& replies, melearner::Player::RequestId id) {
+      for (const auto& reply : replies) if (reply.first().toULongLong() == id) return true;
+      return false;
+    };
     player.setApprovedRoots({root, output.path()});
     video.resize(640, 360); video.show(); player.start();
     QTRY_VERIFY_WITH_TIMEOUT(rendered.count() == 1, 10000);
@@ -47,7 +52,6 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(loaded.count() == 1, 10000);
     QVERIFY2(errors.isEmpty(), errors.isEmpty() ? "" : qPrintable(errors.first().at(2).toString()));
     QVERIFY2(fatal.isEmpty(), fatal.isEmpty() ? "" : qPrintable(fatal.first().at(1).toString()));
-    QVERIFY(player.play());
     QImage initial;
     QTRY_VERIFY_WITH_TIMEOUT([&] {
       initial = video.grabFramebuffer();
@@ -64,24 +68,26 @@ private slots:
     qInfo().noquote() << "Active decoder:" << decoders.last().first().toString();
     if (softwareDecoding) QCOMPARE(decoders.last().first().toString(), QString("no"));
     QVERIFY2(firstFrame.elapsed() < (relativePath.contains("HEVC") ? 3000 : 2000), "First-frame budget exceeded");
+    // Keep the two-second corpus paused. A slow test runner must not reach EOF
+    // before screenshot capture. MainPlaybackTest covers continuous playback.
+    const auto stepId = player.frameStep(); QVERIFY(stepId);
+    QTRY_VERIFY_WITH_TIMEOUT(hasReply(commands, stepId) || hasReply(errors, stepId), 5000);
+    QVERIFY2(hasReply(commands, stepId), "Frame step failed; see Player command failure above");
     QTRY_VERIFY_WITH_TIMEOUT(video.grabFramebuffer() != initial, 5000);
-    QVERIFY(player.pause());
+    const auto pauseId = player.pause(); QVERIFY(pauseId);
+    QTRY_VERIFY_WITH_TIMEOUT(hasReply(commands, pauseId) || hasReply(errors, pauseId), 5000);
+    QVERIFY2(hasReply(commands, pauseId), "Pause failed; see Player command failure above");
     video.resize(800, 450);
     QTest::qWait(150);
     QVERIFY(!video.grabFramebuffer().isNull());
     const auto screenshotPath = output.path() + "/frame.png";
-    QSignalSpy commands(&player, &melearner::Player::commandFinished);
     qInfo() << "Screenshot requested at position:"
             << (positions.isEmpty() ? -1 : positions.last().first().toLongLong()) << "ms";
     const auto directory = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
     if (!directory.isEmpty()) QVERIFY(video.grabFramebuffer().save(directory + '/' + QTest::currentDataTag() + ".png"));
     const auto screenshotId = player.screenshot(screenshotPath); QVERIFY(screenshotId);
-    const auto hasReply = [screenshotId](const QSignalSpy& replies) {
-      for (const auto& reply : replies) if (reply.first().toULongLong() == screenshotId) return true;
-      return false;
-    };
-    QTRY_VERIFY_WITH_TIMEOUT(hasReply(commands) || hasReply(errors), 5000);
-    QVERIFY2(hasReply(commands), "Screenshot failed; see Player command failure above");
+    QTRY_VERIFY_WITH_TIMEOUT(hasReply(commands, screenshotId) || hasReply(errors, screenshotId), 5000);
+    QVERIFY2(hasReply(commands, screenshotId), "Screenshot failed; see Player command failure above");
     QVERIFY(!QImage(screenshotPath).isNull());
     if (relativePath.contains("H264")) {
       QSignalSpy tracks(&player, &melearner::Player::tracksChanged);
