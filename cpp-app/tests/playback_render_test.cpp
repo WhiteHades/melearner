@@ -7,6 +7,23 @@
 #include <QTemporaryDir>
 #include <QtTest>
 
+namespace {
+// The generated corpus has a solid yellow bar here. Nonblank/changing-frame
+// checks alone do not detect the black grid caused by corrupted GL state.
+bool hasIntactColorBar(const QImage& image) {
+  if (image.isNull()) return false;
+  int yellow = 0;
+  int total = 0;
+  for (int y = image.height() * 55 / 100; y < image.height() * 65 / 100; ++y)
+    for (int x = image.width() * 38 / 100; x < image.width() * 43 / 100; ++x) {
+      const auto pixel = image.pixel(x, y);
+      yellow += qRed(pixel) > 180 && qGreen(pixel) > 180 && qBlue(pixel) < 100;
+      ++total;
+    }
+  return total > 0 && yellow * 10 >= total * 9;
+}
+}
+
 class PlaybackRenderTest final : public QObject {
   Q_OBJECT
 private slots:
@@ -63,6 +80,9 @@ private slots:
           if (small.pixel(x, y) != first) return true;
       return false;
     }(), 10000);
+    const auto directory = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
+    if (!directory.isEmpty()) QVERIFY(initial.save(directory + '/' + QTest::currentDataTag() + "-initial.png"));
+    QVERIFY2(hasIntactColorBar(initial), "Decoded color bar is corrupted in the framebuffer");
     qInfo("Visible first frame: %lld ms", firstFrame.elapsed());
     QTRY_VERIFY(!decoders.isEmpty() && !decoders.last().first().toString().isEmpty());
     qInfo().noquote() << "Active decoder:" << decoders.last().first().toString();
@@ -83,7 +103,7 @@ private slots:
     const auto screenshotPath = output.path() + "/frame.png";
     qInfo() << "Screenshot requested at position:"
             << (positions.isEmpty() ? -1 : positions.last().first().toLongLong()) << "ms";
-    const auto directory = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
+    QVERIFY2(hasIntactColorBar(video.grabFramebuffer()), "Resize corrupted the decoded color bar");
     if (!directory.isEmpty()) QVERIFY(video.grabFramebuffer().save(directory + '/' + QTest::currentDataTag() + ".png"));
     const auto screenshotId = player.screenshot(screenshotPath); QVERIFY(screenshotId);
     QTRY_VERIFY_WITH_TIMEOUT(hasReply(commands, screenshotId) || hasReply(errors, screenshotId), 5000);

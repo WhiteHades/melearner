@@ -5,7 +5,6 @@
 #include <QOpenGLContext>
 #include <QMetaObject>
 #include <QAccessibleWidget>
-#include <QPainter>
 
 #include <thread>
 
@@ -35,6 +34,30 @@ void* resolveOpenGLProc(void* context, const char* name) {
         return nullptr;
     }
     return reinterpret_cast<void*>(glContext->getProcAddress(name));
+}
+
+// Draw the focus border without introducing Qt's OpenGL paint-engine state
+// into libmpv rendering. Scissored clears need no shader or vertex buffers.
+void drawFocusBorder(int width, int height, qreal scale) {
+    const int thickness = qMax(1, qRound(2 * scale));
+    const auto rectangle = [width, height, thickness](int inset, GLfloat color) {
+        const int w = width - 2 * inset;
+        const int h = height - 2 * inset;
+        if (w <= 0 || h <= 0) return;
+        glClearColor(color, color, color, 1.0F);
+        glScissor(inset, inset, w, qMin(thickness, h));
+        glClear(GL_COLOR_BUFFER_BIT);
+        glScissor(inset, height - inset - qMin(thickness, h), w, qMin(thickness, h));
+        glClear(GL_COLOR_BUFFER_BIT);
+        glScissor(inset, inset, qMin(thickness, w), h);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glScissor(width - inset - qMin(thickness, w), inset, qMin(thickness, w), h);
+        glClear(GL_COLOR_BUFFER_BIT);
+    };
+    glEnable(GL_SCISSOR_TEST);
+    rectangle(qMax(1, qRound(scale)), 0.0F);
+    rectangle(qMax(1, qRound(3 * scale)), 1.0F);
+    glDisable(GL_SCISSOR_TEST);
 }
 
 }  // namespace
@@ -133,23 +156,17 @@ void MpvVideoWidget::initializeGL() {
 
 void MpvVideoWidget::paintGL() {
     renderDirty_.store(false, std::memory_order_release);
-    QPainter focus(this);
-    focus.beginNativePainting();
+    const auto pixelRatio = devicePixelRatioF();
+    const auto pixelWidth = qMax(1, qRound(width() * pixelRatio));
+    const auto pixelHeight = qMax(1, qRound(height() * pixelRatio));
     if (player_ == nullptr || !renderContextReady_) {
         glClearColor(0.09F, 0.07F, 0.06F, 1.0F);
         glClear(GL_COLOR_BUFFER_BIT);
-    } else {
-        const auto pixelRatio = devicePixelRatioF();
-        const auto pixelWidth = qMax(1, qRound(width() * pixelRatio));
-        const auto pixelHeight = qMax(1, qRound(height() * pixelRatio));
-        if (!player_->renderFrame(defaultFramebufferObject(), pixelWidth, pixelHeight)) {
-            emit renderError(QStringLiteral("render"), QStringLiteral("libmpv could not render the current frame."));
-        }
+    } else if (!player_->renderFrame(defaultFramebufferObject(), pixelWidth, pixelHeight)) {
+        emit renderError(QStringLiteral("render"), QStringLiteral("libmpv could not render the current frame."));
     }
-    focus.endNativePainting();
     if (hasFocus()) {
-        focus.setPen(QPen(Qt::black, 2)); focus.drawRect(rect().adjusted(1, 1, -2, -2));
-        focus.setPen(QPen(Qt::white, 2)); focus.drawRect(rect().adjusted(3, 3, -4, -4));
+        drawFocusBorder(pixelWidth, pixelHeight, pixelRatio);
     }
 }
 
