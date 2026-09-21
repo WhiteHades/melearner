@@ -1,0 +1,813 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/WhiteHades/melearner/schemas/evidence-v1.json",
+  "title": "melearner installed artifact evidence v1",
+  "type": "object",
+  "additionalProperties": false,
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "sourceRevision": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "resultStatus": {
+      "type": "string",
+      "enum": [
+        "pass",
+        "fail",
+        "skipped",
+        "blocked",
+        "not_applicable"
+      ]
+    },
+    "evidenceRefs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/identifier"
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      },
+      "required": [
+        "id",
+        "sha256"
+      ]
+    },
+    "storyResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/resultStatus"
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidenceRefs"
+        }
+      },
+      "required": [
+        "status",
+        "evidence"
+      ]
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "enum": [
+            "appimage-linux-x86_64",
+            "arch-linux-x86_64",
+            "dmg-macos-universal",
+            "msi-windows-x86_64"
+          ]
+        },
+        "platform": {
+          "type": "string",
+          "enum": [
+            "linux",
+            "macos",
+            "windows"
+          ]
+        },
+        "architecture": {
+          "type": "string",
+          "enum": [
+            "x86_64",
+            "universal"
+          ]
+        },
+        "format": {
+          "type": "string",
+          "enum": [
+            "appimage",
+            "pkg.tar.zst",
+            "dmg",
+            "msi"
+          ]
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "signature": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "status": {
+              "$ref": "#/$defs/resultStatus"
+            },
+            "referenceType": {
+              "type": "string",
+              "enum": [
+                "certificate",
+                "notarization"
+              ]
+            },
+            "reference": {
+              "$ref": "#/$defs/identifier"
+            }
+          },
+          "required": [
+            "status",
+            "referenceType",
+            "reference"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "platform",
+        "architecture",
+        "format",
+        "sha256",
+        "signature"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "const": "appimage-linux-x86_64"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "platform": {
+                "const": "linux"
+              },
+              "architecture": {
+                "const": "x86_64"
+              },
+              "format": {
+                "const": "appimage"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "const": "arch-linux-x86_64"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "platform": {
+                "const": "linux"
+              },
+              "architecture": {
+                "const": "x86_64"
+              },
+              "format": {
+                "const": "pkg.tar.zst"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "const": "dmg-macos-universal"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "platform": {
+                "const": "macos"
+              },
+              "architecture": {
+                "const": "universal"
+              },
+              "format": {
+                "const": "dmg"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "const": "msi-windows-x86_64"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "platform": {
+                "const": "windows"
+              },
+              "architecture": {
+                "const": "x86_64"
+              },
+              "format": {
+                "const": "msi"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "testResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "status": {
+          "$ref": "#/$defs/resultStatus"
+        },
+        "logSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidenceRefs"
+        }
+      },
+      "required": [
+        "id",
+        "status",
+        "logSha256",
+        "evidence"
+      ]
+    },
+    "metricResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "value": {
+          "type": "number"
+        },
+        "unit": {
+          "$ref": "#/$defs/identifier"
+        },
+        "budget": {
+          "type": "number"
+        },
+        "status": {
+          "$ref": "#/$defs/resultStatus"
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidenceRefs"
+        }
+      },
+      "required": [
+        "id",
+        "value",
+        "unit",
+        "budget",
+        "status",
+        "evidence"
+      ]
+    },
+    "accessibilityResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tool": {
+          "$ref": "#/$defs/identifier"
+        },
+        "status": {
+          "$ref": "#/$defs/resultStatus"
+        },
+        "logSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidenceRefs"
+        }
+      },
+      "required": [
+        "tool",
+        "status",
+        "logSha256",
+        "evidence"
+      ]
+    },
+    "codecResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "codec": {
+          "$ref": "#/$defs/identifier"
+        },
+        "status": {
+          "$ref": "#/$defs/resultStatus"
+        },
+        "logSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidenceRefs"
+        }
+      },
+      "required": [
+        "id",
+        "codec",
+        "status",
+        "logSha256",
+        "evidence"
+      ]
+    },
+    "visibleFrameResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "media": {
+          "$ref": "#/$defs/identifier"
+        },
+        "status": {
+          "$ref": "#/$defs/resultStatus"
+        },
+        "frameCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "changing": {
+          "type": "boolean"
+        },
+        "logSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidenceRefs"
+        }
+      },
+      "required": [
+        "id",
+        "media",
+        "status",
+        "frameCount",
+        "changing",
+        "logSha256",
+        "evidence"
+      ]
+    },
+    "auditResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/resultStatus"
+        },
+        "logSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidenceRefs"
+        }
+      },
+      "required": [
+        "status",
+        "logSha256",
+        "evidence"
+      ]
+    },
+    "lifecycleResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/resultStatus"
+        },
+        "logSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidenceRefs"
+        }
+      },
+      "required": [
+        "status",
+        "logSha256",
+        "evidence"
+      ]
+    },
+    "attachment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      },
+      "required": [
+        "id",
+        "sha256"
+      ]
+    },
+    "legalApproval": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "status": {
+          "$ref": "#/$defs/resultStatus"
+        },
+        "reference": {
+          "$ref": "#/$defs/identifier"
+        }
+      },
+      "required": [
+        "id",
+        "status",
+        "reference"
+      ]
+    }
+  },
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "sourceRevision": {
+      "$ref": "#/$defs/sourceRevision"
+    },
+    "status": {
+      "$ref": "#/$defs/resultStatus"
+    },
+    "artifact": {
+      "$ref": "#/$defs/artifact"
+    },
+    "profile": {
+      "$ref": "#/$defs/identity"
+    },
+    "fixture": {
+      "$ref": "#/$defs/identity"
+    },
+    "runtimeLock": {
+      "$ref": "#/$defs/identity"
+    },
+    "sbom": {
+      "$ref": "#/$defs/identity"
+    },
+    "conditions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "networkDisabled": {
+          "type": "boolean"
+        },
+        "hardwareDecodingDisabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "networkDisabled",
+        "hardwareDecodingDisabled"
+      ]
+    },
+    "stories": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "S1": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S2": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S3": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S4": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S5": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S6": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S7": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S8": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S9": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S10": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S11": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S12": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S13": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S14": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S15": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S16": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S17": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S18": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S19": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S20": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S21": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S22": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S23": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S24": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S25": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S26": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S27": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S28": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S29": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S30": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S31": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S32": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S33": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S34": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S35": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S36": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S37": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S38": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S39": {
+          "$ref": "#/$defs/storyResult"
+        },
+        "S40": {
+          "$ref": "#/$defs/storyResult"
+        }
+      },
+      "required": [
+        "S1",
+        "S2",
+        "S3",
+        "S4",
+        "S5",
+        "S6",
+        "S7",
+        "S8",
+        "S9",
+        "S10",
+        "S11",
+        "S12",
+        "S13",
+        "S14",
+        "S15",
+        "S16",
+        "S17",
+        "S18",
+        "S19",
+        "S20",
+        "S21",
+        "S22",
+        "S23",
+        "S24",
+        "S25",
+        "S26",
+        "S27",
+        "S28",
+        "S29",
+        "S30",
+        "S31",
+        "S32",
+        "S33",
+        "S34",
+        "S35",
+        "S36",
+        "S37",
+        "S38",
+        "S39",
+        "S40"
+      ]
+    },
+    "tests": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/testResult"
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "metrics": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/metricResult"
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "accessibility": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/accessibilityResult"
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "codecResults": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/codecResult"
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "visibleFrameResults": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/visibleFrameResult"
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "audits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "loadedLibraries": {
+          "$ref": "#/$defs/auditResult"
+        },
+        "processes": {
+          "$ref": "#/$defs/auditResult"
+        },
+        "windows": {
+          "$ref": "#/$defs/auditResult"
+        },
+        "packageExclusions": {
+          "$ref": "#/$defs/auditResult"
+        }
+      },
+      "required": [
+        "loadedLibraries",
+        "processes",
+        "windows",
+        "packageExclusions"
+      ]
+    },
+    "lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "install": {
+          "$ref": "#/$defs/lifecycleResult"
+        },
+        "replace": {
+          "$ref": "#/$defs/lifecycleResult"
+        },
+        "uninstall": {
+          "$ref": "#/$defs/lifecycleResult"
+        },
+        "reinstall": {
+          "$ref": "#/$defs/lifecycleResult"
+        },
+        "retainedData": {
+          "$ref": "#/$defs/lifecycleResult"
+        }
+      },
+      "required": [
+        "install",
+        "replace",
+        "uninstall",
+        "reinstall",
+        "retainedData"
+      ]
+    },
+    "attachments": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/attachment"
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "legalApprovals": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/legalApproval"
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "sourceRevision",
+    "status",
+    "artifact",
+    "profile",
+    "fixture",
+    "runtimeLock",
+    "sbom",
+    "conditions",
+    "stories",
+    "tests",
+    "metrics",
+    "accessibility",
+    "codecResults",
+    "visibleFrameResults",
+    "audits",
+    "lifecycle",
+    "attachments",
+    "legalApprovals",
+    "createdAt"
+  ]
+}
