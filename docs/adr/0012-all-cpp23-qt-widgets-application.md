@@ -4,6 +4,8 @@
 
 Accepted on 2026-08-24. Supersedes ADR 0011.
 
+ADR 0013 supersedes the all-platform sequencing gate with the user-approved Linux-first cutover. The remaining architecture and acceptance requirements below still apply.
+
 ## Context
 
 The transitional product uses React inside Tauri, and the unreleased replacement work uses Native SDK/Zig with a Rust static core. Carrying either cross-language architecture to release would preserve multiple toolchains and integration seams while the product still needs complete cross-platform media, document, accessibility, performance, and package proof. The final product must be one maintainable native desktop application with no browser runtime, helper process, or dormant fallback.

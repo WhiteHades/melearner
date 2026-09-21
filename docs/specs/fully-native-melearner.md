@@ -160,9 +160,9 @@ All disk, SQLite, scan, search, document, and Player control work is asynchronou
 ## Cutover Rules
 
 - The C++ app uses a distinct data path and exact fresh schema. It does not read or delete old app data.
-- Tauri remains the production line until both Linux artifacts, the macOS artifact, and the Windows artifact pass installed-package evidence from one source revision.
+- Under [ADR 0013](../adr/0013-linux-first-cpp-cutover.md), Tauri remains the production line until both Linux artifacts pass installed-package verification. macOS and Windows qualification remain explicitly pending and do not block the Linux cutover.
 - Native SDK/Zig/Rust and Tauri/React remain frozen behavior oracles only. New product behavior belongs in C++.
-- Final cutover deletes React, Next.js, Tauri, Node, Native SDK, Zig, Rust core, C ABI, obsolete workflows, stale docs, and generated leftovers in one change, then reruns the complete installed matrix on that changed source revision before cutover closes.
+- Linux cutover deletes React, Next.js, Tauri, Node, Native SDK, Zig, Rust core, C ABI, obsolete workflows, stale docs, and generated leftovers in one change, then reruns the Linux installed matrix on that changed source revision. The all-platform release remains gated on all four artifacts from one source revision.
 - There is no shipped fallback, dual-stack feature flag, import, migration, restore, rollback, or downgrade path.
 
 ## Out of Scope

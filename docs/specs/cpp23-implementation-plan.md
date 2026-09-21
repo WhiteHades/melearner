@@ -8,12 +8,13 @@ This is the dependency and traceability index for the all-C++ product contract i
 
 ## Execution rules
 
-- Work only on a ticket whose blocking issues are closed.
+ADR 0013 changes execution order to Linux-first. Cross-platform locks, macOS/Windows foundation tickets, and the four-artifact release gate do not block local Linux implementation. Delete the superseded stacks after the Linux replacement is verified; keep unqualified platforms explicitly pending. Commit and push only when the user explicitly requests them.
+
+- Work only on a ticket whose applicable Linux blocking requirements are satisfied.
 - Add a failing test or fixture before new or repaired behavior.
 - Keep every slice runnable and preserve the module protocols and limits in `docs/research/cpp23-qt-overhaul.md`.
 - Do not add migration, compatibility, rollback, sidecar, helper-process, QML, WebView, or old-runtime fallback paths.
-- Do not start final cutover until installed Linux, macOS, and Windows package gates all pass for the same source revision.
-- Commit and push each verified slice before starting the next unblocked slice.
+- Require installed Linux verification for Linux cutover. The all-platform release remains gated on all four installed artifacts.
 
 ## Ticket graph
 
