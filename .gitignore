@@ -13,3 +13,4 @@ native-app/.zig-cache/
 native-app/zig-out/
 native-app/zig-pkg/
 /.tmp/
+/build/

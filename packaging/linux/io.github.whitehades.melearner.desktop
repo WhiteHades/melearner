@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=melearner
+Comment=Learn from your local courses
+Exec=melearner
+Icon=io.github.whitehades.melearner
+Terminal=false
+Categories=Education;AudioVideo;
+StartupWMClass=io.github.whitehades.melearner
