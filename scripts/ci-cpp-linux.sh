@@ -65,10 +65,19 @@ printf '%s\n' "$installed_version" | tee "$log_dir/installed-version.txt"
 
 export LIBGL_ALWAYS_SOFTWARE=1
 export MELEARNER_TEST_SCREENSHOTS="$log_dir/screenshots"
+playback_failed=false
 for test in playback_render main_playback; do
-  xvfb-run -a -s '-screen 0 1920x1080x24' \
+  if xvfb-run -a -s '-screen 0 1920x1080x24' \
     env QT_QPA_PLATFORM=xcb timeout 120 "./build/cpp-release/${test}_test" \
-    2>&1 | tee "$log_dir/${test}.log"
+    2>&1 | tee "$log_dir/${test}.log"; then
+    printf '%s passed\n' "$test"
+  else
+    printf '%s failed; see %s\n' "$test" "$log_dir/${test}.log" >&2
+    playback_failed=true
+  fi
 done
+if [[ "$playback_failed" == true ]]; then
+  exit 1
+fi
 printf '%s\n' 'C++ build, CTest, source-install smoke, and Xvfb playback checks passed.' \
   'This is not AppImage/Arch package, Wayland, GPU, or release qualification.'

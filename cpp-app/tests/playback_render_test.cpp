@@ -31,6 +31,13 @@ private slots:
     QSignalSpy errors(&player, &melearner::Player::commandFailed);
     QSignalSpy fatal(&player, &melearner::Player::fatalError);
     QSignalSpy decoders(&player, &melearner::Player::decoderChanged);
+    connect(&player, &melearner::Player::commandFailed, this,
+      [](melearner::Player::RequestId id, const QString& code, const QString& message) {
+        qWarning().noquote() << "Player command failed:" << id << code << message;
+      });
+    connect(&player, &melearner::Player::playbackEnded, this,
+      [](const QString&, bool failed) { qInfo() << "Playback ended; failed:" << failed; });
+    QSignalSpy positions(&player, &melearner::Player::positionChanged);
     player.setApprovedRoots({root, output.path()});
     video.resize(640, 360); video.show(); player.start();
     QTRY_VERIFY_WITH_TIMEOUT(rendered.count() == 1, 10000);
@@ -64,11 +71,17 @@ private slots:
     QVERIFY(!video.grabFramebuffer().isNull());
     const auto screenshotPath = output.path() + "/frame.png";
     QSignalSpy commands(&player, &melearner::Player::commandFinished);
+    qInfo() << "Screenshot requested at position:"
+            << (positions.isEmpty() ? -1 : positions.last().first().toLongLong()) << "ms";
+    const auto directory = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
+    if (!directory.isEmpty()) QVERIFY(video.grabFramebuffer().save(directory + '/' + QTest::currentDataTag() + ".png"));
     const auto screenshotId = player.screenshot(screenshotPath); QVERIFY(screenshotId);
-    QTRY_VERIFY_WITH_TIMEOUT([&] {
-      for (const auto& command : commands) if (command.first().toULongLong() == screenshotId) return true;
+    const auto hasReply = [screenshotId](const QSignalSpy& replies) {
+      for (const auto& reply : replies) if (reply.first().toULongLong() == screenshotId) return true;
       return false;
-    }(), 5000);
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(hasReply(commands) || hasReply(errors), 5000);
+    QVERIFY2(hasReply(commands), "Screenshot failed; see Player command failure above");
     QVERIFY(!QImage(screenshotPath).isNull());
     if (relativePath.contains("H264")) {
       QSignalSpy tracks(&player, &melearner::Player::tracksChanged);
@@ -83,8 +96,6 @@ private slots:
       }(), 5000);
     }
     QCOMPARE(QApplication::topLevelWidgets().size(), 1);
-    const auto directory = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
-    if (!directory.isEmpty()) QVERIFY(video.grabFramebuffer().save(directory + '/' + QTest::currentDataTag() + ".png"));
     // The widget must release its renderer before shutdown joins libmpv.
     video.setPlayer(nullptr); player.shutdown();
   }
