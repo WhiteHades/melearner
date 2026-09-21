@@ -1,63 +1,84 @@
-# Design: melearner
+---
+name: melearner
+description: A cream-and-red native interface for learning from local course files.
+colors:
+  paper: "#faf7f0"
+  surface: "#fffdf8"
+  ink: "#302a26"
+  border: "#d9cfc2"
+  hover: "#f1e7da"
+  accent: "#b82e35"
+  on-accent: "#fffdf8"
+  dark-paper: "#211d1b"
+  dark-surface: "#2a2522"
+  dark-ink: "#f5ede1"
+  dark-border: "#574a43"
+  dark-hover: "#3b302c"
+  dark-accent: "#f19b9d"
+  dark-on-accent: "#211d1b"
+  cozy-paper: "#fff2d5"
+  cozy-surface: "#fff8e8"
+rounded:
+  control: "6px"
+  item: "4px"
+spacing:
+  compact: "8px"
+  group: "12px"
+  section: "16px"
+  shell-inline: "20px"
+---
 
-A locked visual system for the all-C++ Qt Widgets application. Every visual change preserves the product interaction contract and applies this system through native Qt controls and custom accessible widgets.
+# melearner design
 
-## Scope
+## Overview
 
-- The final application uses Qt 6.11 Widgets and C++23. It uses no QML, WebView, browser layout, or JavaScript UI.
-- The supported content floor is 560x400 logical pixels. Compact is 560-767 px, standard is 768-1279 px, and wide is 1280 px or greater.
-- Qt standard widgets provide familiar platform interaction. Custom drawing is limited to Course artwork, Progress traces, activity, document pages, and the in-window Player surface, each with explicit accessibility semantics.
+The user chose a modern, minimal, shadcn-inspired interface with a cream-and-red logo. The implementation uses C++23 and Qt Widgets. Native controls provide keyboard navigation, focus, menus, and accessibility semantics.
 
-## Register
+Course content leads the window. The interface supports choosing a root folder, opening a course, and resuming a lesson with little navigation overhead.
 
-Product UI. Design serves a focused learning task: scan a root folder, resume a lesson, and move through local videos, audio, and documents without distraction.
+## Colors
 
-## Genre
+Warm paper and ink form the light appearance. Red identifies primary actions, selection, and activity. Dark appearance uses a lighter red with dark text on selected controls. Cozy appearance warms the paper and surface while retaining the same red accent.
 
-Restrained editorial product UI.
-
-## Theme
-
-Inspired by the Kami paper system: warm parchment surfaces, low-chroma ink, one restrained ink-blue accent in light mode, and a warmer amber accent in cozy mode. No cool gray surfaces, no hard shadows, no glass effects, no decorative gradients that compete with course content.
+The palette and widget styles are defined in `MainWindow::applyAppearance`. Activity cells derive their colors from that palette and choose the higher-contrast foreground. System high contrast uses the native black-and-white palette and removes custom widget styling.
 
 ## Typography
 
-- Use the packaged melearner interface font where available and platform UI fallback fonts otherwise.
-- Keep headings roman, never italic.
-- Keep product labels compact and readable.
-- Use tabular numbers for progress, versions, counts, and time.
+Use the platform UI font and honor user text sizing. Route headings use 1.5 times the base size, metric values use 1.25 times, and section headings use bold weight. Code blocks use the platform fixed-width font. There is no bundled interface font.
 
-## Surface Rules
+Long course and lesson titles elide in navigation, with their full text available through tooltips and accessibility names. Descriptions wrap. Button labels remain on one line.
 
-- App background is warm paper, not pure white or pure black.
-- Cards lift one shade above the page with a 1px warm border.
-- Elevation should be a whisper shadow only; if a shadow is obvious, it is too strong.
-- Rounded corners use one compact Qt style token set. Native dialogs and menus retain platform conventions.
+## Layout
 
-## Accent Rules
+The content floor is 560 by 400 logical pixels. Below 768 pixels, the course outline and lesson occupy separate panes with an explicit switch. Standard windows show the resizable outline beside the lesson. Wide windows can show notes alongside the lesson.
 
-- Accent is for primary actions, current selection, links, and progress only.
-- Accent fill must always pair with the existing foreground token for contrast.
-- Avoid large accent floods. Course thumbnails may provide visual richness; chrome should stay quiet.
+The video widget stays attached to its rendering context while the layout changes. Lists use bounded pages and native item views.
 
-## Layout Rules
+Library tabs contain Courses and Stats. Stats totals use four columns when space permits and two on narrower windows. Breakdown tables stack when needed. The page scrolls vertically; wide tables scroll within their own bounds. Layout thresholds also account for increased text size.
 
-- Preserve product routes, content, and information architecture.
-- Improve rhythm through spacing, borders, and surface contrast rather than reordering UI.
-- Avoid nested-card feeling by letting parent surfaces and child controls differ subtly.
-- Keep behavior stable at 560x400, 768-wide, 1280-wide, and representative desktop and ultrawide viewports. Widths below 560 are outside the support contract.
+## Elevation & Depth
 
-## Motion
+Warm surface colors and fine borders distinguish controls. The application does not add decorative shadows. Stats sections use headings and spacing without enclosing cards.
 
-- Motion exists only for feedback: hover, focus, loading, opening menus, and thumbnail fade-in.
-- Prefer 150-250ms transitions.
-- Do not animate layout properties.
+## Shapes
 
-## Anti-Slop Checks
+Controls use compact rounded corners. Borders keep their width when focus changes, so text and neighboring controls stay in place. Native window decoration remains under desktop control.
 
-- No gradient text.
-- No purple-blue SaaS glow palette.
-- No identical icon-card feature rows.
-- No side-stripe card accents.
-- No fake browser, phone, terminal, or IDE chrome.
-- No emoji as primary feature icons.
+## Components
+
+Primary playback and resume buttons use the accent and its paired foreground. Secondary actions use the surface color. Hover, pressed, focused, and disabled states remain distinct.
+
+Library tabs use a red underline for the active destination. Menus, dialogs, sliders, and tables retain native interaction behavior.
+
+Activity cells expose the date and exact values to assistive technology. Arrow-key selection also displays those values below the grid. Progress time is derived from lesson position, not elapsed viewing time.
+
+App-authored transitions are currently off. Navigation, seeking, selection, and focus update immediately. Any future animation must have a specific feedback purpose and honor reduced-motion preferences.
+
+## Do's and Don'ts
+
+- Preserve native keyboard interaction and system text sizing.
+- Check light, dark, cozy, and high-contrast appearances before changing palette behavior.
+- Check compact and desktop layouts with normal and doubled text.
+- Keep the cream-and-red logo and reserve solid accent fills for actions and state.
+- Do not introduce a browser runtime, QML, or JavaScript UI.
+- Do not add decorative motion, gradients, or nested cards around course content.
