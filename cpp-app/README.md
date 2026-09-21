@@ -32,3 +32,13 @@ bash scripts/install-cpp-linux.sh
 ```
 
 An optional absolute argument selects another installation prefix. This source installer uses the host's native libraries; it is not the self-contained release package. AppImage, Arch private-runtime packaging, signatures, and installed-package acceptance remain separate release work.
+
+The installer rejects extra arguments, empty or relative prefixes, and a nonempty `DESTDIR`; it is a direct source installer, not a package staging command. It checks for CTest and Qt Test before configuring, treats zero discovered tests as an error, and only reports success after installation produces an executable. Use the quoted command printed on success to launch from a custom prefix; application-menu visibility depends on the desktop session's search paths. These checks do not establish installed playback or package qualification.
+
+To exercise installer success and failure handling without building the application:
+
+```sh
+python3 scripts/test-cpp-linux-installer.py
+```
+
+This requires Linux, Bash, and Python 3.9 or newer. Build tools and install destinations are isolated fixtures; when CTest is available, three cases also exercise real empty, failing, and passing CTest suites. A pass does not compile the Qt application, exercise live playback, or qualify release packages.
