@@ -8,6 +8,7 @@
 #include <cstdint>
 
 class QLabel;
+class QGridLayout;
 class QTableWidget;
 
 namespace melearner {
@@ -25,6 +26,10 @@ public:
     // Revision zero is never treated as "latest". An inactive panel clears
     // its projection and ignores terminal results from older requests.
     void setActive(bool active, std::uint64_t revision);
+
+protected:
+    void resizeEvent(QResizeEvent* event) override;
+    void changeEvent(QEvent* event) override;
 
 private:
     enum class RequestKind : std::uint8_t {
@@ -45,6 +50,8 @@ private:
     void renderMedia(const QVector<library::MediaTypeStats>& rows);
     void renderTopCourses(const QVector<library::TopCourseStats>& rows);
     void setStatus(QString message);
+    void updateLayout();
+    void updateActivityColors();
 
     library::Library& library_;
     QLabel* status_ = nullptr;
@@ -56,9 +63,13 @@ private:
     QLabel* watchedDetail_ = nullptr;
     QLabel* storageValue_ = nullptr;
     QLabel* storageDetail_ = nullptr;
+    QLabel* activityDetail_ = nullptr;
     QTableWidget* media_ = nullptr;
     QTableWidget* topCourses_ = nullptr;
     QTableWidget* activity_ = nullptr;
+    QGridLayout* breakdown_ = nullptr;
+    QGridLayout* totals_ = nullptr;
+    QWidget* coursesBox_ = nullptr;
     std::uint64_t revision_ = 0;
     std::uint64_t generation_ = 0;
     bool active_ = false;

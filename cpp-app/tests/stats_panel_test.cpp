@@ -121,11 +121,18 @@ void StatsPanelTest::rendersBoundedSnapshotAndZeroFilledActivity() {
             const auto* item = activity->item(row, column);
             QVERIFY(item != nullptr);
             QCOMPARE(item->text(), QStringLiteral("0"));
-            QVERIFY(item->data(Qt::AccessibleTextRole).toString().contains(QStringLiteral("watched")));
+            QVERIFY(item->data(Qt::AccessibleTextRole).toString().contains(QStringLiteral("progress time")));
             QVERIFY(item->toolTip().contains(QStringLiteral("completions")));
         }
     }
     QVERIFY(activity->accessibleName().contains(QStringLiteral("activity"), Qt::CaseInsensitive));
+    activity->setCurrentCell(6, 11);
+    QCOMPARE(panel.findChild<QLabel*>("activityDetail")->text(), activity->item(6, 11)->data(Qt::AccessibleTextRole).toString());
+    QTest::keyClick(activity, Qt::Key_Left);
+    QCOMPARE(activity->currentColumn(), 10);
+    QCOMPARE(panel.findChild<QLabel*>("activityDetail")->text(), activity->item(6, 10)->data(Qt::AccessibleTextRole).toString());
+    QCOMPARE(media->focusPolicy(), Qt::StrongFocus);
+    QCOMPARE(topCourses->focusPolicy(), Qt::StrongFocus);
 }
 
 void StatsPanelTest::ignoresResultsAfterDeactivation() {
@@ -169,6 +176,12 @@ void StatsPanelTest::displaysPositionDerivedActivityOnly() {
     QVERIFY(progress.revision != 0);
 
     StatsPanel panel(library);
+    auto colors = panel.palette();
+    colors.setColor(QPalette::Base, QColor("#fffdf8"));
+    colors.setColor(QPalette::Highlight, QColor("#b82e35"));
+    colors.setColor(QPalette::Text, QColor("#302a26"));
+    colors.setColor(QPalette::HighlightedText, QColor("#fffdf8"));
+    panel.setPalette(colors);
     panel.setActive(true, progress.revision);
     auto* activity = panel.findChild<QTableWidget*>(QStringLiteral("activityGrid"));
     QVERIFY(activity != nullptr);
@@ -179,12 +192,21 @@ void StatsPanelTest::displaysPositionDerivedActivityOnly() {
         for (int column = 0; column < activity->columnCount(); ++column) {
             const auto* item = activity->item(row, column);
             QVERIFY(item != nullptr);
-            if (item->data(Qt::AccessibleTextRole).toString().contains(QStringLiteral("1m 30s watched"))) {
+            if (item->data(Qt::AccessibleTextRole).toString().contains(QStringLiteral("1m 30s progress time"))) {
                 foundWatchedActivity = true;
+                QCOMPARE(item->background().color(), colors.color(QPalette::Highlight));
+                QCOMPARE(item->foreground().color(), colors.color(QPalette::HighlightedText));
             }
         }
     }
     QVERIFY(foundWatchedActivity);
+    colors.setColor(QPalette::Base, QColor("#2a2522"));
+    colors.setColor(QPalette::Highlight, QColor("#f19b9d"));
+    colors.setColor(QPalette::Text, QColor("#f5ede1"));
+    colors.setColor(QPalette::HighlightedText, QColor("#211d1b"));
+    panel.setPalette(colors);
+    QCOMPARE(activity->item(6, 11)->background().color(), colors.color(QPalette::Highlight));
+    QCOMPARE(activity->item(6, 11)->foreground().color(), colors.color(QPalette::HighlightedText));
 }
 
 QTEST_MAIN(StatsPanelTest)

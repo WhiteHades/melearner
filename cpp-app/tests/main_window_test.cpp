@@ -11,6 +11,11 @@
 #include <QPainter>
 #include <QPdfWriter>
 #include <QSpinBox>
+#include <QTabWidget>
+#include <QTableWidget>
+#include <QScrollArea>
+#include <QScrollBar>
+#include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QTextEdit>
 #include <QtTest>
@@ -19,6 +24,46 @@ class MainWindowTest final : public QObject {
   Q_OBJECT
 private slots:
   void initTestCase() { Q_INIT_RESOURCE(assets); }
+  void statsFollowCourseProgress_data() {
+    QTest::addColumn<int>("fontScale");
+    QTest::newRow("normal-text") << 1;
+    QTest::newRow("double-text") << 2;
+  }
+  void statsFollowCourseProgress() {
+    QFETCH(int, fontScale);
+    const auto originalFont = QApplication::font();
+    const auto restoreFont = qScopeGuard([originalFont] { QApplication::setFont(originalFont); });
+    auto font = originalFont; font.setPointSizeF(font.pointSizeF() * fontScale); QApplication::setFont(font);
+    QTemporaryDir files; QVERIFY(files.isValid());
+    const auto root = files.path() + "/Courses";
+    QVERIFY(QDir().mkpath(root + "/Reading/Section"));
+    QFile lesson(root + "/Reading/Section/Read.txt");
+    QVERIFY(lesson.open(QIODevice::WriteOnly)); lesson.write("Read a local lesson."); lesson.close();
+    MainWindow window(files.path() + "/library.sqlite3"); window.show();
+    QTRY_VERIFY(window.findChild<QPushButton*>("chooseRoot")->isEnabled()); window.chooseRoot(root);
+    auto* courses = window.findChild<QListView*>("courses"); QTRY_COMPARE(courses->model()->rowCount(), 1);
+    auto* tabs = window.findChild<QTabWidget*>("libraryTabs"); QVERIFY(tabs); tabs->setCurrentIndex(1);
+    auto* count = window.findChild<QLabel*>("coursesValue"); QTRY_COMPARE(count->text(), QString("1 / 1"));
+    auto* completion = window.findChild<QLabel*>("completionValue"); QTRY_COMPARE(completion->text(), QString("0%"));
+    auto* activity = window.findChild<QTableWidget*>("activityGrid"); QTRY_VERIFY(activity->item(6, 11));
+    for (int width : {560, 768, 1280}) {
+      window.resize(width, 720); QCoreApplication::processEvents();
+      auto* scroll = window.findChild<QScrollArea*>("statsScroll");
+      QTRY_COMPARE(scroll->horizontalScrollBar()->maximum(), 0);
+      const auto captures = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
+      if (!captures.isEmpty()) QVERIFY(window.grab().save(captures + QString("/stats-%1-%2x.png").arg(width).arg(fontScale)));
+      scroll->verticalScrollBar()->setValue(scroll->verticalScrollBar()->maximum());
+      QCoreApplication::processEvents();
+      if (!captures.isEmpty()) QVERIFY(window.grab().save(captures + QString("/stats-activity-%1-%2x.png").arg(width).arg(fontScale)));
+      scroll->verticalScrollBar()->setValue(0);
+    }
+    tabs->setCurrentIndex(0);
+    courses->setCurrentIndex(courses->model()->index(0, 0)); QTest::keyClick(courses, Qt::Key_Return);
+    auto* complete = window.findChild<QPushButton*>("markComplete"); QTRY_VERIFY(complete->isEnabled());
+    QTest::mouseClick(complete, Qt::LeftButton); QTRY_COMPARE(complete->text(), QString("Mark incomplete"));
+    QTest::mouseClick(window.findChild<QPushButton*>("backToLibrary"), Qt::LeftButton);
+    tabs->setCurrentIndex(1); QTRY_COMPARE(completion->text(), QString("100%"));
+  }
   void opensPdfWithinCourse() {
     QTemporaryDir files; QVERIFY(files.isValid());
     const auto root = files.path() + "/Courses";

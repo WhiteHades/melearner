@@ -5,6 +5,7 @@
 #include "search_dialog.hpp"
 #include "pdf_view.hpp"
 #include "notes_panel.hpp"
+#include "stats_panel.hpp"
 #include <QApplication>
 #include <QActionGroup>
 #include <QAccessibilityHints>
@@ -34,6 +35,8 @@
 #include <QSplitter>
 #include <QSpinBox>
 #include <QStackedWidget>
+#include <QTabWidget>
+#include <QTabBar>
 #include <QStatusBar>
 #include <QStyleHints>
 #include <QTimer>
@@ -145,6 +148,9 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   rootLabel_->setMinimumWidth(0); rootLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
   rootLabel_->setAccessibleName(tr("Root folder")); shell->addWidget(rootLabel_);
   routes_ = new QStackedWidget; shell->addWidget(routes_, 1);
+  libraryTabs_ = new QTabWidget; libraryTabs_->setObjectName("libraryTabs");
+  libraryTabs_->setDocumentMode(true);
+  libraryTabs_->tabBar()->setDrawBase(false);
   auto* libraryPage = new QWidget; auto* libraryLayout = new QVBoxLayout(libraryPage);
   libraryLayout->setContentsMargins(0, 12, 0, 0);
   resumePanel_ = new QWidget; resumePanel_->setObjectName("resumePanel"); auto* resumeLayout = new QHBoxLayout(resumePanel_);
@@ -165,7 +171,13 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   empty_ = new QLabel(tr("Opening your Library…")); empty_->setWordWrap(true);
   empty_->setAlignment(Qt::AlignCenter); libraryLayout->addWidget(empty_);
   courseModel_ = new PagedListModel(128, this); courses_ = list("courses", courseModel_);
-  libraryLayout->addWidget(courses_, 1); routes_->addWidget(libraryPage);
+  libraryLayout->addWidget(courses_, 1);
+  libraryTabs_->addTab(libraryPage, tr("Courses"));
+  auto* statsScroll = new QScrollArea; statsScroll->setObjectName("statsScroll");
+  statsScroll->setWidgetResizable(true); statsScroll->setFrameShape(QFrame::NoFrame);
+  stats_ = new melearner::StatsPanel(library_); statsScroll->setWidget(stats_);
+  libraryTabs_->addTab(statsScroll, tr("Stats")); routes_->addWidget(libraryTabs_);
+  connect(libraryTabs_, &QTabWidget::currentChanged, this, [this] { observeRevision(libraryRevision_); });
   split_ = new QSplitter(Qt::Horizontal); split_->setChildrenCollapsible(false);
   outline_ = new QWidget; outline_->setMinimumWidth(210);
   auto* outlineLayout = new QVBoxLayout(outline_); outlineLayout->setContentsMargins(0, 0, 10, 0);
@@ -312,6 +324,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     if (id) lessonRequests_.insert(id, {routeGeneration_, offset}); else lessonModel_->failedPage(offset);
   });
   connect(&library_, &lib::Library::opened, this, [this](auto, const lib::Startup& result) {
+    observeRevision(result.revision);
     settings_ = result.settings; applyAppearance(settings_.appearance); applyPresentation();
     rootPath_ = result.root.path; rootLabel_->setText(rootPath_); rootLabel_->setToolTip(tooltip(rootPath_));
     updateLayout();
@@ -327,6 +340,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     showCourse(result.course, result.hasLesson ? result.lesson.id : QString());
   });
   connect(&library_, &lib::Library::resumeReady, this, [this, resume](auto id, const lib::ResumePage& page) {
+    observeRevision(page.revision);
     if (id != resumeRequestId_ || resumeGeneration_ != routeGeneration_ || course_) return;
     resumeRequestId_ = 0; resumeEntry_.reset();
     if (!page.rows.isEmpty() && page.rows.first().hasLesson && !page.rows.first().course.missing) {
@@ -338,6 +352,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     resumePanel_->setVisible(resumeEntry_.has_value());
   });
   connect(&library_, &lib::Library::courseEntered, this, [this](auto id, const lib::CourseEntry& entry) {
+    observeRevision(entry.revision);
     if (id != entryRequestId_ || entryGeneration_ != routeGeneration_ || !course_ || course_->id != entry.course.id) return;
     entryRequestId_ = 0; course_ = entry.course;
     if (entry.course.missing) { showError(tr("Course folder missing: %1. Choose its root folder, then Rescan.").arg(entry.course.path)); return; }
@@ -454,6 +469,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   connect(&library_, &lib::Library::scanFinished, this, [this](auto id, const lib::ScanResult& state) {
     if (id != scanId_) return;
     scanId_ = 0; cancelScan_->hide();
+    observeRevision(state.revision);
     rootPath_ = state.rootPath; rootLabel_->setText(rootPath_); rootLabel_->setToolTip(tooltip(rootPath_));
     choose_->setEnabled(true); rescan_->setEnabled(true); showLibrary();
     rememberedCourse_.clear(); rememberedLesson_.clear();
@@ -461,6 +477,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
       : tr("Scan completed with %1 warnings. %2").arg(state.warnings.size()).arg(state.warnings.first()));
   });
   connect(&library_, &lib::Library::failed, this, [this](auto id, const lib::Error& error) {
+    if (error.code == lib::ErrorCode::stale_revision) return; // Revision-bound panels handle superseded reads.
     if (courseRequests_.contains(id)) courseModel_->failedPage(courseRequests_.take(id).offset);
     if (lessonRequests_.contains(id)) lessonModel_->failedPage(lessonRequests_.take(id).offset);
     if (id == scanId_) { scanId_ = 0; cancelScan_->hide(); }
@@ -480,6 +497,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
       std::max<qint64>(0, durationMs_), !lesson_->completed);
   });
   connect(&library_, &lib::Library::progressSaved, this, [this](auto, const lib::ProgressResult& result) {
+    observeRevision(result.revision);
     if (!lesson_ || lesson_->id != result.lessonId) return;
     lesson_->completed = result.completed;
     lesson_->lastPosition = result.lastPosition; lesson_->watchedTime = result.watchedTime;
@@ -487,6 +505,8 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
       lesson_->sectionName + (result.completed ? tr(" · Complete") : ""), result.completed, true, QVariant::fromValue(*lesson_)});
     complete_->setText(result.completed ? tr("Mark incomplete") : tr("Mark complete"));
   });
+  connect(&library_, &lib::Library::noteSaved, this, [this](auto, const lib::NoteSaved& result) { observeRevision(result.revision); });
+  connect(&library_, &lib::Library::noteDeleted, this, [this](auto, const lib::NoteDeleted& result) { observeRevision(result.revision); });
   connect(play_, &QPushButton::clicked, this, [this] { if (paused_) (void)player_->play(); else (void)player_->pause(); });
   connect(seek_, &QSlider::sliderReleased, this, [this] { if (durationMs_ > 0) (void)player_->seek(durationMs_ * seek_->value() / 10000); });
   connect(seek_, &QSlider::valueChanged, this, [this](int value) {
@@ -595,10 +615,16 @@ void MainWindow::showLibrary() {
   ++routeGeneration_; courseRequests_.clear(); lessonRequests_.clear(); course_.reset(); lesson_.reset();
   documentRequestId_ = 0; pendingLessonIndex_ = -1;
   routes_->setCurrentIndex(0); back_->hide(); outlineToggle_->hide(); title_->setText(tr("Your Library"));
+  observeRevision(libraryRevision_);
   choose_->show(); rescan_->show();
   restoreCourseSelection_ = returnCourseRow_ >= 0;
-  courseModel_->reset(); refreshResume(); courses_->setFocus();
+  courseModel_->reset(); refreshResume();
+  if (libraryTabs_->currentIndex() == 0) courses_->setFocus(); else libraryTabs_->setFocus();
   updateLayout();
+}
+void MainWindow::observeRevision(quint64 revision) {
+  libraryRevision_ = std::max(libraryRevision_, revision);
+  stats_->setActive(!course_ && libraryTabs_->currentIndex() == 1, libraryRevision_);
 }
 void MainWindow::refreshResume() {
   resumeEntry_.reset(); resumePanel_->hide(); resumeGeneration_ = routeGeneration_;
@@ -613,6 +639,7 @@ void MainWindow::showCourse(const lib::Course& course, const QString& requestedL
   if (player_->isReady()) (void)player_->stop();
   returnCourseRow_ = courses_->currentIndex().row(); returnCourseId_ = course.id;
   ++routeGeneration_; lessonRequests_.clear(); courseRequests_.clear(); course_ = course; lesson_.reset(); resolvedLessonIndex_ = -1; pendingLessonIndex_ = -1;
+  observeRevision(libraryRevision_);
   compactOutline_ = true; routes_->setCurrentIndex(1); back_->show(); title_->setText(course.name); title_->setToolTip(tooltip(course.name));
   playerControls_->hide();
   media_->setCurrentIndex(1); documentView_->clear(); documentView_->hide();
@@ -807,11 +834,11 @@ void MainWindow::applyAppearance(const QString& appearance) {
     QPushButton:hover { background: %4; }
     QPushButton:pressed { background: %3; }
     QPushButton:focus, QComboBox:focus, QLineEdit:focus, QSpinBox:focus,
-    QTextEdit:focus, QListView:focus { border: 2px solid %5; }
+    QTextEdit:focus, QListView:focus { border: 1px solid %5; }
     QPushButton:disabled { color: %7; background: %8; }
     QPushButton#playPause, QPushButton#resumeLesson { background: %5; color: %6; border-color: %5; font-weight: 600; }
     QPushButton#playPause:disabled { background: %4; color: %7; border-color: %3; }
-    QPushButton#playPause:focus, QPushButton#resumeLesson:focus { border: 2px solid %2; }
+    QPushButton#playPause:focus, QPushButton#resumeLesson:focus { border: 1px solid %2; }
     QComboBox, QLineEdit, QSpinBox { background: %1; color: %2; border: 1px solid %3; border-radius: 6px; padding: 4px 8px; }
     QListView, QTextEdit, QTableWidget { background: %1; color: %2; border: 1px solid %3; border-radius: 6px; selection-background-color: %5; selection-color: %6; }
     QListView::item { padding: 6px 10px; border-radius: 4px; }
@@ -824,6 +851,13 @@ void MainWindow::applyAppearance(const QString& appearance) {
     QSplitter::handle { background: %8; }
     QSplitter::handle:hover { background: %3; }
     QToolTip { background: %1; color: %2; border: 1px solid %3; padding: 6px; }
+    QTabWidget::pane { border: 0; }
+    QTabBar::tab { background: %8; color: %7; border-bottom: 2px solid transparent; padding: 8px 16px; }
+    QTabBar::tab:selected { color: %2; border-bottom-color: %5; }
+    QTabBar::tab:hover { background: %4; }
+    QGroupBox { border: 0; margin-top: 24px; font-weight: 600; }
+    QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; }
+    QHeaderView::section { background: %8; color: %2; border: 0; border-bottom: 1px solid %3; padding: 6px; }
   )").arg(base, ink.name(), border, hover, accent, onAccent,
     dark ? "#b4a69d" : "#75685f", surface));
 }

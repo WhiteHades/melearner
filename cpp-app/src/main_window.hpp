@@ -17,7 +17,8 @@ class QTextEdit;
 class PdfView;
 class QDockWidget;
 class QGridLayout;
-namespace melearner { class Player; class MpvVideoWidget; class NotesPanel; }
+class QTabWidget;
+namespace melearner { class Player; class MpvVideoWidget; class NotesPanel; class StatsPanel; }
 
 class MainWindow final : public QMainWindow {
   Q_OBJECT
@@ -35,6 +36,10 @@ private:
   melearner::documents::Documents documents_;
   QString rootPath_;
   melearner::library::Settings settings_;
+  quint64 libraryRevision_ = 0;
+  QTabWidget* libraryTabs_;
+  melearner::StatsPanel* stats_;
+  void observeRevision(quint64 revision);
   quint64 routeGeneration_ = 0;
   struct PageRequest { quint64 generation; int offset; };
   QMap<quint64, PageRequest> courseRequests_;

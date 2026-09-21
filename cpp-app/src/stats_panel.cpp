@@ -3,15 +3,19 @@
 #include <QAbstractItemView>
 #include <QColor>
 #include <QDate>
+#include <QEvent>
 #include <QGroupBox>
 #include <QHeaderView>
 #include <QLabel>
 #include <QLocale>
 #include <QTableWidget>
 #include <QTableWidgetItem>
+#include <QResizeEvent>
+#include <QStyle>
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 namespace melearner {
@@ -64,7 +68,7 @@ QString titleCase(QString value) {
 }
 
 QString activityText(const QDate& date, const library::ActivityDay& day) {
-    return QObject::tr("%1: %2 watched, %3 Lessons touched, %4 completions")
+    return QObject::tr("%1: %2 progress time, %3 lessons touched, %4 completions")
         .arg(date.toString(Qt::ISODate), durationText(day.watchedSeconds),
              countText(day.lessonsTouched), countText(day.completions));
 }
@@ -117,6 +121,8 @@ QGroupBox* metricBox(
 
 void configureTable(QTableWidget* table) {
     table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    table->setFocusPolicy(Qt::StrongFocus);
+    table->setTabKeyNavigation(false);
     table->setWordWrap(false);
     table->setTextElideMode(Qt::ElideRight);
     table->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -126,6 +132,11 @@ void configureTable(QTableWidget* table) {
     table->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     table->setAlternatingRowColors(true);
     table->setFrameShape(QFrame::NoFrame);
+}
+
+double luminance(const QColor& color) {
+    const auto linear = [](double value) { return value <= 0.04045 ? value / 12.92 : std::pow((value + 0.055) / 1.055, 2.4); };
+    return 0.2126 * linear(color.redF()) + 0.7152 * linear(color.greenF()) + 0.0722 * linear(color.blueF());
 }
 
 QTableWidgetItem* tableItem(const QString& text, const QString& accessibleText = {}) {
@@ -145,8 +156,8 @@ StatsPanel::StatsPanel(library::Library& library, QWidget* parent)
     setMinimumWidth(320);
 
     auto* root = new QVBoxLayout(this);
-    root->setContentsMargins(0, 0, 0, 0);
-    root->setSpacing(10);
+    root->setContentsMargins(0, 12, 0, 0);
+    root->setSpacing(16);
 
     auto* heading = new QLabel(tr("Learning stats"));
     heading->setObjectName(QStringLiteral("statsHeading"));
@@ -160,7 +171,7 @@ StatsPanel::StatsPanel(library::Library& library, QWidget* parent)
     status_->setText(tr("Choose a library root to load statistics."));
     root->addWidget(status_);
 
-    auto* totals = new QGridLayout;
+    auto* totals = new QGridLayout; totals_ = totals;
     totals->setHorizontalSpacing(8);
     totals->setVerticalSpacing(8);
     totals->addWidget(metricBox(tr("Courses"), QStringLiteral("coursesValue"),
@@ -169,7 +180,7 @@ StatsPanel::StatsPanel(library::Library& library, QWidget* parent)
     totals->addWidget(metricBox(tr("Completion"), QStringLiteral("completionValue"),
                                 QStringLiteral("completionDetail"), &completionValue_, &completionDetail_),
                       0, 1);
-    totals->addWidget(metricBox(tr("Watched"), QStringLiteral("watchedValue"),
+    totals->addWidget(metricBox(tr("Progress time"), QStringLiteral("watchedValue"),
                                 QStringLiteral("watchedDetail"), &watchedValue_, &watchedDetail_),
                       1, 0);
     totals->addWidget(metricBox(tr("Storage"), QStringLiteral("storageValue"),
@@ -179,7 +190,7 @@ StatsPanel::StatsPanel(library::Library& library, QWidget* parent)
     totals->setColumnStretch(1, 1);
     root->addLayout(totals);
 
-    auto* breakdown = new QGridLayout;
+    auto* breakdown = new QGridLayout; breakdown_ = breakdown;
     breakdown->setHorizontalSpacing(10);
     breakdown->setVerticalSpacing(10);
 
@@ -188,21 +199,19 @@ StatsPanel::StatsPanel(library::Library& library, QWidget* parent)
     media_ = new QTableWidget(0, 4, mediaBox);
     media_->setObjectName(QStringLiteral("mediaTable"));
     media_->setAccessibleName(tr("Media mix").append(tr(" table")));
-    media_->setHorizontalHeaderLabels({tr("Type"), tr("Lessons"), tr("Completed"), tr("Watched")});
+    media_->setHorizontalHeaderLabels({tr("Type"), tr("Lessons"), tr("Completed"), tr("Progress")});
     media_->setSelectionMode(QAbstractItemView::NoSelection);
-    media_->setFocusPolicy(Qt::NoFocus);
     configureTable(media_);
     mediaLayout->addWidget(media_);
     breakdown->addWidget(mediaBox, 0, 0);
 
-    auto* coursesBox = new QGroupBox(tr("Top courses"));
+    auto* coursesBox = new QGroupBox(tr("Top courses")); coursesBox_ = coursesBox;
     auto* coursesLayout = new QVBoxLayout(coursesBox);
     topCourses_ = new QTableWidget(0, 4, coursesBox);
     topCourses_->setObjectName(QStringLiteral("topCoursesTable"));
     topCourses_->setAccessibleName(tr("Top courses table"));
-    topCourses_->setHorizontalHeaderLabels({tr("Course"), tr("Complete"), tr("Watched"), tr("Storage")});
+    topCourses_->setHorizontalHeaderLabels({tr("Course"), tr("Complete"), tr("Progress"), tr("Storage")});
     topCourses_->setSelectionMode(QAbstractItemView::NoSelection);
-    topCourses_->setFocusPolicy(Qt::NoFocus);
     configureTable(topCourses_);
     coursesLayout->addWidget(topCourses_);
     breakdown->addWidget(coursesBox, 0, 1);
@@ -229,8 +238,19 @@ StatsPanel::StatsPanel(library::Library& library, QWidget* parent)
     activity_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     activity_->verticalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     activity_->setMinimumHeight(230);
+    activity_->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    activity_->horizontalHeader()->setMinimumSectionSize(40);
     activityLayout->addWidget(activity_);
+    activityDetail_ = plainLabel(QStringLiteral("activityDetail"), tr("Selected activity"));
+    activityDetail_->setText(tr("Select a day to see its activity."));
+    activityLayout->addWidget(activityDetail_);
+    connect(activity_, &QTableWidget::currentCellChanged, this, [this](int row, int column) {
+        const auto* item = activity_->item(row, column);
+        activityDetail_->setText(item ? item->data(Qt::AccessibleTextRole).toString()
+                                    : tr("Select a day to see its activity."));
+    });
     root->addWidget(activityBox);
+    root->addStretch();
 
     connect(&library_, &library::Library::statsReady, this,
             [this](library::RequestId requestId, const library::LibraryStats& stats) {
@@ -341,12 +361,13 @@ void StatsPanel::renderSnapshot(const library::LibraryStats& stats) {
                                     .arg(countText(stats.completedLessons), countText(stats.lessons)));
     watchedValue_->setText(durationText(stats.watchedSeconds));
     watchedDetail_->setText(stats.totalSeconds == 0
-                                ? tr("Position-derived Progress")
+                                ? tr("Based on lesson position")
                                 : tr("of %1 total").arg(durationText(stats.totalSeconds)));
     storageValue_->setText(bytesText(stats.bytes));
-    storageDetail_->setText(tr("%1 sections").arg(countText(stats.sections)));
+    storageDetail_->setText(tr("Sections: %1").arg(countText(stats.sections)));
     renderMedia(stats.mediaTypes);
     renderTopCourses(stats.topCourses);
+    updateLayout();
     setStatus(tr("Statistics updated."));
 }
 
@@ -354,7 +375,7 @@ void StatsPanel::renderMedia(const QVector<library::MediaTypeStats>& rows) {
     media_->setRowCount(rows.size());
     for (int row = 0; row < rows.size(); ++row) {
         const auto& item = rows.at(row);
-        const auto accessible = tr("%1: %2 lessons, %3 completed, %4 watched")
+        const auto accessible = tr("%1: %2 lessons, %3 completed, %4 progress time")
                                     .arg(titleCase(item.type), countText(item.lessons),
                                          countText(item.completed), durationText(item.watchedSeconds));
         media_->setItem(row, 0, tableItem(titleCase(item.type), accessible));
@@ -368,7 +389,7 @@ void StatsPanel::renderTopCourses(const QVector<library::TopCourseStats>& rows) 
     topCourses_->setRowCount(rows.size());
     for (int row = 0; row < rows.size(); ++row) {
         const auto& item = rows.at(row);
-        const auto accessible = tr("%1: %2 of %3 lessons complete, %4 watched, %5 stored")
+        const auto accessible = tr("%1: %2 of %3 lessons complete, %4 progress time, %5 stored")
                                     .arg(item.name, countText(item.completedLessons), countText(item.lessons),
                                          durationText(item.watchedSeconds), bytesText(item.bytes));
         topCourses_->setItem(row, 0, tableItem(item.name, accessible));
@@ -411,7 +432,7 @@ void StatsPanel::renderActivity(const library::ActivityDayPage& page) {
     QStringList dayLabels;
     dayLabels.reserve(kActivityRows);
     for (int row = 0; row < kActivityRows; ++row) {
-        dayLabels.append(tr("Day %1").arg(row + 1));
+        dayLabels.append(QLocale().dayName(first.addDays(row).dayOfWeek(), QLocale::ShortFormat));
     }
     activity_->setHorizontalHeaderLabels(weekLabels);
     activity_->setVerticalHeaderLabels(dayLabels);
@@ -425,17 +446,70 @@ void StatsPanel::renderActivity(const library::ActivityDayPage& page) {
         auto* item = tableItem(QString::number(level), accessible);
         item->setTextAlignment(Qt::AlignCenter);
         item->setData(Qt::UserRole, date.toString(Qt::ISODate));
-        auto color = activity_->palette().color(QPalette::Highlight);
-        color.setAlpha(level == 0 ? 20 : 35 + level * 45);
-        item->setBackground(color);
         activity_->setItem(index % kActivityRows, index / kActivityRows, item);
     }
+    updateActivityColors();
     activity_->setCurrentCell(-1, -1);
     setStatus(tr("Activity updated."));
 }
 
 void StatsPanel::setStatus(QString message) {
     status_->setText(std::move(message));
+}
+
+void StatsPanel::resizeEvent(QResizeEvent* event) { QWidget::resizeEvent(event); updateLayout(); }
+
+void StatsPanel::changeEvent(QEvent* event) {
+    QWidget::changeEvent(event);
+    if (event->type() == QEvent::PaletteChange) updateActivityColors();
+    if (event->type() == QEvent::FontChange) updateLayout();
+}
+
+void StatsPanel::updateLayout() {
+    if (!breakdown_) return;
+    const bool narrow = width() < std::max(900, fontMetrics().height() * 55);
+    const QList<QWidget*> metrics = {coursesValue_->parentWidget(), completionValue_->parentWidget(),
+                                    watchedValue_->parentWidget(), storageValue_->parentWidget()};
+    for (int index = 0; index < metrics.size(); ++index)
+        totals_->addWidget(metrics[index], narrow ? index / 2 : 0, narrow ? index % 2 : index);
+    for (int column = 0; column < 4; ++column) totals_->setColumnStretch(column, !narrow || column < 2 ? 1 : 0);
+    breakdown_->addWidget(coursesBox_, narrow ? 1 : 0, narrow ? 0 : 1);
+    breakdown_->setColumnStretch(1, narrow ? 0 : 1);
+    const int rowHeight = std::max(40, fontMetrics().lineSpacing() + 12);
+    for (auto* table : {media_, topCourses_}) {
+        table->verticalHeader()->setDefaultSectionSize(rowHeight);
+        table->setFixedHeight(table->horizontalHeader()->sizeHint().height() + rowHeight * std::max(1, table->rowCount())
+                             + table->style()->pixelMetric(QStyle::PM_ScrollBarExtent) + 4);
+        table->horizontalHeader()->setMinimumSectionSize(table->fontMetrics().horizontalAdvance(tr("Completed")) + 20);
+        table->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    }
+    activity_->setMinimumHeight(rowHeight * 8 + 24);
+    activity_->horizontalHeader()->setMinimumSectionSize(std::max(40, activity_->fontMetrics().horizontalAdvance("00/00") + 16));
+}
+
+void StatsPanel::updateActivityColors() {
+    if (!activity_) return;
+    const auto base = palette().color(QPalette::Base);
+    const auto accent = palette().color(QPalette::Highlight);
+    const auto ink = palette().color(QPalette::Text);
+    const auto onAccent = palette().color(QPalette::HighlightedText);
+    for (int row = 0; row < kActivityRows; ++row) {
+        for (int column = 0; column < kActivityColumns; ++column) {
+            auto* item = activity_->item(row, column); if (!item) continue;
+            const double amount = std::clamp(item->text().toInt(), 0, 4) / 4.0;
+            const QColor background = QColor::fromRgbF(
+                base.redF() + (accent.redF() - base.redF()) * amount,
+                base.greenF() + (accent.greenF() - base.greenF()) * amount,
+                base.blueF() + (accent.blueF() - base.blueF()) * amount);
+            const double light = luminance(background);
+            const auto contrast = [light](const QColor& text) {
+                const double other = luminance(text);
+                return (std::max(light, other) + 0.05) / (std::min(light, other) + 0.05);
+            };
+            item->setBackground(background);
+            item->setForeground(contrast(ink) >= contrast(onAccent) ? ink : onAccent);
+        }
+    }
 }
 
 }  // namespace melearner
