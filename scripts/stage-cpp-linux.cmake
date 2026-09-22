@@ -338,7 +338,7 @@ function(_runtime_dependency_is_system_boundary _dependency _dependency_name _ou
     endif()
   endif()
   if(_dependency_name MATCHES
-      "^(ld-linux[^/]*|linux-vdso[^/]*|libc|libm|libdl|libpthread|librt|libresolv|libutil|libnss_[^/]+|libcrypt|libanl|libBrokenLocale)\\.so"
+      "^(ld-linux[^/]*|linux-vdso[^/]*|libc|libm|libmvec|libdl|libpthread|librt|libresolv|libutil|libnss_[^/]+|libcrypt|libanl|libBrokenLocale)\\.so"
       OR _dependency_name MATCHES
       "^(libGL[^/]*|libEGL[^/]*|libGLES[^/]*|libOpenGL[^/]*|libOpenCL[^/]*|libvulkan[^/]*|libcuda[^/]*|libcudart[^/]*|libnv[^/]*|libnvidia[^/]*|libamd[^/]*|libamdocl[^/]*|libdrm[^/]*|libgbm[^/]*|libX[^/]*|libxcb[^/]*|libwayland[^/]*|libdecor[^/]*|libxkbcommon[^/]*|libasound[^/]*|libpulse[^/]*|libpipewire[^/]*|libjack[^/]*)\\.so")
     set(${_output} TRUE PARENT_SCOPE)

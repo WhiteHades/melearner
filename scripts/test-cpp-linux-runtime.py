@@ -27,7 +27,9 @@ def checked(*args: str, **kwargs) -> subprocess.CompletedProcess:
 
 class RuntimeTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.temp = tempfile.TemporaryDirectory(prefix="melearner runtime ")
+        temp_root = ROOT / ".tmp"
+        temp_root.mkdir(exist_ok=True)
+        self.temp = tempfile.TemporaryDirectory(prefix="runtime-regressions-", dir=temp_root)
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.stage = (ROOT / "scripts/stage-cpp-linux.cmake").read_text(encoding="utf-8")
@@ -292,6 +294,8 @@ int main(int argc, char **argv) {
               "if(NOT result)\nmessage(FATAL_ERROR \"OpenCL must be system-bound\")\nendif()\n"
               "_runtime_dependency_is_system_boundary(\"/usr/lib/libvulkan.so.1\" \"libvulkan.so.1\" result)\n"
               "if(NOT result)\nmessage(FATAL_ERROR \"Vulkan must be system-bound\")\nendif()\n"
+              "_runtime_dependency_is_system_boundary(\"/usr/lib/libmvec.so.1\" \"libmvec.so.1\" result)\n"
+              "if(NOT result)\nmessage(FATAL_ERROR \"glibc vector math must stay with the host glibc\")\nendif()\n"
               "_runtime_dependency_is_system_boundary(\"/usr/lib/libQt6Core.so.6\" \"libQt6Core.so.6\" result)\n"
               "if(result)\nmessage(FATAL_ERROR \"Qt must remain private\")\nendif()\n",
             encoding="utf-8",
