@@ -46,6 +46,15 @@ qt_add_resources(melearner_app assets PREFIX / FILES
 add_executable(melearner cpp-app/src/main.cpp)
 target_link_libraries(melearner PRIVATE melearner_app)
 target_compile_definitions(melearner PRIVATE MELEARNER_VERSION="${PROJECT_VERSION}")
+if(BUILD_TESTING)
+  add_test(NAME cli_version COMMAND melearner --version)
+  add_test(NAME cli_version_short COMMAND melearner -v)
+  add_test(NAME cli_help COMMAND melearner --help)
+  add_test(NAME cli_help_short COMMAND melearner -h)
+  add_test(NAME cli_help_all COMMAND melearner --help-all)
+  set_tests_properties(cli_version cli_version_short cli_help cli_help_short cli_help_all
+    PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=melearner-invalid;DISPLAY=;WAYLAND_DISPLAY=" TIMEOUT 10)
+endif()
 install(TARGETS melearner RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES packaging/linux/io.github.whitehades.melearner.desktop
   DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
