@@ -56,6 +56,17 @@ The header uses borderless navigation controls. Folder changes and rescanning li
 
 The video widget stays attached to its rendering context while the layout changes. Lists use bounded pages and native item views.
 
+## Keyboard
+
+Keyboard users are first-class alongside pointer users. Native Qt focus and
+editing behavior remain authoritative; Vim-style motions are scoped to lists,
+the course outline, the player, and read-only lesson content. `j`/`k`, `gg`/`G`,
+`Ctrl+D`/`Ctrl+U`, lesson stepping, completion, notes, and player controls are
+available without capturing text-field or IME input. `?`/`F1` opens a searchable
+shortcut list and `:`/`Ctrl+Space` opens the same action registry as a command
+palette. Menus and that popup are generated from the same `QAction` commands so
+labels and bindings do not drift.
+
 Library tabs contain Courses and Stats. Stats totals use four columns when space permits and two on narrower windows. Breakdown tables stack when needed. The page scrolls vertically; wide tables scroll within their own bounds. Layout thresholds also account for increased text size.
 
 ## Elevation & Depth

@@ -14,6 +14,7 @@
 #include <QComboBox>
 #include <QDateTime>
 #include <QDebug>
+#include <QDialog>
 #include <QDockWidget>
 #include <QDesktopServices>
 #include <QFileDialog>
@@ -23,10 +24,14 @@
 #include <QGraphicsOpacityEffect>
 #include <QLabel>
 #include <QKeyEvent>
+#include <QLineEdit>
 #include <QListView>
 #include <QTreeView>
 #include <QMenu>
+#include <QMenuBar>
 #include <QMessageBox>
+#include <QListWidget>
+#include <QListWidgetItem>
 #include <QPushButton>
 #include <QPointer>
 #include <QPainter>
@@ -34,9 +39,14 @@
 #include <QResizeEvent>
 #include <QShortcut>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QSplitter>
+#include <QAbstractItemView>
+#include <QAbstractScrollArea>
+#include <QAbstractSpinBox>
+#include <QPlainTextEdit>
 #include <QSpinBox>
 #include <QStackedWidget>
 #include <QTabWidget>
@@ -70,6 +80,31 @@ protected:
       fontMetrics().elidedText(text(), Qt::ElideRight, contentsRect().width()));
   }
 };
+void populateKeyboardPopup(QDialog* dialog, QLineEdit* query, QListWidget* list,
+    const QList<QAction*>& actions, bool commandPalette) {
+  list->clear();
+  const auto filter = query->text().trimmed();
+  for (auto* action : actions) {
+    if (!action || (!commandPalette && !action->property("showInKeyboardPopup").toBool())) continue;
+    const auto label = action->text();
+    const auto keys = action->property("shortcutText").toString();
+    const auto context = action->property("shortcutContext").toString();
+    const auto haystack = QStringLiteral("%1 %2 %3").arg(label, keys, context);
+    if (!filter.isEmpty() && !haystack.contains(filter, Qt::CaseInsensitive)) continue;
+    auto* item = new QListWidgetItem(QStringLiteral("%1    %2  ·  %3").arg(keys, label, context), list);
+    item->setData(Qt::UserRole, QVariant::fromValue<qulonglong>(reinterpret_cast<quintptr>(action)));
+    item->setToolTip(haystack);
+    item->setTextAlignment(Qt::AlignVCenter | Qt::AlignLeft);
+    item->setFlags(item->flags() | Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+  }
+  if (list->count() > 0) list->setCurrentRow(0);
+  dialog->setWindowTitle(commandPalette ? QObject::tr("Command palette") : QObject::tr("Keyboard shortcuts"));
+}
+QAction* keyboardActionForItem(QListWidgetItem* item) {
+  if (!item) return nullptr;
+  const auto raw = item->data(Qt::UserRole).toULongLong();
+  return reinterpret_cast<QAction*>(static_cast<quintptr>(raw));
+}
 QString clockText(qint64 milliseconds) {
   const auto seconds = std::max<qint64>(0, milliseconds / 1000);
   return QString("%1:%2:%3").arg(seconds / 3600).arg(seconds / 60 % 60, 2, 10, QChar('0')).arg(seconds % 60, 2, 10, QChar('0'));
@@ -360,8 +395,6 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   connect(rescan_, &QPushButton::clicked, this, [this] { chooseRoot(rootPath_); });
   connect(back_, &QPushButton::clicked, this, &MainWindow::showLibrary);
   connect(searchButton_, &QPushButton::clicked, this, &MainWindow::openSearch);
-  auto* searchShortcut = new QShortcut(QKeySequence("Ctrl+K"), this);
-  connect(searchShortcut, &QShortcut::activated, this, &MainWindow::openSearch);
   connect(outlineToggle_, &QPushButton::clicked, this, [this] { compactOutline_ = !compactOutline_; updateLayout(); });
   connect(courseModel_, &PagedListModel::pageRequested, this, [this](int offset) {
     const auto id = library_.courses(offset);
@@ -560,7 +593,9 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
       (void)player_->seek(durationMs_ * value / 10000);
   });
   connect(mute, &QAction::triggered, this, [this](bool checked) { (void)player_->setMuted(checked); });
-  connect(player_, &melearner::Player::mutedChanged, mute, &QAction::setChecked);
+  connect(player_, &melearner::Player::mutedChanged, this, [this, mute](bool value) {
+    muted_ = value; mute->setChecked(value);
+  });
   connect(rewind, &QAction::triggered, this, [this] { if (playerLoaded_) (void)player_->seekRelative(-10000); });
   connect(forward, &QAction::triggered, this, [this] { if (playerLoaded_) (void)player_->seekRelative(10000); });
   connect(frame, &QAction::triggered, this, [this] { if (playerLoaded_) (void)player_->frameStep(); });
@@ -647,8 +682,80 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     screenshotRequests_.remove(id); showError(message);
   });
   connect(player_, &melearner::Player::fatalError, this, [this](const QString&, const QString& message) { showError(message); });
-  auto* escape = new QShortcut(QKeySequence(Qt::Key_Escape), this);
-  connect(escape, &QShortcut::activated, this, [this] { if (isFullScreen()) showNormal(); else if (course_) showLibrary(); });
+  // Keep the command list as the single source for keyboard help and menus.
+  // Single-letter Vim motions are dispatched from keyPressEvent/eventFilter so
+  // native editors never lose their text input semantics.
+  auto* libraryCommand = registerKeyboardCommand("library", tr("Return to Library"), tr("Esc"), tr("Navigation"),
+    [this] { if (course_) showLibrary(); });
+  auto* searchCommand = registerKeyboardCommand("search", tr("Search library"), tr("Ctrl+K  /"), tr("Navigation"),
+    [this] { openSearch(); });
+  auto* helpCommand = registerKeyboardCommand("shortcuts", tr("Show keyboard shortcuts"), tr("?  F1"), tr("Help"),
+    [this] { showKeyboardPopup(false); });
+  auto* helpShortcut = new QShortcut(QKeySequence(Qt::Key_F1), this);
+  helpShortcut->setContext(Qt::ApplicationShortcut); helpShortcut->setAutoRepeat(false);
+  connect(helpShortcut, &QShortcut::activated, helpCommand, &QAction::trigger);
+  auto* paletteCommand = registerKeyboardCommand("commandPalette", tr("Open command palette"), tr(":  Ctrl+Space"), tr("Help"),
+    [this] { showKeyboardPopup(true); });
+  auto* upCommand = registerKeyboardCommand("moveUp", tr("Move up"), tr("k"), tr("Vim navigation"),
+    [this] { moveSelection(-1); });
+  auto* downCommand = registerKeyboardCommand("moveDown", tr("Move down"), tr("j"), tr("Vim navigation"),
+    [this] { moveSelection(1); });
+  auto* firstCommand = registerKeyboardCommand("first", tr("Jump to first item"), tr("gg"), tr("Vim navigation"),
+    [this] { jumpSelection(false); });
+  auto* lastCommand = registerKeyboardCommand("last", tr("Jump to last item"), tr("G"), tr("Vim navigation"),
+    [this] { jumpSelection(true); });
+  auto* pageUpCommand = registerKeyboardCommand("pageUp", tr("Scroll up one page"), tr("Ctrl+U"), tr("Reading"),
+    [this] { scrollDocument(-1); });
+  auto* pageDownCommand = registerKeyboardCommand("pageDown", tr("Scroll down one page"), tr("Ctrl+D"), tr("Reading"),
+    [this] { scrollDocument(1); });
+  auto* collapseCommand = registerKeyboardCommand("collapse", tr("Collapse outline section"), tr("h"), tr("Course outline"),
+    [this] { toggleOutlineBranch(false); });
+  auto* expandCommand = registerKeyboardCommand("expand", tr("Expand outline section"), tr("l"), tr("Course outline"),
+    [this] { toggleOutlineBranch(true); });
+  auto* previousCommand = registerKeyboardCommand("previousLesson", tr("Previous lesson"), tr("["), tr("Lesson"),
+    [this] { stepLesson(-1); });
+  auto* nextCommand = registerKeyboardCommand("nextLesson", tr("Next lesson"), tr("]"), tr("Lesson"),
+    [this] { stepLesson(1); });
+  auto* completeCommand = registerKeyboardCommand("complete", tr("Mark lesson complete"), tr("c"), tr("Lesson"),
+    [this] { if (complete_ && complete_->isEnabled()) complete_->click(); });
+  auto* notesCommand = registerKeyboardCommand("notes", tr("Open lesson notes"), tr("n"), tr("Lesson"),
+    [this] { openNotes(); });
+  auto* outlineCommand = registerKeyboardCommand("outline", tr("Toggle course outline"), tr("o"), tr("Lesson"),
+    [this] { if (outlineToggle_ && outlineToggle_->isVisible()) outlineToggle_->click(); });
+  auto* playCommand = registerKeyboardCommand("playPause", tr("Play or pause"), tr("Space"), tr("Player"),
+    [this] { if (playerLoaded_ && play_) play_->click(); });
+  auto* seekBackCommand = registerKeyboardCommand("seekBack", tr("Seek back ten seconds"), tr("h  Left"), tr("Player"),
+    [this] { if (playerLoaded_) (void)player_->seekRelative(-10000); });
+  auto* seekForwardCommand = registerKeyboardCommand("seekForward", tr("Seek forward ten seconds"), tr("l  Right"), tr("Player"),
+    [this] { if (playerLoaded_) (void)player_->seekRelative(10000); });
+  auto* fullscreenCommand = registerKeyboardCommand("fullscreen", tr("Toggle fullscreen"), tr("f"), tr("Player"),
+    [this] { if (isFullScreen()) showNormal(); else showFullScreen(); });
+  auto* muteCommand = registerKeyboardCommand("mute", tr("Mute or unmute"), tr("m"), tr("Player"),
+    [this] { if (playerLoaded_) (void)player_->setMuted(!muted_); });
+  auto* frameBackCommand = registerKeyboardCommand("frameBack", tr("Seek back one second"), tr(","), tr("Player"),
+    [this] { if (playerLoaded_) (void)player_->seekRelative(-1000); });
+  auto* frameForwardCommand = registerKeyboardCommand("frameForward", tr("Advance one frame"), tr("."), tr("Player"),
+    [this] { if (playerLoaded_) (void)player_->frameStep(); });
+  auto* chooseCommand = registerKeyboardCommand("chooseRoot", tr("Choose root folder"), {}, tr("Library"),
+    [this] { if (choose_ && choose_->isEnabled()) choose_->click(); });
+  auto* rescanCommand = registerKeyboardCommand("rescanRoot", tr("Rescan root folder"), {}, tr("Library"),
+    [this] { if (rescan_ && rescan_->isEnabled()) rescan_->click(); });
+
+  auto* navigateMenu = menuBar()->addMenu(tr("Navigate"));
+  for (auto* action : {libraryCommand, searchCommand, previousCommand, nextCommand, completeCommand, notesCommand, outlineCommand})
+    navigateMenu->addAction(action);
+  navigateMenu->addSeparator();
+  for (auto* action : {chooseCommand, rescanCommand}) navigateMenu->addAction(action);
+  auto* viewMenu = menuBar()->addMenu(tr("View"));
+  for (auto* action : {upCommand, downCommand, firstCommand, lastCommand, pageUpCommand, pageDownCommand,
+                       collapseCommand, expandCommand}) viewMenu->addAction(action);
+  auto* playerMenu = menuBar()->addMenu(tr("Player"));
+  for (auto* action : {playCommand, seekBackCommand, seekForwardCommand, fullscreenCommand, muteCommand,
+                       frameBackCommand, frameForwardCommand}) playerMenu->addAction(action);
+  auto* helpMenu = menuBar()->addMenu(tr("Help"));
+  helpMenu->addAction(helpCommand); helpMenu->addAction(paletteCommand);
+  connect(qApp, &QApplication::focusChanged, this, [this] { pendingG_ = false; });
+  installKeyboardFilters();
   startupId_ = library_.open();
   if (!startupId_) showError(tr("The Library could not start. Close and reopen melearner."));
   applyAppearance("light");
@@ -657,6 +764,205 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
 MainWindow::~MainWindow() {
   delete video_; // The OpenGL context must be current during renderer destruction.
   player_->shutdown(); documents_.close(); library_.close();
+}
+QAction* MainWindow::registerKeyboardCommand(const QString& id, const QString& label,
+    const QString& shortcut, const QString& context, std::function<void()> callback) {
+  auto* action = new QAction(label, this);
+  action->setObjectName("keyboard-" + id);
+  action->setProperty("shortcutText", shortcut);
+  action->setProperty("shortcutContext", context);
+  action->setProperty("showInKeyboardPopup", !shortcut.isEmpty());
+  connect(action, &QAction::triggered, this, [callback = std::move(callback)] { callback(); });
+  addAction(action);
+  keyboardActions_.append(action);
+  keyboardCommands_.insert(id, action);
+  return action;
+}
+QAction* MainWindow::keyboardCommand(const QString& id) const {
+  return keyboardCommands_.value(id, nullptr);
+}
+void MainWindow::showKeyboardPopup(bool commandPalette) {
+  if (const auto* open = findChild<QDialog*>(commandPalette ? "commandPalette" : "shortcutHelp"); open && open->isVisible()) return;
+  auto* dialog = new QDialog(this);
+  dialog->setObjectName(commandPalette ? "commandPalette" : "shortcutHelp");
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  dialog->setModal(true);
+  dialog->resize(620, 520);
+  auto* layout = new QVBoxLayout(dialog);
+  layout->setContentsMargins(20, 18, 20, 16); layout->setSpacing(10);
+  auto* heading = new QLabel(commandPalette ? tr("Run a command") : tr("Keyboard shortcuts"), dialog);
+  heading->setObjectName("keyboardPopupTitle");
+  auto headingFont = heading->font(); headingFont.setWeight(QFont::DemiBold); headingFont.setPointSizeF(headingFont.pointSizeF() * 1.12); heading->setFont(headingFont);
+  layout->addWidget(heading);
+  auto* hint = new QLabel(commandPalette ? tr("Type to filter commands · Enter to run · Esc to close")
+                                         : tr("Type to filter · Enter to run a command · Esc to close"), dialog);
+  hint->setObjectName("keyboardPopupHint"); hint->setWordWrap(true); layout->addWidget(hint);
+  auto* query = new QLineEdit(dialog); query->setObjectName("keyboardPopupFilter");
+  query->setPlaceholderText(commandPalette ? tr("Search commands…") : tr("Filter shortcuts…"));
+  query->setAccessibleName(commandPalette ? tr("Command filter") : tr("Shortcut filter"));
+  layout->addWidget(query);
+  auto* list = new QListWidget(dialog); list->setObjectName("keyboardPopupList");
+  list->setSelectionMode(QAbstractItemView::SingleSelection); list->setUniformItemSizes(true);
+  list->setAlternatingRowColors(false); list->setFrameShape(QFrame::NoFrame); layout->addWidget(list, 1);
+  const QPointer<QWidget> invoker = QApplication::focusWidget();
+  populateKeyboardPopup(dialog, query, list, keyboardActions_, commandPalette);
+  connect(query, &QLineEdit::textChanged, dialog, [dialog, query, list, this, commandPalette] {
+    populateKeyboardPopup(dialog, query, list, keyboardActions_, commandPalette);
+  });
+  const auto runSelected = [this, dialog, list, invoker] {
+    const QPointer<QAction> action = keyboardActionForItem(list->currentItem());
+    if (!action || !action->isEnabled()) return;
+    dialog->accept();
+    QTimer::singleShot(0, this, [invoker, action] {
+      if (invoker) invoker->setFocus(Qt::OtherFocusReason);
+      if (action) action->trigger();
+    });
+  };
+  connect(query, &QLineEdit::returnPressed, dialog, runSelected);
+  connect(list, &QListWidget::itemActivated, dialog, [runSelected](QListWidgetItem*) { runSelected(); });
+  dialog->show(); query->setFocus();
+}
+bool MainWindow::isTextInputFocused() const {
+  auto* focus = QApplication::focusWidget();
+  if (!focus) return false;
+  if (qobject_cast<QLineEdit*>(focus) || qobject_cast<QAbstractSpinBox*>(focus) || qobject_cast<QComboBox*>(focus)) return true;
+  if (const auto* edit = qobject_cast<QTextEdit*>(focus)) return !edit->isReadOnly();
+  if (const auto* edit = qobject_cast<QPlainTextEdit*>(focus)) return !edit->isReadOnly();
+  return false;
+}
+void MainWindow::moveSelection(int delta) {
+  auto* focus = QApplication::focusWidget();
+  const auto inside = [focus](QWidget* root) { return root && focus && (focus == root || root->isAncestorOf(focus)); };
+  if (inside(documentView_) && documentView_->isReadOnly()) {
+    auto* bar = documentView_->verticalScrollBar(); bar->setValue(bar->value() + delta * bar->singleStep()); return;
+  }
+  if (inside(courses_)) {
+    const auto model = courses_->model(); if (!model || model->rowCount() == 0) return;
+    const int row = courses_->currentIndex().isValid() ? courses_->currentIndex().row() : (delta > 0 ? -1 : model->rowCount());
+    courses_->setCurrentIndex(model->index(std::clamp(row + delta, 0, model->rowCount() - 1), 0));
+    courses_->scrollTo(courses_->currentIndex()); return;
+  }
+  if (inside(lessons_)) {
+    auto current = lessons_->currentIndex();
+    if (!current.isValid()) current = outlineModel_->index(0, 0);
+    if (!current.isValid()) return;
+    const auto next = delta > 0 ? lessons_->indexBelow(current) : lessons_->indexAbove(current);
+    if (next.isValid()) { lessons_->setCurrentIndex(next); lessons_->scrollTo(next); }
+  }
+}
+void MainWindow::jumpSelection(bool last) {
+  auto* focus = QApplication::focusWidget();
+  const auto inside = [focus](QWidget* root) { return root && focus && (focus == root || root->isAncestorOf(focus)); };
+  if (inside(documentView_) && documentView_->isReadOnly()) {
+    auto* bar = documentView_->verticalScrollBar(); bar->setValue(last ? bar->maximum() : bar->minimum()); return;
+  }
+  if (inside(courses_)) {
+    const auto model = courses_->model(); if (!model || model->rowCount() == 0) return;
+    const auto index = model->index(last ? model->rowCount() - 1 : 0, 0);
+    courses_->setCurrentIndex(index); courses_->scrollTo(index); return;
+  }
+  if (!inside(lessons_)) return;
+  auto index = lessons_->currentIndex();
+  if (!index.isValid()) index = outlineModel_->index(0, 0);
+  if (!index.isValid()) return;
+  QKeyEvent nativeJump(QEvent::KeyPress, last ? Qt::Key_End : Qt::Key_Home, Qt::NoModifier);
+  QApplication::sendEvent(lessons_, &nativeJump);
+}
+void MainWindow::scrollDocument(int pages) {
+  auto* focus = QApplication::focusWidget();
+  const auto inside = [focus](QWidget* root) { return root && focus && (focus == root || root->isAncestorOf(focus)); };
+  if (inside(documentView_) && documentView_->isReadOnly()) {
+    auto* bar = documentView_->verticalScrollBar(); bar->setValue(bar->value() + pages * bar->pageStep()); return;
+  }
+  if (inside(content_)) {
+    auto* scroll = qobject_cast<QScrollArea*>(content_); if (scroll) scroll->verticalScrollBar()->setValue(scroll->verticalScrollBar()->value() + pages * scroll->verticalScrollBar()->pageStep()); return;
+  }
+  if (inside(courses_) || inside(lessons_)) moveSelection(pages > 0 ? 8 : -8);
+}
+void MainWindow::toggleOutlineBranch(bool expand) {
+  auto* focus = QApplication::focusWidget();
+  if (!lessons_ || !focus || !(focus == lessons_ || lessons_->isAncestorOf(focus))) return;
+  auto index = lessons_->currentIndex(); if (!index.isValid()) return;
+  if (!expand && index.parent().isValid()) { index = index.parent(); lessons_->setCurrentIndex(index); }
+  lessons_->setExpanded(index, expand);
+}
+void MainWindow::installKeyboardFilters() {
+  const QList<QWidget*> widgets = {static_cast<QWidget*>(this), centralWidget(), static_cast<QWidget*>(courses_),
+    static_cast<QWidget*>(lessons_), static_cast<QWidget*>(documentView_), static_cast<QWidget*>(video_),
+    playerControls_, content_, static_cast<QWidget*>(libraryTabs_)};
+  for (auto* widget : widgets) {
+    if (!widget) continue;
+    widget->installEventFilter(this);
+    if (auto* scrollArea = qobject_cast<QAbstractScrollArea*>(widget)) scrollArea->viewport()->installEventFilter(this);
+  }
+}
+bool MainWindow::handleKeyboardEvent(QObject* watched, QKeyEvent* event) {
+  if (!event || event->type() != QEvent::KeyPress || QApplication::activeModalWidget() || QApplication::activePopupWidget()) return false;
+  if (event->key() == Qt::Key_F1 && event->modifiers() == Qt::NoModifier && !event->isAutoRepeat()) {
+    keyboardCommand("shortcuts")->trigger(); event->accept(); return true;
+  }
+  if (isTextInputFocused()) return false;
+  const auto key = event->key(); const auto modifiers = event->modifiers();
+  if (event->isAutoRepeat() && key != Qt::Key_J && key != Qt::Key_K && key != Qt::Key_H &&
+      key != Qt::Key_L && key != Qt::Key_Left && key != Qt::Key_Right &&
+      key != Qt::Key_D && key != Qt::Key_U && key != Qt::Key_PageDown && key != Qt::Key_PageUp) return false;
+  const auto noModifiers = modifiers == Qt::NoModifier;
+  const auto noTextModifier = noModifiers || modifiers == Qt::ShiftModifier;
+  const auto control = modifiers.testFlag(Qt::ControlModifier) && !modifiers.testFlag(Qt::AltModifier) && !modifiers.testFlag(Qt::MetaModifier);
+  const auto focus = QApplication::focusWidget();
+  const auto inside = [focus, watched](QWidget* root) {
+    const auto* watchedWidget = qobject_cast<QWidget*>(watched);
+    return root && ((focus && (focus == root || root->isAncestorOf(focus))) || watched == root ||
+                    (watchedWidget && root->isAncestorOf(watchedWidget)));
+  };
+  if (control && key == Qt::Key_K) { keyboardCommand("search")->trigger(); event->accept(); return true; }
+  if (control && key == Qt::Key_Space) { keyboardCommand("commandPalette")->trigger(); event->accept(); return true; }
+  if (noTextModifier && (key == Qt::Key_Question || (key == Qt::Key_Slash && modifiers == Qt::ShiftModifier) || key == Qt::Key_F1)) {
+    keyboardCommand("shortcuts")->trigger(); event->accept(); return true;
+  }
+  if (noModifiers && key == Qt::Key_Slash) { keyboardCommand("search")->trigger(); event->accept(); return true; }
+  if (noTextModifier && (key == Qt::Key_Colon || (key == Qt::Key_Semicolon && modifiers == Qt::ShiftModifier))) {
+    keyboardCommand("commandPalette")->trigger(); event->accept(); return true;
+  }
+  if (pendingG_) {
+    pendingG_ = false;
+    if (noModifiers && key == Qt::Key_G) { keyboardCommand("first")->trigger(); event->accept(); return true; }
+  } else if (noModifiers && key == Qt::Key_G) { pendingG_ = true; event->accept(); return true; }
+  if (control && key == Qt::Key_D) { keyboardCommand("pageDown")->trigger(); event->accept(); return true; }
+  if (control && key == Qt::Key_U) { keyboardCommand("pageUp")->trigger(); event->accept(); return true; }
+  const bool inVideo = inside(video_) || inside(playerControls_);
+  const bool inOutline = inside(lessons_);
+  const bool inLibrary = inside(courses_);
+  if (inVideo && playerLoaded_ && noModifiers) {
+    // Buttons and sliders keep native Space/arrow behavior while focused.
+    if (focus != video_ && (key == Qt::Key_Space || key == Qt::Key_Left || key == Qt::Key_Right)) return false;
+    QString command;
+    if (key == Qt::Key_Space) command = "playPause";
+    else if (key == Qt::Key_Left || key == Qt::Key_H) command = "seekBack";
+    else if (key == Qt::Key_Right || key == Qt::Key_L) command = "seekForward";
+    else if (key == Qt::Key_F) command = "fullscreen";
+    else if (key == Qt::Key_M) command = "mute";
+    else if (key == Qt::Key_Comma) command = "frameBack";
+    else if (key == Qt::Key_Period) command = "frameForward";
+    if (!command.isEmpty()) { keyboardCommand(command)->trigger(); event->accept(); return true; }
+  }
+  if (noModifiers && key == Qt::Key_Escape) {
+    if (isFullScreen()) { showNormal(); event->accept(); return true; }
+    if (course_) { keyboardCommand("library")->trigger(); event->accept(); return true; }
+  }
+  if (noModifiers && key == Qt::Key_J) { keyboardCommand("moveDown")->trigger(); event->accept(); return true; }
+  if (noModifiers && key == Qt::Key_K) { keyboardCommand("moveUp")->trigger(); event->accept(); return true; }
+  if (modifiers == Qt::ShiftModifier && key == Qt::Key_G) { keyboardCommand("last")->trigger(); event->accept(); return true; }
+  if (noModifiers && key == Qt::Key_H && inOutline) { keyboardCommand("collapse")->trigger(); event->accept(); return true; }
+  if (noModifiers && key == Qt::Key_L && inOutline) { keyboardCommand("expand")->trigger(); event->accept(); return true; }
+  if (noModifiers && key == Qt::Key_BracketLeft && course_) { keyboardCommand("previousLesson")->trigger(); event->accept(); return true; }
+  if (noModifiers && key == Qt::Key_BracketRight && course_) { keyboardCommand("nextLesson")->trigger(); event->accept(); return true; }
+  if (noModifiers && key == Qt::Key_C && course_) { keyboardCommand("complete")->trigger(); event->accept(); return true; }
+  if (noModifiers && key == Qt::Key_N && course_) { keyboardCommand("notes")->trigger(); event->accept(); return true; }
+  if (noModifiers && key == Qt::Key_O && course_) { keyboardCommand("outline")->trigger(); event->accept(); return true; }
+  if (noModifiers && key == Qt::Key_PageDown && (inLibrary || inOutline || inside(documentView_))) { keyboardCommand("pageDown")->trigger(); event->accept(); return true; }
+  if (noModifiers && key == Qt::Key_PageUp && (inLibrary || inOutline || inside(documentView_))) { keyboardCommand("pageUp")->trigger(); event->accept(); return true; }
+  return false;
 }
 void MainWindow::chooseRoot(const QString& path) {
   const auto id = library_.scan(path);
@@ -765,22 +1071,11 @@ void MainWindow::stepLesson(int delta) {
 }
 void MainWindow::resizeEvent(QResizeEvent* event) { QMainWindow::resizeEvent(event); updateLayout(); }
 void MainWindow::keyPressEvent(QKeyEvent* event) {
-  // Native controls receive the event first. Only unclaimed keys reach this handler.
-  if (playerLoaded_ && content_->isVisible() && !QApplication::activeModalWidget() && event->modifiers() == Qt::NoModifier) {
-    switch (event->key()) {
-      case Qt::Key_Space:
-        if (!event->isAutoRepeat()) { if (paused_) (void)player_->play(); else (void)player_->pause(); }
-        event->accept(); return;
-      case Qt::Key_Left: (void)player_->seekRelative(-10000); event->accept(); return;
-      case Qt::Key_Right: (void)player_->seekRelative(10000); event->accept(); return;
-      case Qt::Key_F:
-        if (!event->isAutoRepeat()) { if (isFullScreen()) showNormal(); else showFullScreen(); }
-        event->accept(); return;
-    }
-  }
+  if (handleKeyboardEvent(this, event)) return;
   QMainWindow::keyPressEvent(event);
 }
 bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+  if (event->type() == QEvent::KeyPress && handleKeyboardEvent(watched, static_cast<QKeyEvent*>(event))) return true;
   if (event->type() == QEvent::Resize && playerControls_) updateControlsLayout();
   if (hideControls_ && (watched == video_ || watched == playerControls_ || playerControls_->isAncestorOf(qobject_cast<QWidget*>(watched)))) {
     if (event->type() == QEvent::MouseMove || event->type() == QEvent::MouseButtonPress ||

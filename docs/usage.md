@@ -3,7 +3,7 @@
 ## First Run
 
 1. Open melearner.
-2. Click **Scan root folder**.
+2. Click **Choose root folder**.
 3. Choose the folder that contains your course folders.
 4. Open a course and select a lesson.
 
@@ -20,11 +20,36 @@ melearner groups files into courses, sections, and lessons based on the folder s
 
 | Key | Action |
 | --- | --- |
-| `Space` / `K` | Play or pause |
-| `M` | Mute or unmute |
-| `F` | Fullscreen |
-| `J` / `Left` | Seek back 10 seconds |
-| `L` / `Right` | Seek forward 10 seconds |
+| `Space` | Play or pause when the player is focused |
+| `h` / `Left` | Seek back 10 seconds in the player; collapse the selected outline section elsewhere |
+| `l` / `Right` | Seek forward 10 seconds in the player; expand the selected outline section elsewhere |
+| `f` | Toggle fullscreen |
+| `m` | Mute or unmute |
+| `,` / `.` | Seek back one second / advance one frame |
+| `[` / `]` | Previous / next lesson |
+
+## Keyboard-first navigation
+
+The app keeps Qt's normal Tab, Shift+Tab, arrows, Enter, Space, text selection,
+IME, and editing behavior. Vim-style motions apply when a library, outline, or
+read-only lesson view has focus; editable fields keep their native bindings.
+
+| Key | Action |
+| --- | --- |
+| `j` / `k` | Move down / up in the focused list or scroll a read-only lesson |
+| `gg` / `G` | Jump to the first / last focused item |
+| `Ctrl+D` / `Ctrl+U` | Scroll down / up one page |
+| `c` | Mark the current lesson complete or incomplete |
+| `n` | Open lesson notes |
+| `o` | Toggle the course outline on narrow windows |
+| `Ctrl+K` / `/` | Search the library |
+| `:` / `Ctrl+Space` | Open the searchable command palette |
+| `?` / `F1` | Open the searchable shortcut list |
+| `Escape` | Close fullscreen or return to the Library |
+
+The shortcut popup is intentionally searchable and grouped by context. It is
+the source of truth for the commands currently implemented; melearner does not
+embed a Vim or Neovim editor runtime.
 
 ## Playback Compatibility
 

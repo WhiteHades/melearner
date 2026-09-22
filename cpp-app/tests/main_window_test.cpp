@@ -3,13 +3,16 @@
 #include "pdf_view.hpp"
 #include <QDir>
 #include <QDockWidget>
+#include <QDialog>
 #include <QAction>
 #include <QFile>
 #include <QLabel>
 #include <QListView>
 #include <QTreeView>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QPushButton>
+#include <QPointer>
 #include <QPainter>
 #include <QPdfWriter>
 #include <QSpinBox>
@@ -37,6 +40,51 @@ private slots:
     window.chooseRoot(files.path() + "/missing-root");
     QTRY_VERIFY(status->text().contains("not a safe directory"));
     QTRY_VERIFY(choose->isEnabled());
+  }
+  void keyboardPopupAndTextInputStayScoped() {
+    QTemporaryDir files; QVERIFY(files.isValid());
+    const auto root = files.path() + "/Courses";
+    QVERIFY(QDir().mkpath(root + "/Keyboard/Section"));
+    QFile lesson(root + "/Keyboard/Section/Read.txt");
+    QVERIFY(lesson.open(QIODevice::WriteOnly)); lesson.write("Keyboard lesson"); lesson.close();
+    QVERIFY(QDir().mkpath(root + "/Second/Section"));
+    QVERIFY(QFile::copy(lesson.fileName(), root + "/Second/Section/Read.txt"));
+    MainWindow window(files.path() + "/library.sqlite3"); window.show();
+    QTRY_VERIFY(window.findChild<QPushButton*>("chooseRoot")->isEnabled()); window.chooseRoot(root);
+    auto* courses = window.findChild<QListView*>("courses");
+    QTRY_COMPARE(courses->model()->rowCount(), 2);
+    window.activateWindow(); QVERIFY(QTest::qWaitForWindowActive(&window));
+
+    QTest::keyClick(&window, Qt::Key_F1);
+    QPointer<QDialog> shortcuts = window.findChild<QDialog*>("shortcutHelp"); QTRY_VERIFY(shortcuts && shortcuts->isVisible());
+    auto* filter = shortcuts->findChild<QLineEdit*>("keyboardPopupFilter"); QVERIFY(filter);
+    auto* rows = shortcuts->findChild<QListWidget*>("keyboardPopupList"); QVERIFY(rows);
+    QVERIFY(rows->count() > 10); filter->setText("play"); QTRY_VERIFY(rows->count() > 0);
+    shortcuts->reject(); QTRY_VERIFY(shortcuts.isNull());
+
+    auto* input = new QLineEdit(&window); input->setObjectName("keyboardInputProbe"); input->show(); input->setFocus();
+    QTest::keyClick(input, Qt::Key_J); QCOMPARE(input->text(), QString("j"));
+    QTest::keyClick(input, Qt::Key_F1);
+    shortcuts = window.findChild<QDialog*>("shortcutHelp"); QTRY_VERIFY(shortcuts && shortcuts->isVisible());
+    shortcuts->reject(); QTRY_VERIFY(shortcuts.isNull());
+    window.activateWindow(); QVERIFY(QTest::qWaitForWindowActive(&window));
+    courses->setFocus(); courses->setCurrentIndex(courses->model()->index(1, 0));
+    QTRY_VERIFY(courses->hasFocus());
+    QTest::keyClick(courses, Qt::Key_G);
+    input->setFocus(); QTRY_VERIFY(input->hasFocus()); QTest::keyClick(input, Qt::Key_X);
+    courses->setFocus(); QTRY_VERIFY(courses->hasFocus());
+    QTest::keyClick(courses, Qt::Key_G); QCOMPARE(courses->currentIndex().row(), 1);
+    QTest::keyClick(courses, Qt::Key_G); QCOMPARE(courses->currentIndex().row(), 0);
+    input->clearFocus(); input->deleteLater(); QCoreApplication::processEvents();
+
+    QTest::keyClick(&window, Qt::Key_Space, Qt::ControlModifier);
+    QPointer<QDialog> palette = window.findChild<QDialog*>("commandPalette"); QTRY_VERIFY(palette && palette->isVisible());
+    filter = palette->findChild<QLineEdit*>("keyboardPopupFilter");
+    rows = palette->findChild<QListWidget*>("keyboardPopupList");
+    filter->setText("rescan root"); QCOMPARE(rows->count(), 1);
+    filter->setText("last item"); QCOMPARE(rows->count(), 1);
+    QTest::keyClick(filter, Qt::Key_Return);
+    QTRY_COMPARE(courses->currentIndex().row(), 1);
   }
   void statsFollowCourseProgress_data() {
     QTest::addColumn<int>("fontScale");

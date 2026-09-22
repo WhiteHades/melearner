@@ -2,10 +2,14 @@
 #include "library.hpp"
 #include "documents.hpp"
 #include <QMainWindow>
+#include <QHash>
+#include <QList>
 #include <QMap>
 #include <QSet>
+#include <functional>
 #include <optional>
 
+class QAction;
 class QLabel;
 class QListView;
 class QTreeView;
@@ -24,6 +28,7 @@ class QMenu;
 class QTimer;
 class QGraphicsOpacityEffect;
 class QPropertyAnimation;
+class QKeyEvent;
 namespace melearner { class Player; class MpvVideoWidget; class NotesPanel; class StatsPanel; class CourseOutlineModel; }
 
 class MainWindow final : public QMainWindow {
@@ -38,6 +43,20 @@ protected:
   void keyPressEvent(QKeyEvent* event) override;
   bool eventFilter(QObject* watched, QEvent* event) override;
 private:
+  QAction* registerKeyboardCommand(const QString& id, const QString& label,
+      const QString& shortcut, const QString& context, std::function<void()> callback);
+  QAction* keyboardCommand(const QString& id) const;
+  void showKeyboardPopup(bool commandPalette);
+  bool handleKeyboardEvent(QObject* watched, QKeyEvent* event);
+  bool isTextInputFocused() const;
+  void moveSelection(int delta);
+  void jumpSelection(bool last);
+  void scrollDocument(int pages);
+  void toggleOutlineBranch(bool expand);
+  void installKeyboardFilters();
+  QList<QAction*> keyboardActions_;
+  QHash<QString, QAction*> keyboardCommands_;
+  bool pendingG_ = false;
   melearner::library::Library library_;
   melearner::documents::Documents documents_;
   QString rootPath_;
@@ -128,6 +147,7 @@ private:
   quint64 playerLoadId_ = 0;
   QMap<quint64, QString> screenshotRequests_;
   bool paused_ = true;
+  bool muted_ = false;
   QString decoder_;
   qint64 positionMs_ = 0;
   qint64 durationMs_ = 0;

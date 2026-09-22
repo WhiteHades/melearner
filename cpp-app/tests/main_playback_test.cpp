@@ -91,6 +91,9 @@ private slots:
         QTest::mouseMove(surface, QPoint(10, 10));
         QTRY_COMPARE(play->text(), QString("Pause"));
         QCOMPARE(play->accessibleName(), play->text());
+        QKeyEvent repeatedSpace(QEvent::KeyPress, Qt::Key_Space, Qt::NoModifier, " ", true);
+        QApplication::sendEvent(surface, &repeatedSpace);
+        QTest::qWait(30); QCOMPARE(play->text(), QString("Pause"));
         QTest::qWait(50);
         QVERIFY(!controls->underMouse());
         QVERIFY(QMetaObject::invokeMethod(hideControls, "timeout", Qt::DirectConnection));
