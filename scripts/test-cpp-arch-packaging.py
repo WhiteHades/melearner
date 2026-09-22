@@ -15,7 +15,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts/package-cpp-arch.sh"
-PACKAGE_NAME = "melearner-bin-0.1.0-95-x86_64.pkg.tar.zst"
+PACKAGE_NAME = "melearner-bin-0.1.9-1-x86_64.pkg.tar.zst"
 
 
 class ArchPackageTests(unittest.TestCase):
@@ -42,7 +42,7 @@ class ArchPackageTests(unittest.TestCase):
             "usr/share/doc/melearner/runtime-stage.json",
             {
                 "schemaVersion": 1,
-                "version": "0.1.0",
+                "version": "0.1.9",
                 "architecture": "x86_64",
                 "releaseQualified": False,
                 "privateLibraries": ["libmpv.so.2", "libQt6Pdf.so.6"],

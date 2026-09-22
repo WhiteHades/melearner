@@ -19,10 +19,10 @@ foreach(_variable IN LISTS _required_variables)
 endforeach()
 
 if(NOT DEFINED MELEARNER_VERSION OR "${MELEARNER_VERSION}" STREQUAL "")
-  set(MELEARNER_VERSION "0.1.0")
+  set(MELEARNER_VERSION "0.1.9")
 endif()
-if(NOT MELEARNER_VERSION STREQUAL "0.1.0")
-  message(FATAL_ERROR "melearner release version is fixed at 0.1.0, got ${MELEARNER_VERSION}")
+if(NOT MELEARNER_VERSION STREQUAL "0.1.9")
+  message(FATAL_ERROR "melearner release version is fixed at 0.1.9, got ${MELEARNER_VERSION}")
 endif()
 
 if(NOT IS_DIRECTORY "${MELEARNER_SOURCE_DIR}")
@@ -42,19 +42,19 @@ file(READ "${MELEARNER_SOURCE_DIR}/CMakeLists.txt" _root_cmake)
 string(REGEX MATCH
   "project[ \\t\\r\\n]*\\([ \\t\\r\\n]*melearner[ \\t\\r\\n]+VERSION[ \\t\\r\\n]+([0-9]+\\.[0-9]+\\.[0-9]+)"
   _project_match "${_root_cmake}")
-if(NOT _project_match OR NOT CMAKE_MATCH_1 STREQUAL "0.1.0")
-  message(FATAL_ERROR "CMake project version must be 0.1.0")
+if(NOT _project_match OR NOT CMAKE_MATCH_1 STREQUAL "0.1.9")
+  message(FATAL_ERROR "CMake project version must be 0.1.9")
 endif()
 file(STRINGS "${MELEARNER_BUILD_DIR}/CMakeCache.txt" _cache_version_lines
   REGEX "^CMAKE_PROJECT_VERSION:STATIC=")
 if(NOT _cache_version_lines)
-  message(FATAL_ERROR "configured CMake build version must be 0.1.0")
+  message(FATAL_ERROR "configured CMake build version must be 0.1.9")
 endif()
 list(GET _cache_version_lines 0 _cache_version_line)
 string(REGEX REPLACE "^CMAKE_PROJECT_VERSION:STATIC=" "" _cache_version
   "${_cache_version_line}")
-if(NOT _cache_version STREQUAL "0.1.0")
-  message(FATAL_ERROR "configured CMake build version must be 0.1.0")
+if(NOT _cache_version STREQUAL "0.1.9")
+  message(FATAL_ERROR "configured CMake build version must be 0.1.9")
 endif()
 
 file(GLOB _existing_stage_entries RELATIVE "${MELEARNER_STAGE_DIR}" "${MELEARNER_STAGE_DIR}/*")

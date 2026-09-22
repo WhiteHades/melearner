@@ -1,7 +1,7 @@
 pkgbase = melearner-bin
 	pkgdesc = local course learner
-	pkgver = 0.1.0
-	pkgrel = 95
+	pkgver = 0.1.9
+	pkgrel = 1
 	url = https://github.com/WhiteHades/melearner
 	arch = x86_64
 	license = MIT
@@ -37,7 +37,7 @@ pkgbase = melearner-bin
 	depends = xcb-util-keysyms
 	depends = xcb-util-renderutil
 	depends = xcb-util-wm
-	provides = melearner=0.1.0
+	provides = melearner=0.1.9
 	conflicts = melearner
 	options = !strip
 

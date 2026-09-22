@@ -2,8 +2,8 @@
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-version="0.1.0"
-pkgrel="95"
+version="0.1.9"
+pkgrel="1"
 build_dir="${repo_root}/build/cpp-release"
 legal_root="${repo_root}/packaging"
 stage_dir=""
@@ -20,7 +20,7 @@ Options:
   --build-dir <path>  configured CMake release build (default: build/cpp-release)
   --legal-root <path> legal inputs (default: packaging)
   --stage-dir <path>  existing final C++ package stage (default: stage release build)
-  --output <path>     output package (default: dist/melearner-bin-0.1.0-95-x86_64.pkg.tar.zst)
+  --output <path>     output package (default: dist/melearner-bin-0.1.9-1-x86_64.pkg.tar.zst)
   -h, --help          show this help
 EOF
 }
@@ -244,8 +244,8 @@ if not isinstance(metadata, dict):
     fail("runtime-stage.json must be a JSON object")
 if metadata.get("schemaVersion") != 1:
     fail("runtime-stage.json schemaVersion must be 1")
-if metadata.get("version") != "0.1.0":
-    fail("runtime-stage.json version must be 0.1.0")
+if metadata.get("version") != "0.1.9":
+    fail("runtime-stage.json version must be 0.1.9")
 if metadata.get("architecture") != "x86_64":
     fail("runtime-stage.json architecture must be x86_64")
 if metadata.get("releaseQualified") is not False:

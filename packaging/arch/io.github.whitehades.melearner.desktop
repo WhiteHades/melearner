@@ -1,7 +1,7 @@
 [Desktop Entry]
 Name=melearner
 GenericName=local course learner
-Comment=Local-first course learner for local files
+Comment=Local-only course learner for local files
 Exec=/usr/bin/melearner
 Icon=io.github.whitehades.melearner
 Type=Application

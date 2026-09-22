@@ -63,7 +63,7 @@ cmake --install build/cpp-release --prefix "$install_prefix" 2>&1 | tee "$log_di
 test -x "$install_prefix/bin/melearner"
 installed_version="$(QT_QPA_PLATFORM=offscreen "$install_prefix/bin/melearner" --version)"
 printf '%s\n' "$installed_version" | tee "$log_dir/installed-version.txt"
-[[ "$installed_version" == *" 0.1.0" ]] || { echo "Unexpected installed version" >&2; exit 1; }
+[[ "$installed_version" == *" 0.1.9" ]] || { echo "Unexpected installed version" >&2; exit 1; }
 
 # Keep the software renderer's worker pool bounded on shared CI runners.
 export LIBGL_ALWAYS_SOFTWARE=1

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-version="0.1.0"
+version="0.1.9"
 build_dir="${repo_root}/build/cpp-release"
 legal_root="${repo_root}/packaging"
 output="${repo_root}/dist/melearner-${version}-linux-x86_64.tar.zst"
@@ -17,7 +17,7 @@ AppImage or Arch package and is never marked release-qualified.
 Options:
   --build-dir <path>  configured CMake release build (default: build/cpp-release)
   --legal-root <path> legal inputs (default: packaging)
-  --output <path>     output archive (default: dist/melearner-0.1.0-linux-x86_64.tar.zst)
+  --output <path>     output archive (default: dist/melearner-0.1.9-linux-x86_64.tar.zst)
   -h, --help          show this help
 EOF
 }

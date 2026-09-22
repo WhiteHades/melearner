@@ -14,7 +14,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-NAME = "melearner-0.1.0-linux-x86_64.tar.zst"
+NAME = "melearner-0.1.9-linux-x86_64.tar.zst"
 REAL_CMAKE = shutil.which("cmake")
 REAL_TAR = shutil.which("tar")
 
@@ -34,7 +34,7 @@ class ArchiveTests(unittest.TestCase):
         shutil.copy2(ROOT / "scripts/package-cpp-linux.sh", self.repo / "scripts")
         (self.repo / "CMakeLists.txt").write_text(
             "cmake_minimum_required(VERSION 3.20)\n"
-            "project(melearner VERSION 0.1.0 LANGUAGES NONE)\n", encoding="utf-8")
+            "project(melearner VERSION 0.1.9 LANGUAGES NONE)\n", encoding="utf-8")
         subprocess.run([REAL_CMAKE, "-S", str(self.repo), "-B", str(self.build)],
                        check=True, capture_output=True, text=True, timeout=20)
         self.env = os.environ.copy()
@@ -101,7 +101,7 @@ elif mode == "racing-symlink":
 
     def test_real_static_cache_is_accepted(self) -> None:
         cache = (self.build / "CMakeCache.txt").read_text()
-        self.assertIn("CMAKE_PROJECT_VERSION:STATIC=0.1.0", cache)
+        self.assertIn("CMAKE_PROJECT_VERSION:STATIC=0.1.9", cache)
         listing = subprocess.run([REAL_CMAKE, "-LA", "-N", str(self.build)],
                                  check=True, capture_output=True, text=True, timeout=20)
         self.assertNotIn("CMAKE_PROJECT_VERSION:STATIC=", listing.stdout)
@@ -110,7 +110,7 @@ elif mode == "racing-symlink":
         self.assertIn("Release-qualified: false", result.stdout)
         archive = subprocess.run([REAL_TAR, "--zstd", "-tf", str(self.output)],
                                  check=True, capture_output=True, text=True, timeout=20)
-        self.assertIn("melearner-0.1.0/usr/bin/melearner\n", archive.stdout)
+        self.assertIn("melearner-0.1.9/usr/bin/melearner\n", archive.stdout)
 
     def test_large_archive_does_not_fail_with_sigpipe(self) -> None:
         result = self.run_package(mode="large")
@@ -128,10 +128,10 @@ elif mode == "racing-symlink":
     def test_invalid_versions(self) -> None:
         cache = self.build / "CMakeCache.txt"
         for entry in ("", "CMAKE_PROJECT_VERSION:STATIC=0.2.0\n",
-                      "CMAKE_PROJECT_VERSION:STATIC=0.1.0\n" * 2):
+                      "CMAKE_PROJECT_VERSION:STATIC=0.1.9\n" * 2):
             with self.subTest(entry=entry):
                 cache.write_text(entry)
-                self.assert_rejected(self.run_package(), "CMake build version must be 0.1.0")
+                self.assert_rejected(self.run_package(), "CMake build version must be 0.1.9")
                 self.assertFalse((self.root / "stage.log").exists())
 
     def test_missing_build(self) -> None:
@@ -204,14 +204,14 @@ sys.exit(subprocess.call([os.environ["REAL_TAR"], *sys.argv[1:]]))
 ''')
 
     def test_listing_failure_does_not_publish(self) -> None:
-        self.tar_listing("melearner-0.1.0/usr/bin/melearner\n", 2)
+        self.tar_listing("melearner-0.1.9/usr/bin/melearner\n", 2)
         self.assert_rejected(self.run_package(), "cannot read the complete archive listing")
         self.assertFalse(self.output.exists())
 
     def test_unsafe_archive_paths(self) -> None:
-        for path in ("/absolute", "melearner-0.1.0/../escape", "../escape", "melearner-0.1.0/.."):
+        for path in ("/absolute", "melearner-0.1.9/../escape", "../escape", "melearner-0.1.9/.."):
             with self.subTest(path=path):
-                self.tar_listing("melearner-0.1.0/usr/bin/melearner\n" + path + "\n")
+                self.tar_listing("melearner-0.1.9/usr/bin/melearner\n" + path + "\n")
                 self.assert_rejected(self.run_package(), "archive contains an unsafe path")
                 self.assertFalse(self.output.exists())
 
