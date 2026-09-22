@@ -87,9 +87,29 @@ struct CoursePage {
     bool hasMore = false;
 };
 
+struct Section {
+    QString id;
+    QString courseId;
+    QString name;
+    std::uint64_t orderIndex = 0;
+    std::uint64_t lessonCount = 0;
+    std::uint64_t completedLessons = 0;
+    std::uint64_t watchedSeconds = 0;
+};
+
+struct SectionPage {
+    std::uint64_t revision = 0;
+    QString courseId;
+    std::uint64_t offset = 0;
+    std::uint64_t total = 0;
+    QVector<Section> rows;
+    bool hasMore = false;
+};
+
 struct LessonPage {
     std::uint64_t revision = 0;
     QString courseId;
+    QString sectionId;
     std::uint64_t offset = 0;
     std::uint64_t total = 0;
     QVector<Lesson> rows;
@@ -214,6 +234,11 @@ struct SearchResolution {
     QString sectionId;
     bool hasLesson = false;
     Lesson lesson;
+    // Zero-based position of the resolved Lesson in its Course's stable
+    // Section order and within that Section's stable Lesson order.
+    std::uint64_t sectionOffset = 0;
+    std::uint64_t sectionLessonOffset = 0;
+    // Course-wide stable Lesson position retained for flat navigation.
     std::uint64_t lessonOffset = 0;
 };
 
@@ -257,8 +282,17 @@ public:
 
     [[nodiscard]] RequestId open();
     [[nodiscard]] RequestId courses(std::uint64_t offset = 0, std::uint64_t limit = 128);
+    [[nodiscard]] RequestId sections(
+        QString courseId,
+        std::uint64_t offset = 0,
+        std::uint64_t limit = 128);
     [[nodiscard]] RequestId lessons(
         QString courseId,
+        std::uint64_t offset = 0,
+        std::uint64_t limit = 256);
+    [[nodiscard]] RequestId sectionLessons(
+        QString courseId,
+        QString sectionId,
         std::uint64_t offset = 0,
         std::uint64_t limit = 256);
     [[nodiscard]] RequestId enterCourse(QString courseId, QString requestedLessonId = {});
@@ -273,6 +307,10 @@ public:
         std::uint64_t offset = 0,
         std::uint64_t limit = 100);
     [[nodiscard]] RequestId resolveSearch(QString kind, QString objectId);
+    [[nodiscard]] RequestId resolveLesson(
+        QString courseId,
+        QString sectionId,
+        QString lessonId);
     [[nodiscard]] RequestId notes(
         QString lessonId,
         std::uint64_t offset = 0,
@@ -294,6 +332,7 @@ public:
 signals:
     void opened(RequestId requestId, Startup result);
     void coursesReady(RequestId requestId, CoursePage result);
+    void sectionsReady(RequestId requestId, SectionPage result);
     void lessonsReady(RequestId requestId, LessonPage result);
     void courseEntered(RequestId requestId, CourseEntry result);
     void resumeReady(RequestId requestId, ResumePage result);
@@ -324,6 +363,8 @@ Q_DECLARE_METATYPE(melearner::library::Course)
 Q_DECLARE_METATYPE(melearner::library::Lesson)
 Q_DECLARE_METATYPE(melearner::library::Startup)
 Q_DECLARE_METATYPE(melearner::library::CoursePage)
+Q_DECLARE_METATYPE(melearner::library::Section)
+Q_DECLARE_METATYPE(melearner::library::SectionPage)
 Q_DECLARE_METATYPE(melearner::library::LessonPage)
 Q_DECLARE_METATYPE(melearner::library::CourseEntry)
 Q_DECLARE_METATYPE(melearner::library::ResumePage)

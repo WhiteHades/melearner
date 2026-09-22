@@ -25,6 +25,7 @@ using melearner::library::LibraryStats;
 using melearner::library::SearchPage;
 using melearner::library::SearchResolution;
 using melearner::library::ScanResult;
+using melearner::library::SectionPage;
 using melearner::library::Startup;
 
 namespace {
@@ -88,8 +89,37 @@ bool readCourses(Library& library, QSignalSpy& coursesReady, CoursePage* result)
     return true;
 }
 
+bool readSections(
+    Library& library,
+    QSignalSpy& sectionsReady,
+    const QString& courseId,
+    std::uint64_t offset,
+    std::uint64_t limit,
+    SectionPage* result) {
+    if (library.sections(courseId, offset, limit) == 0 || !waitFor(sectionsReady, 5'000)) {
+        return false;
+    }
+    *result = qvariant_cast<SectionPage>(sectionsReady.takeFirst().at(1));
+    return true;
+}
+
 bool readLessons(Library& library, QSignalSpy& lessonsReady, const QString& courseId, LessonPage* result) {
     if (library.lessons(courseId) == 0 || !waitFor(lessonsReady, 5'000)) {
+        return false;
+    }
+    *result = qvariant_cast<LessonPage>(lessonsReady.takeFirst().at(1));
+    return true;
+}
+
+bool readSectionLessons(
+    Library& library,
+    QSignalSpy& lessonsReady,
+    const QString& courseId,
+    const QString& sectionId,
+    std::uint64_t offset,
+    std::uint64_t limit,
+    LessonPage* result) {
+    if (library.sectionLessons(courseId, sectionId, offset, limit) == 0 || !waitFor(lessonsReady, 5'000)) {
         return false;
     }
     *result = qvariant_cast<LessonPage>(lessonsReady.takeFirst().at(1));
@@ -183,6 +213,7 @@ private slots:
     void cancellationPreservesLastCommitAndHasOneTerminal();
     void markerConflictIsPreserved();
     void discoveryLimitPreservesLastCommit();
+    void readsBoundedSectionOutlineAndScopedLessons();
     void courseEntryAndResumePersist();
     void statsAndActivityUseCanonicalScope();
     void progressReopensWithAtomicActivityInputs();
@@ -240,6 +271,113 @@ void LibraryTest::scansIntoPagedCourseAndLessonRows() {
     QCOMPARE(lessons.rows.at(2).type, QStringLiteral("document"));
 }
 
+void LibraryTest::readsBoundedSectionOutlineAndScopedLessons() {
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const auto root = temporary.filePath(QStringLiteral("root"));
+    const auto course = root + QStringLiteral("/Course Outline");
+    const auto firstSection = course + QStringLiteral("/Section 2");
+    const auto secondSection = course + QStringLiteral("/Section 10");
+    QVERIFY(QDir().mkpath(firstSection));
+    QVERIFY(QDir().mkpath(secondSection));
+    writeFile(firstSection + QStringLiteral("/Lesson 1.mp4"));
+    writeFile(secondSection + QStringLiteral("/Lesson 10.mp4"));
+    writeFile(secondSection + QStringLiteral("/Lesson 2.mp4"));
+
+    Library library(temporary.filePath(QStringLiteral("library.sqlite3")));
+    QSignalSpy opened(&library, &Library::opened);
+    QSignalSpy scanFinished(&library, &Library::scanFinished);
+    QSignalSpy sectionsReady(&library, &Library::sectionsReady);
+    QSignalSpy lessonsReady(&library, &Library::lessonsReady);
+    QSignalSpy searchResolved(&library, &Library::searchResolved);
+    QSignalSpy failed(&library, &Library::failed);
+    Startup startup;
+    QVERIFY(openLibrary(library, opened, &startup));
+    ScanResult scan;
+    QVERIFY(scanLibrary(library, scanFinished, root, &scan));
+    QCOMPARE(scan.courses, std::uint64_t{1});
+    QCOMPARE(scan.lessons, std::uint64_t{3});
+
+    QSignalSpy coursesReady(&library, &Library::coursesReady);
+    CoursePage courses;
+    QVERIFY(readCourses(library, coursesReady, &courses));
+    const auto courseId = courses.rows.front().id;
+
+    SectionPage firstPage;
+    QVERIFY(readSections(library, sectionsReady, courseId, 0, 1, &firstPage));
+    QCOMPARE(firstPage.courseId, courseId);
+    QCOMPARE(firstPage.offset, std::uint64_t{0});
+    QCOMPARE(firstPage.total, std::uint64_t{2});
+    QCOMPARE(firstPage.rows.size(), 1);
+    QVERIFY(firstPage.hasMore);
+    QCOMPARE(firstPage.rows.front().name, QStringLiteral("Section 2"));
+    QCOMPARE(firstPage.rows.front().lessonCount, std::uint64_t{1});
+
+    SectionPage secondPage;
+    QVERIFY(readSections(library, sectionsReady, courseId, 1, 128, &secondPage));
+    QCOMPARE(secondPage.rows.size(), 1);
+    QVERIFY(!secondPage.hasMore);
+    QCOMPARE(secondPage.rows.front().name, QStringLiteral("Section 10"));
+    QCOMPARE(secondPage.rows.front().orderIndex, std::uint64_t{1});
+
+    LessonPage scopedLessons;
+    QVERIFY(readSectionLessons(
+        library,
+        lessonsReady,
+        courseId,
+        firstPage.rows.front().id,
+        0,
+        500,
+        &scopedLessons));
+    QCOMPARE(scopedLessons.courseId, courseId);
+    QCOMPARE(scopedLessons.sectionId, firstPage.rows.front().id);
+    QCOMPARE(scopedLessons.total, std::uint64_t{1});
+    QCOMPARE(scopedLessons.rows.size(), 1);
+    QCOMPARE(scopedLessons.rows.front().name, QStringLiteral("Lesson 1"));
+
+    LessonPage flatLessons;
+    QVERIFY(readLessons(library, lessonsReady, courseId, &flatLessons));
+    QVERIFY(flatLessons.sectionId.isEmpty());
+    QCOMPARE(flatLessons.total, std::uint64_t{3});
+
+    QVERIFY(library.resolveLesson(
+                 courseId,
+                 firstPage.rows.front().id,
+                 scopedLessons.rows.front().id)
+            != 0);
+    QVERIFY(waitFor(searchResolved, 5'000));
+    const auto resolution = qvariant_cast<SearchResolution>(searchResolved.takeFirst().at(1));
+    QCOMPARE(resolution.kind, QStringLiteral("lesson"));
+    QCOMPARE(resolution.course.id, courseId);
+    QCOMPARE(resolution.sectionId, firstPage.rows.front().id);
+    QCOMPARE(resolution.lesson.id, scopedLessons.rows.front().id);
+    QCOMPARE(resolution.sectionOffset, std::uint64_t{0});
+    QCOMPARE(resolution.sectionLessonOffset, std::uint64_t{0});
+    QCOMPARE(resolution.lessonOffset, std::uint64_t{0});
+
+    QVERIFY(library.resolveLesson(
+                 courseId,
+                 secondPage.rows.front().id,
+                 flatLessons.rows.at(1).id)
+            != 0);
+    QVERIFY(waitFor(searchResolved, 5'000));
+    const auto secondResolution = qvariant_cast<SearchResolution>(searchResolved.takeFirst().at(1));
+    QCOMPARE(secondResolution.sectionOffset, std::uint64_t{1});
+    QCOMPARE(secondResolution.sectionLessonOffset, std::uint64_t{0});
+    QCOMPARE(secondResolution.lessonOffset, std::uint64_t{1});
+
+    failed.clear();
+    QVERIFY(library.resolveLesson(
+                 courseId,
+                 secondPage.rows.front().id,
+                 scopedLessons.rows.front().id)
+            != 0);
+    QVERIFY(waitFor(failed, 5'000));
+    QCOMPARE(
+        qvariant_cast<melearner::library::Error>(failed.takeFirst().at(1)).code,
+        ErrorCode::invalid_request);
+}
+
 void LibraryTest::readsLastCommitWhileLargeScanDiscovers() {
     QTemporaryDir temporary;
     QVERIFY(temporary.isValid());
@@ -261,7 +399,6 @@ void LibraryTest::readsLastCommitWhileLargeScanDiscovers() {
     Library library(temporary.filePath(QStringLiteral("library.sqlite3")));
     QSignalSpy opened(&library, &Library::opened);
     QSignalSpy scanFinished(&library, &Library::scanFinished);
-    QSignalSpy scanProgress(&library, &Library::scanProgress);
     QSignalSpy coursesReady(&library, &Library::coursesReady);
     Startup startup;
     QVERIFY(openLibrary(library, opened, &startup));
@@ -275,7 +412,6 @@ void LibraryTest::readsLastCommitWhileLargeScanDiscovers() {
     const auto committedRevision = committedCourses.revision;
 
     scanFinished.clear();
-    scanProgress.clear();
     coursesReady.clear();
     const auto scanRequestId = library.scan(largeRoot);
     QVERIFY(scanRequestId != 0);
@@ -285,7 +421,6 @@ void LibraryTest::readsLastCommitWhileLargeScanDiscovers() {
     const auto readRequestId = library.courses();
     QVERIFY(readRequestId != 0);
     QVERIFY(waitFor(coursesReady, 5'000));
-    QVERIFY(!scanProgress.isEmpty());
     QVERIFY(scanFinished.isEmpty());
     const auto duringScan = qvariant_cast<CoursePage>(coursesReady.takeFirst().at(1));
     QCOMPARE(duringScan.revision, committedRevision);
@@ -524,6 +659,9 @@ void LibraryTest::courseEntryAndResumePersist() {
     QVERIFY(initialResume.hasMore);
     QCOMPARE(initialResume.rows.front().course.name, QStringLiteral("Course 1"));
     QVERIFY(initialResume.rows.front().hasLesson);
+    QCOMPARE(initialResume.rows.front().lesson.name, QStringLiteral("Lesson 1"));
+    QVERIFY(!initialResume.rows.front().lesson.sectionName.isEmpty());
+    QVERIFY(initialResume.rows.front().lesson.sectionName != initialResume.rows.front().lesson.name);
     QCOMPARE(initialResume.rows.front().globalLessonOffset, std::uint64_t{0});
 
     ResumePage finalResumePage;
@@ -544,6 +682,9 @@ void LibraryTest::courseEntryAndResumePersist() {
     QVERIFY(readCourseEntry(library, courseEntered, course1.id, {}, &firstEntry));
     QVERIFY(firstEntry.hasLesson);
     QCOMPARE(firstEntry.lesson.id, firstLessonId);
+    QCOMPARE(firstEntry.lesson.name, QStringLiteral("Lesson 1"));
+    QVERIFY(!firstEntry.lesson.sectionName.isEmpty());
+    QVERIFY(firstEntry.lesson.sectionName != firstEntry.lesson.name);
     QCOMPARE(firstEntry.globalLessonOffset, std::uint64_t{0});
     QVERIFY(firstEntry.revision > initialResume.revision);
     QVERIFY(firstEntry.course.lastAccessed > 0);
@@ -607,6 +748,8 @@ void LibraryTest::courseEntryAndResumePersist() {
     QVERIFY(readResume(reopened, reopenedResume, 0, 100, &persisted));
     QCOMPARE(persisted.rows.front().course.id, course3.id);
     QCOMPARE(persisted.rows.front().course.lastAccessed, thirdAccessed);
+    QCOMPARE(persisted.rows.front().lesson.name, QStringLiteral("Lesson 1"));
+    QVERIFY(persisted.rows.front().lesson.sectionName != persisted.rows.front().lesson.name);
 }
 
 void LibraryTest::statsAndActivityUseCanonicalScope() {

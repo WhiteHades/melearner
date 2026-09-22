@@ -46,6 +46,7 @@ constexpr std::string_view kSchemaSha256 =
 
 constexpr std::uint64_t kMaxAcceptedRequests = 128;
 constexpr std::uint64_t kMaxCoursePage = 128;
+constexpr std::uint64_t kMaxSectionPage = 128;
 constexpr std::uint64_t kMaxLessonPage = 256;
 constexpr std::uint64_t kMaxResumePage = 4;
 constexpr std::uint64_t kMaxActivityPage = 84;
@@ -1110,14 +1111,14 @@ void bindScope(Statement& statement, const CourseScope& scope, int firstIndex = 
     return result;
 }
 
-[[nodiscard]] LessonPage readLessonPage(
+[[nodiscard]] SectionPage readSectionPage(
     sqlite3* db,
     QString courseId,
     std::uint64_t offset,
     std::uint64_t limit,
     std::uint64_t revision) {
-    const auto boundedLimit = std::clamp(limit, std::uint64_t{1}, kMaxLessonPage);
-    Statement count(db, QStringLiteral("SELECT count(*) FROM lessons WHERE course_id = ?1"));
+    const auto boundedLimit = std::clamp(limit, std::uint64_t{1}, kMaxSectionPage);
+    Statement count(db, QStringLiteral("SELECT count(*) FROM sections WHERE course_id = ?1"));
     count.bind(1, courseId);
     const auto countResult = count.step();
     const auto total = countResult == SQLITE_ROW ? static_cast<std::uint64_t>(columnInt(count.get(), 0)) : 0;
@@ -1125,17 +1126,88 @@ void bindScope(Statement& statement, const CourseScope& scope, int firstIndex = 
     Statement statement(
         db,
         QStringLiteral(
+            "SELECT s.id, s.course_id, s.name, s.order_index, count(l.id), "
+            "coalesce(sum(CASE WHEN l.completed = 1 THEN 1 ELSE 0 END), 0), "
+            "coalesce(sum(l.watched_time), 0) "
+            "FROM sections s LEFT JOIN lessons l "
+            "ON l.course_id = s.course_id AND l.section_id = s.id "
+            "WHERE s.course_id = ?1 GROUP BY s.id "
+            "ORDER BY s.order_index, s.name COLLATE MELEARNER_NATURAL, s.id "
+            "LIMIT ?2 OFFSET ?3"));
+    statement.bind(1, courseId);
+    statement.bind(2, boundedLimit);
+    statement.bind(3, offset);
+    SectionPage result{
+        .revision = revision,
+        .courseId = std::move(courseId),
+        .offset = offset,
+        .total = total,
+        .rows = {},
+        .hasMore = false,
+    };
+    while (statement.step() == SQLITE_ROW) {
+        result.rows.push_back({
+            .id = columnText(statement.get(), 0),
+            .courseId = columnText(statement.get(), 1),
+            .name = columnText(statement.get(), 2),
+            .orderIndex = static_cast<std::uint64_t>(columnInt(statement.get(), 3)),
+            .lessonCount = nonnegativeAggregate(statement.get(), 4, QStringLiteral("section lesson count")),
+            .completedLessons = nonnegativeAggregate(statement.get(), 5, QStringLiteral("section completed Lesson count")),
+            .watchedSeconds = nonnegativeAggregate(statement.get(), 6, QStringLiteral("section watched time")),
+        });
+    }
+    result.hasMore = offset < total && offset + static_cast<std::uint64_t>(result.rows.size()) < total;
+    return result;
+}
+
+[[nodiscard]] LessonPage readLessonPage(
+    sqlite3* db,
+    QString courseId,
+    QString sectionId,
+    std::uint64_t offset,
+    std::uint64_t limit,
+    std::uint64_t revision) {
+    const auto boundedLimit = std::clamp(limit, std::uint64_t{1}, kMaxLessonPage);
+    const auto scoped = !sectionId.isEmpty();
+    Statement count(
+        db,
+        scoped ? QStringLiteral("SELECT count(*) FROM lessons WHERE course_id = ?1 AND section_id = ?2")
+               : QStringLiteral("SELECT count(*) FROM lessons WHERE course_id = ?1"));
+    count.bind(1, courseId);
+    if (scoped) {
+        count.bind(2, sectionId);
+    }
+    const auto countResult = count.step();
+    const auto total = countResult == SQLITE_ROW ? static_cast<std::uint64_t>(columnInt(count.get(), 0)) : 0;
+
+    Statement statement(
+        db,
+        scoped ? QStringLiteral(
+            "SELECT l.id, l.course_id, l.section_id, s.name, l.name, l.path, l.relative_path, "
+            "l.type, l.duration, l.watched_time, l.last_position, l.file_size, l.order_index, "
+            "l.completed FROM lessons l JOIN sections s ON s.id = l.section_id "
+            "AND s.course_id = l.course_id "
+            "WHERE l.course_id = ?1 AND l.section_id = ?2 ORDER BY l.order_index, "
+            "l.name COLLATE MELEARNER_NATURAL, l.id LIMIT ?3 OFFSET ?4")
+               : QStringLiteral(
             "SELECT l.id, l.course_id, l.section_id, s.name, l.name, l.path, l.relative_path, "
             "l.type, l.duration, l.watched_time, l.last_position, l.file_size, l.order_index, "
             "l.completed FROM lessons l JOIN sections s ON s.id = l.section_id "
             "WHERE l.course_id = ?1 ORDER BY s.order_index, l.order_index, "
             "l.name COLLATE MELEARNER_NATURAL, l.id LIMIT ?2 OFFSET ?3"));
     statement.bind(1, courseId);
-    statement.bind(2, boundedLimit);
-    statement.bind(3, offset);
+    if (scoped) {
+        statement.bind(2, sectionId);
+        statement.bind(3, boundedLimit);
+        statement.bind(4, offset);
+    } else {
+        statement.bind(2, boundedLimit);
+        statement.bind(3, offset);
+    }
     LessonPage result{
         .revision = revision,
-        .courseId = courseId,
+        .courseId = std::move(courseId),
+        .sectionId = std::move(sectionId),
         .offset = offset,
         .total = total,
         .rows = {},
@@ -1376,6 +1448,117 @@ void bindScope(Statement& statement, const CourseScope& scope, int firstIndex = 
     return readLessonAt(statement, 0);
 }
 
+[[nodiscard]] SearchResolution resolveLessonResult(
+    sqlite3* db,
+    QString courseId,
+    QString sectionId,
+    QString lessonId,
+    std::uint64_t revision) {
+    if (!validId(lessonId)) {
+        throw DbError(ErrorCode::invalid_request, QStringLiteral("Lesson ID is invalid"));
+    }
+    const auto hasCourseScope = !courseId.isEmpty();
+    const auto hasSectionScope = !sectionId.isEmpty();
+    if (hasCourseScope && !validId(courseId)) {
+        throw DbError(ErrorCode::invalid_request, QStringLiteral("Course ID is invalid"));
+    }
+    if (hasSectionScope && !validId(sectionId)) {
+        throw DbError(ErrorCode::invalid_request, QStringLiteral("Section ID is invalid"));
+    }
+
+    QString sql = QStringLiteral(
+        "SELECT l.id, l.course_id, l.section_id, s.name, l.name, l.path, l.relative_path, l.type, "
+        "l.duration, l.watched_time, l.last_position, l.file_size, l.order_index, l.completed, s.order_index "
+        "FROM lessons l JOIN sections s ON s.id = l.section_id AND s.course_id = l.course_id "
+        "WHERE l.id = ?1");
+    if (hasCourseScope) {
+        sql += QStringLiteral(" AND l.course_id = ?2");
+    }
+    if (hasSectionScope) {
+        sql += hasCourseScope ? QStringLiteral(" AND l.section_id = ?3")
+                              : QStringLiteral(" AND l.section_id = ?2");
+    }
+    Statement lesson(db, std::move(sql));
+    lesson.bind(1, lessonId);
+    if (hasCourseScope) {
+        lesson.bind(2, courseId);
+    }
+    if (hasSectionScope) {
+        lesson.bind(hasCourseScope ? 3 : 2, sectionId);
+    }
+    if (lesson.step() != SQLITE_ROW) {
+        throw DbError(
+            ErrorCode::invalid_request,
+            hasCourseScope || hasSectionScope ? QStringLiteral("Lesson does not exist in the requested scope")
+                                              : QStringLiteral("Lesson does not exist"));
+    }
+
+    SearchResolution result{
+        .revision = revision,
+        .kind = QStringLiteral("lesson"),
+        .objectId = lessonId,
+        .course = {},
+        .sectionId = columnText(lesson.get(), 2),
+        .hasLesson = true,
+        .lesson = readLesson(lesson.get()),
+        .lessonOffset = 0,
+    };
+    result.course = readCourseById(db, result.lesson.courseId);
+
+    const auto sectionOrderIndex = static_cast<std::uint64_t>(columnInt(lesson.get(), 14));
+    Statement sectionOffset(
+        db,
+        QStringLiteral(
+            "SELECT count(*) FROM sections s WHERE s.course_id = ?1 AND ("
+            "s.order_index < ?2 OR (s.order_index = ?2 AND ("
+            "s.name COLLATE MELEARNER_NATURAL < ?3 OR "
+            "(s.name COLLATE MELEARNER_NATURAL = ?3 AND s.id < ?4))))"));
+    sectionOffset.bind(1, result.lesson.courseId);
+    sectionOffset.bind(2, sectionOrderIndex);
+    sectionOffset.bind(3, result.lesson.sectionName);
+    sectionOffset.bind(4, result.lesson.sectionId);
+    if (sectionOffset.step() == SQLITE_ROW) {
+        result.sectionOffset = static_cast<std::uint64_t>(columnInt(sectionOffset.get(), 0));
+    }
+
+    Statement sectionLessonOffset(
+        db,
+        QStringLiteral(
+            "SELECT count(*) FROM lessons l WHERE l.course_id = ?1 AND l.section_id = ?2 AND ("
+            "l.order_index < ?3 OR (l.order_index = ?3 AND ("
+            "l.name COLLATE MELEARNER_NATURAL < ?4 OR "
+            "(l.name COLLATE MELEARNER_NATURAL = ?4 AND l.id < ?5))))"));
+    sectionLessonOffset.bind(1, result.lesson.courseId);
+    sectionLessonOffset.bind(2, result.lesson.sectionId);
+    sectionLessonOffset.bind(3, result.lesson.orderIndex);
+    sectionLessonOffset.bind(4, result.lesson.name);
+    sectionLessonOffset.bind(5, result.lesson.id);
+    if (sectionLessonOffset.step() == SQLITE_ROW) {
+        result.sectionLessonOffset = static_cast<std::uint64_t>(columnInt(sectionLessonOffset.get(), 0));
+    }
+
+    Statement globalOffset(
+        db,
+        QStringLiteral(
+            "SELECT count(*) FROM lessons l JOIN sections s "
+            "ON s.id = l.section_id AND s.course_id = l.course_id "
+            "WHERE l.course_id = ?1 AND ("
+            "s.order_index < ?2 OR "
+            "(s.order_index = ?2 AND l.order_index < ?3) OR "
+            "(s.order_index = ?2 AND l.order_index = ?3 AND ("
+            "l.name COLLATE MELEARNER_NATURAL < ?4 OR "
+            "(l.name COLLATE MELEARNER_NATURAL = ?4 AND l.id < ?5))))"));
+    globalOffset.bind(1, result.lesson.courseId);
+    globalOffset.bind(2, sectionOrderIndex);
+    globalOffset.bind(3, result.lesson.orderIndex);
+    globalOffset.bind(4, result.lesson.name);
+    globalOffset.bind(5, result.lesson.id);
+    if (globalOffset.step() == SQLITE_ROW) {
+        result.lessonOffset = static_cast<std::uint64_t>(columnInt(globalOffset.get(), 0));
+    }
+    return result;
+}
+
 [[nodiscard]] SearchResolution resolveSearchResult(
     sqlite3* db,
     QString kind,
@@ -1411,43 +1594,7 @@ void bindScope(Statement& statement, const CourseScope& scope, int firstIndex = 
     if (kind != QStringLiteral("lesson")) {
         throw DbError(ErrorCode::invalid_request, QStringLiteral("Search result kind is invalid"));
     }
-
-    Statement lesson(
-        db,
-        QStringLiteral(
-            "SELECT l.id, l.course_id, l.section_id, s.name, l.name, l.path, l.relative_path, l.type, "
-            "l.duration, l.watched_time, l.last_position, l.file_size, l.order_index, l.completed, s.order_index "
-            "FROM lessons l JOIN sections s ON s.id = l.section_id AND s.course_id = l.course_id "
-            "WHERE l.id = ?1"));
-    lesson.bind(1, objectId);
-    if (lesson.step() != SQLITE_ROW) {
-        throw DbError(ErrorCode::invalid_request, QStringLiteral("Lesson does not exist"));
-    }
-    result.hasLesson = true;
-    result.lesson = readLesson(lesson.get());
-    result.course = readCourseById(db, result.lesson.courseId);
-    result.sectionId = result.lesson.sectionId;
-
-    Statement offset(
-        db,
-        QStringLiteral(
-            "SELECT count(*) FROM lessons l JOIN sections s "
-            "ON s.id = l.section_id AND s.course_id = l.course_id "
-            "WHERE l.course_id = ?1 AND ("
-            "s.order_index < ?2 OR "
-            "(s.order_index = ?2 AND l.order_index < ?3) OR "
-            "(s.order_index = ?2 AND l.order_index = ?3 AND ("
-            "l.name COLLATE MELEARNER_NATURAL < ?4 OR "
-            "(l.name COLLATE MELEARNER_NATURAL = ?4 AND l.id < ?5))))"));
-    offset.bind(1, result.lesson.courseId);
-    offset.bind(2, static_cast<std::uint64_t>(columnInt(lesson.get(), 14)));
-    offset.bind(3, result.lesson.orderIndex);
-    offset.bind(4, result.lesson.name);
-    offset.bind(5, result.lesson.id);
-    if (offset.step() == SQLITE_ROW) {
-        result.lessonOffset = static_cast<std::uint64_t>(columnInt(offset.get(), 0));
-    }
-    return result;
+    return resolveLessonResult(db, {}, {}, std::move(objectId), revision);
 }
 
 [[nodiscard]] Startup readStartup(sqlite3* db, std::uint64_t revision) {
@@ -1499,14 +1646,15 @@ private:
         db,
         QStringLiteral(
             "WITH ordered_lessons AS ("
-            "SELECT l.id, l.course_id, l.section_id, s.name, l.name, l.path, l.relative_path, "
+            "SELECT l.id, l.course_id, l.section_id, s.name AS section_name, "
+            "l.name AS lesson_name, l.path, l.relative_path, "
             "l.type, l.duration, l.watched_time, l.last_position, l.file_size, l.order_index, "
             "l.completed, ROW_NUMBER() OVER (ORDER BY s.order_index, "
             "s.name COLLATE MELEARNER_NATURAL, s.id, l.order_index, "
             "l.name COLLATE MELEARNER_NATURAL, l.id) - 1 AS global_offset "
             "FROM lessons l JOIN sections s ON s.id = l.section_id AND s.course_id = l.course_id "
             "WHERE l.course_id = ?1) "
-            "SELECT id, course_id, section_id, name, name, path, relative_path, type, duration, "
+            "SELECT id, course_id, section_id, section_name, lesson_name, path, relative_path, type, duration, "
             "watched_time, last_position, file_size, order_index, completed, global_offset "
             "FROM ordered_lessons "
             "ORDER BY CASE WHEN ?2 <> '' AND id = ?2 THEN 0 ELSE 1 END, "
@@ -1540,7 +1688,8 @@ private:
         db,
         QStringLiteral(
             "WITH ordered_lessons AS ("
-            "SELECT l.id, l.course_id, l.section_id, s.name, l.name, l.path, l.relative_path, "
+            "SELECT l.id, l.course_id, l.section_id, s.name AS section_name, "
+            "l.name AS lesson_name, l.path, l.relative_path, "
             "l.type, l.duration, l.watched_time, l.last_position, l.file_size, l.order_index, "
             "l.completed, "
             "ROW_NUMBER() OVER (PARTITION BY l.course_id ORDER BY s.order_index, "
@@ -1564,7 +1713,7 @@ private:
             "LIMIT ?1 OFFSET ?2) "
             "SELECT cp.id, cp.name, cp.path, cp.missing_since, cp.last_accessed, cp.lesson_count, "
             "cp.completed_lessons, cp.watched_seconds, "
-            "ol.id, ol.course_id, ol.section_id, ol.name, ol.name, ol.path, ol.relative_path, "
+            "ol.id, ol.course_id, ol.section_id, ol.section_name, ol.lesson_name, ol.path, ol.relative_path, "
             "ol.type, ol.duration, ol.watched_time, ol.last_position, ol.file_size, ol.order_index, "
             "ol.completed, ol.global_offset "
             "FROM course_page cp JOIN ordered_lessons ol "
@@ -2485,6 +2634,8 @@ Library::Library(QString databasePath, QObject* parent)
     qRegisterMetaType<Lesson>();
     qRegisterMetaType<Startup>();
     qRegisterMetaType<CoursePage>();
+    qRegisterMetaType<Section>();
+    qRegisterMetaType<SectionPage>();
     qRegisterMetaType<LessonPage>();
     qRegisterMetaType<CourseEntry>();
     qRegisterMetaType<ResumePage>();
@@ -2543,6 +2694,27 @@ RequestId Library::courses(std::uint64_t offset, std::uint64_t limit) {
     return requestId;
 }
 
+RequestId Library::sections(QString courseId, std::uint64_t offset, std::uint64_t limit) {
+    const auto requestId = worker_->enqueue(
+        [this, courseId = std::move(courseId), offset, limit](sqlite3*, RequestId id) mutable {
+            if (!validId(courseId)) {
+                throw DbError(ErrorCode::invalid_request, QStringLiteral("Course ID is invalid"));
+            }
+            if (worker_->database_ == nullptr) {
+                throw DbError(ErrorCode::database, QStringLiteral("Library database is not open"));
+            }
+            const auto page = readSectionPage(
+                worker_->database_, std::move(courseId), offset, limit, worker_->revision_);
+            worker_->terminal(id, [owner = this, id, page]() mutable {
+                emit owner->sectionsReady(id, std::move(page));
+            });
+        });
+    if (requestId == 0) {
+        worker_->reject(0, ErrorCode::busy, QStringLiteral("Library request queue is full or closing"));
+    }
+    return requestId;
+}
+
 RequestId Library::lessons(QString courseId, std::uint64_t offset, std::uint64_t limit) {
     const auto requestId = worker_->enqueue([this, courseId = std::move(courseId), offset, limit](sqlite3*, RequestId id) mutable {
         if (courseId.isEmpty()) {
@@ -2551,9 +2723,49 @@ RequestId Library::lessons(QString courseId, std::uint64_t offset, std::uint64_t
         if (worker_->database_ == nullptr) {
             throw DbError(ErrorCode::database, QStringLiteral("Library database is not open"));
         }
-        const auto page = readLessonPage(worker_->database_, std::move(courseId), offset, limit, worker_->revision_);
+        const auto page = readLessonPage(worker_->database_, std::move(courseId), {}, offset, limit, worker_->revision_);
         worker_->terminal(id, [owner = this, id, page]() mutable { emit owner->lessonsReady(id, std::move(page)); });
     });
+    if (requestId == 0) {
+        worker_->reject(0, ErrorCode::busy, QStringLiteral("Library request queue is full or closing"));
+    }
+    return requestId;
+}
+
+RequestId Library::sectionLessons(
+    QString courseId,
+    QString sectionId,
+    std::uint64_t offset,
+    std::uint64_t limit) {
+    const auto requestId = worker_->enqueue(
+        [this,
+         courseId = std::move(courseId),
+         sectionId = std::move(sectionId),
+         offset,
+         limit](sqlite3*, RequestId id) mutable {
+            if (!validId(courseId)) {
+                throw DbError(ErrorCode::invalid_request, QStringLiteral("Course ID is invalid"));
+            }
+            if (!validId(sectionId)) {
+                throw DbError(ErrorCode::invalid_request, QStringLiteral("Section ID is invalid"));
+            }
+            if (worker_->database_ == nullptr) {
+                throw DbError(ErrorCode::database, QStringLiteral("Library database is not open"));
+            }
+            Statement section(
+                worker_->database_,
+                QStringLiteral("SELECT 1 FROM sections WHERE course_id = ?1 AND id = ?2"));
+            section.bind(1, courseId);
+            section.bind(2, sectionId);
+            if (section.step() != SQLITE_ROW) {
+                throw DbError(ErrorCode::invalid_request, QStringLiteral("Section does not exist in Course"));
+            }
+            const auto page = readLessonPage(
+                worker_->database_, std::move(courseId), std::move(sectionId), offset, limit, worker_->revision_);
+            worker_->terminal(id, [owner = this, id, page]() mutable {
+                emit owner->lessonsReady(id, std::move(page));
+            });
+        });
     if (requestId == 0) {
         worker_->reject(0, ErrorCode::busy, QStringLiteral("Library request queue is full or closing"));
     }
@@ -2704,6 +2916,31 @@ RequestId Library::resolveSearch(QString kind, QString objectId) {
             }
             const auto result = resolveSearchResult(
                 worker_->database_, std::move(kind), std::move(objectId), worker_->revision_);
+            worker_->terminal(id, [owner = this, id, result]() mutable {
+                emit owner->searchResolved(id, std::move(result));
+            });
+        });
+    if (requestId == 0) {
+        worker_->reject(0, ErrorCode::busy, QStringLiteral("Library request queue is full or closing"));
+    }
+    return requestId;
+}
+
+RequestId Library::resolveLesson(QString courseId, QString sectionId, QString lessonId) {
+    const auto requestId = worker_->enqueue(
+        [this,
+         courseId = std::move(courseId),
+         sectionId = std::move(sectionId),
+         lessonId = std::move(lessonId)](sqlite3*, RequestId id) mutable {
+            if (worker_->database_ == nullptr) {
+                throw DbError(ErrorCode::database, QStringLiteral("Library database is not open"));
+            }
+            const auto result = resolveLessonResult(
+                worker_->database_,
+                std::move(courseId),
+                std::move(sectionId),
+                std::move(lessonId),
+                worker_->revision_);
             worker_->terminal(id, [owner = this, id, result]() mutable {
                 emit owner->searchResolved(id, std::move(result));
             });
