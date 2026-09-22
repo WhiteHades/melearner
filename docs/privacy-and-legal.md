@@ -2,7 +2,7 @@
 
 ## Privacy
 
-melearner is local-only.
+melearner is local only.
 
 - No account
 - No telemetry

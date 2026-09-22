@@ -4,7 +4,7 @@
 
 # melearner
 
-Local-only desktop learning from course files already on your machine.
+Local only desktop learning from course files already on your machine.
 
 [![platform](https://img.shields.io/badge/platform-Linux-8f2d25?style=flat)](docs/install.md)
 [![stack](https://img.shields.io/badge/stack-C%2B%2B23%20%C2%B7%20Qt%206.11-8f2d25?style=flat)](cpp-app/README.md)

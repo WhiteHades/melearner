@@ -6,7 +6,7 @@ The repository file `docs/specs/fully-native-melearner.md` is canonical. GitHub 
 
 melearner now has one maintained C++23/Qt application. The former React/WebView/Tauri and Native SDK/Zig/Rust lines were superseded and removed during the Linux-first cutover. Linux verification is active; macOS and Windows qualification remains pending.
 
-The learner needs one responsive, polished, local-only desktop application for Courses already on the machine. The final package must contain no WebView, browser runtime, JavaScript UI, external player, helper process, second Player window, or compatibility path for obsolete data.
+The learner needs one responsive, polished, local only desktop application for Courses already on the machine. The final package must contain no WebView, browser runtime, JavaScript UI, external player, helper process, second Player window, or compatibility path for obsolete data.
 
 ## Solution
 

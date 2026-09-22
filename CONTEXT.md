@@ -1,6 +1,6 @@
 # melearner
 
-melearner is a local-only course learner for legally obtained files already on the user's machine. The domain is about turning a folder of local learning material into a navigable library without becoming a content service.
+melearner is a local only course learner for legally obtained files already on the user's machine. The domain is about turning a folder of local learning material into a navigable library without becoming a content service.
 
 ## Language
 
