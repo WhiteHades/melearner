@@ -762,6 +762,15 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
 }
 
 MainWindow::~MainWindow() {
+  hideControls_->stop(); controlsFade_->stop();
+  // Child removal and focus changes happen before QObject disconnects us.
+  disconnect(qApp, nullptr, this, nullptr);
+  disconnect(QApplication::styleHints()->accessibility(), nullptr, this, nullptr);
+  removeEventFilter(this);
+  for (auto* object : findChildren<QObject*>()) {
+    object->removeEventFilter(this);
+    disconnect(object, nullptr, this, nullptr);
+  }
   delete video_; // The OpenGL context must be current during renderer destruction.
   player_->shutdown(); documents_.close(); library_.close();
 }
