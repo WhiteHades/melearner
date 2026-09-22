@@ -4,7 +4,6 @@
 #include "player.hpp"
 #include "search_dialog.hpp"
 #include "pdf_view.hpp"
-#include "notes_panel.hpp"
 #include "stats_panel.hpp"
 #include "course_outline_model.hpp"
 #include "study_icons.hpp"
@@ -16,7 +15,6 @@
 #include <QDateTime>
 #include <QDebug>
 #include <QDialog>
-#include <QDockWidget>
 #include <QDesktopServices>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -143,38 +141,11 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   setWindowTitle("melearner"); setMinimumSize(560, 400); resize(1200, 780);
   setWindowIcon(QIcon(":/cpp-app/assets/melearner-logo.png"));
   auto* center = new QWidget; center->setObjectName("appShell"); setCentralWidget(center);
-  auto* workspace = new QHBoxLayout(center); workspace->setContentsMargins(0, 0, 0, 0); workspace->setSpacing(0);
-  navigation_ = new QWidget; navigation_->setObjectName("navigationRail");
-  navigation_->setAttribute(Qt::WA_StyledBackground);
-  navigation_->setFixedWidth(std::max(224, fontMetrics().horizontalAdvance(tr("Keyboard shortcuts")) + 84));
-  auto* navigation = new QVBoxLayout(navigation_); navigation->setContentsMargins(16, 28, 16, 20); navigation->setSpacing(10);
-  auto* brandRow = new QHBoxLayout;
-  auto* brand = new QLabel; brand->setPixmap(windowIcon().pixmap(38, 38)); brand->setFixedSize(38, 38);
-  brand->setObjectName("brand"); brandRow->addWidget(brand);
-  auto* wordmark = new QLabel("melearner"); wordmark->setFont(editorialFont(font(), 1.5, true)); brandRow->addWidget(wordmark, 1);
-  navigation->addLayout(brandRow);
-  auto* brandCaption = new QLabel(tr("Learn at your own pace.")); brandCaption->setObjectName("brandCaption");
-  brandCaption->setWordWrap(true); navigation->addWidget(brandCaption); navigation->addSpacing(36);
-  navigationCourses_ = button(tr("Courses"), "navigationCourses"); navigationCourses_->setCheckable(true);
-  navigationActivity_ = button(tr("Learning activity"), "navigationActivity"); navigationActivity_->setCheckable(true);
-  navigationNotes_ = button(tr("Lesson notes"), "navigationNotes"); navigationNotes_->setCheckable(true);
-  for (auto* destination : {navigationCourses_, navigationActivity_, navigationNotes_}) {
-    destination->setProperty("variant", "navigation"); destination->setMinimumHeight(44); navigation->addWidget(destination);
-  }
-  connect(navigationCourses_, &QPushButton::clicked, this, [this] { libraryTabs_->setCurrentIndex(0); showLibrary(); });
-  connect(navigationActivity_, &QPushButton::clicked, this, [this] { libraryTabs_->setCurrentIndex(1); showLibrary(); });
-  connect(navigationNotes_, &QPushButton::clicked, this, &MainWindow::openNotes);
-  navigation->addStretch();
-  auto* shortcuts = button(tr("Keyboard shortcuts"), "showShortcuts"); shortcuts->setProperty("variant", "navigation");
-  shortcuts->setToolTip(tr("Keyboard shortcuts (? or F1)")); navigation->addWidget(shortcuts);
-  connect(shortcuts, &QPushButton::clicked, this, [this] { showKeyboardPopup(false); });
-  auto* navigationSettings = button(tr("Settings"), "navigationSettings"); navigationSettings->setProperty("variant", "navigation");
-  navigation->addWidget(navigationSettings); workspace->addWidget(navigation_);
-  auto* body = new QWidget;
-  auto* shell = new QVBoxLayout(body); shell->setContentsMargins(24, 20, 24, 10); shell->setSpacing(14);
-  workspace->addWidget(body, 1);
+  auto* shell = new QVBoxLayout(center); shell->setContentsMargins(16, 12, 16, 8); shell->setSpacing(10);
   auto* toolbar = new QHBoxLayout;
-  back_ = button(tr("Library"), "backToLibrary"); back_->hide(); toolbar->addWidget(back_);
+  auto* brand = new QLabel; brand->setPixmap(windowIcon().pixmap(32, 32)); brand->setFixedSize(32, 32);
+  brand->setObjectName("brand"); brand->setAccessibleName("melearner"); toolbar->addWidget(brand);
+  back_ = button(tr("Courses"), "backToLibrary"); back_->hide(); toolbar->addWidget(back_);
   title_ = new ElidingLabel(tr("Your learning path")); title_->setObjectName("routeTitle");
   auto heading = editorialFont(font(), 2.3, true); title_->setFont(heading);
   title_->setMinimumWidth(0); title_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
@@ -183,15 +154,17 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   searchButton_->setAccessibleName(tr("Search courses, sections, and lessons"));
   searchButton_->setMaximumWidth(460); searchButton_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
   toolbar->addWidget(searchButton_, 1); toolbar->addStretch();
-  notesButton_ = button(tr("Notes"), "lessonNotes"); notesButton_->hide(); toolbar->addWidget(notesButton_);
-  rescan_ = button(tr("Rescan"), "rescanRoot"); rescan_->setEnabled(false); toolbar->addWidget(rescan_);
-  choose_ = button(tr("Choose root folder"), "chooseRoot"); choose_->setEnabled(false); toolbar->addWidget(choose_);
+  auto* shortcuts = button(tr("Keyboard shortcuts"), "showShortcuts");
+  shortcuts->setText({}); shortcuts->setMinimumWidth(40);
+  shortcuts->setToolTip(tr("Keyboard shortcuts (? or F1)")); toolbar->addWidget(shortcuts);
+  connect(shortcuts, &QPushButton::clicked, this, [this] { showKeyboardPopup(false); });
+  rescan_ = button(tr("Rescan"), "rescanRoot"); rescan_->setParent(center); rescan_->hide(); rescan_->setEnabled(false);
+  choose_ = button(tr("Choose root folder"), "chooseRoot"); choose_->setEnabled(false);
   auto* settings = button(tr("Settings"), "appearance");
-  settingsButton_ = settings;
   settings->setAccessibleName(tr("Application settings"));
-  for (auto* action : {back_, outlineToggle_, notesButton_, settings}) action->setProperty("variant", "ghost");
+  settings->setToolTip(tr("Application settings")); settings->setText({}); settings->setMinimumWidth(48);
+  for (auto* action : {back_, outlineToggle_, shortcuts, settings}) action->setProperty("variant", "ghost");
   searchButton_->setToolTip(tr("Search Library (Ctrl+K)"));
-  notesButton_->setCheckable(true);
   auto* appearanceMenu = new QMenu(settings);
   for (const auto& name : {QString("light"), QString("dark"), QString("cozy")}) {
     auto* action = appearanceMenu->addAction(name.left(1).toUpper() + name.mid(1));
@@ -210,7 +183,6 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   }
   appearanceMenu->addSeparator();
   connect(appearanceMenu->addAction(tr("Search Library…")), &QAction::triggered, this, &MainWindow::openSearch);
-  connect(appearanceMenu->addAction(tr("Lesson notes…")), &QAction::triggered, this, &MainWindow::openNotes);
   connect(appearanceMenu->addAction(tr("Change root folder…")), &QAction::triggered, choose_, &QPushButton::click);
   connect(appearanceMenu->addAction(tr("Rescan root")), &QAction::triggered, rescan_, &QPushButton::click);
   appearanceMenu->addSeparator();
@@ -225,7 +197,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   });
   connect(QApplication::styleHints()->accessibility(), &QAccessibilityHints::contrastPreferenceChanged, this,
     [this] { applyAppearance(settings_.appearance); });
-  settings->setMenu(appearanceMenu); navigationSettings->setMenu(appearanceMenu); toolbar->addWidget(settings);
+  settings->setMenu(appearanceMenu); toolbar->addWidget(settings);
   shell->addLayout(toolbar);
   auto* hero = new QHBoxLayout; hero->setSpacing(24);
   auto* heroText = new QVBoxLayout; heroText->setSpacing(8); heroText->addWidget(title_);
@@ -247,6 +219,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   libraryTabs_->tabBar()->setDrawBase(false);
   auto* libraryPage = new QWidget; auto* libraryLayout = new QVBoxLayout(libraryPage);
   libraryLayout->setContentsMargins(0, 12, 0, 0);
+  libraryLayout->addWidget(choose_, 0, Qt::AlignLeft);
   resumePanel_ = new QWidget; resumePanel_->setObjectName("resumePanel"); resumePanel_->setAttribute(Qt::WA_StyledBackground);
   auto* resumeLayout = new QHBoxLayout(resumePanel_); resumeLayout->setContentsMargins(22, 18, 22, 18);
   auto* resumeTitles = new QVBoxLayout;
@@ -301,7 +274,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   auto* contentScroll = new QScrollArea; contentScroll->setWidgetResizable(true); contentScroll->setFrameShape(QFrame::NoFrame);
   contentScroll->setObjectName("lessonScroll"); contentScroll->viewport()->installEventFilter(this);
   auto* contentBody = new QWidget; contentScroll->setWidget(contentBody); content_ = contentScroll; content_->setMinimumWidth(0);
-  auto* contentLayout = new QVBoxLayout(contentBody); contentLayout->setContentsMargins(0, 0, 12, 0);
+  auto* contentLayout = new QVBoxLayout(contentBody); contentLayout->setContentsMargins(12, 0, 0, 0);
   lessonTitle_ = new ElidingLabel(tr("Select a lesson")); lessonTitle_->setFont(editorialFont(font(), 1.6, true));
   lessonTitle_->setObjectName("lessonTitle");
   lessonTitle_->setMinimumWidth(0); lessonTitle_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
@@ -421,7 +394,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   auto* previous = button(tr("Previous"), "previousLesson"); lessonNavigation_->addWidget(previous);
   complete_ = button(tr("Mark complete"), "markComplete"); complete_->setEnabled(false); lessonNavigation_->addWidget(complete_, 1);
   auto* next = button(tr("Next"), "nextLesson"); lessonNavigation_->addWidget(next); contentLayout->addLayout(lessonNavigation_);
-  split_->insertWidget(0, content_); split_->setStretchFactor(0, 1); split_->setStretchFactor(1, 0); split_->setSizes({820, 280});
+  split_->addWidget(content_); split_->setStretchFactor(0, 0); split_->setStretchFactor(1, 1); split_->setSizes({280, 820});
   routes_->addWidget(split_);
   status_ = new QLabel(tr("Opening Library…")); status_->setWordWrap(true); status_->setAccessibleName(tr("Status"));
   status_->setTextFormat(Qt::PlainText);
@@ -434,23 +407,12 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     status_->setText(library_.cancelScan(scanId_) ? tr("Canceling scan…") : tr("Scan is committing. Please wait."));
     cancelScan_->setEnabled(false);
   });
-  notesDock_ = new QDockWidget(tr("Lesson notes"), this);
-  notesDock_->setObjectName("lessonNotesDock");
-  notesDock_->setFeatures(QDockWidget::NoDockWidgetFeatures); notesDock_->setMinimumWidth(240); notesDock_->setMaximumWidth(360);
-  notesDock_->setTitleBarWidget(new QWidget(notesDock_));
-  notes_ = new melearner::NotesPanel(library_, notesDock_); notesDock_->setWidget(notes_);
-  addDockWidget(Qt::RightDockWidgetArea, notesDock_); notesDock_->hide();
-  connect(notes_, &melearner::NotesPanel::seekRequested, this, [this](double seconds) {
-    if (playerLoaded_) (void)player_->seek(static_cast<qint64>(std::clamp(seconds, 0.0, std::max<qint64>(0, durationMs_) / 1000.0) * 1000));
-  });
-  connect(notesButton_, &QPushButton::clicked, this, &MainWindow::openNotes);
-
   connect(choose_, &QPushButton::clicked, this, [this] {
     const auto path = QFileDialog::getExistingDirectory(this, tr("Choose root folder"), rootPath_);
     if (!path.isEmpty()) chooseRoot(path);
   });
   connect(rescan_, &QPushButton::clicked, this, [this] { chooseRoot(rootPath_); });
-  connect(back_, &QPushButton::clicked, this, &MainWindow::showLibrary);
+  connect(back_, &QPushButton::clicked, this, [this] { libraryTabs_->setCurrentIndex(0); showLibrary(); });
   connect(searchButton_, &QPushButton::clicked, this, &MainWindow::openSearch);
   connect(outlineToggle_, &QPushButton::clicked, this, [this] { compactOutline_ = !compactOutline_; updateLayout(); });
   connect(courseModel_, &PagedListModel::pageRequested, this, [this](int offset) {
@@ -646,8 +608,6 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     lesson_->lastPosition = result.lastPosition; lesson_->watchedTime = result.watchedTime;
     complete_->setText(result.completed ? tr("Mark incomplete") : tr("Mark complete"));
   });
-  connect(&library_, &lib::Library::noteSaved, this, [this](auto, const lib::NoteSaved& result) { observeRevision(result.revision); });
-  connect(&library_, &lib::Library::noteDeleted, this, [this](auto, const lib::NoteDeleted& result) { observeRevision(result.revision); });
   connect(play_, &QPushButton::clicked, this, [this] { if (paused_) (void)player_->play(); else (void)player_->pause(); });
   connect(seek_, &QSlider::sliderReleased, this, [this] { if (durationMs_ > 0) (void)player_->seek(durationMs_ * seek_->value() / 10000); });
   connect(seek_, &QSlider::valueChanged, this, [this](int value) {
@@ -700,7 +660,6 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   connect(player_, &melearner::Player::positionChanged, this, [this](qint64 position, qint64 duration) {
     if (!playerLoaded_) return;
     positionMs_ = position; durationMs_ = duration;
-    notes_->updatePosition(position / 1000.0);
     time_->setText(clockText(position) + " / " + clockText(duration));
     if (!seek_->isSliderDown()) {
       const QSignalBlocker blocker(seek_);
@@ -781,8 +740,6 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     [this] { stepLesson(1); });
   auto* completeCommand = registerKeyboardCommand("complete", tr("Mark lesson complete"), tr("c"), tr("Lesson"),
     [this] { if (complete_ && complete_->isEnabled()) complete_->click(); });
-  auto* notesCommand = registerKeyboardCommand("notes", tr("Open lesson notes"), tr("n"), tr("Lesson"),
-    [this] { openNotes(); });
   auto* outlineCommand = registerKeyboardCommand("outline", tr("Toggle course outline"), tr("o"), tr("Lesson"),
     [this] { if (outlineToggle_ && outlineToggle_->isVisible()) outlineToggle_->click(); });
   auto* playCommand = registerKeyboardCommand("playPause", tr("Play or pause"), tr("Space"), tr("Player"),
@@ -805,7 +762,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     [this] { if (rescan_ && rescan_->isEnabled()) rescan_->click(); });
 
   auto* navigateMenu = appearanceMenu->addMenu(tr("Navigate"));
-  for (auto* action : {libraryCommand, searchCommand, previousCommand, nextCommand, completeCommand, notesCommand, outlineCommand})
+  for (auto* action : {libraryCommand, searchCommand, previousCommand, nextCommand, completeCommand, outlineCommand})
     navigateMenu->addAction(action);
   navigateMenu->addSeparator();
   for (auto* action : {chooseCommand, rescanCommand}) navigateMenu->addAction(action);
@@ -1030,7 +987,6 @@ bool MainWindow::handleKeyboardEvent(QObject* watched, QKeyEvent* event) {
   if (noModifiers && key == Qt::Key_BracketLeft && course_) { keyboardCommand("previousLesson")->trigger(); event->accept(); return true; }
   if (noModifiers && key == Qt::Key_BracketRight && course_) { keyboardCommand("nextLesson")->trigger(); event->accept(); return true; }
   if (noModifiers && key == Qt::Key_C && course_) { keyboardCommand("complete")->trigger(); event->accept(); return true; }
-  if (noModifiers && key == Qt::Key_N && course_) { keyboardCommand("notes")->trigger(); event->accept(); return true; }
   if (noModifiers && key == Qt::Key_O && course_) { keyboardCommand("outline")->trigger(); event->accept(); return true; }
   if (noModifiers && key == Qt::Key_PageDown && (inLibrary || inOutline || inside(documentView_))) { keyboardCommand("pageDown")->trigger(); event->accept(); return true; }
   if (noModifiers && key == Qt::Key_PageUp && (inLibrary || inOutline || inside(documentView_))) { keyboardCommand("pageUp")->trigger(); event->accept(); return true; }
@@ -1045,7 +1001,6 @@ void MainWindow::chooseRoot(const QString& path) {
 void MainWindow::showLibrary() {
   if (course_ && lesson_) { rememberedCourse_ = course_->id; rememberedLesson_ = lesson_->id; }
   externalOpenId_ = 0;
-  notes_->setLesson({});
   pdf_->clear();
   savePosition(); playerLoaded_ = false; playerLoadRequested_ = false;
   if (player_->isReady()) (void)player_->stop();
@@ -1074,7 +1029,6 @@ void MainWindow::refreshResume() {
 void MainWindow::showCourse(const lib::Course& course, const QString& requestedLesson) {
   if (course.missing) { showError(tr("Course folder missing: %1. Choose its root folder, then Rescan.").arg(course.path)); return; }
   externalOpenId_ = 0; externalOpen_->hide();
-  notes_->setLesson({});
   pdf_->clear();
   savePosition(); playerLoaded_ = false; playerLoadRequested_ = false; documentRequestId_ = 0;
   if (player_->isReady()) (void)player_->stop();
@@ -1104,7 +1058,6 @@ void MainWindow::showLesson(const lib::Lesson& lesson) {
   documentRequestId_ = 0; documentGeneration_ = 0; documentOffsets_.clear();
   documentPrevious_->setEnabled(false); documentNext_->setEnabled(false);
   positionMs_ = static_cast<qint64>(lesson.lastPosition * 1000); durationMs_ = static_cast<qint64>(lesson.duration * 1000);
-  notes_->setLesson(lesson.id, positionMs_ / 1000.0);
   lastSaveMs_ = QDateTime::currentMSecsSinceEpoch(); lessonTitle_->setText(lesson.name);
   lessonTitle_->setToolTip(tooltip(lesson.name));
   complete_->setEnabled(true); complete_->setText(lesson.completed ? tr("Mark incomplete") : tr("Mark complete"));
@@ -1201,14 +1154,7 @@ void MainWindow::updateLayout() {
   if (!rescan_ || !choose_) return;
   const bool compact = width() < std::max(768, fontMetrics().height() * 40);
   const bool compactHeader = compact;
-  const bool showNavigation = width() >= std::max(1040, fontMetrics().height() * 62);
-  navigation_->setVisible(showNavigation);
-  navigationCourses_->setChecked(course_.has_value() || libraryTabs_->currentIndex() == 0);
-  navigationActivity_->setChecked(!course_ && libraryTabs_->currentIndex() == 1);
-  navigationNotes_->setEnabled(lesson_.has_value());
-  settingsButton_->setVisible(!showNavigation);
-  libraryTabs_->tabBar()->setVisible(!showNavigation);
-  title_->setFont(editorialFont(font(), compact ? 1.5 : 2.3, true));
+  title_->setFont(editorialFont(font(), compact || course_ ? 1.5 : 2.3, true));
   if (!course_) {
     const bool activity = libraryTabs_->currentIndex() == 1;
     title_->setText(activity ? tr("Your learning activity") : tr("Your learning path"));
@@ -1219,40 +1165,15 @@ void MainWindow::updateLayout() {
   heroArtwork_->setVisible(!course_ && !highContrast && width() >= std::max(1280, fontMetrics().height() * 60) && height() >= 700);
   static_cast<QBoxLayout*>(resumePanel_->layout())->setDirection(compact ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight);
   title_->setVisible(!course_ || !compactHeader || fontMetrics().height() < 24);
-  if (searchButton_) searchButton_->setVisible(!compactHeader || !course_);
+  if (searchButton_) searchButton_->setVisible(!course_);
   if (rootLabel_) rootLabel_->setVisible(!course_ && height() >= 600);
   rescan_->hide(); choose_->setVisible(!course_ && rootPath_.isEmpty());
-  const bool wideNotes = width() >= std::max(1280, fontMetrics().height() * 60);
-  if (notesDock_) notesDock_->setVisible(lesson_.has_value() && notesOpen_ && wideNotes);
-  navigationNotes_->setChecked(notesDock_ && notesDock_->isVisible());
-  if (notesButton_) {
-    notesButton_->setVisible(lesson_.has_value() && (!compactHeader || fontMetrics().height() < 24));
-    notesButton_->setChecked(notesDock_->isVisible());
-  }
   if (!course_) return;
   outlineToggle_->setVisible(compact);
   outlineToggle_->setText(compactOutline_ ? tr("Lesson") : tr("Lessons"));
-  split_->setStretchFactor(0, 1);
-  split_->setStretchFactor(1, compact ? 1 : 0);
+  split_->setStretchFactor(0, compact ? 1 : 0);
+  split_->setStretchFactor(1, 1);
   outline_->setVisible(!compact || compactOutline_); content_->setVisible(!compact || !compactOutline_);
-}
-void MainWindow::openNotes() {
-  if (!lesson_) return;
-  if (width() >= std::max(1280, fontMetrics().height() * 60)) {
-    notesOpen_ = !notesOpen_; updateLayout(); return;
-  }
-  notesButton_->setChecked(false);
-  const QPointer<QWidget> invoker = QApplication::focusWidget();
-  auto* dialog = new QDialog(this); dialog->setWindowTitle(tr("Lesson notes")); dialog->resize(520, 500);
-  dialog->setAttribute(Qt::WA_DeleteOnClose);
-  auto* layout = new QVBoxLayout(dialog);
-  auto* panel = new melearner::NotesPanel(library_, dialog); panel->setLesson(lesson_->id, positionMs_ / 1000.0); layout->addWidget(panel);
-  connect(player_, &melearner::Player::positionChanged, panel, [panel](qint64 position, qint64) { panel->updatePosition(position / 1000.0); });
-  connect(panel, &melearner::NotesPanel::seekRequested, this, [this](double seconds) {
-    if (playerLoaded_) (void)player_->seek(static_cast<qint64>(std::clamp(seconds, 0.0, std::max<qint64>(0, durationMs_) / 1000.0) * 1000));
-  });
-  connect(dialog, &QDialog::finished, this, [invoker] { if (invoker) invoker->setFocus(); });
-  dialog->open();
 }
 void MainWindow::openSearch() {
   if (findChild<SearchDialog*>()) return;
@@ -1311,12 +1232,12 @@ void MainWindow::applyAppearance(const QString& appearance) {
   }
   QApplication::setPalette(palette);
   using Icon = melearner::StudyIcon;
+  libraryTabs_->setTabIcon(0, melearner::studyIcon(Icon::Courses, palette.windowText().color()));
+  libraryTabs_->setTabIcon(1, melearner::studyIcon(Icon::Activity, palette.windowText().color()));
   const std::pair<const char*, Icon> icons[] = {
-    {"navigationCourses", Icon::Courses}, {"navigationActivity", Icon::Activity},
-    {"navigationNotes", Icon::Notes}, {"navigationSettings", Icon::Settings},
     {"showShortcuts", Icon::Keyboard}, {"searchLibrary", Icon::Search},
     {"appearance", Icon::Settings}, {"backToLibrary", Icon::ChevronLeft},
-    {"toggleOutline", Icon::Courses}, {"lessonNotes", Icon::Notes},
+    {"toggleOutline", Icon::Courses},
     {"chooseRoot", Icon::Folder}, {"resumeLesson", Icon::Play},
     {"previousLesson", Icon::ChevronLeft}, {"nextLesson", Icon::ChevronRight},
     {"markComplete", Icon::Check}, {"playbackOptions", Icon::Settings},
@@ -1353,7 +1274,6 @@ void MainWindow::applyAppearance(const QString& appearance) {
   )"));
   if (highContrast) { qApp->setStyleSheet({}); updateLayout(); return; }
   qApp->setStyleSheet(QString(R"(
-    QWidget#navigationRail { border-right: 1px solid %3; background: %8; }
     QWidget#resumePanel, QWidget#courseOutline { border: 1px solid %3; border-radius: 10px; background: %1; }
     QPushButton { background: %1; color: %2; border: 1px solid %3; border-radius: 7px; padding: 0 12px; }
     QPushButton:hover { background: %4; }
@@ -1361,9 +1281,6 @@ void MainWindow::applyAppearance(const QString& appearance) {
     QPushButton[variant="ghost"] { background: transparent; border-color: transparent; }
     QPushButton[variant="ghost"]:hover, QPushButton[variant="ghost"]:checked { background: %4; }
     QPushButton[variant="ghost"]:focus { border-color: %5; }
-    QPushButton[variant="navigation"] { background: transparent; border-color: transparent; text-align: left; padding: 0 10px; }
-    QPushButton[variant="navigation"]:checked, QPushButton[variant="navigation"]:hover { background: %4; color: %5; }
-    QPushButton[variant="navigation"]:focus { border-color: %5; }
     QPushButton#searchLibrary { text-align: left; color: %7; }
     QPushButton:focus, QComboBox:focus, QLineEdit:focus, QSpinBox:focus,
     QTextEdit:focus, QListView:focus, QTreeView:focus { border: 1px solid %5; }
@@ -1394,7 +1311,7 @@ void MainWindow::applyAppearance(const QString& appearance) {
     QGroupBox { background: %1; border: 1px solid %3; border-radius: 10px; margin-top: 18px; padding: 10px; font-weight: 600; }
     QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 10px; padding: 0 5px; background: %8; }
     QHeaderView::section { background: %8; color: %2; border: 0; border-bottom: 1px solid %3; padding: 6px; }
-    QLabel#rootPath, QLabel#appStatus, QLabel#routeDescription, QLabel#brandCaption { color: %7; }
+    QLabel#rootPath, QLabel#appStatus, QLabel#routeDescription { color: %7; }
     QLabel#statsStatus, QLabel#activityHint, QLabel#activityDetail, QLabel[statsRole="detail"] { color: %7; }
   )").arg(base, ink.name(), border, hover, accent, onAccent,
     muted, surface));

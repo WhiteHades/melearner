@@ -57,10 +57,6 @@ INSERT INTO lesson_subtitles (id, lesson_id, path, language, label, order_index,
   ('subtitle-video-en', 'lesson-video', '/fixtures/library/Systems 日本語/01 入門/01 welcome.en.srt', 'en', 'English', 0, '2026-07-01T00:00:00.000Z'),
   ('subtitle-video-ja', 'lesson-video', '/fixtures/library/Systems 日本語/01 入門/01 welcome.ja.vtt', 'ja', '日本語', 1, '2026-07-01T00:00:00.000Z');
 
-INSERT INTO notes (id, lesson_id, timestamp, text, created_at) VALUES
-  ('note-video-1', 'lesson-video', 42.5, 'Review the ownership diagram.', '2026-07-08T10:00:00.000Z'),
-  ('note-video-2', 'lesson-video', 318.0, '復習: final example', '2026-07-09T10:00:00.000Z');
-
 INSERT INTO lesson_activity (
   id, course_id, lesson_id, activity_date, watched_seconds, completed, created_at
 ) VALUES

@@ -17,8 +17,6 @@ using melearner::library::ActivityDayPage;
 using melearner::library::ErrorCode;
 using melearner::library::LessonPage;
 using melearner::library::Library;
-using melearner::library::NotePage;
-using melearner::library::NoteSaved;
 using melearner::library::ProgressResult;
 using melearner::library::ResumePage;
 using melearner::library::LibraryStats;
@@ -188,20 +186,6 @@ bool readSearch(
     return true;
 }
 
-bool readNotes(
-    Library& library,
-    QSignalSpy& notesReady,
-    const QString& lessonId,
-    std::uint64_t offset,
-    std::uint64_t limit,
-    NotePage* result) {
-    if (library.notes(lessonId, offset, limit) == 0 || !waitFor(notesReady, 5'000)) {
-        return false;
-    }
-    *result = qvariant_cast<NotePage>(notesReady.takeFirst().at(1));
-    return true;
-}
-
 }  // namespace
 
 class LibraryTest final : public QObject {
@@ -220,7 +204,6 @@ private slots:
     void immediateCloseFlushesProgress();
     void markerAndMissingCourseIdentitySurviveRescan();
     void searchesPagedNamesAndResolvesMissingState();
-    void notesCrudPersistsWithValidation();
 };
 
 void LibraryTest::scansIntoPagedCourseAndLessonRows() {
@@ -1126,111 +1109,6 @@ void LibraryTest::searchesPagedNamesAndResolvesMissingState() {
     SearchPage escapedSearch;
     QVERIFY(readSearch(library, searchReady, QStringLiteral("Course\" OR *"), 0, 100, &escapedSearch));
     QCOMPARE(escapedSearch.query, QStringLiteral("Course\" OR *"));
-}
-
-void LibraryTest::notesCrudPersistsWithValidation() {
-    QTemporaryDir temporary;
-    QVERIFY(temporary.isValid());
-    const auto root = temporary.filePath(QStringLiteral("root"));
-    const auto course = root + QStringLiteral("/Course");
-    QVERIFY(QDir().mkpath(course));
-    writeFile(course + QStringLiteral("/lesson.mp4"));
-    const auto database = temporary.filePath(QStringLiteral("library.sqlite3"));
-
-    QString lessonId;
-    QString firstNoteId;
-    QString secondNoteId;
-    {
-        Library library(database);
-        QSignalSpy opened(&library, &Library::opened);
-        QSignalSpy scanFinished(&library, &Library::scanFinished);
-        QSignalSpy coursesReady(&library, &Library::coursesReady);
-        QSignalSpy lessonsReady(&library, &Library::lessonsReady);
-        QSignalSpy notesReady(&library, &Library::notesReady);
-        QSignalSpy noteSaved(&library, &Library::noteSaved);
-        QSignalSpy noteDeleted(&library, &Library::noteDeleted);
-        QSignalSpy failed(&library, &Library::failed);
-        Startup startup;
-        QVERIFY(openLibrary(library, opened, &startup));
-        ScanResult scan;
-        QVERIFY(scanLibrary(library, scanFinished, root, &scan));
-        CoursePage courses;
-        QVERIFY(readCourses(library, coursesReady, &courses));
-        LessonPage lessons;
-        QVERIFY(readLessons(library, lessonsReady, courses.rows.front().id, &lessons));
-        lessonId = lessons.rows.front().id;
-
-        QVERIFY(library.createNote(lessonId, 20.5, QStringLiteral("later")) != 0);
-        QVERIFY(waitFor(noteSaved, 5'000));
-        const auto later = qvariant_cast<melearner::library::NoteSaved>(noteSaved.takeFirst().at(1));
-        secondNoteId = later.note.id;
-        QCOMPARE(later.note.lessonId, lessonId);
-        QCOMPARE(later.note.timestamp, 20.5);
-        QCOMPARE(later.note.text, QStringLiteral("later"));
-
-        QVERIFY(library.createNote(lessonId, 10.25, QStringLiteral("earlier")) != 0);
-        QVERIFY(waitFor(noteSaved, 5'000));
-        const auto earlier = qvariant_cast<melearner::library::NoteSaved>(noteSaved.takeFirst().at(1));
-        firstNoteId = earlier.note.id;
-
-        NotePage notes;
-        QVERIFY(readNotes(library, notesReady, lessonId, 0, 500, &notes));
-        QCOMPARE(notes.total, std::uint64_t{2});
-        QCOMPARE(notes.rows.size(), 2);
-        QCOMPARE(notes.rows.at(0).id, firstNoteId);
-        QCOMPARE(notes.rows.at(0).timestamp, 10.25);
-        QCOMPARE(notes.rows.at(1).id, secondNoteId);
-        QVERIFY(notes.rows.size() <= 100);
-
-        QVERIFY(library.updateNote(firstNoteId, 30.0, QStringLiteral("updated")) != 0);
-        QVERIFY(waitFor(noteSaved, 5'000));
-        const auto updated = qvariant_cast<melearner::library::NoteSaved>(noteSaved.takeFirst().at(1));
-        QCOMPARE(updated.note.id, firstNoteId);
-        QCOMPARE(updated.note.text, QStringLiteral("updated"));
-        QCOMPARE(updated.note.timestamp, 30.0);
-
-        NotePage reordered;
-        QVERIFY(readNotes(library, notesReady, lessonId, 0, 100, &reordered));
-        QCOMPARE(reordered.rows.at(0).id, secondNoteId);
-        QCOMPARE(reordered.rows.at(1).id, firstNoteId);
-
-        failed.clear();
-        QVERIFY(library.createNote(lessonId, std::numeric_limits<double>::quiet_NaN(), QStringLiteral("bad")) != 0);
-        QVERIFY(waitFor(failed, 5'000));
-        QCOMPARE(qvariant_cast<melearner::library::Error>(failed.takeFirst().at(1)).code, ErrorCode::invalid_request);
-
-        failed.clear();
-        QVERIFY(library.createNote(QStringLiteral("missing-lesson"), 1.0, QStringLiteral("bad")) != 0);
-        QVERIFY(waitFor(failed, 5'000));
-        QCOMPARE(qvariant_cast<melearner::library::Error>(failed.takeFirst().at(1)).code, ErrorCode::invalid_request);
-
-        failed.clear();
-        QVERIFY(library.updateNote(firstNoteId, 1.0, QString(8 * 1024 + 1, QChar(u'x'))) != 0);
-        QVERIFY(waitFor(failed, 5'000));
-        QCOMPARE(qvariant_cast<melearner::library::Error>(failed.takeFirst().at(1)).code, ErrorCode::invalid_request);
-
-        QVERIFY(library.deleteNote(secondNoteId) != 0);
-        QVERIFY(waitFor(noteDeleted, 5'000));
-        const auto deleted = qvariant_cast<melearner::library::NoteDeleted>(noteDeleted.takeFirst().at(1));
-        QCOMPARE(deleted.noteId, secondNoteId);
-
-        NotePage afterDelete;
-        QVERIFY(readNotes(library, notesReady, lessonId, 0, 100, &afterDelete));
-        QCOMPARE(afterDelete.total, std::uint64_t{1});
-        QCOMPARE(afterDelete.rows.front().id, firstNoteId);
-        library.close();
-    }
-
-    Library reopened(database);
-    QSignalSpy reopenedSignal(&reopened, &Library::opened);
-    QSignalSpy reopenedNotes(&reopened, &Library::notesReady);
-    Startup startup;
-    QVERIFY(openLibrary(reopened, reopenedSignal, &startup));
-    NotePage persisted;
-    QVERIFY(readNotes(reopened, reopenedNotes, lessonId, 0, 100, &persisted));
-    QCOMPARE(persisted.total, std::uint64_t{1});
-    QCOMPARE(persisted.rows.front().id, firstNoteId);
-    QCOMPARE(persisted.rows.front().text, QStringLiteral("updated"));
 }
 
 QTEST_MAIN(LibraryTest)

@@ -20,7 +20,6 @@ class QStackedWidget;
 class PagedListModel;
 class QTextEdit;
 class PdfView;
-class QDockWidget;
 class QGridLayout;
 class QBoxLayout;
 class QTabWidget;
@@ -30,7 +29,7 @@ class QGraphicsOpacityEffect;
 class QPropertyAnimation;
 class QKeyEvent;
 class QProgressBar;
-namespace melearner { class Player; class MpvVideoWidget; class NotesPanel; class StatsPanel; class CourseOutlineModel; }
+namespace melearner { class Player; class MpvVideoWidget; class StatsPanel; class CourseOutlineModel; }
 
 class MainWindow final : public QMainWindow {
   Q_OBJECT
@@ -92,13 +91,8 @@ private:
   QWidget* content_;
   QLabel* status_;
   QLabel* rootLabel_ = nullptr;
-  QWidget* navigation_ = nullptr;
   QLabel* heroArtwork_ = nullptr;
   QLabel* routeDescription_ = nullptr;
-  QPushButton* navigationCourses_ = nullptr;
-  QPushButton* navigationActivity_ = nullptr;
-  QPushButton* navigationNotes_ = nullptr;
-  QPushButton* settingsButton_ = nullptr;
   QLabel* title_;
   QLabel* lessonTitle_;
   QLabel* empty_;
@@ -118,12 +112,7 @@ private:
   melearner::MpvVideoWidget* video_ = nullptr;
   QStackedWidget* media_;
   PdfView* pdf_;
-  QDockWidget* notesDock_ = nullptr;
-  bool notesOpen_ = false;
-  melearner::NotesPanel* notes_ = nullptr;
-  QPushButton* notesButton_ = nullptr;
   QPushButton* searchButton_ = nullptr;
-  void openNotes();
   QWidget* playerControls_ = nullptr;
   QGridLayout* playbackLayout_;
   QList<QWidget*> playbackWidgets_;

@@ -51,10 +51,7 @@ constexpr std::uint64_t kMaxLessonPage = 256;
 constexpr std::uint64_t kMaxResumePage = 4;
 constexpr std::uint64_t kMaxActivityPage = 84;
 constexpr std::uint64_t kMaxSearchPage = 100;
-constexpr std::uint64_t kMaxNotesPage = 100;
 constexpr std::size_t kMaxSearchQueryBytes = 512;
-constexpr std::size_t kMaxNoteTextBytes = 8 * 1024;
-constexpr qsizetype kMaxNoteTextUnits = 2'000;
 constexpr std::size_t kMaxIdBytes = 128;
 constexpr std::size_t kMaxWarnings = 512;
 constexpr std::uint64_t kMaxScanCourses = 10'000;
@@ -339,12 +336,6 @@ int naturalCollation(void*, int leftLength, const void* left, int rightLength, c
 [[nodiscard]] bool validId(const QString& value) {
     return !value.isEmpty() && value.toUtf8().size() <= static_cast<qsizetype>(kMaxIdBytes)
         && !value.contains(QChar(u'\0'));
-}
-
-[[nodiscard]] bool validNoteText(const QString& value) {
-    return !value.isEmpty() && !value.trimmed().isEmpty() && !value.contains(QChar(u'\0'))
-        && value.toUtf8().size() <= static_cast<qsizetype>(kMaxNoteTextBytes)
-        && value.size() <= kMaxNoteTextUnits;
 }
 
 [[nodiscard]] QString normalizedSearchQuery(QString query) {
@@ -1358,68 +1349,6 @@ void bindScope(Statement& statement, const CourseScope& scope, int firstIndex = 
     };
     while (matches.step() == SQLITE_ROW) {
         result.rows.push_back(readSearchRow(db, columnInt(matches.get(), 0)));
-    }
-    result.hasMore = offset < total && static_cast<std::uint64_t>(result.rows.size()) < total - offset;
-    return result;
-}
-
-[[nodiscard]] Note readNote(sqlite3_stmt* statement) {
-    return {
-        .id = columnText(statement, 0),
-        .lessonId = columnText(statement, 1),
-        .timestamp = sqlite3_column_double(statement, 2),
-        .text = columnText(statement, 3),
-        .createdAt = columnInt(statement, 4),
-        .updatedAt = columnInt(statement, 5),
-    };
-}
-
-[[nodiscard]] Note readNoteById(sqlite3* db, const QString& noteId) {
-    Statement statement(
-        db,
-        QStringLiteral("SELECT id, lesson_id, timestamp, text, created_at, updated_at FROM notes WHERE id = ?1"));
-    statement.bind(1, noteId);
-    if (statement.step() != SQLITE_ROW) {
-        throw DbError(ErrorCode::database, QStringLiteral("Saved note is missing"));
-    }
-    return readNote(statement.get());
-}
-
-[[nodiscard]] NotePage readNotePage(
-    sqlite3* db,
-    QString lessonId,
-    std::uint64_t offset,
-    std::uint64_t limit,
-    std::uint64_t revision) {
-    Statement lesson(db, QStringLiteral("SELECT 1 FROM lessons WHERE id = ?1"));
-    lesson.bind(1, lessonId);
-    if (lesson.step() != SQLITE_ROW) {
-        throw DbError(ErrorCode::invalid_request, QStringLiteral("Lesson does not exist"));
-    }
-
-    const auto boundedLimit = std::clamp(limit, std::uint64_t{1}, kMaxNotesPage);
-    Statement count(db, QStringLiteral("SELECT count(*) FROM notes WHERE lesson_id = ?1"));
-    count.bind(1, lessonId);
-    const auto countResult = count.step();
-    const auto total = countResult == SQLITE_ROW ? static_cast<std::uint64_t>(columnInt(count.get(), 0)) : 0;
-    Statement statement(
-        db,
-        QStringLiteral(
-            "SELECT id, lesson_id, timestamp, text, created_at, updated_at FROM notes "
-            "WHERE lesson_id = ?1 ORDER BY timestamp, created_at, id LIMIT ?2 OFFSET ?3"));
-    statement.bind(1, lessonId);
-    statement.bind(2, boundedLimit);
-    statement.bind(3, offset);
-    NotePage result{
-        .revision = revision,
-        .lessonId = std::move(lessonId),
-        .offset = offset,
-        .total = total,
-        .rows = {},
-        .hasMore = false,
-    };
-    while (statement.step() == SQLITE_ROW) {
-        result.rows.push_back(readNote(statement.get()));
     }
     result.hasMore = offset < total && static_cast<std::uint64_t>(result.rows.size()) < total - offset;
     return result;
@@ -2650,10 +2579,6 @@ Library::Library(QString databasePath, QObject* parent)
     qRegisterMetaType<SearchRow>();
     qRegisterMetaType<SearchPage>();
     qRegisterMetaType<SearchResolution>();
-    qRegisterMetaType<Note>();
-    qRegisterMetaType<NotePage>();
-    qRegisterMetaType<NoteSaved>();
-    qRegisterMetaType<NoteDeleted>();
 }
 
 Library::~Library() {
@@ -2945,145 +2870,6 @@ RequestId Library::resolveLesson(QString courseId, QString sectionId, QString le
                 emit owner->searchResolved(id, std::move(result));
             });
         });
-    if (requestId == 0) {
-        worker_->reject(0, ErrorCode::busy, QStringLiteral("Library request queue is full or closing"));
-    }
-    return requestId;
-}
-
-RequestId Library::notes(QString lessonId, std::uint64_t offset, std::uint64_t limit) {
-    const auto requestId = worker_->enqueue(
-        [this, lessonId = std::move(lessonId), offset, limit](sqlite3*, RequestId id) mutable {
-            if (worker_->database_ == nullptr) {
-                throw DbError(ErrorCode::database, QStringLiteral("Library database is not open"));
-            }
-            if (!validId(lessonId)) {
-                throw DbError(ErrorCode::invalid_request, QStringLiteral("Lesson ID is invalid"));
-            }
-            const auto page = readNotePage(worker_->database_, std::move(lessonId), offset, limit, worker_->revision_);
-            worker_->terminal(id, [owner = this, id, page]() mutable { emit owner->notesReady(id, std::move(page)); });
-        });
-    if (requestId == 0) {
-        worker_->reject(0, ErrorCode::busy, QStringLiteral("Library request queue is full or closing"));
-    }
-    return requestId;
-}
-
-RequestId Library::createNote(QString lessonId, double timestamp, QString text) {
-    const auto requestId = worker_->enqueue(
-        [this, lessonId = std::move(lessonId), timestamp, text = std::move(text)](sqlite3*, RequestId id) mutable {
-            if (worker_->database_ == nullptr) {
-                throw DbError(ErrorCode::database, QStringLiteral("Library database is not open"));
-            }
-            if (!validId(lessonId)) {
-                throw DbError(ErrorCode::invalid_request, QStringLiteral("Lesson ID is invalid"));
-            }
-            if (!std::isfinite(timestamp) || timestamp < 0.0) {
-                throw DbError(ErrorCode::invalid_request, QStringLiteral("Note timestamp is invalid"));
-            }
-            if (!validNoteText(text)) {
-                throw DbError(ErrorCode::invalid_request, QStringLiteral("Note text is empty or too long"));
-            }
-            Statement lesson(worker_->database_, QStringLiteral("SELECT 1 FROM lessons WHERE id = ?1"));
-            lesson.bind(1, lessonId);
-            if (lesson.step() != SQLITE_ROW) {
-                throw DbError(ErrorCode::invalid_request, QStringLiteral("Lesson does not exist"));
-            }
-            const auto noteId = newId(QStringLiteral("note"));
-            const auto timestampMs = nowMs();
-            Transaction transaction(worker_->database_);
-            Statement insert(
-                worker_->database_,
-                QStringLiteral(
-                    "INSERT INTO notes(id, lesson_id, timestamp, text, created_at, updated_at) "
-                    "VALUES (?1, ?2, ?3, ?4, ?5, ?6)"));
-            insert.bind(1, noteId);
-            insert.bind(2, lessonId);
-            insert.bind(3, timestamp);
-            insert.bind(4, text);
-            insert.bind(5, timestampMs);
-            insert.bind(6, timestampMs);
-            (void)insert.step();
-            transaction.commit();
-            ++worker_->revision_;
-            const NoteSaved result{
-                .note = readNoteById(worker_->database_, noteId),
-                .revision = worker_->revision_,
-            };
-            worker_->terminal(id, [owner = this, id, result]() mutable { emit owner->noteSaved(id, std::move(result)); });
-        }, true);
-    if (requestId == 0) {
-        worker_->reject(0, ErrorCode::busy, QStringLiteral("Library request queue is full or closing"));
-    }
-    return requestId;
-}
-
-RequestId Library::updateNote(QString noteId, double timestamp, QString text) {
-    const auto requestId = worker_->enqueue(
-        [this, noteId = std::move(noteId), timestamp, text = std::move(text)](sqlite3*, RequestId id) mutable {
-            if (worker_->database_ == nullptr) {
-                throw DbError(ErrorCode::database, QStringLiteral("Library database is not open"));
-            }
-            if (!validId(noteId)) {
-                throw DbError(ErrorCode::invalid_request, QStringLiteral("Note ID is invalid"));
-            }
-            if (!std::isfinite(timestamp) || timestamp < 0.0) {
-                throw DbError(ErrorCode::invalid_request, QStringLiteral("Note timestamp is invalid"));
-            }
-            if (!validNoteText(text)) {
-                throw DbError(ErrorCode::invalid_request, QStringLiteral("Note text is empty or too long"));
-            }
-            const auto timestampMs = nowMs();
-            Transaction transaction(worker_->database_);
-            Statement update(
-                worker_->database_,
-                QStringLiteral("UPDATE notes SET timestamp = ?1, text = ?2, updated_at = ?3 WHERE id = ?4"));
-            update.bind(1, timestamp);
-            update.bind(2, text);
-            update.bind(3, timestampMs);
-            update.bind(4, noteId);
-            (void)update.step();
-            if (sqlite3_changes(worker_->database_) != 1) {
-                throw DbError(ErrorCode::invalid_request, QStringLiteral("Note does not exist"));
-            }
-            transaction.commit();
-            ++worker_->revision_;
-            const NoteSaved result{
-                .note = readNoteById(worker_->database_, noteId),
-                .revision = worker_->revision_,
-            };
-            worker_->terminal(id, [owner = this, id, result]() mutable { emit owner->noteSaved(id, std::move(result)); });
-        }, true);
-    if (requestId == 0) {
-        worker_->reject(0, ErrorCode::busy, QStringLiteral("Library request queue is full or closing"));
-    }
-    return requestId;
-}
-
-RequestId Library::deleteNote(QString noteId) {
-    const auto requestId = worker_->enqueue(
-        [this, noteId = std::move(noteId)](sqlite3*, RequestId id) mutable {
-            if (worker_->database_ == nullptr) {
-                throw DbError(ErrorCode::database, QStringLiteral("Library database is not open"));
-            }
-            if (!validId(noteId)) {
-                throw DbError(ErrorCode::invalid_request, QStringLiteral("Note ID is invalid"));
-            }
-            Transaction transaction(worker_->database_);
-            Statement remove(worker_->database_, QStringLiteral("DELETE FROM notes WHERE id = ?1"));
-            remove.bind(1, noteId);
-            (void)remove.step();
-            if (sqlite3_changes(worker_->database_) != 1) {
-                throw DbError(ErrorCode::invalid_request, QStringLiteral("Note does not exist"));
-            }
-            transaction.commit();
-            ++worker_->revision_;
-            const NoteDeleted result{
-                .noteId = noteId,
-                .revision = worker_->revision_,
-            };
-            worker_->terminal(id, [owner = this, id, result]() mutable { emit owner->noteDeleted(id, std::move(result)); });
-        }, true);
     if (requestId == 0) {
         worker_->reject(0, ErrorCode::busy, QStringLiteral("Library request queue is full or closing"));
     }

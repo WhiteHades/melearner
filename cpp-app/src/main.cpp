@@ -12,7 +12,7 @@
 namespace {
 
 void configureCommandLineParser(QCommandLineParser& arguments) {
-  arguments.setApplicationDescription("Study local courses with native video, documents, and lesson notes.");
+  arguments.setApplicationDescription("Study local courses with native video, documents, and progress tracking.");
   arguments.addOption({"software-decoding", "Disable hardware video decoding for troubleshooting or qualification."});
   arguments.addHelpOption();
   arguments.addVersionOption();

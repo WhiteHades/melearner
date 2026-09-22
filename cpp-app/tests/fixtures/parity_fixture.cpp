@@ -1265,7 +1265,7 @@ PdfXrefInfo validate_pdf_xref(const fs::path& path) {
 
 std::string build_manifest_v2(const fs::path& repo_root, const GenerationResult& logical_result) {
     if (logical_result.counts.courses != 1'000U || logical_result.counts.lessons != 100'000U
-        || logical_result.counts.activity_dates != 84U || logical_result.counts.notes != 201U
+        || logical_result.counts.activity_dates != 84U
         || logical_result.peak_buffered_records > 256U || logical_result.expected.sha256.size() != 64U
         || logical_result.scenario.sha256.size() != 64U || logical_result.report.sha256.size() != 64U
         || logical_result.logical_bundle_sha256.size() != 64U) {
@@ -1287,13 +1287,11 @@ std::string build_manifest_v2(const fs::path& repo_root, const GenerationResult&
            << "      \"courses\": 1000,\n"
            << "      \"lessons\": 100000,\n"
            << "      \"retainedMissingCourses\": 2,\n"
-           << "      \"activityDates\": 84,\n"
-           << "      \"notes\": 201\n"
+           << "      \"activityDates\": 84\n"
            << "    },\n"
            << "    \"pageShapes\": {\n"
            << "      \"courses\": [128, 128, 128, 128, 128, 128, 128, 104],\n"
-           << "      \"largeCourseLessons\": [256, 256, 256, 232],\n"
-           << "      \"notes\": [100, 100, 1]\n"
+           << "      \"largeCourseLessons\": [256, 256, 256, 232]\n"
            << "    },\n"
            << "    \"logicalOutputs\": {\n"
            << "      \"format\": \"UTF-8 LF; expected/scenario NDJSON v1 and generation report JSON v1\",\n";

@@ -25,7 +25,6 @@ struct FixtureCounts {
     std::uint64_t courses = 0;
     std::uint64_t lessons = 0;
     std::uint64_t activity_dates = 0;
-    std::uint64_t notes = 0;
 };
 
 struct FileDigest {

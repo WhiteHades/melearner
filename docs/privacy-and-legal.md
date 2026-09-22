@@ -16,7 +16,7 @@ Local data paths:
 - Database: Qt's `AppLocalDataLocation` for organization `WhiteHades` and application `melearner-cpp-v1`, with the file name `library-v1.sqlite3` (typically `$HOME/.local/share/WhiteHades/melearner-cpp-v1/library-v1.sqlite3` on Linux).
 - User course files: wherever you keep them
 
-Course identity data, fingerprints, missing-folder state, notes, progress, and lesson activity stay in the local SQLite database. Fingerprints are derived from local course structure and learning-item metadata so renamed or moved folders can reconnect to existing progress.
+Course identity data, fingerprints, missing-folder state, progress, and lesson activity stay in the local SQLite database. Fingerprints are derived from local course structure and learning-item metadata so renamed or moved folders can reconnect to existing progress.
 
 melearner also writes `.melearner-course.json` into available course folders so later scans can match by marker ID before weaker fingerprint matching. These marker files stay on disk with the course folders, contain only the local course identity value, and are never sent anywhere by the app.
 

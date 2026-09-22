@@ -47,7 +47,7 @@ Progress is stored in local SQLite under the C++ application data directory.
 - In-window video and audio playback with resume position
 - Documents, subtitles, and section-aware course outlines
 - Search across courses, sections, and lessons
-- Local SQLite progress, notes, and learning activity
+- Local SQLite progress and learning activity
 - Durable course identity for folder moves and renames
 - Works entirely on your machine
 

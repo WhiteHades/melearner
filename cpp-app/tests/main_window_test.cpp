@@ -3,7 +3,6 @@
 #include "pdf_view.hpp"
 #include "study_icons.hpp"
 #include <QDir>
-#include <QDockWidget>
 #include <QDialog>
 #include <QAction>
 #include <QFile>
@@ -165,12 +164,9 @@ private slots:
     QVERIFY(window.findChild<QPushButton*>("openDocumentExternally")->isVisible());
     QVERIFY(!window.findChild<QPushButton*>("playPause")->isVisible());
     window.resize(1600, 780); QCoreApplication::processEvents();
-    auto* notes = window.findChild<QDockWidget*>("lessonNotesDock"); QVERIFY(notes);
-    QVERIFY(!notes->isVisible());
-    auto* notesButton = window.findChild<QPushButton*>("lessonNotes"); QVERIFY(notesButton->isVisible());
-    QTest::mouseClick(notesButton, Qt::LeftButton); QTRY_VERIFY(notes->isVisible());
-    QVERIFY(notesButton->isChecked());
-    QTest::mouseClick(notesButton, Qt::LeftButton); QTRY_VERIFY(!notes->isVisible());
+    QVERIFY(!window.findChild<QWidget*>("lessonNotesDock"));
+    QVERIFY(!window.findChild<QPushButton*>("lessonNotes"));
+    QVERIFY(!window.findChild<QAction*>("keyboard-notes"));
     for (const int width : {560, 768, 1280, 1920}) {
       window.resize(width, 720); QTest::qWait(30); QVERIFY(window.width() <= width);
       QTRY_COMPARE(page->value(), 3);
@@ -211,16 +207,17 @@ private slots:
     auto* courses = window.findChild<QListView*>("courses");
     QTRY_VERIFY2_WITH_TIMEOUT(courses->model()->rowCount() == 1,
       qPrintable(window.findChild<QLabel*>("appStatus")->text()), 15000);
-    auto* rail = window.findChild<QWidget*>("navigationRail"); QVERIFY(rail);
-    auto* courseNavigation = window.findChild<QPushButton*>("navigationCourses"); QVERIFY(courseNavigation);
-    QVERIFY(!courseNavigation->icon().isNull());
+    QVERIFY(!window.findChild<QWidget*>("navigationRail"));
+    auto* shortcuts = window.findChild<QPushButton*>("showShortcuts"); QVERIFY(shortcuts);
+    auto* settings = window.findChild<QPushButton*>("appearance"); QVERIFY(settings);
+    auto* searchButton = window.findChild<QPushButton*>("searchLibrary"); QVERIFY(searchButton);
+    QVERIFY(!shortcuts->icon().isNull());
     QTRY_VERIFY(window.findChild<QProgressBar*>("resumeProgress")->isVisible());
     QCOMPARE(window.findChild<QProgressBar*>("resumeProgress")->value(), 0);
     for (const int width : {560, 768, 1280, 1920}) {
       window.resize(width, 720); QTest::qWait(30);
       QVERIFY(window.width() <= width);
-      QCOMPARE(rail->isVisible(), width >= std::max(1040, window.fontMetrics().height() * 62));
-      QVERIFY(courseNavigation->isChecked());
+      QVERIFY(shortcuts->isVisible()); QVERIFY(settings->isVisible()); QVERIFY(searchButton->isVisible());
       QCOMPARE(courses->horizontalScrollBar()->maximum(), 0);
       const auto captures = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
       if (!captures.isEmpty()) QVERIFY(window.grab().save(captures + QString("/library-%1-%2x.png").arg(width).arg(fontScale)));
@@ -238,6 +235,7 @@ private slots:
     QTRY_COMPARE(lessons->model()->rowCount(section), 320);
     QTRY_VERIFY(lessons->isExpanded(section));
     QTRY_COMPARE(window.findChild<QTextEdit*>("documentText")->toPlainText(), QString("A local lesson."));
+    QVERIFY(!searchButton->isVisible());
     for (const int width : {560, 768, 1280, 1920}) {
       window.resize(width, 720);
       QCoreApplication::processEvents();
@@ -245,6 +243,12 @@ private slots:
       QVERIFY(window.width() <= width);
       QVERIFY(lessons->isVisible());
       QVERIFY(lessons->width() >= 200);
+      QVERIFY(shortcuts->isVisible()); QVERIFY(settings->isVisible()); QVERIFY(!searchButton->isVisible());
+      if (window.findChild<QScrollArea*>("lessonScroll")->isVisible()) {
+        const auto* outline = window.findChild<QWidget*>("courseOutline");
+        const auto* viewer = window.findChild<QScrollArea*>("lessonScroll");
+        QVERIFY(outline->mapTo(&window, QPoint(outline->width(), 0)).x() <= viewer->mapTo(&window, QPoint()).x());
+      }
       if (window.findChild<QPushButton*>("toggleOutline")->isVisible())
         QTRY_VERIFY(lessons->width() >= window.width() - 80);
       const auto captureDirectory = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");

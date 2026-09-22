@@ -8,7 +8,6 @@ namespace melearner {
 enum class StudyIcon {
   Courses,
   Activity,
-  Notes,
   Search,
   Settings,
   Keyboard,

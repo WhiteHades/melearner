@@ -25,7 +25,6 @@ constexpr std::size_t kRecordBatchLimit = 256;
 constexpr std::size_t kCourseCount = 1'000;
 constexpr std::size_t kLessonCount = 100'000;
 constexpr std::size_t kActivityDateCount = 84;
-constexpr std::size_t kNoteCount = 201;
 
 [[nodiscard]] std::string fixed_width(std::size_t value, std::size_t width) {
     std::array<char, 32> digits{};
@@ -424,15 +423,6 @@ GenerationResult generate_recipe_v1(const GenerationOptions& options) {
         scenario.append(record.str());
     }
 
-    for (std::size_t note_index = 0; note_index < kNoteCount; ++note_index) {
-        std::ostringstream record;
-        record << "{\"record\":\"note\",\"id\":\"note-" << fixed_width(note_index, 3)
-               << "\",\"lessonId\":\"lesson-0001-000000\",\"timestampSeconds\":42,"
-               << "\"createdAt\":\"2026-08-24T12:00:00.000Z\",\"text\":\"Stable note "
-               << fixed_width(note_index, 3) << "\"}";
-        scenario.append(record.str());
-    }
-
     {
         std::ostringstream record;
         record << "{\"record\":\"identityCase\",\"case\":\"duplicate-marker\","
@@ -525,17 +515,13 @@ GenerationResult generate_recipe_v1(const GenerationOptions& options) {
     expected.append(
         "{\"record\":\"summary\",\"courses\":1000,\"lessons\":100000,"
         "\"retainedMissingCourses\":2,\"presentLessonsAfterRemovals\":99802,"
-        "\"activityDates\":84,\"notes\":201}");
+        "\"activityDates\":84}");
     expected.append(
         "{\"record\":\"pageShape\",\"projection\":\"courses\",\"pageSize\":128,"
         "\"rows\":[128,128,128,128,128,128,128,104]}");
     expected.append(
         "{\"record\":\"pageShape\",\"projection\":\"largeCourseLessons\","
         "\"courseId\":\"course-0000\",\"pageSize\":256,\"rows\":[256,256,256,232]}");
-    expected.append(
-        "{\"record\":\"pageShape\",\"projection\":\"notes\",\"lessonId\":"
-        "\"lesson-0001-000000\",\"pageSize\":100,\"rows\":[100,100,1],"
-        "\"order\":[\"createdAt\",\"id\"]}");
     expected.append(
         "{\"record\":\"identityExpectation\",\"case\":\"duplicate-marker\","
         "\"outcome\":\"warn-ignore-marker-and-match-by-fingerprint\"}");
@@ -583,7 +569,6 @@ GenerationResult generate_recipe_v1(const GenerationOptions& options) {
             .courses = kCourseCount,
             .lessons = kLessonCount,
             .activity_dates = kActivityDateCount,
-            .notes = kNoteCount,
         },
         .peak_buffered_records = std::max(scenario.peak(), expected.peak()),
         .physical_lessons_created = physical_lessons_created,
@@ -612,13 +597,11 @@ GenerationResult generate_recipe_v1(const GenerationOptions& options) {
            << "    \"courses\": 1000,\n"
            << "    \"lessons\": 100000,\n"
            << "    \"retainedMissingCourses\": 2,\n"
-           << "    \"activityDates\": 84,\n"
-           << "    \"notes\": 201\n"
+           << "    \"activityDates\": 84\n"
            << "  },\n"
            << "  \"pageShapes\": {\n"
            << "    \"courses\": [128, 128, 128, 128, 128, 128, 128, 104],\n"
-           << "    \"largeCourseLessons\": [256, 256, 256, 232],\n"
-           << "    \"notes\": [100, 100, 1]\n"
+           << "    \"largeCourseLessons\": [256, 256, 256, 232]\n"
            << "  },\n"
            << "  \"physical\": {\n"
            << "    \"lessonFilesCreated\": " << result.physical_lessons_created << ",\n"

@@ -11,32 +11,30 @@
       "courses": 1000,
       "lessons": 100000,
       "retainedMissingCourses": 2,
-      "activityDates": 84,
-      "notes": 201
+      "activityDates": 84
     },
     "pageShapes": {
       "courses": [128, 128, 128, 128, 128, 128, 128, 104],
-      "largeCourseLessons": [256, 256, 256, 232],
-      "notes": [100, 100, 1]
+      "largeCourseLessons": [256, 256, 256, 232]
     },
     "logicalOutputs": {
       "format": "UTF-8 LF; expected/scenario NDJSON v1 and generation report JSON v1",
       "expected": {
         "path": "expected-v1.ndjson",
-        "bytes": 1144,
-        "sha256": "86a244a6066e24aa26eaf08c723c8674a8f54d6b162fdd1095f1c0a8b3deebb7"
+        "bytes": 995,
+        "sha256": "e9b6e1aef095651afdbb55713e2c36e9643a03b9f3633b20d488dac8c3db7d81"
       },
       "scenario": {
         "path": "scenario-v1.ndjson",
-        "bytes": 23714684,
-        "sha256": "ba9fe2a9b6ff2fc5d6d0a00b3509fca7b502cfd15a6ea471a49572549a4e0282"
+        "bytes": 23684132,
+        "sha256": "d01bc1c8df68f9057c2598e8b14d4481d330bde604572f35fe6ee95fc383b61f"
       },
       "report": {
         "path": "generation-report-v1.json",
-        "bytes": 954,
-        "sha256": "f2fa377170f8d0b78f252285d1689645efca066fd9a5f0b96cdeec2174ee415a"
+        "bytes": 907,
+        "sha256": "f114ec123175061712995be8356ca4b7250aa5e3e048779755ce88ba640d8412"
       },
-      "bundleSha256": "e4680b7b217dc86f522a867f5e797bdd6b863c912ddfa3deb9cb42bf996a84f0"
+      "bundleSha256": "22d3631a47cb6d52af6345a3927a7dae06bd363f4c24b2732e8b4cc7b1324620"
     }
   },
   "mediaOracle": {
@@ -51,23 +49,23 @@
     "generator": [
       {
         "path": "cpp-app/tests/fixtures/parity_fixture.hpp",
-        "bytes": 2516,
-        "sha256": "39d6f5ee0802fb3535339ec8cbfe6c42f3a8193739014a208841b93614559b13"
+        "bytes": 2487,
+        "sha256": "920217c7ffaf1d81b75c19dfc4008e7ee903c6ac342a39376e03162111efe003"
       },
       {
         "path": "cpp-app/tests/fixtures/parity_fixture.cpp",
-        "bytes": 57489,
-        "sha256": "3f52e957c23619302686e627e3f4e9ebc6a2a6b75255fa49ab0c6c7e2f2c3492"
+        "bytes": 57360,
+        "sha256": "7b41abfcac14856e06888287be47c7ce254d16d4c89272895f6c4489a2578d0b"
       },
       {
         "path": "cpp-app/tests/fixtures/parity_recipe_v1.cpp",
-        "bytes": 26728,
-        "sha256": "8d0d2531b219b5aa98bdec703106ae8ac6a3737185d3fdb54858aa989ef5b9ec"
+        "bytes": 25870,
+        "sha256": "ad8808419610f5310f402865c704ac9b22322a9b7774d80c8634a46c4f100229"
       },
       {
         "path": "cpp-app/tests/fixtures/parity_fixture_main.cpp",
-        "bytes": 4061,
-        "sha256": "042ce3087c1604aa74249b6839d7edddc1df5a75f9a6fbf15a5cdfeae88fac46"
+        "bytes": 4025,
+        "sha256": "86ee3e398455b0c9042c6300a5001b05f674acce8f90d5c38e9c2a120fe54174"
       },
       {
         "path": "cpp-app/tests/fixtures/parity_fixture.manifest",
@@ -78,8 +76,8 @@
     "test": [
       {
         "path": "cpp-app/tests/fixtures/parity_fixture_test.cpp",
-        "bytes": 59030,
-        "sha256": "5be1c901272147aff31fa54a872f39ef057bffa256cf55b88f63659c26a204df"
+        "bytes": 57918,
+        "sha256": "881592fa98127f00c0c528323b146c6527fea6593fa4886be2c47c1501050af0"
       }
     ],
     "cmake": [
@@ -107,8 +105,8 @@
   "files": [
     {
       "path": "fixtures/parity/database-current.sql",
-      "bytes": 4515,
-      "sha256": "348be55432ed14bfe58fbfd123ba485fd71d10d25be0456ab7543878c8346ab6",
+      "bytes": 4245,
+      "sha256": "ccf2561cf160ea3fbbb0d66ed910725eb118ac09b41e6ff6d016ff79e86896e2",
       "role": "frozen-database-oracle",
       "provenance": {
         "project": "melearner",
@@ -239,8 +237,8 @@
     },
     {
       "path": "fixtures/parity/fixture-manifest-v1.json",
-      "bytes": 7770,
-      "sha256": "522e4f6572abe60b6e9ff78208163e98899739997491756f838b05de0711f34e",
+      "bytes": 7750,
+      "sha256": "3ec09882a3c669462b5275f74fad1c9200c565e0a60046bcbff1ef3662f4a841",
       "role": "frozen-manifest-v1",
       "provenance": {
         "project": "melearner",
@@ -335,8 +333,8 @@
     },
     {
       "path": "fixtures/parity/oracle-v1.json",
-      "bytes": 5165,
-      "sha256": "3e36d705ae3d738a6fbf9193283875bda23d374b8d774db93d15492698ec86f9",
+      "bytes": 5133,
+      "sha256": "dc8a18fae52b666ed3fbb6c3f3a2ce15b28654f1d65c9df55cfd6255a2eaf752",
       "role": "behavior-oracle-v1",
       "provenance": {
         "project": "melearner",

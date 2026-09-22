@@ -403,7 +403,6 @@ void require_generation_equal(const GenerationResult& left, const GenerationResu
     require_equal(left.counts.courses, right.counts.courses, "repeat Course count");
     require_equal(left.counts.lessons, right.counts.lessons, "repeat Lesson count");
     require_equal(left.counts.activity_dates, right.counts.activity_dates, "repeat date count");
-    require_equal(left.counts.notes, right.counts.notes, "repeat note count");
     require_equal(left.peak_buffered_records, right.peak_buffered_records, "repeat peak buffer");
     require(left.expected == right.expected, "expected output digest changed between roots");
     require(left.scenario == right.scenario, "scenario output digest changed between roots");
@@ -424,7 +423,6 @@ void verify_scenario_contract(const fs::path& scenario_path) {
     std::uint64_t courses = 0;
     std::uint64_t lessons = 0;
     std::uint64_t dates = 0;
-    std::uint64_t notes = 0;
     std::uint64_t identity_cases = 0;
     std::uint64_t remove_operations = 0;
     std::uint64_t path_cases = 0;
@@ -520,21 +518,6 @@ void verify_scenario_contract(const fs::path& scenario_path) {
             ++dates;
             continue;
         }
-        if (*record == "note") {
-            const auto id = string_field(line, "id");
-            require(id.has_value(), "note record lacks an ID");
-            require(
-                *id == "note-" + zero_pad(static_cast<std::size_t>(notes), 3),
-                "equal-timestamp notes are not stably ordered by ID");
-            require_contains(line, "\"lessonId\":\"lesson-0001-000000\"", "note Lesson scope");
-            require_contains(line, "\"timestampSeconds\":42", "note media timestamp");
-            require_contains(
-                line,
-                "\"createdAt\":\"2026-08-24T12:00:00.000Z\"",
-                "stable equal note timestamp");
-            ++notes;
-            continue;
-        }
         if (*record == "identityCase") {
             ++identity_cases;
             const auto identity_case = string_field(line, "case");
@@ -591,12 +574,11 @@ void verify_scenario_contract(const fs::path& scenario_path) {
         throw TestFailure("unexpected scenario record type: " + *record);
     }
 
-    require_equal(lines, 101'293U, "scenario NDJSON records");
+    require_equal(lines, 101'092U, "scenario NDJSON records");
     require_equal(headers, 1U, "scenario header records");
     require_equal(courses, 1'000U, "scenario Courses");
     require_equal(lessons, 100'000U, "scenario Lessons");
     require_equal(dates, 84U, "scenario activity dates");
-    require_equal(notes, 201U, "scenario notes");
     require_equal(identity_cases, 4U, "scenario identity cases");
     require_equal(remove_operations, 2U, "missing Course removal operations");
     require_equal(path_cases, 1U, "separator canonicalization records");
@@ -645,8 +627,6 @@ void verify_expected_contract(const fs::path& expected_path) {
         "\"rows\":[128,128,128,128,128,128,128,104]",
         "Course page tail");
     require_contains(expected, "\"rows\":[256,256,256,232]", "large Course Lesson page tail");
-    require_contains(expected, "\"rows\":[100,100,1]", "note page tail");
-    require_contains(expected, "\"order\":[\"createdAt\",\"id\"]", "stable note ordering");
     require_contains(expected, "\"firstDate\":\"2026-06-02\"", "activity first date");
     require_contains(expected, "\"lastDate\":\"2026-08-24\"", "activity last date");
     require_contains(expected, "\"presentLessonsAfterRemovals\":99802", "final scan Lesson count");
@@ -1037,7 +1017,6 @@ int main(int argc, char** argv) {
         require_equal(first.counts.courses, 1'000U, "generated Courses");
         require_equal(first.counts.lessons, 100'000U, "generated Lessons");
         require_equal(first.counts.activity_dates, 84U, "generated activity dates");
-        require_equal(first.counts.notes, 201U, "generated notes");
         require_equal(first.peak_buffered_records, 256U, "peak buffered records");
         require_equal(first.physical_lessons_created, 0U, "default created physical Lessons");
         require_equal(first.physical_lessons_present, 0U, "default present physical Lessons");

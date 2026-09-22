@@ -57,7 +57,7 @@ the normal CTest run because it materializes a 100,000-lesson fixture.
 
 Qt owns the single application window, widgets, models, focus, keyboard input,
 and accessibility. C++ modules own the current SQLite schema, course scan,
-search, progress, notes, documents, PDF rendering, and embedded libmpv player.
+search, progress, documents, PDF rendering, and embedded libmpv player.
 The application uses one current schema and the isolated C++ data path; it does
 not import, migrate, or inspect data from the removed application lines.
 

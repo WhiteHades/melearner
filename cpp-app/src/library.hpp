@@ -242,34 +242,6 @@ struct SearchResolution {
     std::uint64_t lessonOffset = 0;
 };
 
-struct Note {
-    QString id;
-    QString lessonId;
-    double timestamp = 0.0;
-    QString text;
-    std::int64_t createdAt = 0;
-    std::int64_t updatedAt = 0;
-};
-
-struct NotePage {
-    std::uint64_t revision = 0;
-    QString lessonId;
-    std::uint64_t offset = 0;
-    std::uint64_t total = 0;
-    QVector<Note> rows;
-    bool hasMore = false;
-};
-
-struct NoteSaved {
-    Note note;
-    std::uint64_t revision = 0;
-};
-
-struct NoteDeleted {
-    QString noteId;
-    std::uint64_t revision = 0;
-};
-
 class Library final : public QObject {
     Q_OBJECT
 
@@ -311,13 +283,6 @@ public:
         QString courseId,
         QString sectionId,
         QString lessonId);
-    [[nodiscard]] RequestId notes(
-        QString lessonId,
-        std::uint64_t offset = 0,
-        std::uint64_t limit = 100);
-    [[nodiscard]] RequestId createNote(QString lessonId, double timestamp, QString text);
-    [[nodiscard]] RequestId updateNote(QString noteId, double timestamp, QString text);
-    [[nodiscard]] RequestId deleteNote(QString noteId);
     [[nodiscard]] RequestId scan(QString rootPath);
     // Returns true only when the active scan accepted cancellation before its commit gate.
     [[nodiscard]] bool cancelScan(RequestId scanRequestId);
@@ -340,9 +305,6 @@ signals:
     void activityReady(RequestId requestId, ActivityDayPage result);
     void searchReady(RequestId requestId, SearchPage result);
     void searchResolved(RequestId requestId, SearchResolution result);
-    void notesReady(RequestId requestId, NotePage result);
-    void noteSaved(RequestId requestId, NoteSaved result);
-    void noteDeleted(RequestId requestId, NoteDeleted result);
     void scanProgress(RequestId requestId, ScanProgress progress);
     void scanFinished(RequestId requestId, ScanResult result);
     void progressSaved(RequestId requestId, ProgressResult result);
@@ -379,7 +341,3 @@ Q_DECLARE_METATYPE(melearner::library::ProgressResult)
 Q_DECLARE_METATYPE(melearner::library::SearchRow)
 Q_DECLARE_METATYPE(melearner::library::SearchPage)
 Q_DECLARE_METATYPE(melearner::library::SearchResolution)
-Q_DECLARE_METATYPE(melearner::library::Note)
-Q_DECLARE_METATYPE(melearner::library::NotePage)
-Q_DECLARE_METATYPE(melearner::library::NoteSaved)
-Q_DECLARE_METATYPE(melearner::library::NoteDeleted)

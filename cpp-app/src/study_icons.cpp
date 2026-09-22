@@ -49,22 +49,6 @@ void drawActivity(QPainter& painter) {
   painter.drawPath(path);
 }
 
-void drawNotes(QPainter& painter) {
-  QPainterPath page;
-  page.moveTo(6, 3.5);
-  page.lineTo(16, 3.5);
-  page.lineTo(19, 6.5);
-  page.lineTo(19, 20.5);
-  page.lineTo(6, 20.5);
-  page.closeSubpath();
-  painter.drawPath(page);
-  painter.drawLine(QPointF(16, 3.5), QPointF(16, 6.5));
-  painter.drawLine(QPointF(16, 6.5), QPointF(19, 6.5));
-  painter.drawLine(QPointF(9, 10), QPointF(16, 10));
-  painter.drawLine(QPointF(9, 14), QPointF(16, 14));
-  painter.drawLine(QPointF(9, 18), QPointF(14, 18));
-}
-
 void drawSearch(QPainter& painter) {
   painter.drawEllipse(QRectF(3.5, 3.5, 13, 13));
   painter.drawLine(QPointF(15.5, 15.5), QPointF(20.5, 20.5));
@@ -167,7 +151,6 @@ void drawIcon(QPainter& painter, StudyIcon icon) {
   switch (icon) {
     case StudyIcon::Courses: drawCourses(painter); break;
     case StudyIcon::Activity: drawActivity(painter); break;
-    case StudyIcon::Notes: drawNotes(painter); break;
     case StudyIcon::Search: drawSearch(painter); break;
     case StudyIcon::Settings: drawSettings(painter); break;
     case StudyIcon::Keyboard: drawKeyboard(painter); break;

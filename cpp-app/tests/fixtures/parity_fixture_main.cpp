@@ -36,7 +36,7 @@ void print_usage(std::ostream& output) {
 
 void print_generation(const GenerationResult& result) {
     std::cout << "courses=" << result.counts.courses << " lessons=" << result.counts.lessons
-              << " dates=" << result.counts.activity_dates << " notes=" << result.counts.notes
+              << " dates=" << result.counts.activity_dates
               << " peakBufferedRecords=" << result.peak_buffered_records << '\n'
               << "expected bytes=" << result.expected.bytes << " sha256=" << result.expected.sha256
               << '\n'

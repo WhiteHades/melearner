@@ -40,7 +40,6 @@ read-only lesson view has focus; editable fields keep their native bindings.
 | `gg` / `G` | Jump to the first / last focused item |
 | `Ctrl+D` / `Ctrl+U` | Scroll down / up one page |
 | `c` | Mark the current lesson complete or incomplete |
-| `n` | Open lesson notes |
 | `o` | Toggle the course outline on narrow windows |
 | `Ctrl+K` / `/` | Search the library |
 | `:` / `Ctrl+Space` | Open the searchable command palette |
@@ -63,7 +62,7 @@ Progress saves automatically to local SQLite. The app keeps the last position an
 
 Course identity uses local database IDs and content fingerprints, not just absolute paths. If you rename or move a course folder and scan it again, melearner tries to reconnect the course and its lessons to the existing progress.
 
-If a course folder is missing during a refresh, melearner keeps its progress, notes, subtitles, and lesson records in SQLite. The course stays visible with a missing-folder label and cannot be opened until the folder is scanned again.
+If a course folder is missing during a refresh, melearner keeps its progress, subtitles, and lesson records in SQLite. The course stays visible with a missing-folder label and cannot be opened until the folder is scanned again.
 
 If two existing courses look identical, melearner does not guess. It leaves progress on the existing records and shows a scan warning instead of assigning progress to the wrong course.
 
