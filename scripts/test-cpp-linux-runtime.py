@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Test production staging RPATHs and the ELF audit using tiny compiled fixtures.
 
-RPATH values come from stage-cpp-linux.cmake and are applied by the
-version-checked patchelf tool. The audit function is evaluated verbatim in an isolated CMake script.
+RPATH values come from stage-cpp-linux.cmake and are passed to the fixture
+linker using the production values. The audit function is evaluated verbatim in an isolated CMake script.
 This does not run the complete stager, Qt, libmpv, or an installed melearner app.
 """
 from __future__ import annotations
