@@ -1218,7 +1218,10 @@ struct ArchiveReadResult {
 class Documents::Worker final {
 public:
     explicit Worker(Documents* owner)
-        : owner_(owner), thread_([this](std::stop_token token) { run(token); }) {}
+        : owner_(owner) {
+        // Start only after the mutex, condition variable, queue, and state exist.
+        thread_ = std::jthread([this](std::stop_token token) { run(token); });
+    }
 
     ~Worker() { close(); }
 

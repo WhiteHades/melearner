@@ -66,6 +66,25 @@ class DocumentsTest final : public QObject {
     Q_OBJECT
 
 private slots:
+    void repeatedWorkerStartupAndShutdown() {
+        QTemporaryDir root;
+        QVERIFY(root.isValid());
+        const auto path = writeFile(root.path(), "startup.txt", "Worker is ready.");
+        QVERIFY(!path.isEmpty());
+        for (int attempt = 0; attempt < 128; ++attempt) {
+            Documents documents;
+            QSignalSpy opened(&documents, &Documents::opened);
+            const auto request = documents.open({root.path(), path});
+            QVERIFY(request != 0);
+            QTRY_COMPARE_WITH_TIMEOUT(opened.size(), 1, 2000);
+            QCOMPARE(opened.first().at(0).toULongLong(), request);
+            const auto page = qvariant_cast<PageResult>(opened.first().at(1));
+            QVERIFY(page.succeeded());
+            QCOMPARE(page.page->blocks.first().text, QString("Worker is ready."));
+            documents.close();
+        }
+    }
+
     void readsTextAndMarkdown() {
         QTemporaryDir root;
         QVERIFY(root.isValid());
