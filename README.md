@@ -53,7 +53,7 @@ Progress is stored in local SQLite under the C++ application data directory.
 
 ## Development
 
-See [C++ development](cpp-app/README.md), [installation](docs/install.md), and [usage](docs/usage.md).
+See [C++ development](cpp-app/README.md), [Windows preparation](docs/windows-development.md), [installation](docs/install.md), and [usage](docs/usage.md).
 
 ## License
 
