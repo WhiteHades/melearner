@@ -131,9 +131,40 @@ _require_file("${_icon}" "application icon")
 
 find_program(_file_tool NAMES file)
 find_program(_readelf_tool NAMES readelf)
-find_program(_patchelf_tool NAMES patchelf)
+function(_validate_patchelf _result _candidate)
+  execute_process(
+    COMMAND "${_candidate}" --version
+    RESULT_VARIABLE _candidate_result
+    OUTPUT_VARIABLE _candidate_output)
+  string(REGEX MATCH "patchelf[ \\t]+([0-9]+\\.[0-9]+\\.[0-9]+)"
+    _candidate_match "${_candidate_output}")
+  if(NOT _candidate_result EQUAL 0 OR NOT _candidate_match
+      OR CMAKE_MATCH_1 VERSION_LESS "0.19.1")
+    set(${_result} FALSE PARENT_SCOPE)
+  endif()
+endfunction()
+if(DEFINED MELEARNER_PATCHELF AND NOT "${MELEARNER_PATCHELF}" STREQUAL "")
+  set(_patchelf_tool "${MELEARNER_PATCHELF}")
+else()
+  find_program(_patchelf_tool NAMES patchelf VALIDATOR _validate_patchelf NO_CACHE)
+endif()
 if(NOT _file_tool OR NOT _readelf_tool OR NOT _patchelf_tool)
   message(FATAL_ERROR "file, readelf, and patchelf are required for C++ Linux staging")
+endif()
+execute_process(
+  COMMAND "${_patchelf_tool}" --version
+  RESULT_VARIABLE _patchelf_version_result
+  OUTPUT_VARIABLE _patchelf_version_output
+  ERROR_VARIABLE _patchelf_version_error)
+if(NOT _patchelf_version_result EQUAL 0)
+  message(FATAL_ERROR
+    "could not query patchelf version: ${_patchelf_version_error}")
+endif()
+string(REGEX MATCH "patchelf[ \\t]+([0-9]+\\.[0-9]+\\.[0-9]+)"
+  _patchelf_version_match "${_patchelf_version_output}")
+if(NOT _patchelf_version_match OR CMAKE_MATCH_1 VERSION_LESS "0.19.1")
+  message(FATAL_ERROR
+    "patchelf >= 0.19.1 is required; selected ${_patchelf_tool} reports: ${_patchelf_version_output}")
 endif()
 
 execute_process(
@@ -187,57 +218,69 @@ if(NOT IS_DIRECTORY "${_qt_plugin_dir}")
 endif()
 
 set(_plugin_root "${_install_prefix}/lib/qt6/plugins")
-set(_plugin_groups
-  platforms
-  platformthemes
-  platforminputcontexts
-  styles
-  imageformats
-  iconengines
-  generic
-  tls
-  networkinformation
-  xcbglintegrations
-  wayland-shell-integration
-  wayland-decoration-client
-  wayland-graphics-integration-client
-  egldeviceintegrations)
+
+# Keep the runtime closure tied to the features the C++ application actually
+# uses.  Qt's PNG reader/writer is built into QtGui on the target Qt package;
+# the remaining accepted local image formats are plugins.  Accessibility is a
+# QtGui facility, not a plugin group.  The XDG portal theme is intentionally
+# left to the host: QFileDialog and QDesktopServices have native fallbacks and
+# this application does not link QtDBus directly.
+set(_required_qt_plugins
+  "platforms|libqxcb.so"
+  "platforms|libqwayland.so"
+  "platforminputcontexts|libcomposeplatforminputcontextplugin.so"
+  "platforminputcontexts|libibusplatforminputcontextplugin.so"
+  "imageformats|libqjpeg.so"
+  "imageformats|libqgif.so"
+  "imageformats|libqwebp.so"
+  "xcbglintegrations|libqxcb-egl-integration.so"
+  "xcbglintegrations|libqxcb-glx-integration.so"
+  "wayland-shell-integration|libxdg-shell.so"
+  "wayland-graphics-integration-client|libqt-plugin-wayland-egl.so")
 set(_plugin_sources)
 set(_plugin_group_names)
-set(_platform_plugin_count 0)
-foreach(_group IN LISTS _plugin_groups)
-  set(_source_group "${_qt_plugin_dir}/${_group}")
-  if(NOT IS_DIRECTORY "${_source_group}")
-    continue()
+function(_stage_qt_plugin _source_root _destination_root _group _name
+    _sources_output _groups_output)
+  set(_source "${_source_root}/${_group}/${_name}")
+  if(NOT EXISTS "${_source}" OR IS_DIRECTORY "${_source}")
+    message(FATAL_ERROR "required Qt plugin is missing: ${_source}")
   endif()
-  file(GLOB _source_plugins LIST_DIRECTORIES false "${_source_group}/*.so*")
-  foreach(_source_plugin IN LISTS _source_plugins)
-    if(NOT _source_plugin MATCHES "\\.so(\\.|$)")
-      continue()
-    endif()
-    set(_destination_group "${_plugin_root}/${_group}")
-    file(MAKE_DIRECTORY "${_destination_group}")
-    file(COPY "${_source_plugin}" DESTINATION "${_destination_group}" FOLLOW_SYMLINK_CHAIN)
-    list(APPEND _plugin_sources "${_source_plugin}")
-    list(APPEND _plugin_group_names "${_group}")
-    if(_group STREQUAL "platforms")
-      math(EXPR _platform_plugin_count "${_platform_plugin_count} + 1")
-    endif()
-  endforeach()
+  set(_destination_group "${_destination_root}/${_group}")
+  file(MAKE_DIRECTORY "${_destination_group}")
+  file(COPY "${_source}" DESTINATION "${_destination_group}" FOLLOW_SYMLINK_CHAIN)
+  set(_sources "${${_sources_output}}")
+  list(APPEND _sources "${_source}")
+  set(${_sources_output} "${_sources}" PARENT_SCOPE)
+  set(_groups "${${_groups_output}}")
+  list(APPEND _groups "${_group}")
+  set(${_groups_output} "${_groups}" PARENT_SCOPE)
+endfunction()
+
+foreach(_plugin_spec IN LISTS _required_qt_plugins)
+  string(REPLACE "|" ";" _plugin_parts "${_plugin_spec}")
+  list(GET _plugin_parts 0 _group)
+  list(GET _plugin_parts 1 _name)
+  _stage_qt_plugin("${_qt_plugin_dir}" "${_plugin_root}" "${_group}" "${_name}"
+    _plugin_sources _plugin_group_names)
 endforeach()
-if(_platform_plugin_count LESS 1)
-  message(FATAL_ERROR "Qt has no platform plugin under ${_qt_plugin_dir}/platforms")
-endif()
 
 file(WRITE "${_install_prefix}/bin/qt.conf"
   "[Paths]\nPrefix=..\nPlugins=lib/qt6/plugins\n")
 
 set(_runtime_dir "${_install_prefix}/lib/melearner")
 file(MAKE_DIRECTORY "${_runtime_dir}")
+# Arch's mpv package currently records MuJS as an absolute NEEDED path.  CMake's
+# resolver rejects that path before it can classify it, so exclude only this
+# known host-provider spelling, then copy it into the private closure and
+# normalize the staged mpv reference below.  Any other absolute NEEDED path is
+# a provider defect and fails staging instead of silently escaping the bundle.
+set(_absolute_mujs_needed_regex "^/.*/libmujs\\.so(\\.[^/]*)?$")
+set(_runtime_pre_exclude_regexes "${_absolute_mujs_needed_regex}")
 file(GET_RUNTIME_DEPENDENCIES
   EXECUTABLES "${_binary}"
   MODULES ${_plugin_sources}
   DIRECTORIES "${_qt_plugin_dir}" "${_runtime_dir}" "${_install_prefix}/lib"
+  PRE_EXCLUDE_REGEXES ${_runtime_pre_exclude_regexes}
   RESOLVED_DEPENDENCIES_VAR _resolved_dependencies
   UNRESOLVED_DEPENDENCIES_VAR _unresolved_dependencies)
 
@@ -252,15 +295,63 @@ if(_real_unresolved)
   message(FATAL_ERROR "unresolved runtime dependencies:\n  ${_unresolved_report}")
 endif()
 
+set(_absolute_private_dependencies)
+set(_absolute_dependency_owners)
+foreach(_dependency IN LISTS _resolved_dependencies)
+  execute_process(
+    COMMAND "${_readelf_tool}" -dW "${_dependency}"
+    RESULT_VARIABLE _dependency_readelf_result
+    OUTPUT_VARIABLE _dependency_readelf_output
+    ERROR_VARIABLE _dependency_readelf_error)
+  if(NOT _dependency_readelf_result EQUAL 0)
+    message(FATAL_ERROR
+      "readelf failed while checking NEEDED paths for ${_dependency}: ${_dependency_readelf_error}")
+  endif()
+  string(REGEX MATCHALL "Shared library: \\[/[^]]+\\]" _absolute_needed
+    "${_dependency_readelf_output}")
+  foreach(_absolute_entry IN LISTS _absolute_needed)
+    string(REGEX REPLACE ".*\\[([^]]+)\\].*" "\\1" _absolute_path
+      "${_absolute_entry}")
+    if(NOT _absolute_path MATCHES "${_absolute_mujs_needed_regex}")
+      message(FATAL_ERROR
+        "unsupported absolute NEEDED path in ${_dependency}: ${_absolute_path}")
+    endif()
+    list(APPEND _absolute_private_dependencies "${_absolute_path}")
+    list(APPEND _absolute_dependency_owners "${_dependency}|${_absolute_path}")
+  endforeach()
+endforeach()
+list(REMOVE_DUPLICATES _absolute_private_dependencies)
+list(REMOVE_DUPLICATES _absolute_dependency_owners)
+
 set(_system_boundary_names)
 set(_private_dependency_names)
 set(_private_dependencies)
-foreach(_dependency IN LISTS _resolved_dependencies)
-  get_filename_component(_dependency_name "${_dependency}" NAME)
+function(_runtime_dependency_is_system_boundary _dependency _dependency_name _output)
+  if(_dependency MATCHES
+      "^/opt/(cuda|rocm|nvidia|amd)(/|$)"
+      OR _dependency MATCHES
+      "^/usr/(lib|lib64)/(cuda|rocm|nvidia|amd)(/|$)")
+    if(NOT _dependency_name MATCHES
+        "^(libOpenCL|libOpenGL|libGL|libEGL|libGLES|libvulkan|libcuda|libcudart|libnv|libnvidia|libamd|libamdocl)[^/]*\\.so")
+      message(FATAL_ERROR
+        "unlocked vendor GPU dependency cannot be copied privately: ${_dependency}")
+    endif()
+  endif()
   if(_dependency_name MATCHES
       "^(ld-linux[^/]*|linux-vdso[^/]*|libc|libm|libdl|libpthread|librt|libresolv|libutil|libnss_[^/]+|libcrypt|libanl|libBrokenLocale)\\.so"
       OR _dependency_name MATCHES
-      "^(libGL[^/]*|libEGL[^/]*|libGLES[^/]*|libOpenGL[^/]*|libdrm[^/]*|libgbm[^/]*|libX[^/]*|libxcb[^/]*|libwayland[^/]*|libdecor[^/]*|libxkbcommon[^/]*|libasound[^/]*|libpulse[^/]*|libpipewire[^/]*|libjack[^/]*)\\.so")
+      "^(libGL[^/]*|libEGL[^/]*|libGLES[^/]*|libOpenGL[^/]*|libOpenCL[^/]*|libvulkan[^/]*|libcuda[^/]*|libcudart[^/]*|libnv[^/]*|libnvidia[^/]*|libamd[^/]*|libamdocl[^/]*|libdrm[^/]*|libgbm[^/]*|libX[^/]*|libxcb[^/]*|libwayland[^/]*|libdecor[^/]*|libxkbcommon[^/]*|libasound[^/]*|libpulse[^/]*|libpipewire[^/]*|libjack[^/]*)\\.so")
+    set(${_output} TRUE PARENT_SCOPE)
+  else()
+    set(${_output} FALSE PARENT_SCOPE)
+  endif()
+endfunction()
+
+foreach(_dependency IN LISTS _resolved_dependencies)
+  get_filename_component(_dependency_name "${_dependency}" NAME)
+  _runtime_dependency_is_system_boundary(
+    "${_dependency}" "${_dependency_name}" _dependency_is_system_boundary)
+  if(_dependency_is_system_boundary)
     list(APPEND _system_boundary_names "${_dependency_name}")
     continue()
   endif()
@@ -271,8 +362,38 @@ foreach(_dependency IN LISTS _resolved_dependencies)
   list(APPEND _private_dependencies "${_dependency}")
   list(APPEND _private_dependency_names "${_dependency_name}")
 endforeach()
+foreach(_absolute_path IN LISTS _absolute_private_dependencies)
+  if(NOT EXISTS "${_absolute_path}" OR IS_DIRECTORY "${_absolute_path}")
+    message(FATAL_ERROR "absolute NEEDED dependency disappeared: ${_absolute_path}")
+  endif()
+  get_filename_component(_absolute_name "${_absolute_path}" NAME)
+  file(COPY "${_absolute_path}" DESTINATION "${_runtime_dir}" FOLLOW_SYMLINK_CHAIN)
+  list(APPEND _private_dependencies "${_absolute_path}")
+  list(APPEND _private_dependency_names "${_absolute_name}")
+endforeach()
 list(REMOVE_DUPLICATES _system_boundary_names)
 list(REMOVE_DUPLICATES _private_dependency_names)
+
+foreach(_owner_spec IN LISTS _absolute_dependency_owners)
+  string(REPLACE "|" ";" _owner_parts "${_owner_spec}")
+  list(GET _owner_parts 0 _owner)
+  list(GET _owner_parts 1 _absolute_path)
+  get_filename_component(_owner_name "${_owner}" NAME)
+  get_filename_component(_absolute_name "${_absolute_path}" NAME)
+  set(_staged_owner "${_runtime_dir}/${_owner_name}")
+  if(NOT EXISTS "${_staged_owner}")
+    message(FATAL_ERROR "staged owner for absolute NEEDED dependency is missing: ${_staged_owner}")
+  endif()
+  execute_process(
+    COMMAND "${_patchelf_tool}" --replace-needed "${_absolute_path}" "${_absolute_name}" "${_staged_owner}"
+    RESULT_VARIABLE _replace_needed_result
+    OUTPUT_VARIABLE _replace_needed_output
+    ERROR_VARIABLE _replace_needed_error)
+  if(NOT _replace_needed_result EQUAL 0)
+    message(FATAL_ERROR
+      "patchelf could not normalize ${_absolute_path} in ${_staged_owner}: ${_replace_needed_output}${_replace_needed_error}")
+  endif()
+endforeach()
 
 set(_has_libmpv FALSE)
 set(_has_qt_pdf FALSE)
@@ -335,7 +456,7 @@ function(_audit_elf _path _label)
     message(FATAL_ERROR "readelf failed for ${_label}: ${_readelf_error}")
   endif()
   string(TOLOWER "${_readelf_output}" _readelf_lower)
-  if(_readelf_lower MATCHES "(webkit|javascriptcore|webview2|cef|electron|tauri|qwebengine|qt6webengine|qt6qml|qt6quick)")
+  if(_readelf_lower MATCHES "\\((needed|soname)\\)[^\n]*\\[[^]]*(webkit|javascriptcore|webview2|cef|electron|tauri|qwebengine|qt6webengine|qt6qml|qt6quick)")
     message(FATAL_ERROR "superseded browser/runtime import in ${_label}")
   endif()
   if(_readelf_output MATCHES "(RPATH|RUNPATH).*(/home/|/opt/|/usr/local/|/nix/store/)")
