@@ -63,7 +63,7 @@
         "path": "scripts/generate-media-corpus.sh",
         "tool": "ffmpeg",
         "version": "n8.1.2",
-        "sha256": "beebb38dea2eb4792fc8cecd2cad72412362ee5607683114e19ebaefb16591f0"
+        "sha256": "55bf78241df2fdd3250a1b23adb12892e74ac7ea9032d5c2a1f402eeea60d012"
       },
       "seed": "lavfi-testsrc2-320x180-10fps-2s+sine-440hz",
       "source": {
@@ -94,7 +94,7 @@
         "path": "scripts/generate-media-corpus.sh",
         "tool": "ffmpeg",
         "version": "n8.1.2",
-        "sha256": "beebb38dea2eb4792fc8cecd2cad72412362ee5607683114e19ebaefb16591f0"
+        "sha256": "55bf78241df2fdd3250a1b23adb12892e74ac7ea9032d5c2a1f402eeea60d012"
       },
       "seed": "lavfi-testsrc2-320x180-10fps-2s+sine-440hz+sine-660hz",
       "source": {
@@ -125,7 +125,7 @@
         "path": "scripts/generate-media-corpus.sh",
         "tool": "ffmpeg",
         "version": "n8.1.2",
-        "sha256": "beebb38dea2eb4792fc8cecd2cad72412362ee5607683114e19ebaefb16591f0"
+        "sha256": "55bf78241df2fdd3250a1b23adb12892e74ac7ea9032d5c2a1f402eeea60d012"
       },
       "seed": "lavfi-testsrc2-320x180-10fps-2s-yuv420p10le",
       "source": {

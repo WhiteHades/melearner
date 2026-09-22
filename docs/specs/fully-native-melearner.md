@@ -4,15 +4,15 @@ The repository file `docs/specs/fully-native-melearner.md` is canonical. GitHub 
 
 ## Problem Statement
 
-melearner currently has a React/WebView/Tauri production shell and an incomplete Native SDK/Zig/Rust replacement. Neither line has passed the full media, document, accessibility, responsiveness, and clean-package contract on Linux, macOS, and Windows. Maintaining both also duplicates ownership and leaves cross-language seams that do not serve the final product.
+melearner now has one maintained C++23/Qt application. The former React/WebView/Tauri and Native SDK/Zig/Rust lines were superseded and removed during the Linux-first cutover. Linux verification is active; macOS and Windows qualification remains pending.
 
 The learner needs one responsive, polished, local-first desktop application for Courses already on the machine. The final package must contain no WebView, browser runtime, JavaScript UI, external player, helper process, second Player window, or compatibility path for obsolete data.
 
 ## Solution
 
-Replace every application layer with one C++23 executable using Qt 6.11 Widgets and CMake 4.4. Qt owns native windows, layouts, item views, focus, keyboard behavior, accessibility, themes, automation, and the OpenGL Player widget. C++ modules own the current SQLite schema, Library scan and identity rules, search, Progress, Learning activity, notes, document conversion, PDFium tiles, embedded libmpv, and local-path validation.
+Replace every application layer with one C++23 executable using Qt 6.11 Widgets and CMake 4.4. Qt owns native windows, layouts, item views, focus, keyboard behavior, accessibility, themes, automation, and the OpenGL Player widget. C++ modules own the current SQLite schema, Library scan and identity rules, search, Progress, Learning activity, notes, document conversion, PDF tiles, embedded libmpv, and local-path validation.
 
-All disk, SQLite, scan, search, document, and Player control work is asynchronous from the GUI's perspective. The GUI owns bounded visible projections instead of a duplicate Library graph. The old implementations remain frozen parity oracles until the C++ packages pass every target gate, then they are deleted in the cutover change.
+All disk, SQLite, scan, search, document, and Player control work is asynchronous from the GUI's perspective. The GUI owns bounded visible projections instead of a duplicate Library graph. Frozen parity inputs remain under `fixtures/parity/`; they are not runtime implementations.
 
 ## User Stories
 
@@ -160,9 +160,8 @@ All disk, SQLite, scan, search, document, and Player control work is asynchronou
 ## Cutover Rules
 
 - The C++ app uses a distinct data path and exact fresh schema. It does not read or delete old app data.
-- Under [ADR 0013](../adr/0013-linux-first-cpp-cutover.md), Tauri remains the production line until both Linux artifacts pass installed-package verification. macOS and Windows qualification remain explicitly pending and do not block the Linux cutover.
-- Native SDK/Zig/Rust and Tauri/React remain frozen behavior oracles only. New product behavior belongs in C++.
-- Linux cutover deletes React, Next.js, Tauri, Node, Native SDK, Zig, Rust core, C ABI, obsolete workflows, stale docs, and generated leftovers in one change, then reruns the Linux installed matrix on that changed source revision. The all-platform release remains gated on all four artifacts from one source revision.
+- Under [ADR 0013](../adr/0013-linux-first-cpp-cutover.md), the C++ application is the Linux implementation. macOS and Windows qualification remain explicitly pending and do not block Linux work or source cleanup.
+- The Linux cutover deletion of React, Next.js, Tauri, Node, Native SDK, Zig, Rust core, C ABI, obsolete workflows, stale docs, and generated leftovers is applied. Rerun the Linux installed matrix on each changed source revision; the all-platform release remains gated on all four artifacts from one source revision.
 - There is no shipped fallback, dual-stack feature flag, import, migration, restore, rollback, or downgrade path.
 
 ## Out of Scope

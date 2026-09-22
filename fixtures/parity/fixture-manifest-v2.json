@@ -79,7 +79,7 @@
       {
         "path": "cpp-app/tests/fixtures/parity_fixture_test.cpp",
         "bytes": 59030,
-        "sha256": "86a612f7f27a8f993d9002524cda88e1b95dddc90ecc677968d370670676ad5f"
+        "sha256": "5be1c901272147aff31fa54a872f39ef057bffa256cf55b88f63659c26a204df"
       }
     ],
     "cmake": [
@@ -92,15 +92,15 @@
     "lineEndings": [
       {
         "path": ".gitattributes",
-        "bytes": 792,
-        "sha256": "43d79b49dcbc416360b0439b461fc9ec9bd7c051c4781ddf8d56234cd39e4954"
+        "bytes": 755,
+        "sha256": "fe7c2446dfcf85f7e46eaae4456a0bd407a2b1bfde934a6e92f1c56c14f92ec1"
       }
     ],
     "mediaGenerator": [
       {
         "path": "scripts/generate-media-corpus.sh",
-        "bytes": 2521,
-        "sha256": "beebb38dea2eb4792fc8cecd2cad72412362ee5607683114e19ebaefb16591f0"
+        "bytes": 2517,
+        "sha256": "55bf78241df2fdd3250a1b23adb12892e74ac7ea9032d5c2a1f402eeea60d012"
       }
     ]
   },
@@ -240,7 +240,7 @@
     {
       "path": "fixtures/parity/fixture-manifest-v1.json",
       "bytes": 7770,
-      "sha256": "56a4782fdbf00db6b522749ad63a42fd65f0d312c85a17c7b5d7e37c2ed3939f",
+      "sha256": "522e4f6572abe60b6e9ff78208163e98899739997491756f838b05de0711f34e",
       "role": "frozen-manifest-v1",
       "provenance": {
         "project": "melearner",

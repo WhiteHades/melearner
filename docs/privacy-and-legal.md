@@ -13,8 +13,7 @@ melearner is local-first.
 
 Local data paths:
 
-- Database: `$HOME/.local/share/melearner/melearner.db` on Linux, `%LOCALAPPDATA%\melearner\melearner.db` on Windows, and `$HOME/Library/Application Support/melearner/melearner.db` on macOS.
-- Logs: `~/.melearner/`
+- Database: Qt's `AppLocalDataLocation` for organization `WhiteHades` and application `melearner-cpp-v1`, with the file name `library-v1.sqlite3` (typically `$HOME/.local/share/WhiteHades/melearner-cpp-v1/library-v1.sqlite3` on Linux).
 - User course files: wherever you keep them
 
 Course identity data, fingerprints, missing-folder state, notes, progress, and lesson activity stay in the local SQLite database. Fingerprints are derived from local course structure and learning-item metadata so renamed or moved folders can reconnect to existing progress.

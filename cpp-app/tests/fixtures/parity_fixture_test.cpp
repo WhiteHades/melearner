@@ -854,7 +854,7 @@ void verify_media_contract(const fs::path& repo_root) {
     require_contains(manifest_v1, "\"version\": \"n8.1.2\"", "pinned ffmpeg provenance");
     require(
         melearner::fixtures::digest_file(repo_root / "scripts/generate-media-corpus.sh").sha256
-            == "beebb38dea2eb4792fc8cecd2cad72412362ee5607683114e19ebaefb16591f0",
+            == "55bf78241df2fdd3250a1b23adb12892e74ac7ea9032d5c2a1f402eeea60d012",
         "frozen media recipe hash changed");
 }
 

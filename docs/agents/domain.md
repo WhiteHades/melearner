@@ -32,12 +32,14 @@ This is a single-context repo:
 |-- docs/stats-and-identity-plan.md
 |-- docs/adr/
 |-- cpp-app/
-|-- crates/melearner-core/  (superseded oracle before cutover)
-|-- native-app/             (superseded oracle before cutover)
-`-- src-tauri/              (transitional production before cutover)
+|-- fixtures/parity/         (frozen domain and media inputs)
+`-- packaging/
 ```
 
-Three implementation scopes coexist until the ADR 0012 cutover. `src-tauri/` is the transitional production shell. `crates/melearner-core/` and `native-app/` are frozen parity oracles from the superseded Native SDK line. `cpp-app/` is the unreleased final line. Keep the old scopes runnable only as required by parity gates. Do not route production through the C++ line before installed-package acceptance, and do not add compatibility adapters between data paths.
+The Linux-first cutover is complete at the source boundary: `cpp-app/` is the
+only application implementation. `fixtures/parity/` remains test data for the
+current C++ contracts, not a runtime compatibility path. Do not add adapters,
+imports, or fallback implementations for removed application lines.
 
 ## Use the glossary's vocabulary
 

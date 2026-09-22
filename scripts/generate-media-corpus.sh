@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ ! -f native-app/app.zon || ! -d fixtures/parity ]]; then
+if [[ ! -f CMakeLists.txt || ! -d fixtures/parity ]]; then
   echo "run this script from the melearner repository root" >&2
   exit 1
 fi

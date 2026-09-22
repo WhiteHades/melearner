@@ -1,81 +1,59 @@
 <div align="center">
 
-<img src="src-tauri/icons/icon.svg" width="112" height="112" alt="melearner logo" />
+<img src="cpp-app/assets/melearner-logo.png" width="112" height="112" alt="melearner logo" />
 
 # melearner
 
-Local-first desktop app for learning from course files you already have on your machine.
+Local-first desktop learning from course files already on your machine.
 
-[![platform](https://img.shields.io/badge/platform-linux-6366f1?style=flat)](https://tauri.app)
-[![stack](https://img.shields.io/badge/tauri%202%20%C2%B7%20next.js%2016%20%C2%B7%20rust-0f172a?style=flat)](https://nextjs.org)
-[![storage](https://img.shields.io/badge/storage-local%20sqlite-22c55e?style=flat)](docs/privacy-and-legal.md)
-[![license](https://img.shields.io/badge/license-MIT-a855f7?style=flat)](LICENSE)
+[![platform](https://img.shields.io/badge/platform-Linux-8f2d25?style=flat)](docs/install.md)
+[![stack](https://img.shields.io/badge/stack-C%2B%2B23%20%C2%B7%20Qt%206.11-8f2d25?style=flat)](cpp-app/README.md)
+[![storage](https://img.shields.io/badge/storage-local%20SQLite-8f2d25?style=flat)](docs/privacy-and-legal.md)
+[![license](https://img.shields.io/badge/license-MIT-8f2d25?style=flat)](LICENSE)
 
 </div>
 
-melearner scans a root folder, groups local videos/audio/documents into courses, remembers progress locally, and shows local learning stats. It preserves progress when a course folder is renamed or moved, and it keeps missing courses in the local database until they are scanned again. It does not download, stream, sync, or share content.
+melearner scans a folder, groups local videos, audio, and documents into courses, remembers progress locally, and shows learning activity. It does not download, stream, sync, or share content.
 
-## Install
+## Install on Linux
 
-### Arch Linux
-
-Recommended: install the AUR package.
+The supported source installer builds and tests the C++23/Qt application, then installs it into `$HOME/.local` by default:
 
 ```bash
-yay -S melearner-bin
-# or
-paru -S melearner-bin
+git clone https://github.com/WhiteHades/melearner
+cd melearner
+bash scripts/install-cpp-linux.sh
 ```
 
-Optional manual package install: download `melearner-bin-<version>-<pkgrel>-x86_64.pkg.tar.zst` from the [latest release](https://github.com/WhiteHades/melearner/releases/latest), then run:
+Run it with:
 
 ```bash
-sudo pacman -U melearner-bin-<version>-<pkgrel>-x86_64.pkg.tar.zst
+$HOME/.local/bin/melearner
 ```
 
-### Other Linux Distros
+The Arch package and portable archive use the same C++ executable and are being qualified from the Linux release build.
 
-Download the AppImage from the [latest release](https://github.com/WhiteHades/melearner/releases/latest), then run:
-
-```bash
-chmod +x melearner_<version>_amd64.AppImage
-./melearner_<version>_amd64.AppImage
-```
-
-### Experimental Windows and macOS
-
-Windows and macOS downloads, when available, are experimental and may not work on every machine yet. They remain available for testing and are supported on a best-effort basis while native playback and packaging are verified.
-
-More install details: [docs/install.md](docs/install.md).
-
-## First Run
+## First run
 
 1. Open melearner.
-2. Click **Scan root folder** and choose your course directory.
-3. Open a course, pick a lesson, and keep learning.
+2. Choose the folder that contains your courses.
+3. Open a course and select a lesson.
 
-Progress is saved in local SQLite and restored when you come back.
+Progress is stored in local SQLite under the C++ application data directory.
 
 ## Features
 
 - Local course library from folders you choose
-- Native video/audio playback with resume position and keyboard controls
+- In-window video and audio playback with resume position
 - Documents, subtitles, and section-aware course outlines
 - Search across courses, sections, and lessons
-- Local SQLite progress storage
-- Durable course identity for folder renames, moves, and missing-folder recovery
-- Local stats, storage breakdowns, and an activity heatmap
-- Automatic `.melearner-course.json` marker files for stronger local course identity
+- Local SQLite progress, notes, and learning activity
+- Durable course identity for folder moves and renames
 - Offline by default: no accounts, telemetry, or sync
 
-## Docs
+## Development
 
-- [Install](docs/install.md)
-- [Usage and shortcuts](docs/usage.md)
-- [Development and release notes](docs/development.md)
-- [Stats and course identity](docs/stats-and-identity-plan.md)
-- [Privacy and legal](docs/privacy-and-legal.md)
-- [Architecture decisions](docs/adr/)
+See [C++ development](cpp-app/README.md), [installation](docs/install.md), and [usage](docs/usage.md).
 
 ## License
 
