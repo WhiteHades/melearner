@@ -18,6 +18,7 @@ class StudyItemDelegate final : public QStyledItemDelegate {
 public:
   using QStyledItemDelegate::QStyledItemDelegate;
   QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const override;
+  void paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const override;
   void setCompact(bool compact) { compact_ = compact; }
 private:
   bool compact_ = false;

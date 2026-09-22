@@ -29,6 +29,7 @@ class QTimer;
 class QGraphicsOpacityEffect;
 class QPropertyAnimation;
 class QKeyEvent;
+class QProgressBar;
 namespace melearner { class Player; class MpvVideoWidget; class NotesPanel; class StatsPanel; class CourseOutlineModel; }
 
 class MainWindow final : public QMainWindow {
@@ -75,6 +76,7 @@ private:
   std::optional<melearner::library::Lesson> lesson_;
   std::optional<melearner::library::CourseEntry> resumeEntry_;
   QWidget* resumePanel_;
+  QProgressBar* resumeProgress_;
   QLabel* resumeCourse_;
   QLabel* resumeLesson_;
   quint64 resumeRequestId_ = 0;
@@ -90,6 +92,13 @@ private:
   QWidget* content_;
   QLabel* status_;
   QLabel* rootLabel_ = nullptr;
+  QWidget* navigation_ = nullptr;
+  QLabel* heroArtwork_ = nullptr;
+  QLabel* routeDescription_ = nullptr;
+  QPushButton* navigationCourses_ = nullptr;
+  QPushButton* navigationActivity_ = nullptr;
+  QPushButton* navigationNotes_ = nullptr;
+  QPushButton* settingsButton_ = nullptr;
   QLabel* title_;
   QLabel* lessonTitle_;
   QLabel* empty_;

@@ -153,7 +153,7 @@ private slots:
         if (!captureDirectory.isEmpty()) QVERIFY(window.grab().save(captureDirectory + QString("/player-minimum-%1x.png").arg(fontScale)));
         window.resize(1280, 720);
         auto* appearance = window.findChild<QPushButton*>("appearance")->menu();
-        const QStringList colors{"#faf9f6", "#181817", "#fff2d5"};
+        const QStringList colors{"#faf7f2", "#1b1917", "#f8f0e3"};
         for (int theme : {1, 2, 0}) {
           appearance->actions().at(theme)->trigger();
           QTRY_COMPARE(QApplication::palette().color(QPalette::Window).name(), colors.at(theme));

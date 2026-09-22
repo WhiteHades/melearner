@@ -153,7 +153,7 @@ void StatsPanelTest::ignoresResultsAfterDeactivation() {
     QVERIFY(coursesValue != nullptr);
     QVERIFY(status != nullptr);
     QTest::qWait(250);
-    QCOMPARE(coursesValue->text(), QStringLiteral("—"));
+    QCOMPARE(coursesValue->text(), QStringLiteral("Not available"));
     QVERIFY(!status->text().contains(QStringLiteral("updated"), Qt::CaseInsensitive));
 }
 

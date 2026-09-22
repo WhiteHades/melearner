@@ -1,10 +1,69 @@
 #include "paged_list_model.hpp"
+#include "library.hpp"
+#include "study_icons.hpp"
+#include <QApplication>
+#include <QPainter>
 #include <QSize>
 #include <algorithm>
 
 QSize StudyItemDelegate::sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const {
   auto size = QStyledItemDelegate::sizeHint(option, index);
+  if (const auto* model = qobject_cast<const PagedListModel*>(index.model())) {
+    const auto row = model->row(index.row());
+    if (row && row->value.canConvert<melearner::library::Course>()) {
+      size.setHeight(std::max(compact_ ? 88 : 120,
+        option.fontMetrics.lineSpacing() * 3 + (compact_ ? 28 : 48)));
+      return size;
+    }
+  }
   size.setHeight(std::max(compact_ ? 52 : 68, option.fontMetrics.lineSpacing() * 2 + (compact_ ? 16 : 20))); return size;
+}
+
+void StudyItemDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const {
+  const auto* model = qobject_cast<const PagedListModel*>(index.model());
+  const auto row = model ? model->row(index.row()) : std::optional<StudyRow>{};
+  if (!row || !row->value.canConvert<melearner::library::Course>()) {
+    QStyledItemDelegate::paint(painter, option, index); return;
+  }
+  const auto course = row->value.value<melearner::library::Course>();
+  // The view's transparent stylesheet base is not an opaque card fill.
+  const auto palette = QApplication::palette();
+  const bool selected = option.state.testFlag(QStyle::State_Selected);
+  const bool hover = option.state.testFlag(QStyle::State_MouseOver);
+  const auto card = option.rect.adjusted(1, 3, -1, -3);
+  painter->save(); painter->setRenderHint(QPainter::Antialiasing);
+  painter->setBrush(palette.color(selected || hover ? QPalette::AlternateBase : QPalette::Base));
+  painter->setPen(palette.color(option.state.testFlag(QStyle::State_HasFocus) ? QPalette::Highlight : QPalette::Mid));
+  painter->drawRoundedRect(card, 10, 10);
+  const int inset = compact_ ? 16 : 22;
+  const int iconSize = compact_ ? 24 : 32;
+  const auto ink = palette.color(QPalette::Text);
+  const auto accent = palette.color(QPalette::Highlight);
+  melearner::studyIcon(melearner::StudyIcon::Courses, course.missing ? palette.color(QPalette::PlaceholderText) : accent)
+    .paint(painter, QRect(card.left() + inset, card.top() + inset, iconSize, iconSize));
+  const int left = card.left() + inset + iconSize + 16;
+  const int right = card.right() - inset - 24;
+  const int available = std::max(0, right - left);
+  auto heading = option.font;
+  if (!compact_) { heading.setFamily("Liberation Serif"); heading.setPointSizeF(heading.pointSizeF() * 1.35); }
+  heading.setWeight(QFont::DemiBold);
+  painter->setFont(heading); painter->setPen(ink);
+  const QFontMetrics titleMetrics(heading);
+  painter->drawText(QRect(left, card.top() + inset - 2, available, titleMetrics.height() + 4),
+    Qt::AlignLeft | Qt::AlignVCenter, titleMetrics.elidedText(row->title, Qt::ElideRight, available));
+  painter->setFont(option.font); painter->setPen(palette.color(QPalette::PlaceholderText));
+  painter->drawText(QRect(left, card.top() + inset + titleMetrics.height() + 4, available, option.fontMetrics.height() + 2),
+    Qt::AlignLeft | Qt::AlignVCenter, option.fontMetrics.elidedText(row->description, Qt::ElideRight, available));
+  melearner::studyIcon(melearner::StudyIcon::ChevronRight, ink)
+    .paint(painter, QRect(card.right() - inset - 20, card.center().y() - 10, 20, 20));
+  if (!course.missing && course.lessonCount > 0) {
+    const qreal ratio = std::min(1.0, static_cast<qreal>(course.completedLessons) / course.lessonCount);
+    const QRectF track(left, card.bottom() - inset, std::max(0, std::min(260, available)), 5);
+    painter->setPen(Qt::NoPen); painter->setBrush(palette.color(QPalette::Mid));
+    painter->drawRoundedRect(track, 2.5, 2.5);
+    if (ratio > 0) { painter->setBrush(accent); painter->drawRoundedRect(QRectF(track.topLeft(), QSizeF(track.width() * ratio, 5)), 2.5, 2.5); }
+  }
+  painter->restore();
 }
 
 PagedListModel::PagedListModel(int pageSize, QObject* parent)

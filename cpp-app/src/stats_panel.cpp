@@ -1,9 +1,11 @@
 #include "stats_panel.hpp"
 
 #include <QAbstractItemView>
+#include <QApplication>
 #include <QColor>
 #include <QDate>
 #include <QEvent>
+#include <QFontDatabase>
 #include <QGroupBox>
 #include <QHeaderView>
 #include <QLabel>
@@ -73,6 +75,16 @@ QString activityText(const QDate& date, const library::ActivityDay& day) {
              countText(day.lessonsTouched), countText(day.completions));
 }
 
+QFont editorialFont(const QFont& base, qreal scale, bool bold = false) {
+    auto font = base;
+    if (QFontDatabase::families().contains(QStringLiteral("Liberation Serif"))) {
+        font.setFamily(QStringLiteral("Liberation Serif"));
+    }
+    font.setPointSizeF(base.pointSizeF() * scale);
+    font.setBold(bold);
+    return font;
+}
+
 bool hasActivity(const library::ActivityDay& day) {
     return day.watchedSeconds != 0 || day.lessonsTouched != 0 || day.completions != 0;
 }
@@ -91,6 +103,7 @@ int activityLevel(const library::ActivityDay& day, std::uint64_t maximumWatched)
 
 QLabel* plainLabel(const QString& objectName, const QString& accessibleName) {
     auto* label = new QLabel;
+    label->setFont(QApplication::font());
     label->setObjectName(objectName);
     label->setTextFormat(Qt::PlainText);
     label->setAccessibleName(accessibleName);
@@ -105,21 +118,21 @@ QGroupBox* metricBox(
     QLabel** value,
     QLabel** detail) {
     auto* box = new QGroupBox(title);
+    box->setFont(editorialFont(box->font(), 1.05, true));
     auto* layout = new QVBoxLayout(box);
     layout->setContentsMargins(10, 8, 10, 8);
     layout->setSpacing(2);
     *value = plainLabel(valueName, title + QObject::tr(" value"));
-    auto valueFont = (*value)->font();
-    valueFont.setBold(true);
-    valueFont.setPointSizeF(valueFont.pointSizeF() * 1.25);
-    (*value)->setFont(valueFont);
+    (*value)->setFont(editorialFont(QApplication::font(), 1.65, true));
     *detail = plainLabel(detailName, title + QObject::tr(" detail"));
+    (*detail)->setProperty("statsRole", "detail");
     layout->addWidget(*value);
     layout->addWidget(*detail);
     return box;
 }
 
 void configureTable(QTableWidget* table) {
+    table->setFont(QApplication::font());
     table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table->setFocusPolicy(Qt::StrongFocus);
     table->setTabKeyNavigation(false);
@@ -156,15 +169,13 @@ StatsPanel::StatsPanel(library::Library& library, QWidget* parent)
     setMinimumWidth(320);
 
     auto* root = new QVBoxLayout(this);
-    root->setContentsMargins(0, 12, 0, 0);
-    root->setSpacing(16);
+    root->setContentsMargins(0, 8, 0, 20);
+    root->setSpacing(12);
 
     auto* heading = new QLabel(tr("Learning stats"));
     heading->setObjectName(QStringLiteral("statsHeading"));
     heading->setAccessibleName(tr("Learning statistics"));
-    auto headingFont = heading->font();
-    headingFont.setBold(true);
-    heading->setFont(headingFont);
+    heading->setFont(editorialFont(heading->font(), 1.55, true));
     root->addWidget(heading);
 
     status_ = plainLabel(QStringLiteral("statsStatus"), tr("Statistics status"));
@@ -195,6 +206,7 @@ StatsPanel::StatsPanel(library::Library& library, QWidget* parent)
     breakdown->setVerticalSpacing(10);
 
     auto* mediaBox = new QGroupBox(tr("Media mix"));
+    mediaBox->setFont(editorialFont(mediaBox->font(), 1.05, true));
     auto* mediaLayout = new QVBoxLayout(mediaBox);
     media_ = new QTableWidget(0, 4, mediaBox);
     media_->setObjectName(QStringLiteral("mediaTable"));
@@ -206,6 +218,7 @@ StatsPanel::StatsPanel(library::Library& library, QWidget* parent)
     breakdown->addWidget(mediaBox, 0, 0);
 
     auto* coursesBox = new QGroupBox(tr("Top courses")); coursesBox_ = coursesBox;
+    coursesBox->setFont(editorialFont(coursesBox->font(), 1.05, true));
     auto* coursesLayout = new QVBoxLayout(coursesBox);
     topCourses_ = new QTableWidget(0, 4, coursesBox);
     topCourses_->setObjectName(QStringLiteral("topCoursesTable"));
@@ -220,6 +233,7 @@ StatsPanel::StatsPanel(library::Library& library, QWidget* parent)
     root->addLayout(breakdown);
 
     auto* activityBox = new QGroupBox(tr("Activity · 12 weeks"));
+    activityBox->setFont(editorialFont(activityBox->font(), 1.05, true));
     auto* activityLayout = new QVBoxLayout(activityBox);
     auto* activityHint = plainLabel(QStringLiteral("activityHint"), tr("Activity description"));
     activityHint->setText(tr("Each cell shows a relative activity level; focus a cell for its date and exact value."));
@@ -240,6 +254,8 @@ StatsPanel::StatsPanel(library::Library& library, QWidget* parent)
     activity_->setMinimumHeight(230);
     activity_->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     activity_->horizontalHeader()->setMinimumSectionSize(40);
+    activity_->setShowGrid(false);
+    activity_->setGridStyle(Qt::NoPen);
     activityLayout->addWidget(activity_);
     activityDetail_ = plainLabel(QStringLiteral("activityDetail"), tr("Selected activity"));
     activityDetail_->setText(tr("Select a day to see its activity."));
@@ -329,7 +345,7 @@ void StatsPanel::requestData() {
 }
 
 void StatsPanel::resetProjection(const QString& status) {
-    const auto empty = tr("—");
+    const auto empty = tr("Not available");
     for (auto* label : {coursesValue_, completionValue_, watchedValue_, storageValue_}) {
         label->setText(empty);
     }
@@ -357,7 +373,7 @@ void StatsPanel::renderSnapshot(const library::LibraryStats& stats) {
                                  ? tr("All courses available")
                                  : tr("%1 missing").arg(countText(stats.missingCourses)));
     completionValue_->setText(tr("%1%").arg(stats.completionPercent));
-    completionDetail_->setText(tr("%1 of %2 lessons")
+    completionDetail_->setText(tr("Lessons complete: %1 of %2")
                                     .arg(countText(stats.completedLessons), countText(stats.lessons)));
     watchedValue_->setText(durationText(stats.watchedSeconds));
     watchedDetail_->setText(stats.totalSeconds == 0
@@ -375,7 +391,7 @@ void StatsPanel::renderMedia(const QVector<library::MediaTypeStats>& rows) {
     media_->setRowCount(rows.size());
     for (int row = 0; row < rows.size(); ++row) {
         const auto& item = rows.at(row);
-        const auto accessible = tr("%1: %2 lessons, %3 completed, %4 progress time")
+        const auto accessible = tr("%1: lessons: %2, completed: %3, progress time: %4")
                                     .arg(titleCase(item.type), countText(item.lessons),
                                          countText(item.completed), durationText(item.watchedSeconds));
         media_->setItem(row, 0, tableItem(titleCase(item.type), accessible));
@@ -389,7 +405,7 @@ void StatsPanel::renderTopCourses(const QVector<library::TopCourseStats>& rows) 
     topCourses_->setRowCount(rows.size());
     for (int row = 0; row < rows.size(); ++row) {
         const auto& item = rows.at(row);
-        const auto accessible = tr("%1: %2 of %3 lessons complete, %4 progress time, %5 stored")
+        const auto accessible = tr("%1: lessons complete: %2 of %3, progress time: %4, stored: %5")
                                     .arg(item.name, countText(item.completedLessons), countText(item.lessons),
                                          durationText(item.watchedSeconds), bytesText(item.bytes));
         topCourses_->setItem(row, 0, tableItem(item.name, accessible));

@@ -1,6 +1,7 @@
 #include "main_window.hpp"
 #include "search_dialog.hpp"
 #include "pdf_view.hpp"
+#include "study_icons.hpp"
 #include <QDir>
 #include <QDockWidget>
 #include <QDialog>
@@ -12,6 +13,7 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPushButton>
+#include <QProgressBar>
 #include <QPointer>
 #include <QPainter>
 #include <QPdfWriter>
@@ -29,6 +31,18 @@ class MainWindowTest final : public QObject {
   Q_OBJECT
 private slots:
   void initTestCase() { Q_INIT_RESOURCE(assets); }
+  void iconsHaveTransparentBackgroundsAtEveryScale() {
+    const auto icon = melearner::studyIcon(melearner::StudyIcon::Courses, QColor("#a72c23"));
+    for (const auto mode : {QIcon::Normal, QIcon::Disabled}) {
+      for (const qreal scale : {1.0, 1.5, 2.0}) {
+        const auto pixmap = icon.pixmap(QSize(24, 24), scale, mode);
+        const auto pixels = pixmap.toImage();
+        QCOMPARE(pixmap.devicePixelRatio(), scale);
+        QCOMPARE(pixels.pixelColor(0, 0).alpha(), 0);
+        QVERIFY(pixels.pixelColor(pixels.width() / 2, pixels.height() / 2).alpha() > 0);
+      }
+    }
+  }
   void routesErrorsToTheirCurrentOwner() {
     QTemporaryDir files; QVERIFY(files.isValid());
     MainWindow window(files.path() + "/library.sqlite3"); window.show();
@@ -197,6 +211,20 @@ private slots:
     auto* courses = window.findChild<QListView*>("courses");
     QTRY_VERIFY2_WITH_TIMEOUT(courses->model()->rowCount() == 1,
       qPrintable(window.findChild<QLabel*>("appStatus")->text()), 15000);
+    auto* rail = window.findChild<QWidget*>("navigationRail"); QVERIFY(rail);
+    auto* courseNavigation = window.findChild<QPushButton*>("navigationCourses"); QVERIFY(courseNavigation);
+    QVERIFY(!courseNavigation->icon().isNull());
+    QTRY_VERIFY(window.findChild<QProgressBar*>("resumeProgress")->isVisible());
+    QCOMPARE(window.findChild<QProgressBar*>("resumeProgress")->value(), 0);
+    for (const int width : {560, 768, 1280, 1920}) {
+      window.resize(width, 720); QTest::qWait(30);
+      QVERIFY(window.width() <= width);
+      QCOMPARE(rail->isVisible(), width >= std::max(1040, window.fontMetrics().height() * 62));
+      QVERIFY(courseNavigation->isChecked());
+      QCOMPARE(courses->horizontalScrollBar()->maximum(), 0);
+      const auto captures = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
+      if (!captures.isEmpty()) QVERIFY(window.grab().save(captures + QString("/library-%1-%2x.png").arg(width).arg(fontScale)));
+    }
     const int comfortableHeight = courses->sizeHintForRow(0);
     auto* compact = window.findChild<QAction*>("presentation-compact"); QVERIFY(compact); compact->trigger();
     QTRY_VERIFY(courses->sizeHintForRow(0) < comfortableHeight);

@@ -18,6 +18,7 @@ include(cpp-app/cmake/lexbor.cmake)
 add_library(melearner_app STATIC
   cpp-app/src/single_instance.cpp
   cpp-app/src/main_window.cpp
+  cpp-app/src/study_icons.cpp
   cpp-app/src/paged_list_model.cpp
   cpp-app/src/course_outline_model.cpp
   cpp-app/src/search_dialog.cpp
@@ -38,7 +39,9 @@ target_compile_options(melearner_app PRIVATE
   $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic>)
 set_source_files_properties(cpp-app/schema/library-v1.sql PROPERTIES QT_RESOURCE_ALIAS "schema/library-v1.sql")
 qt_add_resources(melearner_app assets PREFIX / FILES
-  cpp-app/assets/melearner-logo.png cpp-app/schema/library-v1.sql)
+  cpp-app/assets/melearner-logo.png cpp-app/assets/study-still-life.png
+  cpp-app/assets/fonts/LiberationSerif-Regular.ttf cpp-app/assets/fonts/LiberationSerif-Bold.ttf
+  cpp-app/schema/library-v1.sql)
 
 add_executable(melearner cpp-app/src/main.cpp)
 target_link_libraries(melearner PRIVATE melearner_app)
@@ -49,6 +52,8 @@ install(FILES packaging/linux/io.github.whitehades.melearner.desktop
 install(FILES cpp-app/assets/melearner-logo.png
   DESTINATION ${CMAKE_INSTALL_DATADIR}/pixmaps
   RENAME io.github.whitehades.melearner.png)
+install(FILES cpp-app/assets/fonts/LICENSE
+  DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/melearner/liberation-fonts)
 
 if(BUILD_TESTING)
   find_package(Qt6 REQUIRED COMPONENTS Test)
