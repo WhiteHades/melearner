@@ -3,7 +3,8 @@
 #include "mpv_video_widget.hpp"
 #include <QDir>
 #include <QAccessible>
-#include <QComboBox>
+#include <QMenu>
+#include <QSlider>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QLabel>
@@ -42,7 +43,8 @@ private slots:
     const auto database = data.path() + "/library.sqlite3";
     qint64 saved = 0;
     for (int launch = 0; launch < 2; ++launch) {
-      MainWindow window(database, nullptr, true); window.show();
+      MainWindow window(database, nullptr, true); window.show(); window.activateWindow();
+      QVERIFY(QTest::qWaitForWindowActive(&window));
       auto* choose = window.findChild<QPushButton*>("chooseRoot");
       QTRY_VERIFY_WITH_TIMEOUT(choose->isEnabled(), 5000);
       if (launch == 0) window.chooseRoot(root);
@@ -60,11 +62,20 @@ private slots:
       auto* play = window.findChild<QPushButton*>("playPause");
       QTRY_VERIFY2(play->isEnabled(), qPrintable(window.findChild<QLabel*>("appStatus")->text()));
       QCOMPARE(play->text(), QString("Play"));
+      auto* controls = window.findChild<QWidget*>("playerControls"); QVERIFY(controls);
+      auto* settings = window.findChild<QPushButton*>("playbackOptions"); QVERIFY(settings);
+      auto* speed = window.findChild<QMenu*>("playbackSpeed"); QVERIFY(speed);
+      auto* audio = window.findChild<QMenu*>("audioTrack"); QVERIFY(audio);
+      QTRY_VERIFY(!audio->actions().isEmpty());
+      QCOMPARE(settings->menu()->objectName(), QString("videoSettings"));
+      QVERIFY(controls->isAncestorOf(settings));
+      QVERIFY(controls->isAncestorOf(window.findChild<QSlider*>("playbackPosition")));
       auto* accessibleVideo = QAccessible::queryAccessibleInterface(window.findChild<melearner::MpvVideoWidget*>());
       QVERIFY(accessibleVideo); QCOMPARE(accessibleVideo->role(), QAccessible::Animation);
       QVERIFY(accessibleVideo->imageInterface());
       QCOMPARE(accessibleVideo->text(QAccessible::Name), QString("Video: 01 Video"));
       if (launch == 0) {
+        QVERIFY(player->setRate(0.5));
         QElapsedTimer responsiveness; responsiveness.start();
         qint64 previousTick = 0; qint64 worstGap = 0; int ticks = 0;
         QTimer heartbeat;
@@ -73,8 +84,31 @@ private slots:
         });
         heartbeat.start(10);
         auto* surface = window.findChild<QWidget*>("videoSurface"); QVERIFY(surface);
+        QCOMPARE(controls->parentWidget(), surface);
         surface->setFocus(); QTest::keyClick(surface, Qt::Key_Space);
         QTRY_VERIFY_WITH_TIMEOUT(!positions.isEmpty() && positions.last().at(0).toLongLong() >= 300, 5000);
+        auto* hideControls = window.findChild<QTimer*>("hidePlayerControls"); QVERIFY(hideControls);
+        QTest::mouseMove(surface, QPoint(10, 10));
+        QTRY_COMPARE(play->text(), QString("Pause"));
+        QCOMPARE(play->accessibleName(), play->text());
+        QTest::qWait(50);
+        QVERIFY(!controls->underMouse());
+        QVERIFY(QMetaObject::invokeMethod(hideControls, "timeout", Qt::DirectConnection));
+        QTRY_VERIFY(!controls->isVisible());
+        QTest::mouseMove(surface, QPoint(20, 20)); QTRY_VERIFY(controls->isVisible());
+        QTest::keyClick(surface, Qt::Key_Tab); QTRY_VERIFY(controls->isAncestorOf(QApplication::focusWidget()));
+        QVERIFY(QMetaObject::invokeMethod(hideControls, "timeout", Qt::DirectConnection));
+        QVERIFY(controls->isVisible());
+        // Settings stay inside the player and keep their native keyboard navigation.
+        bool menuOpened = false;
+        QTimer::singleShot(100, settings, [&] {
+          menuOpened = settings->menu()->isVisible();
+          QTest::keyClick(settings->menu(), Qt::Key_Escape);
+        });
+        settings->setFocus(); QTest::keyClick(settings, Qt::Key_Space);
+        QTRY_VERIFY(menuOpened);
+        QTRY_VERIFY(!settings->menu()->isVisible());
+        surface->setFocus();
         window.resize(560, 720); QCoreApplication::processEvents();
         auto* outline = window.findChild<QPushButton*>("toggleOutline");
         QTest::mouseClick(outline, Qt::LeftButton); QVERIFY(!surface->isVisible());
@@ -91,6 +125,7 @@ private slots:
         saved = positions.last().at(0).toLongLong();
         for (const int width : {560, 768, 1280}) {
           window.resize(width, 720); QCoreApplication::processEvents(); QVERIFY(window.width() <= width);
+          QVERIFY(surface->rect().contains(controls->geometry()));
           const auto captures = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
           if (!captures.isEmpty()) QVERIFY(window.grab().save(captures + QString("/player-%1-%2x.png").arg(width).arg(fontScale)));
         }
@@ -104,10 +139,12 @@ private slots:
             QVERIFY2(control->width() >= control->fontMetrics().horizontalAdvance(control->text()) + 12,
               qPrintable(QString("Clipped button: %1").arg(control->text())));
         }
-        const auto* audio = window.findChild<QComboBox*>("audioTrack");
         const auto* next = window.findChild<QPushButton*>("nextLesson");
-        QVERIFY(play->mapTo(&window, QPoint(0, play->height())).y() <= audio->mapTo(&window, QPoint()).y());
-        QVERIFY(audio->mapTo(&window, QPoint(0, audio->height())).y() <= next->mapTo(&window, QPoint()).y());
+        QVERIFY(surface->rect().contains(controls->geometry()));
+        QVERIFY(controls->mapTo(&window, QPoint(0, controls->height())).y() <= next->mapTo(&window, QPoint()).y());
+        QSignalSpy rates(player, &melearner::Player::rateChanged);
+        speed->actions().at(4)->trigger();
+        QTRY_VERIFY(!rates.isEmpty()); QCOMPARE(rates.last().first().toDouble(), 1.5);
         const auto captureDirectory = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
         if (!captureDirectory.isEmpty()) QVERIFY(window.grab().save(captureDirectory + QString("/player-minimum-%1x.png").arg(fontScale)));
       } else {

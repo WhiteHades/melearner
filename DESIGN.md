@@ -66,13 +66,15 @@ Controls use compact rounded corners. Borders keep their width when focus change
 
 ## Components
 
-Primary playback and resume buttons use the accent and its paired foreground. Secondary actions use the surface color. Hover, pressed, focused, and disabled states remain distinct.
+The resume button uses the accent and its paired foreground. Secondary actions use the surface color. Hover, pressed, focused, and disabled states remain distinct.
+
+Video controls sit over the bottom of the video on a dark, high-contrast strip. The timeline, play button, time, volume, Settings, and fullscreen stay together. Speed, audio tracks, subtitles, and chapters use native menus under Settings. Narrow windows and larger text split the controls into two rows without shrinking text.
 
 Library tabs use a red underline for the active destination. Menus, dialogs, sliders, and tables retain native interaction behavior.
 
 Activity cells expose the date and exact values to assistive technology. Arrow-key selection also displays those values below the grid. Progress time is derived from lesson position, not elapsed viewing time.
 
-App-authored transitions are currently off. Navigation, seeking, selection, and focus update immediately. Any future animation must have a specific feedback purpose and honor reduced-motion preferences.
+Player controls disappear after 2.5 seconds of inactivity during video playback. Mouse movement or keyboard focus reveals them immediately. Paused playback, audio lessons, focused controls, and open menus keep them visible. The exit fade uses the native widget animation duration, capped at 160 ms, and is immediate when that duration is zero or high contrast is enabled. Navigation, seeking, selection, and focus update immediately.
 
 ## Do's and Don'ts
 

@@ -11,7 +11,6 @@ class QListView;
 class QTreeView;
 class QPushButton;
 class QSlider;
-class QComboBox;
 class QSplitter;
 class QStackedWidget;
 class PagedListModel;
@@ -21,6 +20,10 @@ class QDockWidget;
 class QGridLayout;
 class QBoxLayout;
 class QTabWidget;
+class QMenu;
+class QTimer;
+class QGraphicsOpacityEffect;
+class QPropertyAnimation;
 namespace melearner { class Player; class MpvVideoWidget; class NotesPanel; class StatsPanel; class CourseOutlineModel; }
 
 class MainWindow final : public QMainWindow {
@@ -94,11 +97,13 @@ private:
   void openNotes();
   QWidget* playerControls_ = nullptr;
   QGridLayout* playbackLayout_;
-  QGridLayout* tracksLayout_;
   QList<QWidget*> playbackWidgets_;
-  QList<QWidget*> trackWidgets_;
   bool compactControls_ = false;
   void updateControlsLayout();
+  void revealPlayerControls();
+  QTimer* hideControls_ = nullptr;
+  QGraphicsOpacityEffect* controlsOpacity_ = nullptr;
+  QPropertyAnimation* controlsFade_ = nullptr;
   QLabel* documentStatus_;
   QTextEdit* documentView_;
   QPushButton* documentPrevious_;
@@ -114,9 +119,9 @@ private:
   QPushButton* play_;
   QSlider* seek_;
   QLabel* time_;
-  QComboBox* audio_;
-  QComboBox* subtitles_;
-  QComboBox* chapters_;
+  QMenu* audio_;
+  QMenu* subtitles_;
+  QMenu* chapters_;
   bool playerLoaded_ = false;
   bool playerLoadRequested_ = false;
   quint64 playerLoadId_ = 0;

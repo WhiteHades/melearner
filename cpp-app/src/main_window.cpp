@@ -20,6 +20,7 @@
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QGridLayout>
+#include <QGraphicsOpacityEffect>
 #include <QLabel>
 #include <QKeyEvent>
 #include <QListView>
@@ -29,6 +30,7 @@
 #include <QPushButton>
 #include <QPointer>
 #include <QPainter>
+#include <QPropertyAnimation>
 #include <QResizeEvent>
 #include <QShortcut>
 #include <QScrollArea>
@@ -40,6 +42,7 @@
 #include <QTabWidget>
 #include <QTabBar>
 #include <QStatusBar>
+#include <QStyle>
 #include <QStyleHints>
 #include <QTimer>
 #include <QTextEdit>
@@ -136,7 +139,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     const auto api = mpv_client_api_version();
     const bool highContrast = QApplication::styleHints()->accessibility()->contrastPreference() == Qt::ContrastPreference::HighContrast;
     QMessageBox::about(this, tr("About melearner"),
-      tr("melearner C++ %1\nQt %2 · SQLite %3 · libmpv API %4.%5\n\nVideo decoder: %7\nApp animations: off\nSystem high contrast: %6\n\nLinux development build. macOS and Windows qualification is pending.")
+      tr("melearner C++ %1\nQt %2 · SQLite %3 · libmpv API %4.%5\n\nVideo decoder: %7\nSystem high contrast: %6\n\nLinux development build. macOS and Windows qualification is pending.")
         .arg(QApplication::applicationVersion(), QString::fromLatin1(qVersion()), QString::fromLatin1(sqlite3_libversion()))
         .arg(api >> 16).arg(api & 0xffff).arg(highContrast ? tr("on") : tr("off"))
         .arg(decoder_.isEmpty() ? tr("Not playing") : decoder_ == "no" ? tr("Software") : decoder_));
@@ -247,30 +250,42 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     if (lesson_ && lesson_->path.endsWith(".pdf", Qt::CaseInsensitive)) status_->setText(message);
   });
   contentLayout->addWidget(media_, 1);
-  playerControls_ = new QWidget;
-  auto* controlsLayout = new QVBoxLayout(playerControls_); controlsLayout->setContentsMargins(0, 0, 0, 0);
-  contentLayout->addWidget(playerControls_); playerControls_->hide();
+  playerControls_ = new QWidget(video_); playerControls_->setObjectName("playerControls");
+  playerControls_->setAttribute(Qt::WA_StyledBackground);
+  auto* controlsLayout = new QVBoxLayout(playerControls_); controlsLayout->setContentsMargins(12, 0, 12, 8);
+  controlsLayout->setSpacing(0); playerControls_->hide();
   seek_ = new QSlider(Qt::Horizontal); seek_->setAccessibleName(tr("Playback position")); seek_->setRange(0, 10000);
   seek_->setObjectName("playbackPosition");
   seek_->setMinimumHeight(40);
   seek_->setEnabled(false); controlsLayout->addWidget(seek_);
-  playbackLayout_ = new QGridLayout;
+  playbackLayout_ = new QGridLayout; playbackLayout_->setHorizontalSpacing(8); playbackLayout_->setVerticalSpacing(4);
   play_ = button(tr("Play"), "playPause"); play_->setEnabled(false);
   time_ = new QLabel("0:00:00 / 0:00:00");
   auto* volume = new QSlider(Qt::Horizontal); volume->setRange(0, 100); volume->setValue(100); volume->setMaximumWidth(100);
   volume->setObjectName("volume");
   volume->setMinimumHeight(40);
   volume->setAccessibleName(tr("Volume")); volume->setToolTip(tr("Volume"));
-  auto* rate = new QComboBox; rate->setAccessibleName(tr("Playback speed")); rate->setMinimumHeight(40);
-  rate->setObjectName("playbackSpeed");
-  for (double speed : {0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0}) rate->addItem(QString::number(speed) + "×", speed);
-  rate->setCurrentIndex(2);
   auto* fullscreen = button(tr("Fullscreen"), "fullscreen");
-  playbackWidgets_ = {play_, time_, volume, rate, fullscreen};
+  auto* playbackOptions = button(tr("Settings"), "playbackOptions");
+  playbackOptions->setAccessibleName(tr("Video settings"));
+  playbackWidgets_ = {play_, time_, volume, playbackOptions, fullscreen};
   for (int index = 0; index < playbackWidgets_.size(); ++index) playbackLayout_->addWidget(playbackWidgets_[index], 0, index);
   playbackLayout_->setColumnStretch(1, 1);
-  auto* playbackOptions = button(tr("Playback"), "playbackOptions");
   auto* playbackMenu = new QMenu(playbackOptions);
+  playbackMenu->setObjectName("videoSettings");
+  auto* rate = playbackMenu->addMenu(tr("Speed")); rate->setObjectName("playbackSpeed");
+  auto* rateGroup = new QActionGroup(rate);
+  for (double speed : {0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0}) {
+    auto* action = rate->addAction(QString::number(speed) + "×");
+    action->setData(speed); action->setCheckable(true); action->setChecked(speed == 1.0); rateGroup->addAction(action);
+  }
+  audio_ = playbackMenu->addMenu(tr("Audio track")); audio_->setObjectName("audioTrack");
+  subtitles_ = playbackMenu->addMenu(tr("Subtitles")); subtitles_->setObjectName("subtitleTrack");
+  chapters_ = playbackMenu->addMenu(tr("Chapters")); chapters_->setObjectName("chapter");
+  auto* audioGroup = new QActionGroup(audio_);
+  auto* subtitleGroup = new QActionGroup(subtitles_);
+  for (auto* menu : {audio_, subtitles_, chapters_}) menu->setEnabled(false);
+  playbackMenu->addSeparator();
   auto* mute = playbackMenu->addAction(tr("Mute")); mute->setCheckable(true);
   auto* rewind = playbackMenu->addAction(tr("Back 10 seconds"));
   auto* forward = playbackMenu->addAction(tr("Forward 10 seconds"));
@@ -279,19 +294,32 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   auto* screenshot = playbackMenu->addAction(tr("Save screenshot…"));
   playbackOptions->setMenu(playbackMenu);
   controlsLayout->addLayout(playbackLayout_);
-  tracksLayout_ = new QGridLayout;
-  audio_ = new QComboBox; audio_->setAccessibleName(tr("Audio track")); audio_->setMinimumContentsLength(6);
-  subtitles_ = new QComboBox; subtitles_->setAccessibleName(tr("Subtitle track")); subtitles_->setMinimumContentsLength(6);
-  chapters_ = new QComboBox; chapters_->setAccessibleName(tr("Chapter")); chapters_->setMinimumContentsLength(6);
-  audio_->setObjectName("audioTrack"); subtitles_->setObjectName("subtitleTrack"); chapters_->setObjectName("chapter");
-  audio_->setPlaceholderText(tr("Audio track")); subtitles_->setPlaceholderText(tr("Subtitles")); chapters_->setPlaceholderText(tr("Chapters"));
-  for (auto* combo : {audio_, subtitles_, chapters_}) {
-    combo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon); combo->setMinimumHeight(40);
-    combo->setEnabled(false);
+  controlsOpacity_ = new QGraphicsOpacityEffect(playerControls_); controlsOpacity_->setOpacity(1);
+  playerControls_->setGraphicsEffect(controlsOpacity_);
+  controlsFade_ = new QPropertyAnimation(controlsOpacity_, "opacity", this);
+  controlsFade_->setEasingCurve(QEasingCurve::OutCubic);
+  connect(controlsFade_, &QPropertyAnimation::finished, this, [this] { playerControls_->hide(); });
+  hideControls_ = new QTimer(this); hideControls_->setObjectName("hidePlayerControls");
+  hideControls_->setSingleShot(true); hideControls_->setInterval(2500);
+  connect(hideControls_, &QTimer::timeout, this, [this] {
+    auto* focus = QApplication::focusWidget();
+    if (!playerLoaded_ || paused_ || !lesson_ || lesson_->type == "audio" ||
+        playerControls_->underMouse() || (focus && playerControls_->isAncestorOf(focus)) ||
+        QApplication::activePopupWidget() || QApplication::activeModalWidget()) {
+      if (playerLoaded_ && !paused_) hideControls_->start();
+      return;
+    }
+    const bool highContrast = QApplication::styleHints()->accessibility()->contrastPreference() == Qt::ContrastPreference::HighContrast;
+    const int duration = highContrast ? 0 : std::clamp(style()->styleHint(QStyle::SH_Widget_Animation_Duration), 0, 160);
+    controlsFade_->setDuration(duration); controlsFade_->setStartValue(controlsOpacity_->opacity());
+    controlsFade_->setEndValue(0.0); controlsFade_->start();
+  });
+  for (auto* widget : playerControls_->findChildren<QWidget*>() + QList<QWidget*>{video_, playerControls_}) {
+    widget->setMouseTracking(true); widget->installEventFilter(this);
   }
-  trackWidgets_ = {audio_, subtitles_, chapters_, playbackOptions};
-  for (int index = 0; index < trackWidgets_.size(); ++index) tracksLayout_->addWidget(trackWidgets_[index], 0, index);
-  controlsLayout->addLayout(tracksLayout_);
+  connect(playbackMenu, &QMenu::aboutToShow, this, &MainWindow::revealPlayerControls);
+  connect(playbackMenu, &QMenu::aboutToHide, this, [this] { hideControls_->start(); });
+  setTabOrder({video_, seek_, play_, volume, playbackOptions, fullscreen});
   lessonNavigation_ = new QHBoxLayout;
   auto* previous = button(tr("Previous"), "previousLesson"); lessonNavigation_->addWidget(previous);
   complete_ = button(tr("Mark complete"), "markComplete"); complete_->setEnabled(false); lessonNavigation_->addWidget(complete_, 1);
@@ -546,11 +574,17 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     if (id) screenshotRequests_.insert(id, path); else showError(tr("Player is busy. Try saving the screenshot again."));
   });
   connect(volume, &QSlider::valueChanged, this, [this](int value) { (void)player_->setVolume(value); });
-  connect(rate, &QComboBox::activated, this, [this, rate](int index) { (void)player_->setRate(rate->itemData(index).toDouble()); });
+  connect(player_, &melearner::Player::volumeChanged, volume, [volume](double value) {
+    const QSignalBlocker blocker(volume); volume->setValue(qRound(value));
+  });
+  connect(rate, &QMenu::triggered, this, [this](QAction* action) { (void)player_->setRate(action->data().toDouble()); });
+  connect(player_, &melearner::Player::rateChanged, rate, [rate](double value) {
+    for (auto* action : rate->actions()) action->setChecked(qFuzzyCompare(action->data().toDouble(), value));
+  });
   connect(fullscreen, &QPushButton::clicked, this, [this] { if (isFullScreen()) showNormal(); else showFullScreen(); });
-  connect(audio_, &QComboBox::activated, this, [this](int i) { (void)player_->selectAudioTrack(audio_->itemData(i).toInt()); });
-  connect(subtitles_, &QComboBox::activated, this, [this](int i) { (void)player_->selectSubtitleTrack(subtitles_->itemData(i).toInt()); });
-  connect(chapters_, &QComboBox::activated, this, [this](int i) { (void)player_->selectChapter(chapters_->itemData(i).toInt()); });
+  connect(audio_, &QMenu::triggered, this, [this](QAction* action) { (void)player_->selectAudioTrack(action->data().toInt()); });
+  connect(subtitles_, &QMenu::triggered, this, [this](QAction* action) { (void)player_->selectSubtitleTrack(action->data().toInt()); });
+  connect(chapters_, &QMenu::triggered, this, [this](QAction* action) { (void)player_->selectChapter(action->data().toInt()); });
   connect(player_, &melearner::Player::initialized, this, &MainWindow::loadSelectedMedia);
   connect(player_, &melearner::Player::decoderChanged, this, [this](const QString& decoder) { decoder_ = decoder; });
   connect(video_, &melearner::MpvVideoWidget::renderContextReady, this, &MainWindow::loadSelectedMedia);
@@ -573,25 +607,31 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   });
   connect(player_, &melearner::Player::pausedChanged, this, [this](bool paused) {
     paused_ = paused; play_->setText(paused ? tr("Play") : tr("Pause")); if (paused && playerLoaded_) savePosition();
+    play_->setAccessibleName(play_->text());
+    revealPlayerControls();
   });
-  connect(player_, &melearner::Player::tracksChanged, this, [this](const auto& tracks) {
-    audio_->clear(); subtitles_->clear(); subtitles_->addItem(tr("Subtitles off"), -1);
+  connect(player_, &melearner::Player::tracksChanged, this, [this, audioGroup, subtitleGroup](const auto& tracks) {
+    audio_->clear(); subtitles_->clear();
+    auto* off = subtitles_->addAction(tr("Off")); off->setData(-1); off->setCheckable(true); off->setChecked(true);
+    subtitleGroup->addAction(off);
     for (const auto& track : tracks) {
       auto* target = track.type == "audio" ? audio_ : track.type == "sub" ? subtitles_ : nullptr;
       if (!target) continue;
-      target->addItem(track.title.isEmpty() ? tr("%1 %2 · %3").arg(track.type).arg(track.id).arg(track.language) : track.title, track.id);
-      if (track.selected) target->setCurrentIndex(target->count() - 1);
+      auto* action = target->addAction(track.title.isEmpty() ? tr("%1 %2 · %3").arg(track.type).arg(track.id).arg(track.language) : track.title);
+      action->setData(track.id); action->setCheckable(true);
+      (target == audio_ ? audioGroup : subtitleGroup)->addAction(action); action->setChecked(track.selected);
     }
-    audio_->setEnabled(audio_->count() > 0); subtitles_->setEnabled(subtitles_->count() > 1);
+    audio_->setEnabled(!audio_->actions().isEmpty()); subtitles_->setEnabled(subtitles_->actions().size() > 1);
   });
   connect(player_, &melearner::Player::chaptersChanged, this, [this](const auto& chapters) {
-    chapters_->clear(); for (const auto& chapter : chapters) chapters_->addItem(chapter.title, chapter.index);
+    chapters_->clear(); for (const auto& chapter : chapters) chapters_->addAction(chapter.title)->setData(chapter.index);
     chapters_->setEnabled(!chapters.empty());
   });
   connect(player_, &melearner::Player::playbackEnded, this, [this](const QString& path, bool failed) {
     if (!lesson_ || lesson_->path != path || !playerLoaded_) return;
     if (!failed) { positionMs_ = durationMs_; savePosition(true); }
     playerLoaded_ = false;
+    revealPlayerControls();
   });
   connect(player_, &melearner::Player::commandFinished, this, [this](auto id) {
     if (screenshotRequests_.contains(id)) status_->setText(tr("Screenshot saved: %1").arg(screenshotRequests_.take(id)));
@@ -686,7 +726,7 @@ void MainWindow::showLesson(const lib::Lesson& lesson) {
   complete_->setEnabled(true); complete_->setText(lesson.completed ? tr("Mark incomplete") : tr("Mark complete"));
   play_->setEnabled(false); seek_->setEnabled(false); time_->setText(clockText(positionMs_) + " / " + clockText(durationMs_));
   compactOutline_ = false; updateLayout();
-  playerControls_->setVisible(lesson.type == "video" || lesson.type == "audio");
+  revealPlayerControls();
   if (lesson.type == "video" || lesson.type == "audio") {
     video_->setAccessibleName(lesson.type == "audio" ? tr("Audio: %1").arg(lesson.name) : tr("Video: %1").arg(lesson.name));
     media_->setCurrentIndex(0); player_->setApprovedRoots({rootPath_}); player_->start(); loadSelectedMedia();
@@ -736,7 +776,19 @@ void MainWindow::keyPressEvent(QKeyEvent* event) {
 }
 bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
   if (event->type() == QEvent::Resize && playerControls_) updateControlsLayout();
+  if (hideControls_ && (watched == video_ || watched == playerControls_ || playerControls_->isAncestorOf(qobject_cast<QWidget*>(watched)))) {
+    if (event->type() == QEvent::MouseMove || event->type() == QEvent::MouseButtonPress ||
+        event->type() == QEvent::FocusIn || event->type() == QEvent::KeyPress) revealPlayerControls();
+    if (watched == video_ && event->type() == QEvent::MouseButtonPress) video_->setFocus(Qt::MouseFocusReason);
+  }
   return QMainWindow::eventFilter(watched, event);
+}
+void MainWindow::revealPlayerControls() {
+  if (!controlsFade_) return;
+  controlsFade_->stop(); controlsOpacity_->setOpacity(1.0);
+  const bool mediaLesson = lesson_ && (lesson_->type == "video" || lesson_->type == "audio");
+  playerControls_->setVisible(mediaLesson);
+  if (mediaLesson) { playerControls_->raise(); updateControlsLayout(); hideControls_->start(); }
 }
 void MainWindow::updateControlsLayout() {
   if (playbackWidgets_.isEmpty() || !lessonNavigation_) return;
@@ -754,24 +806,23 @@ void MainWindow::updateControlsLayout() {
   }
   int required = playbackLayout_->horizontalSpacing() * 4;
   for (const auto* widget : playbackWidgets_) required += widget->sizeHint().width();
-  int tracksRequired = tracksLayout_->horizontalSpacing() * 3;
-  for (const auto* widget : trackWidgets_) tracksRequired += widget->sizeHint().width();
-  required = std::max(required, tracksRequired);
-  const bool compact = available < required;
-  if (compact == compactControls_) return;
-  compactControls_ = compact;
-  for (auto* widget : playbackWidgets_) playbackLayout_->removeWidget(widget);
-  for (auto* widget : trackWidgets_) tracksLayout_->removeWidget(widget);
-  if (compact) {
-    playbackLayout_->addWidget(play_, 0, 0); playbackLayout_->addWidget(time_, 0, 1, 1, 2);
-    playbackLayout_->addWidget(playbackWidgets_[2], 1, 0);
-    playbackLayout_->addWidget(playbackWidgets_[3], 1, 1);
-    playbackLayout_->addWidget(playbackWidgets_[4], 1, 2);
-  } else {
-    for (int index = 0; index < playbackWidgets_.size(); ++index) playbackLayout_->addWidget(playbackWidgets_[index], 0, index);
+  const bool compact = video_->width() - 24 < required;
+  if (compact != compactControls_) {
+    compactControls_ = compact;
+    for (auto* widget : playbackWidgets_) playbackLayout_->removeWidget(widget);
+    if (compact) {
+      playbackLayout_->addWidget(play_, 0, 0); playbackLayout_->addWidget(time_, 0, 1, 1, 2);
+      playbackLayout_->addWidget(playbackWidgets_[2], 1, 0);
+      playbackLayout_->addWidget(playbackWidgets_[3], 1, 1);
+      playbackLayout_->addWidget(playbackWidgets_[4], 1, 2);
+    } else {
+      for (int index = 0; index < playbackWidgets_.size(); ++index) playbackLayout_->addWidget(playbackWidgets_[index], 0, index);
+    }
   }
-  for (int index = 0; index < trackWidgets_.size(); ++index)
-    tracksLayout_->addWidget(trackWidgets_[index], compact ? index / 2 : 0, compact ? index % 2 : index);
+  playerControls_->layout()->activate();
+  const int controlsHeight = playerControls_->sizeHint().height();
+  video_->setMinimumHeight(std::max(180, controlsHeight + 40));
+  playerControls_->setGeometry(0, video_->height() - controlsHeight, video_->width(), controlsHeight);
 }
 void MainWindow::updateLayout() {
   if (!rescan_ || !choose_) return;
@@ -780,7 +831,6 @@ void MainWindow::updateLayout() {
   title_->setVisible(!course_ || !compactHeader || fontMetrics().height() < 24);
   if (searchButton_) searchButton_->setVisible(!compactHeader || !course_);
   if (rootLabel_) rootLabel_->setVisible(height() >= 600);
-  if (video_) video_->setMinimumHeight(height() < 600 ? 60 : 180);
   rescan_->setVisible(!compactHeader); choose_->setVisible(!compactHeader || (!course_ && rootPath_.isEmpty()));
   const bool wideNotes = width() >= std::max(1280, fontMetrics().height() * 60);
   if (notesDock_) notesDock_->setVisible(lesson_.has_value() && wideNotes);
@@ -857,6 +907,24 @@ void MainWindow::applyAppearance(const QString& appearance) {
     palette.setColor(QPalette::Highlight, text); palette.setColor(QPalette::HighlightedText, surface);
   }
   QApplication::setPalette(palette);
+  playerControls_->setAutoFillBackground(highContrast);
+  playerControls_->setStyleSheet(highContrast ? QString() : QStringLiteral(R"(
+    QWidget#playerControls { background: rgba(18, 18, 18, 235); }
+    QLabel { color: #fafafa; background: transparent; }
+    QPushButton { color: #fafafa; background: transparent; border: 1px solid transparent; padding: 0 10px; }
+    QPushButton:hover { background: #363636; }
+    QPushButton:pressed { background: #484848; }
+    QPushButton:focus { border-color: #fafafa; }
+    QPushButton:disabled { color: #a3a3a3; }
+    QPushButton#playPause { color: #fafafa; background: transparent; border-color: transparent; }
+    QPushButton#playPause:hover { background: #363636; }
+    QPushButton#playPause:focus { border-color: #fafafa; }
+    QSlider { background: transparent; border: 0; }
+    QSlider::groove:horizontal { height: 3px; background: #737373; border-radius: 1px; }
+    QSlider::sub-page:horizontal { background: #f19b9d; border-radius: 1px; }
+    QSlider::handle:horizontal { background: #fafafa; width: 10px; margin: -4px 0; border-radius: 5px; }
+    QSlider::handle:horizontal:focus { background: #f19b9d; border: 2px solid #fafafa; }
+  )"));
   if (highContrast) { qApp->setStyleSheet({}); return; }
   qApp->setStyleSheet(QString(R"(
     QPushButton { background: %1; color: %2; border: 1px solid %3; border-radius: 6px; padding: 0 12px; }
