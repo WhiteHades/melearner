@@ -180,12 +180,13 @@ public:
             if (!started_) {
                 return;
             }
+        }
+        notifyAboutToShutdown();
+        {
+            std::lock_guard lock(mutex_);
             stopping_ = true;
         }
         commandAvailable_.notify_one();
-        if (auto* handle = handle_.load(std::memory_order_acquire); handle != nullptr) {
-            mpv_wakeup(handle);
-        }
         if (worker_.joinable()) {
             worker_.join();
         }
@@ -332,6 +333,36 @@ private:
     [[nodiscard]] bool stopping() const {
         std::lock_guard lock(mutex_);
         return stopping_;
+    }
+
+    void notifyAboutToShutdown() {
+        bool notify = false;
+        {
+            std::lock_guard lock(mutex_);
+            if (!shutdownNotified_) {
+                shutdownNotified_ = true;
+                notify = true;
+            }
+        }
+        if (notify) {
+            emit owner_->aboutToShutdown();
+        }
+    }
+
+    void requestShutdownOnOwnerThread() {
+        bool request = false;
+        {
+            std::lock_guard lock(mutex_);
+            if (!stopping_ && !shutdownQueued_) {
+                shutdownQueued_ = true;
+                request = true;
+            }
+        }
+        if (request) {
+            QMetaObject::invokeMethod(owner_, [owner = owner_] {
+                owner->shutdown();
+            }, Qt::QueuedConnection);
+        }
     }
 
     void run() {
@@ -708,11 +739,7 @@ private:
             return;
         }
         case MPV_EVENT_SHUTDOWN:
-            {
-                std::lock_guard lock(mutex_);
-                stopping_ = true;
-            }
-            commandAvailable_.notify_one();
+            requestShutdownOnOwnerThread();
             return;
         default:
             return;
@@ -1001,6 +1028,8 @@ private:
     bool loadCommandInFlight_ = false;
     bool started_ = false;
     bool stopping_ = false;
+    bool shutdownNotified_ = false;
+    bool shutdownQueued_ = false;
     std::thread worker_;
 
     std::atomic<bool> ready_{false};

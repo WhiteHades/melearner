@@ -52,6 +52,8 @@ public:
     // Starts the isolated libmpv worker. Initialization and all normal libmpv
     // calls happen off the Qt GUI thread.
     void start();
+    // Call on this object's Qt thread so attached OpenGL widgets can release
+    // their renderer synchronously before the worker and libmpv handle stop.
     void shutdown();
     [[nodiscard]] bool isReady() const;
 
@@ -84,6 +86,10 @@ public:
     [[nodiscard]] bool hasRenderContext() const;
 
 signals:
+    // Emitted synchronously before shutdown joins the worker or destroys the
+    // libmpv handle. Attached render widgets use it to release their renderer
+    // while their OpenGL context is still available.
+    void aboutToShutdown();
     void initialized();
     void stopped();
     // The generation is the accepted load request ID. Consumers must compare it

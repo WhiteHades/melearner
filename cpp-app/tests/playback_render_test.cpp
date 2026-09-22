@@ -42,8 +42,12 @@ private slots:
     QVERIFY2(!root.isEmpty(), "Checked-in media corpus missing");
     melearner::Player player(nullptr, softwareDecoding ? melearner::Player::DecodeMode::Software : melearner::Player::DecodeMode::Automatic);
     QTemporaryDir output; QVERIFY(output.isValid());
+    connect(&player, &melearner::Player::aboutToShutdown, &player, [] {
+      QTest::qSleep(100);
+    }, Qt::DirectConnection);
     melearner::MpvVideoWidget video(&player);
     QSignalSpy rendered(&video, &melearner::MpvVideoWidget::renderContextReady);
+    QSignalSpy renderErrors(&video, &melearner::MpvVideoWidget::renderError);
     QSignalSpy loaded(&player, &melearner::Player::fileLoaded);
     QSignalSpy errors(&player, &melearner::Player::commandFailed);
     QSignalSpy fatal(&player, &melearner::Player::fatalError);
@@ -122,8 +126,12 @@ private slots:
       }(), 5000);
     }
     QCOMPARE(QApplication::topLevelWidgets().size(), 1);
-    // The widget must release its renderer before shutdown joins libmpv.
-    video.setPlayer(nullptr); player.shutdown();
+    // Shutdown must ask the attached widget to release its renderer before
+    // joining libmpv; this intentionally exercises the reverse cleanup order.
+    player.shutdown();
+    QVERIFY2(renderErrors.isEmpty(), renderErrors.isEmpty()
+        ? "" : qPrintable(renderErrors.first().at(1).toString()));
+    QVERIFY(!video.isRenderContextReady());
   }
 };
 QTEST_MAIN(PlaybackRenderTest)

@@ -121,6 +121,9 @@ void MpvVideoWidget::connectPlayer(Player* player) {
         updateQueued_.store(false, std::memory_order_release);
         emit renderContextLost();
     });
+    connect(player, &Player::aboutToShutdown, this, [this] {
+        detachRenderContext();
+    }, Qt::DirectConnection);
     connect(player, &Player::initialized, this, [this] {
         if (context() != nullptr) {
             makeCurrent();
