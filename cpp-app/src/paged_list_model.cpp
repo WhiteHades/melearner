@@ -4,7 +4,7 @@
 
 QSize StudyItemDelegate::sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const {
   auto size = QStyledItemDelegate::sizeHint(option, index);
-  size.setHeight(std::max(compact_ ? 44 : 68, option.fontMetrics.lineSpacing() * 2 + (compact_ ? 8 : 20))); return size;
+  size.setHeight(std::max(compact_ ? 52 : 68, option.fontMetrics.lineSpacing() * 2 + (compact_ ? 16 : 20))); return size;
 }
 
 PagedListModel::PagedListModel(int pageSize, QObject* parent)

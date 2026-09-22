@@ -19,6 +19,7 @@ add_library(melearner_app STATIC
   cpp-app/src/single_instance.cpp
   cpp-app/src/main_window.cpp
   cpp-app/src/paged_list_model.cpp
+  cpp-app/src/course_outline_model.cpp
   cpp-app/src/search_dialog.cpp
   cpp-app/src/notes_panel.cpp
   cpp-app/src/stats_panel.cpp
@@ -52,7 +53,7 @@ install(FILES cpp-app/assets/melearner-logo.png
 if(BUILD_TESTING)
   find_package(Qt6 REQUIRED COMPONENTS Test)
   file(MAKE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.tmp/cpp-tests")
-  foreach(test IN ITEMS single_instance main_window paged_list_model library player documents search_dialog notes_panel stats_panel local_files pdf)
+  foreach(test IN ITEMS single_instance main_window paged_list_model course_outline_model library player documents search_dialog notes_panel stats_panel local_files pdf)
     add_executable(${test}_test cpp-app/tests/${test}_test.cpp)
     target_link_libraries(${test}_test PRIVATE melearner_app Qt6::Test)
     add_test(NAME ${test} COMMAND ${test}_test)

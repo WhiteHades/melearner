@@ -8,6 +8,7 @@
 #include <QFile>
 #include <QLabel>
 #include <QListView>
+#include <QTreeView>
 #include <QPushButton>
 #include <QSignalSpy>
 #include <QScrollArea>
@@ -52,7 +53,7 @@ private slots:
       QSignalSpy loaded(player, &melearner::Player::fileLoaded);
       QSignalSpy positions(player, &melearner::Player::positionChanged);
       courses->setCurrentIndex(courses->model()->index(0, 0)); QTest::keyClick(courses, Qt::Key_Return);
-      auto* lessons = window.findChild<QListView*>("lessons");
+      auto* lessons = window.findChild<QTreeView*>("lessons");
       QTRY_COMPARE_WITH_TIMEOUT(lessons->model()->rowCount(), 1, 5000);
       QTRY_COMPARE_WITH_TIMEOUT(loaded.count(), 1, 10000);
       QVERIFY(player->setVolume(0));
@@ -62,8 +63,7 @@ private slots:
       auto* accessibleVideo = QAccessible::queryAccessibleInterface(window.findChild<melearner::MpvVideoWidget*>());
       QVERIFY(accessibleVideo); QCOMPARE(accessibleVideo->role(), QAccessible::Animation);
       QVERIFY(accessibleVideo->imageInterface());
-      QCOMPARE(accessibleVideo->text(QAccessible::Name),
-        QString("Video: %1").arg(window.findChild<QLabel*>("lessonTitle")->text()));
+      QCOMPARE(accessibleVideo->text(QAccessible::Name), QString("Video: 01 Video"));
       if (launch == 0) {
         QElapsedTimer responsiveness; responsiveness.start();
         qint64 previousTick = 0; qint64 worstGap = 0; int ticks = 0;

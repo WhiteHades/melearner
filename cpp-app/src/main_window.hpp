@@ -3,10 +3,12 @@
 #include "documents.hpp"
 #include <QMainWindow>
 #include <QMap>
+#include <QSet>
 #include <optional>
 
 class QLabel;
 class QListView;
+class QTreeView;
 class QPushButton;
 class QSlider;
 class QComboBox;
@@ -17,8 +19,9 @@ class QTextEdit;
 class PdfView;
 class QDockWidget;
 class QGridLayout;
+class QBoxLayout;
 class QTabWidget;
-namespace melearner { class Player; class MpvVideoWidget; class NotesPanel; class StatsPanel; }
+namespace melearner { class Player; class MpvVideoWidget; class NotesPanel; class StatsPanel; class CourseOutlineModel; }
 
 class MainWindow final : public QMainWindow {
   Q_OBJECT
@@ -43,7 +46,9 @@ private:
   quint64 routeGeneration_ = 0;
   struct PageRequest { quint64 generation; int offset; };
   QMap<quint64, PageRequest> courseRequests_;
-  QMap<quint64, PageRequest> lessonRequests_;
+  QSet<quint64> mutationRequests_;
+  quint64 startupId_ = 0;
+  void trackMutation(quint64 requestId);
   std::optional<melearner::library::Course> course_;
   std::optional<melearner::library::Lesson> lesson_;
   std::optional<melearner::library::CourseEntry> resumeEntry_;
@@ -74,9 +79,9 @@ private:
   quint64 scanId_ = 0;
   QPushButton* complete_;
   QListView* courses_;
-  QListView* lessons_;
+  QTreeView* lessons_;
   PagedListModel* courseModel_;
-  PagedListModel* lessonModel_;
+  melearner::CourseOutlineModel* outlineModel_;
   bool compactOutline_ = true;
   melearner::Player* player_;
   melearner::MpvVideoWidget* video_ = nullptr;
@@ -98,6 +103,8 @@ private:
   QTextEdit* documentView_;
   QPushButton* documentPrevious_;
   QPushButton* documentNext_;
+  QBoxLayout* documentNavigation_ = nullptr;
+  QBoxLayout* lessonNavigation_ = nullptr;
   QPushButton* externalOpen_;
   quint64 externalOpenId_ = 0;
   quint64 documentRequestId_ = 0;
@@ -119,13 +126,14 @@ private:
   qint64 positionMs_ = 0;
   qint64 durationMs_ = 0;
   qint64 lastSaveMs_ = 0;
-  int pendingLessonIndex_ = -1;
+  quint64 stepResolveId_ = 0;
+  quint64 stepReadId_ = 0;
+  int stepDelta_ = 0;
   int returnCourseRow_ = -1;
   QString returnCourseId_;
   bool restoreCourseSelection_ = false;
   quint64 searchResolveId_ = 0;
   quint64 searchResolveGeneration_ = 0;
-  int resolvedLessonIndex_ = -1;
   void openSearch();
   void loadSelectedMedia();
   void savePosition(bool completed = false);

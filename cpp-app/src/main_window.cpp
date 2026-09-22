@@ -6,6 +6,7 @@
 #include "pdf_view.hpp"
 #include "notes_panel.hpp"
 #include "stats_panel.hpp"
+#include "course_outline_model.hpp"
 #include <QApplication>
 #include <QActionGroup>
 #include <QAccessibilityHints>
@@ -22,6 +23,7 @@
 #include <QLabel>
 #include <QKeyEvent>
 #include <QListView>
+#include <QTreeView>
 #include <QMenu>
 #include <QMessageBox>
 #include <QPushButton>
@@ -87,7 +89,7 @@ QListView* list(const QString& name, PagedListModel* model) {
 }
 
 MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwareDecoding)
-    : QMainWindow(parent), library_(databasePath), player_(new melearner::Player(this,
+    : QMainWindow(parent), library_(databasePath, this), player_(new melearner::Player(this,
         softwareDecoding ? melearner::Player::DecodeMode::Software : melearner::Player::DecodeMode::Automatic)) {
   setWindowTitle("melearner"); setMinimumSize(560, 400); resize(1200, 780);
   setWindowIcon(QIcon(":/cpp-app/assets/melearner-logo.png"));
@@ -112,7 +114,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   for (const auto& name : {QString("light"), QString("dark"), QString("cozy")}) {
     auto* action = appearanceMenu->addAction(name.left(1).toUpper() + name.mid(1));
     connect(action, &QAction::triggered, this, [this, name] {
-      auto changed = settings_; changed.appearance = name; (void)library_.setSettings(changed);
+      auto changed = settings_; changed.appearance = name; trackMutation(library_.setSettings(changed));
     });
   }
   auto* presentation = appearanceMenu->addMenu(tr("Library rows"));
@@ -121,7 +123,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     auto* action = presentation->addAction(name == "compact" ? tr("Compact") : tr("Comfortable"));
     action->setObjectName("presentation-" + name); action->setCheckable(true); presentationGroup->addAction(action);
     connect(action, &QAction::triggered, this, [this, name] {
-      auto changed = settings_; changed.libraryPresentation = name; (void)library_.setSettings(changed);
+      auto changed = settings_; changed.libraryPresentation = name; trackMutation(library_.setSettings(changed));
     });
   }
   appearanceMenu->addSeparator();
@@ -143,7 +145,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     [this] { applyAppearance(settings_.appearance); });
   settings->setMenu(appearanceMenu); toolbar->addWidget(settings);
   shell->addLayout(toolbar);
-  rootLabel_ = new QLabel; rootLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+  rootLabel_ = new ElidingLabel; rootLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
   rootLabel_->setTextFormat(Qt::PlainText);
   rootLabel_->setMinimumWidth(0); rootLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
   rootLabel_->setAccessibleName(tr("Root folder")); shell->addWidget(rootLabel_);
@@ -182,7 +184,19 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   outline_ = new QWidget; outline_->setMinimumWidth(210);
   auto* outlineLayout = new QVBoxLayout(outline_); outlineLayout->setContentsMargins(0, 0, 10, 0);
   auto* outlineTitle = new QLabel(tr("Course outline")); outlineTitle->setMargin(8); outlineLayout->addWidget(outlineTitle);
-  lessonModel_ = new PagedListModel(256, this); lessons_ = list("lessons", lessonModel_);
+  outlineModel_ = new melearner::CourseOutlineModel(library_, this);
+  lessons_ = new QTreeView; lessons_->setObjectName("lessons"); lessons_->setAccessibleName(tr("Course sections and lessons"));
+  lessons_->setModel(outlineModel_); lessons_->setHeaderHidden(true); lessons_->setUniformRowHeights(true);
+  auto* outlineDelegate = new StudyItemDelegate(lessons_); outlineDelegate->setCompact(true);
+  lessons_->setItemDelegate(outlineDelegate);
+  lessons_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  lessons_->setTextElideMode(Qt::ElideRight); lessons_->setWordWrap(true);
+  lessons_->setFrameShape(QFrame::NoFrame); lessons_->setIndentation(18);
+  lessons_->setExpandsOnDoubleClick(false); lessons_->setAnimated(false);
+  connect(outlineModel_, &melearner::CourseOutlineModel::lessonRevealed, this, [this](const QModelIndex& index) {
+    lessons_->expand(index.parent()); lessons_->setCurrentIndex(index); lessons_->scrollTo(index);
+  });
+  connect(outlineModel_, &melearner::CourseOutlineModel::errorOccurred, this, &MainWindow::showError);
   outlineLayout->addWidget(lessons_, 1); split_->addWidget(outline_);
   auto* contentScroll = new QScrollArea; contentScroll->setWidgetResizable(true); contentScroll->setFrameShape(QFrame::NoFrame);
   contentScroll->setObjectName("lessonScroll"); contentScroll->viewport()->installEventFilter(this);
@@ -207,11 +221,11 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   documentView_ = new QTextEdit; documentView_->setObjectName("documentText"); documentView_->setReadOnly(true);
   documentView_->setAccessibleName(tr("Lesson document")); documentView_->setFrameShape(QFrame::NoFrame);
   documentView_->setMaximumWidth(900); documentView_->hide(); documentLayout->addWidget(documentView_, 1);
-  auto* documentNavigation = new QHBoxLayout;
+  documentNavigation_ = new QHBoxLayout;
   documentPrevious_ = button(tr("Previous page"), "previousDocumentPage"); documentPrevious_->setEnabled(false);
   documentNext_ = button(tr("Continue reading"), "nextDocumentPage"); documentNext_->setEnabled(false);
-  documentNavigation->addWidget(documentPrevious_); documentNavigation->addStretch(); documentNavigation->addWidget(documentNext_);
-  documentLayout->addLayout(documentNavigation); media_->addWidget(documentPane); media_->setCurrentIndex(1);
+  documentNavigation_->addWidget(documentPrevious_); documentNavigation_->addStretch(); documentNavigation_->addWidget(documentNext_);
+  documentLayout->addLayout(documentNavigation_); media_->addWidget(documentPane); media_->setCurrentIndex(1);
   auto* pdfPane = new QWidget; auto* pdfLayout = new QVBoxLayout(pdfPane); pdfLayout->setContentsMargins(0, 0, 0, 0);
   auto* pdfControls = new QHBoxLayout;
   auto* fit = button(tr("Fit width"), "pdfFitWidth"); pdfControls->addWidget(fit);
@@ -278,10 +292,10 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   trackWidgets_ = {audio_, subtitles_, chapters_, playbackOptions};
   for (int index = 0; index < trackWidgets_.size(); ++index) tracksLayout_->addWidget(trackWidgets_[index], 0, index);
   controlsLayout->addLayout(tracksLayout_);
-  auto* navigation = new QHBoxLayout;
-  auto* previous = button(tr("Previous"), "previousLesson"); navigation->addWidget(previous);
-  complete_ = button(tr("Mark complete"), "markComplete"); complete_->setEnabled(false); navigation->addWidget(complete_, 1);
-  auto* next = button(tr("Next"), "nextLesson"); navigation->addWidget(next); contentLayout->addLayout(navigation);
+  lessonNavigation_ = new QHBoxLayout;
+  auto* previous = button(tr("Previous"), "previousLesson"); lessonNavigation_->addWidget(previous);
+  complete_ = button(tr("Mark complete"), "markComplete"); complete_->setEnabled(false); lessonNavigation_->addWidget(complete_, 1);
+  auto* next = button(tr("Next"), "nextLesson"); lessonNavigation_->addWidget(next); contentLayout->addLayout(lessonNavigation_);
   split_->addWidget(content_); split_->setStretchFactor(0, 0); split_->setStretchFactor(1, 1); split_->setSizes({300, 860});
   routes_->addWidget(split_);
   status_ = new QLabel(tr("Opening Library…")); status_->setWordWrap(true); status_->setAccessibleName(tr("Status"));
@@ -297,6 +311,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   });
   notesDock_ = new QDockWidget(tr("Lesson notes"), this);
   notesDock_->setFeatures(QDockWidget::NoDockWidgetFeatures); notesDock_->setMinimumWidth(240); notesDock_->setMaximumWidth(360);
+  notesDock_->setTitleBarWidget(new QWidget(notesDock_));
   notes_ = new melearner::NotesPanel(library_, notesDock_); notesDock_->setWidget(notes_);
   addDockWidget(Qt::RightDockWidgetArea, notesDock_); notesDock_->hide();
   connect(notes_, &melearner::NotesPanel::seekRequested, this, [this](double seconds) {
@@ -318,12 +333,9 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     const auto id = library_.courses(offset);
     if (id) courseRequests_.insert(id, {routeGeneration_, offset}); else courseModel_->failedPage(offset);
   });
-  connect(lessonModel_, &PagedListModel::pageRequested, this, [this](int offset) {
-    if (!course_) return;
-    const auto id = library_.lessons(course_->id, offset);
-    if (id) lessonRequests_.insert(id, {routeGeneration_, offset}); else lessonModel_->failedPage(offset);
-  });
-  connect(&library_, &lib::Library::opened, this, [this](auto, const lib::Startup& result) {
+  connect(&library_, &lib::Library::opened, this, [this](auto id, const lib::Startup& result) {
+    if (id != startupId_) return;
+    startupId_ = 0;
     observeRevision(result.revision);
     settings_ = result.settings; applyAppearance(settings_.appearance); applyPresentation();
     rootPath_ = result.root.path; rootLabel_->setText(rootPath_); rootLabel_->setToolTip(tooltip(rootPath_));
@@ -331,10 +343,20 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     choose_->setEnabled(true); rescan_->setEnabled(!rootPath_.isEmpty());
     status_->setText(tr("Ready")); courseModel_->reset(); refreshResume();
   });
-  connect(&library_, &lib::Library::settingsSaved, this, [this](auto, const lib::Settings& settings) {
+  connect(&library_, &lib::Library::settingsSaved, this, [this](auto id, const lib::Settings& settings) {
+    mutationRequests_.remove(id);
     settings_ = settings; applyAppearance(settings.appearance); applyPresentation();
   });
   connect(&library_, &lib::Library::searchResolved, this, [this](auto id, const lib::SearchResolution& result) {
+    if (id == stepResolveId_ && stepResolveId_) {
+      stepResolveId_ = 0;
+      if (!course_ || !lesson_ || result.course.id != course_->id || result.lesson.id != lesson_->id) return;
+      if (stepDelta_ < 0 && result.lessonOffset == 0) return;
+      const auto offset = stepDelta_ < 0 ? result.lessonOffset - 1 : result.lessonOffset + 1;
+      stepReadId_ = library_.lessons(course_->id, offset, 1);
+      if (!stepReadId_) showError(tr("Library is busy. Try changing lessons again."));
+      return;
+    }
     if (id != searchResolveId_ || searchResolveGeneration_ != routeGeneration_) return;
     searchResolveId_ = 0;
     showCourse(result.course, result.hasLesson ? result.lesson.id : QString());
@@ -357,9 +379,6 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     entryRequestId_ = 0; course_ = entry.course;
     if (entry.course.missing) { showError(tr("Course folder missing: %1. Choose its root folder, then Rescan.").arg(entry.course.path)); return; }
     if (!entry.hasLesson) { documentStatus_->setText(tr("This Course has no lessons yet. Add files, then rescan.")); return; }
-    if (entry.globalLessonOffset > std::numeric_limits<int>::max()) { showError(tr("Lesson index exceeds the supported range.")); return; }
-    resolvedLessonIndex_ = static_cast<int>(entry.globalLessonOffset);
-    lessons_->setCurrentIndex(lessonModel_->index(resolvedLessonIndex_)); lessons_->scrollTo(lessons_->currentIndex());
     showLesson(entry.lesson);
   });
   connect(&documents_, &melearner::documents::Documents::opened, this,
@@ -443,24 +462,9 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     empty_->setVisible(page.total == 0); courses_->setVisible(page.total != 0);
   });
   connect(&library_, &lib::Library::lessonsReady, this, [this](auto id, const lib::LessonPage& page) {
-    const auto found = lessonRequests_.find(id); if (found == lessonRequests_.end()) return;
-    const auto request = *found; lessonRequests_.erase(found);
-    if (request.generation != routeGeneration_ || !course_ || course_->id != page.courseId) return;
-    if (page.total > std::numeric_limits<int>::max()) { showError(tr("Course exceeds the supported row count.")); return; }
-    QList<StudyRow> rows;
-    for (const auto& lesson : page.rows) rows.append({lesson.id, lesson.name,
-      lesson.sectionName + (lesson.completed ? tr(" · Complete") : ""), lesson.completed, true, QVariant::fromValue(lesson)});
-    lessonModel_->setPage(static_cast<int>(page.offset), static_cast<int>(page.total), rows);
-    if (resolvedLessonIndex_ >= 0) {
-      lessons_->setCurrentIndex(lessonModel_->index(resolvedLessonIndex_)); lessons_->scrollTo(lessons_->currentIndex());
-      if (lessonModel_->row(resolvedLessonIndex_)) resolvedLessonIndex_ = -1;
-    }
-    if (pendingLessonIndex_ >= 0) {
-      if (const auto row = lessonModel_->row(pendingLessonIndex_)) {
-        const int selected = pendingLessonIndex_; pendingLessonIndex_ = -1;
-        lessons_->setCurrentIndex(lessonModel_->index(selected)); showLesson(row->value.value<lib::Lesson>());
-      }
-    }
+    if (!stepReadId_ || id != stepReadId_) return;
+    stepReadId_ = 0;
+    if (course_ && page.courseId == course_->id && !page.rows.isEmpty()) showLesson(page.rows.first());
   });
   connect(&library_, &lib::Library::scanProgress, this, [this](auto id, const lib::ScanProgress& state) {
     if (id != scanId_) return;
@@ -477,32 +481,40 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
       : tr("Scan completed with %1 warnings. %2").arg(state.warnings.size()).arg(state.warnings.first()));
   });
   connect(&library_, &lib::Library::failed, this, [this](auto id, const lib::Error& error) {
-    if (error.code == lib::ErrorCode::stale_revision) return; // Revision-bound panels handle superseded reads.
+    if (!id) return;
+    bool owned = mutationRequests_.remove(id) || id == startupId_ || id == scanId_;
+    owned = owned || courseRequests_.contains(id) || id == stepResolveId_ || id == stepReadId_;
+    owned = owned || (id == entryRequestId_ && entryGeneration_ == routeGeneration_);
+    owned = owned || (id == resumeRequestId_ && resumeGeneration_ == routeGeneration_);
+    owned = owned || (id == searchResolveId_ && searchResolveGeneration_ == routeGeneration_);
+    if (!owned) return;
+    if (id == startupId_) startupId_ = 0;
     if (courseRequests_.contains(id)) courseModel_->failedPage(courseRequests_.take(id).offset);
-    if (lessonRequests_.contains(id)) lessonModel_->failedPage(lessonRequests_.take(id).offset);
+    if (id == stepResolveId_) stepResolveId_ = 0;
+    if (id == stepReadId_) stepReadId_ = 0;
     if (id == scanId_) { scanId_ = 0; cancelScan_->hide(); }
     choose_->setEnabled(scanId_ == 0); rescan_->setEnabled(scanId_ == 0 && !rootPath_.isEmpty()); showError(error.message);
   });
   connect(courses_, &QListView::activated, this, [this](const QModelIndex& index) {
     if (const auto row = courseModel_->row(index.row())) showCourse(row->value.value<lib::Course>());
   });
-  connect(lessons_, &QListView::activated, this, [this](const QModelIndex& index) {
-    if (const auto row = lessonModel_->row(index.row())) showLesson(row->value.value<lib::Lesson>());
+  connect(lessons_, &QTreeView::activated, this, [this](const QModelIndex& index) {
+    if (const auto lesson = outlineModel_->lesson(index)) showLesson(*lesson);
+    else if (!index.parent().isValid()) lessons_->setExpanded(index, !lessons_->isExpanded(index));
   });
   connect(previous, &QPushButton::clicked, this, [this] { stepLesson(-1); });
   connect(next, &QPushButton::clicked, this, [this] { stepLesson(1); });
   connect(complete_, &QPushButton::clicked, this, [this] {
     if (!lesson_) return;
-    (void)library_.saveProgress(lesson_->id, std::max<qint64>(0, positionMs_),
-      std::max<qint64>(0, durationMs_), !lesson_->completed);
+    trackMutation(library_.saveProgress(lesson_->id, std::max<qint64>(0, positionMs_),
+      std::max<qint64>(0, durationMs_), !lesson_->completed));
   });
-  connect(&library_, &lib::Library::progressSaved, this, [this](auto, const lib::ProgressResult& result) {
+  connect(&library_, &lib::Library::progressSaved, this, [this](auto id, const lib::ProgressResult& result) {
+    mutationRequests_.remove(id);
     observeRevision(result.revision);
     if (!lesson_ || lesson_->id != result.lessonId) return;
     lesson_->completed = result.completed;
     lesson_->lastPosition = result.lastPosition; lesson_->watchedTime = result.watchedTime;
-    lessonModel_->updateRow({lesson_->id, lesson_->name,
-      lesson_->sectionName + (result.completed ? tr(" · Complete") : ""), result.completed, true, QVariant::fromValue(*lesson_)});
     complete_->setText(result.completed ? tr("Mark incomplete") : tr("Mark complete"));
   });
   connect(&library_, &lib::Library::noteSaved, this, [this](auto, const lib::NoteSaved& result) { observeRevision(result.revision); });
@@ -591,7 +603,8 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   connect(player_, &melearner::Player::fatalError, this, [this](const QString&, const QString& message) { showError(message); });
   auto* escape = new QShortcut(QKeySequence(Qt::Key_Escape), this);
   connect(escape, &QShortcut::activated, this, [this] { if (isFullScreen()) showNormal(); else if (course_) showLibrary(); });
-  (void)library_.open();
+  startupId_ = library_.open();
+  if (!startupId_) showError(tr("The Library could not start. Close and reopen melearner."));
   applyAppearance("light");
 }
 
@@ -612,8 +625,8 @@ void MainWindow::showLibrary() {
   pdf_->clear();
   savePosition(); playerLoaded_ = false; playerLoadRequested_ = false;
   if (player_->isReady()) (void)player_->stop();
-  ++routeGeneration_; courseRequests_.clear(); lessonRequests_.clear(); course_.reset(); lesson_.reset();
-  documentRequestId_ = 0; pendingLessonIndex_ = -1;
+  ++routeGeneration_; courseRequests_.clear(); course_.reset(); lesson_.reset(); outlineModel_->setCourse({});
+  documentRequestId_ = 0; stepResolveId_ = 0; stepReadId_ = 0;
   routes_->setCurrentIndex(0); back_->hide(); outlineToggle_->hide(); title_->setText(tr("Your Library"));
   observeRevision(libraryRevision_);
   choose_->show(); rescan_->show();
@@ -625,6 +638,10 @@ void MainWindow::showLibrary() {
 void MainWindow::observeRevision(quint64 revision) {
   libraryRevision_ = std::max(libraryRevision_, revision);
   stats_->setActive(!course_ && libraryTabs_->currentIndex() == 1, libraryRevision_);
+}
+void MainWindow::trackMutation(quint64 requestId) {
+  if (requestId) mutationRequests_.insert(requestId);
+  else showError(tr("The Library is busy. Try again shortly."));
 }
 void MainWindow::refreshResume() {
   resumeEntry_.reset(); resumePanel_->hide(); resumeGeneration_ = routeGeneration_;
@@ -638,14 +655,14 @@ void MainWindow::showCourse(const lib::Course& course, const QString& requestedL
   savePosition(); playerLoaded_ = false; playerLoadRequested_ = false; documentRequestId_ = 0;
   if (player_->isReady()) (void)player_->stop();
   returnCourseRow_ = courses_->currentIndex().row(); returnCourseId_ = course.id;
-  ++routeGeneration_; lessonRequests_.clear(); courseRequests_.clear(); course_ = course; lesson_.reset(); resolvedLessonIndex_ = -1; pendingLessonIndex_ = -1;
+  ++routeGeneration_; courseRequests_.clear(); course_ = course; lesson_.reset(); stepResolveId_ = 0; stepReadId_ = 0;
   observeRevision(libraryRevision_);
   compactOutline_ = true; routes_->setCurrentIndex(1); back_->show(); title_->setText(course.name); title_->setToolTip(tooltip(course.name));
   playerControls_->hide();
   media_->setCurrentIndex(1); documentView_->clear(); documentView_->hide();
   documentStatus_->setText(tr("Choose an item from the Course outline."));
   documentPrevious_->setEnabled(false); documentNext_->setEnabled(false); complete_->setEnabled(false);
-  lessonTitle_->setText(tr("Select a lesson")); lessonModel_->reset(); updateLayout(); lessons_->setFocus();
+  lessonTitle_->setText(tr("Select a lesson")); outlineModel_->setCourse(course.id); updateLayout(); lessons_->setFocus();
   entryGeneration_ = routeGeneration_;
   const auto target = requestedLesson.isEmpty() && rememberedCourse_ == course.id ? rememberedLesson_ : requestedLesson;
   entryRequestId_ = library_.enterCourse(course.id, target);
@@ -653,12 +670,13 @@ void MainWindow::showCourse(const lib::Course& course, const QString& requestedL
 }
 void MainWindow::showLesson(const lib::Lesson& lesson) {
   entryRequestId_ = 0;
-  pendingLessonIndex_ = -1;
+  stepResolveId_ = 0; stepReadId_ = 0;
   externalOpenId_ = 0; externalOpen_->setVisible(lesson.type != "video" && lesson.type != "audio");
   pdf_->clear();
   savePosition(); playerLoaded_ = false; playerLoadRequested_ = false;
   if (player_->isReady()) (void)player_->stop();
   lesson_ = lesson;
+  outlineModel_->revealLesson(lesson);
   documentRequestId_ = 0; documentGeneration_ = 0; documentOffsets_.clear();
   documentPrevious_->setEnabled(false); documentNext_->setEnabled(false);
   positionMs_ = static_cast<qint64>(lesson.lastPosition * 1000); durationMs_ = static_cast<qint64>(lesson.duration * 1000);
@@ -690,16 +708,14 @@ void MainWindow::loadSelectedMedia() {
 void MainWindow::savePosition(bool completed) {
   if (!lesson_) return;
   if ((lesson_->type == "video" || lesson_->type == "audio") && !playerLoaded_) return;
-  (void)library_.saveProgress(lesson_->id, std::max<qint64>(0, positionMs_), std::max<qint64>(0, durationMs_), completed || lesson_->completed);
+  trackMutation(library_.saveProgress(lesson_->id, std::max<qint64>(0, positionMs_), std::max<qint64>(0, durationMs_), completed || lesson_->completed));
   lastSaveMs_ = QDateTime::currentMSecsSinceEpoch();
 }
 void MainWindow::stepLesson(int delta) {
-  const int next = lessons_->currentIndex().row() + delta;
-  if (next < 0 || next >= lessonModel_->rowCount()) return;
-  if (const auto row = lessonModel_->row(next)) {
-    lessons_->setCurrentIndex(lessonModel_->index(next)); lessons_->scrollTo(lessons_->currentIndex());
-    showLesson(row->value.value<lib::Lesson>());
-  } else pendingLessonIndex_ = next;
+  if (!course_ || !lesson_ || stepResolveId_ || stepReadId_) return;
+  stepDelta_ = delta;
+  stepResolveId_ = library_.resolveLesson(course_->id, lesson_->sectionId, lesson_->id);
+  if (!stepResolveId_) showError(tr("Library is busy. Try changing lessons again."));
 }
 void MainWindow::resizeEvent(QResizeEvent* event) { QMainWindow::resizeEvent(event); updateLayout(); }
 void MainWindow::keyPressEvent(QKeyEvent* event) {
@@ -723,23 +739,34 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
   return QMainWindow::eventFilter(watched, event);
 }
 void MainWindow::updateControlsLayout() {
-  if (playbackWidgets_.isEmpty()) return;
+  if (playbackWidgets_.isEmpty() || !lessonNavigation_) return;
+  const auto* scroll = qobject_cast<QScrollArea*>(content_);
+  const int available = scroll->viewport()->width() - 12;
+  for (auto* navigation : {documentNavigation_, lessonNavigation_}) {
+    int needed = 0, count = 0;
+    for (int index = 0; index < navigation->count(); ++index) {
+      if (const auto* widget = navigation->itemAt(index)->widget()) {
+        needed += widget->sizeHint().width(); ++count;
+      }
+    }
+    needed += std::max(0, count - 1) * navigation->spacing();
+    navigation->setDirection(needed > available ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight);
+  }
   int required = playbackLayout_->horizontalSpacing() * 4;
   for (const auto* widget : playbackWidgets_) required += widget->sizeHint().width();
   int tracksRequired = tracksLayout_->horizontalSpacing() * 3;
   for (const auto* widget : trackWidgets_) tracksRequired += widget->sizeHint().width();
   required = std::max(required, tracksRequired);
-  const auto* scroll = qobject_cast<QScrollArea*>(content_);
-  const bool compact = scroll->viewport()->width() - 12 < required;
+  const bool compact = available < required;
   if (compact == compactControls_) return;
   compactControls_ = compact;
   for (auto* widget : playbackWidgets_) playbackLayout_->removeWidget(widget);
   for (auto* widget : trackWidgets_) tracksLayout_->removeWidget(widget);
   if (compact) {
-    playbackLayout_->addWidget(play_, 0, 0); playbackLayout_->addWidget(time_, 0, 1);
-    playbackLayout_->addWidget(playbackWidgets_[4], 0, 2);
-    playbackLayout_->addWidget(playbackWidgets_[2], 1, 0, 1, 2);
-    playbackLayout_->addWidget(playbackWidgets_[3], 1, 2);
+    playbackLayout_->addWidget(play_, 0, 0); playbackLayout_->addWidget(time_, 0, 1, 1, 2);
+    playbackLayout_->addWidget(playbackWidgets_[2], 1, 0);
+    playbackLayout_->addWidget(playbackWidgets_[3], 1, 1);
+    playbackLayout_->addWidget(playbackWidgets_[4], 1, 2);
   } else {
     for (int index = 0; index < playbackWidgets_.size(); ++index) playbackLayout_->addWidget(playbackWidgets_[index], 0, index);
   }
@@ -748,18 +775,20 @@ void MainWindow::updateControlsLayout() {
 }
 void MainWindow::updateLayout() {
   if (!rescan_ || !choose_) return;
-  const bool compact = width() < 768;
+  const bool compact = width() < std::max(768, fontMetrics().height() * 40);
   const bool compactHeader = width() < std::max(768, fontMetrics().height() * 40);
   title_->setVisible(!course_ || !compactHeader || fontMetrics().height() < 24);
   if (searchButton_) searchButton_->setVisible(!compactHeader || !course_);
   if (rootLabel_) rootLabel_->setVisible(height() >= 600);
   if (video_) video_->setMinimumHeight(height() < 600 ? 60 : 180);
   rescan_->setVisible(!compactHeader); choose_->setVisible(!compactHeader || (!course_ && rootPath_.isEmpty()));
-  if (notesDock_) notesDock_->setVisible(lesson_.has_value() && width() >= 1280);
-  if (notesButton_) notesButton_->setVisible(lesson_.has_value() && width() < 1280 && (!compactHeader || fontMetrics().height() < 24));
+  const bool wideNotes = width() >= std::max(1280, fontMetrics().height() * 60);
+  if (notesDock_) notesDock_->setVisible(lesson_.has_value() && wideNotes);
+  if (notesButton_) notesButton_->setVisible(lesson_.has_value() && !wideNotes && (!compactHeader || fontMetrics().height() < 24));
   if (!course_) return;
   outlineToggle_->setVisible(compact);
   outlineToggle_->setText(compactOutline_ ? tr("Lesson") : tr("Lessons"));
+  split_->setStretchFactor(0, compact ? 1 : 0);
   outline_->setVisible(!compact || compactOutline_); content_->setVisible(!compact || !compactOutline_);
 }
 void MainWindow::openNotes() {
@@ -834,16 +863,16 @@ void MainWindow::applyAppearance(const QString& appearance) {
     QPushButton:hover { background: %4; }
     QPushButton:pressed { background: %3; }
     QPushButton:focus, QComboBox:focus, QLineEdit:focus, QSpinBox:focus,
-    QTextEdit:focus, QListView:focus { border: 1px solid %5; }
+    QTextEdit:focus, QListView:focus, QTreeView:focus { border: 1px solid %5; }
     QPushButton:disabled { color: %7; background: %8; }
     QPushButton#playPause, QPushButton#resumeLesson { background: %5; color: %6; border-color: %5; font-weight: 600; }
     QPushButton#playPause:disabled { background: %4; color: %7; border-color: %3; }
     QPushButton#playPause:focus, QPushButton#resumeLesson:focus { border: 1px solid %2; }
     QComboBox, QLineEdit, QSpinBox { background: %1; color: %2; border: 1px solid %3; border-radius: 6px; padding: 4px 8px; }
-    QListView, QTextEdit, QTableWidget { background: %1; color: %2; border: 1px solid %3; border-radius: 6px; selection-background-color: %5; selection-color: %6; }
-    QListView::item { padding: 6px 10px; border-radius: 4px; }
-    QListView::item:hover:!selected { background: %4; }
-    QListView::item:selected { background: %5; color: %6; }
+    QListView, QTreeView, QTextEdit, QTableWidget { background: %1; color: %2; border: 1px solid %3; border-radius: 6px; selection-background-color: %5; selection-color: %6; }
+    QListView::item, QTreeView::item { padding: 6px 10px; border-radius: 4px; }
+    QListView::item:hover:!selected, QTreeView::item:hover:!selected { background: %4; }
+    QListView::item:selected, QTreeView::item:selected { background: %5; color: %6; }
     QMenu { background: %1; color: %2; border: 1px solid %3; padding: 4px; }
     QMenu::item { padding: 8px 24px 8px 12px; border-radius: 4px; }
     QMenu::item:selected { background: %5; color: %6; }

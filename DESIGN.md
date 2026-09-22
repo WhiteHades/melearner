@@ -50,7 +50,7 @@ Long course and lesson titles elide in navigation, with their full text availabl
 
 ## Layout
 
-The content floor is 560 by 400 logical pixels. Below 768 pixels, the course outline and lesson occupy separate panes with an explicit switch. Standard windows show the resizable outline beside the lesson. Wide windows can show notes alongside the lesson.
+The content floor is 560 by 400 logical pixels. Below 768 pixels, the course outline and lesson occupy separate panes with an explicit switch. Increased text size raises that threshold. Standard windows show the resizable outline beside the lesson. Wide windows can show notes alongside the lesson when the text size leaves enough room. Document and lesson navigation buttons stack when their labels no longer fit side by side.
 
 The video widget stays attached to its rendering context while the layout changes. Lists use bounded pages and native item views.
 
