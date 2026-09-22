@@ -2,6 +2,7 @@
 #include "search_dialog.hpp"
 #include "pdf_view.hpp"
 #include <QDir>
+#include <QDockWidget>
 #include <QAction>
 #include <QFile>
 #include <QLabel>
@@ -101,6 +102,13 @@ private slots:
     page->setValue(3); QTRY_VERIFY(pdf->cachedTiles() > 0);
     QVERIFY(window.findChild<QPushButton*>("openDocumentExternally")->isVisible());
     QVERIFY(!window.findChild<QPushButton*>("playPause")->isVisible());
+    window.resize(1600, 780); QCoreApplication::processEvents();
+    auto* notes = window.findChild<QDockWidget*>("lessonNotesDock"); QVERIFY(notes);
+    QVERIFY(!notes->isVisible());
+    auto* notesButton = window.findChild<QPushButton*>("lessonNotes"); QVERIFY(notesButton->isVisible());
+    QTest::mouseClick(notesButton, Qt::LeftButton); QTRY_VERIFY(notes->isVisible());
+    QVERIFY(notesButton->isChecked());
+    QTest::mouseClick(notesButton, Qt::LeftButton); QTRY_VERIFY(!notes->isVisible());
     for (const int width : {560, 768, 1280, 1920}) {
       window.resize(width, 720); QTest::qWait(30); QVERIFY(window.width() <= width);
       QTRY_COMPARE(page->value(), 3);

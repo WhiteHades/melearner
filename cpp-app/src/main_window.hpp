@@ -91,6 +91,7 @@ private:
   QStackedWidget* media_;
   PdfView* pdf_;
   QDockWidget* notesDock_ = nullptr;
+  bool notesOpen_ = false;
   melearner::NotesPanel* notes_ = nullptr;
   QPushButton* notesButton_ = nullptr;
   QPushButton* searchButton_ = nullptr;

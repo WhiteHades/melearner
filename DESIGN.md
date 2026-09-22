@@ -2,20 +2,20 @@
 name: melearner
 description: A cream-and-red native interface for learning from local course files.
 colors:
-  paper: "#faf7f0"
-  surface: "#fffdf8"
-  ink: "#302a26"
-  border: "#d9cfc2"
-  hover: "#f1e7da"
+  paper: "#faf9f6"
+  surface: "#fffefa"
+  ink: "#272522"
+  border: "#e5e2dc"
+  hover: "#efede8"
   accent: "#b82e35"
-  on-accent: "#fffdf8"
-  dark-paper: "#211d1b"
-  dark-surface: "#2a2522"
-  dark-ink: "#f5ede1"
-  dark-border: "#574a43"
-  dark-hover: "#3b302c"
+  on-accent: "#fffefa"
+  dark-paper: "#181817"
+  dark-surface: "#1f1f1d"
+  dark-ink: "#f5f4f0"
+  dark-border: "#343431"
+  dark-hover: "#2a2a27"
   dark-accent: "#f19b9d"
-  dark-on-accent: "#211d1b"
+  dark-on-accent: "#181817"
   cozy-paper: "#fff2d5"
   cozy-surface: "#fff8e8"
 rounded:
@@ -38,19 +38,21 @@ Course content leads the window. The interface supports choosing a root folder, 
 
 ## Colors
 
-Warm paper and ink form the light appearance. Red identifies primary actions, selection, and activity. Dark appearance uses a lighter red with dark text on selected controls. Cozy appearance warms the paper and surface while retaining the same red accent.
+Warm paper and ink form the light appearance. Red identifies primary actions, keyboard focus, and activity. Selected rows and menus use a quiet neutral fill. Dark appearance uses a lighter red. Cozy appearance warms the paper and surface while retaining the same red accent.
 
 The palette and widget styles are defined in `MainWindow::applyAppearance`. Activity cells derive their colors from that palette and choose the higher-contrast foreground. System high contrast uses the native black-and-white palette and removes custom widget styling.
 
 ## Typography
 
-Use the platform UI font and honor user text sizing. Route headings use 1.5 times the base size, metric values use 1.25 times, and section headings use bold weight. Code blocks use the platform fixed-width font. There is no bundled interface font.
+Use the platform UI font and honor user text sizing. Route headings use 1.25 times the base size with semibold weight, metric values use 1.25 times, and section headings use bold weight. Code blocks use the platform fixed-width font. There is no bundled interface font.
 
 Long course and lesson titles elide in navigation, with their full text available through tooltips and accessibility names. Descriptions wrap. Button labels remain on one line.
 
 ## Layout
 
-The content floor is 560 by 400 logical pixels. Below 768 pixels, the course outline and lesson occupy separate panes with an explicit switch. Increased text size raises that threshold. Standard windows show the resizable outline beside the lesson. Wide windows can show notes alongside the lesson when the text size leaves enough room. Document and lesson navigation buttons stack when their labels no longer fit side by side.
+The content floor is 560 by 400 logical pixels. Below 768 pixels, the course outline and lesson occupy separate panes with an explicit switch. Increased text size raises that threshold. Standard windows show the resizable outline beside the lesson. Notes open on request, alongside the lesson in wide windows or in a dialog when space is limited. Document and lesson navigation buttons stack when their labels no longer fit side by side.
+
+The header uses borderless navigation controls. Folder changes and rescanning live in Settings. The initial empty Library exposes Choose root folder directly. Course pages omit the root path so the lesson has more room.
 
 The video widget stays attached to its rendering context while the layout changes. Lists use bounded pages and native item views.
 

@@ -126,6 +126,7 @@ private slots:
         for (const int width : {560, 768, 1280}) {
           window.resize(width, 720); QCoreApplication::processEvents(); QVERIFY(window.width() <= width);
           QVERIFY(surface->rect().contains(controls->geometry()));
+          QTRY_COMPARE(window.findChild<QSlider*>("playbackPosition")->width(), controls->width() - 24);
           const auto captures = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
           if (!captures.isEmpty()) QVERIFY(window.grab().save(captures + QString("/player-%1-%2x.png").arg(width).arg(fontScale)));
         }
@@ -147,6 +148,14 @@ private slots:
         QTRY_VERIFY(!rates.isEmpty()); QCOMPARE(rates.last().first().toDouble(), 1.5);
         const auto captureDirectory = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
         if (!captureDirectory.isEmpty()) QVERIFY(window.grab().save(captureDirectory + QString("/player-minimum-%1x.png").arg(fontScale)));
+        window.resize(1280, 720);
+        auto* appearance = window.findChild<QPushButton*>("appearance")->menu();
+        const QStringList colors{"#faf9f6", "#181817", "#fff2d5"};
+        for (int theme : {1, 2, 0}) {
+          appearance->actions().at(theme)->trigger();
+          QTRY_COMPARE(QApplication::palette().color(QPalette::Window).name(), colors.at(theme));
+          if (!captureDirectory.isEmpty()) QVERIFY(window.grab().save(captureDirectory + QString("/player-theme-%1-%2x.png").arg(theme).arg(fontScale)));
+        }
       } else {
         const auto restored = loaded.first().at(2).toLongLong();
         QVERIFY2(qAbs(restored - saved) < 500, qPrintable(QString("Saved %1 ms, restored %2 ms").arg(saved).arg(restored)));

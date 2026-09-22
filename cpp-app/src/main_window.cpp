@@ -104,7 +104,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   toolbar->addWidget(brand);
   back_ = button(tr("Library"), "backToLibrary"); back_->hide(); toolbar->addWidget(back_);
   title_ = new ElidingLabel(tr("Your Library")); title_->setObjectName("routeTitle");
-  auto heading = title_->font(); heading.setPointSizeF(heading.pointSizeF() * 1.5); heading.setBold(true); title_->setFont(heading);
+  auto heading = title_->font(); heading.setPointSizeF(heading.pointSizeF() * 1.25); heading.setWeight(QFont::DemiBold); title_->setFont(heading);
   title_->setMinimumWidth(0); title_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
   toolbar->addWidget(title_, 1);
   outlineToggle_ = button(tr("Lessons"), "toggleOutline"); outlineToggle_->hide(); toolbar->addWidget(outlineToggle_);
@@ -113,6 +113,10 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   rescan_ = button(tr("Rescan"), "rescanRoot"); rescan_->setEnabled(false); toolbar->addWidget(rescan_);
   choose_ = button(tr("Choose root folder"), "chooseRoot"); choose_->setEnabled(false); toolbar->addWidget(choose_);
   auto* settings = button(tr("Settings"), "appearance");
+  settings->setAccessibleName(tr("Application settings"));
+  for (auto* action : {back_, outlineToggle_, searchButton_, notesButton_, settings}) action->setProperty("variant", "ghost");
+  searchButton_->setToolTip(tr("Search Library (Ctrl+K)"));
+  notesButton_->setCheckable(true);
   auto* appearanceMenu = new QMenu(settings);
   for (const auto& name : {QString("light"), QString("dark"), QString("cozy")}) {
     auto* action = appearanceMenu->addAction(name.left(1).toUpper() + name.mid(1));
@@ -149,6 +153,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   settings->setMenu(appearanceMenu); toolbar->addWidget(settings);
   shell->addLayout(toolbar);
   rootLabel_ = new ElidingLabel; rootLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+  rootLabel_->setObjectName("rootPath");
   rootLabel_->setTextFormat(Qt::PlainText);
   rootLabel_->setMinimumWidth(0); rootLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
   rootLabel_->setAccessibleName(tr("Root folder")); shell->addWidget(rootLabel_);
@@ -338,6 +343,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     cancelScan_->setEnabled(false);
   });
   notesDock_ = new QDockWidget(tr("Lesson notes"), this);
+  notesDock_->setObjectName("lessonNotesDock");
   notesDock_->setFeatures(QDockWidget::NoDockWidgetFeatures); notesDock_->setMinimumWidth(240); notesDock_->setMaximumWidth(360);
   notesDock_->setTitleBarWidget(new QWidget(notesDock_));
   notes_ = new melearner::NotesPanel(library_, notesDock_); notesDock_->setWidget(notes_);
@@ -819,10 +825,10 @@ void MainWindow::updateControlsLayout() {
       for (int index = 0; index < playbackWidgets_.size(); ++index) playbackLayout_->addWidget(playbackWidgets_[index], 0, index);
     }
   }
-  playerControls_->layout()->activate();
   const int controlsHeight = playerControls_->sizeHint().height();
   video_->setMinimumHeight(std::max(180, controlsHeight + 40));
   playerControls_->setGeometry(0, video_->height() - controlsHeight, video_->width(), controlsHeight);
+  playerControls_->layout()->activate();
 }
 void MainWindow::updateLayout() {
   if (!rescan_ || !choose_) return;
@@ -830,11 +836,14 @@ void MainWindow::updateLayout() {
   const bool compactHeader = width() < std::max(768, fontMetrics().height() * 40);
   title_->setVisible(!course_ || !compactHeader || fontMetrics().height() < 24);
   if (searchButton_) searchButton_->setVisible(!compactHeader || !course_);
-  if (rootLabel_) rootLabel_->setVisible(height() >= 600);
-  rescan_->setVisible(!compactHeader); choose_->setVisible(!compactHeader || (!course_ && rootPath_.isEmpty()));
+  if (rootLabel_) rootLabel_->setVisible(!course_ && height() >= 600);
+  rescan_->hide(); choose_->setVisible(!course_ && rootPath_.isEmpty());
   const bool wideNotes = width() >= std::max(1280, fontMetrics().height() * 60);
-  if (notesDock_) notesDock_->setVisible(lesson_.has_value() && wideNotes);
-  if (notesButton_) notesButton_->setVisible(lesson_.has_value() && !wideNotes && (!compactHeader || fontMetrics().height() < 24));
+  if (notesDock_) notesDock_->setVisible(lesson_.has_value() && notesOpen_ && wideNotes);
+  if (notesButton_) {
+    notesButton_->setVisible(lesson_.has_value() && (!compactHeader || fontMetrics().height() < 24));
+    notesButton_->setChecked(notesDock_->isVisible());
+  }
   if (!course_) return;
   outlineToggle_->setVisible(compact);
   outlineToggle_->setText(compactOutline_ ? tr("Lesson") : tr("Lessons"));
@@ -843,6 +852,10 @@ void MainWindow::updateLayout() {
 }
 void MainWindow::openNotes() {
   if (!lesson_) return;
+  if (width() >= std::max(1280, fontMetrics().height() * 60)) {
+    notesOpen_ = !notesOpen_; updateLayout(); return;
+  }
+  notesButton_->setChecked(false);
   const QPointer<QWidget> invoker = QApplication::focusWidget();
   auto* dialog = new QDialog(this); dialog->setWindowTitle(tr("Lesson notes")); dialog->resize(520, 500);
   dialog->setAttribute(Qt::WA_DeleteOnClose);
@@ -882,17 +895,17 @@ void MainWindow::applyAppearance(const QString& appearance) {
   const bool dark = appearance == "dark";
   const bool cozy = appearance == "cozy";
   auto palette = QApplication::palette();
-  const QColor ink(dark ? "#f5ede1" : "#302a26");
-  const QString surface = dark ? "#211d1b" : cozy ? "#fff2d5" : "#faf7f0";
-  const QString base = dark ? "#2a2522" : cozy ? "#fff8e8" : "#fffdf8";
-  const QString border = dark ? "#574a43" : "#d9cfc2";
-  const QString hover = dark ? "#3b302c" : "#f1e7da";
+  const QColor ink(dark ? "#f5f4f0" : "#272522");
+  const QString surface = dark ? "#181817" : cozy ? "#fff2d5" : "#faf9f6";
+  const QString base = dark ? "#1f1f1d" : cozy ? "#fff8e8" : "#fffefa";
+  const QString border = dark ? "#343431" : "#e5e2dc";
+  const QString hover = dark ? "#2a2a27" : cozy ? "#f1e7da" : "#efede8";
   const QString accent = dark ? "#f19b9d" : "#b82e35";
-  const QString onAccent = dark ? "#211d1b" : "#fffdf8";
+  const QString onAccent = dark ? "#181817" : "#fffefa";
   palette.setColor(QPalette::Window, QColor(surface));
   palette.setColor(QPalette::WindowText, ink);
   palette.setColor(QPalette::Base, QColor(base));
-  palette.setColor(QPalette::AlternateBase, QColor(dark ? "#39342d" : "#f3eee4"));
+  palette.setColor(QPalette::AlternateBase, QColor(hover));
   palette.setColor(QPalette::Text, ink);
   palette.setColor(QPalette::Button, QColor(base));
   palette.setColor(QPalette::ButtonText, ink);
@@ -930,20 +943,24 @@ void MainWindow::applyAppearance(const QString& appearance) {
     QPushButton { background: %1; color: %2; border: 1px solid %3; border-radius: 6px; padding: 0 12px; }
     QPushButton:hover { background: %4; }
     QPushButton:pressed { background: %3; }
+    QPushButton[variant="ghost"] { background: transparent; border-color: transparent; }
+    QPushButton[variant="ghost"]:hover, QPushButton[variant="ghost"]:checked { background: %4; }
+    QPushButton[variant="ghost"]:focus { border-color: %5; }
     QPushButton:focus, QComboBox:focus, QLineEdit:focus, QSpinBox:focus,
     QTextEdit:focus, QListView:focus, QTreeView:focus { border: 1px solid %5; }
     QPushButton:disabled { color: %7; background: %8; }
-    QPushButton#playPause, QPushButton#resumeLesson { background: %5; color: %6; border-color: %5; font-weight: 600; }
-    QPushButton#playPause:disabled { background: %4; color: %7; border-color: %3; }
-    QPushButton#playPause:focus, QPushButton#resumeLesson:focus { border: 1px solid %2; }
+    QPushButton#resumeLesson { background: %5; color: %6; border-color: %5; font-weight: 600; }
+    QPushButton#resumeLesson:focus { border: 1px solid %2; }
     QComboBox, QLineEdit, QSpinBox { background: %1; color: %2; border: 1px solid %3; border-radius: 6px; padding: 4px 8px; }
-    QListView, QTreeView, QTextEdit, QTableWidget { background: %1; color: %2; border: 1px solid %3; border-radius: 6px; selection-background-color: %5; selection-color: %6; }
+    QListView, QTreeView, QTextEdit, QTableWidget { background: %1; color: %2; border: 1px solid %3; border-radius: 6px; selection-background-color: %4; selection-color: %2; }
+    QListView#courses, QTreeView#lessons { background: transparent; border-color: transparent; }
+    QListView#courses:focus, QTreeView#lessons:focus { border-color: %5; }
     QListView::item, QTreeView::item { padding: 6px 10px; border-radius: 4px; }
     QListView::item:hover:!selected, QTreeView::item:hover:!selected { background: %4; }
-    QListView::item:selected, QTreeView::item:selected { background: %5; color: %6; }
+    QListView::item:selected, QTreeView::item:selected, QTreeView::branch:selected { background: %4; color: %2; }
     QMenu { background: %1; color: %2; border: 1px solid %3; padding: 4px; }
     QMenu::item { padding: 8px 24px 8px 12px; border-radius: 4px; }
-    QMenu::item:selected { background: %5; color: %6; }
+    QMenu::item:selected { background: %4; color: %2; }
     QMenu::separator { height: 1px; background: %3; margin: 4px 8px; }
     QSplitter::handle { background: %8; }
     QSplitter::handle:hover { background: %3; }
@@ -955,6 +972,7 @@ void MainWindow::applyAppearance(const QString& appearance) {
     QGroupBox { border: 0; margin-top: 24px; font-weight: 600; }
     QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; }
     QHeaderView::section { background: %8; color: %2; border: 0; border-bottom: 1px solid %3; padding: 6px; }
+    QLabel#rootPath, QLabel#appStatus { color: %7; }
   )").arg(base, ink.name(), border, hover, accent, onAccent,
-    dark ? "#b4a69d" : "#75685f", surface));
+    dark ? "#aaa9a3" : "#6c6962", surface));
 }
