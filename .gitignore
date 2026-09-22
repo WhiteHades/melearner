@@ -4,3 +4,5 @@
 .env.local
 /.tmp/
 /build/
+/.impeccable/
+/cpp-app/assets/*.png.json
