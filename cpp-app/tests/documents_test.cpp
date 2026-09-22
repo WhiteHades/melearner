@@ -173,7 +173,7 @@ private slots:
         const auto malformedHtml = writeFile(
             root.path(),
             "malformed.html",
-            QByteArray("<p>bad\xC3\x28</p>", 14));
+            QByteArrayLiteral("<p>bad\xC3\x28</p>"));
         QVERIFY(!malformedHtml.isEmpty());
         const auto malformed = Documents::read({root.path(), malformedHtml});
         QVERIFY(!malformed.succeeded());
