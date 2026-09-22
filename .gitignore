@@ -6,3 +6,15 @@
 /build/
 /.impeccable/
 /cpp-app/assets/*.png.json
+
+# Local agent and product planning material is kept on the workstation only.
+/AGENTS.md
+/CONTEXT.md
+/PRODUCT.md
+/DESIGN.md
+/docs/agents/
+/docs/adr/
+/docs/specs/
+/docs/research/
+/docs/design-cpp-window.md
+/docs/stats-and-identity-plan.md

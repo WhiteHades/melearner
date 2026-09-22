@@ -5,6 +5,11 @@ set(plan_path "${CMAKE_CURRENT_LIST_DIR}/../docs/specs/cpp23-implementation-plan
 set(spec_path "${CMAKE_CURRENT_LIST_DIR}/../docs/specs/fully-native-melearner.md")
 set(temp_dir "${CMAKE_CURRENT_BINARY_DIR}/.tmp-cpp-traceability")
 
+if(NOT EXISTS "${plan_path}" OR NOT EXISTS "${spec_path}")
+  message(STATUS "C++ traceability self-test skipped: private planning sources are not present")
+  return()
+endif()
+
 file(READ "${plan_path}" valid_plan)
 file(READ "${spec_path}" valid_spec)
 file(REMOVE_RECURSE "${temp_dir}")
