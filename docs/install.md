@@ -2,8 +2,8 @@
 
 ## Linux from source
 
-The Linux-first C++ application needs a C++23 compiler, CMake 4.4 or newer,
-Ninja, pkg-config, Qt 6.11 Widgets/OpenGLWidgets/Network/Pdf/Test, SQLite,
+The application needs a C++23 compiler, CMake 4.4 or newer,
+Ninja, pkg-config, Qt 6.11.2 Widgets/OpenGLWidgets/Network/Pdf/Test, SQLite,
 libmpv, libzip, and md4c. On Arch Linux:
 
 ```bash
@@ -27,21 +27,12 @@ bash scripts/install-cpp-linux.sh "$HOME/.local"
 Launch with `$HOME/.local/bin/melearner`. The desktop entry is installed with
 the executable when the prefix supports it.
 
-## Arch package
+## Binary packages
 
-The Arch package is produced from the C++ release build with:
-
-```bash
-cmake --preset linux-release
-cmake --build --preset linux-release --parallel 4
-bash scripts/package-cpp-arch.sh --build-dir build/cpp-release
-```
-
-The package path is still undergoing runtime and legal-input qualification.
+Binary packages for version `0.1.9` are not yet available. Use the source
+installer above. Older release downloads contain an earlier application.
 
 ## Other platforms
 
-Windows development will continue on a Windows PC after the Linux release.
-macOS is deferred. No legacy runtime or compatibility package is shipped.
-
-For the Windows developer build handoff, see [Windows development](windows-development.md). Windows release qualification and packaging remain deferred until a native Windows machine completes that checklist.
+Windows and macOS packages are not available. Contributors can use the
+[Windows build guide](windows-development.md) to build and test on Windows.

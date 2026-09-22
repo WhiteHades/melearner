@@ -1,6 +1,6 @@
-# Windows development
+# Windows builds
 
-Windows release qualification is deferred until the application is built and tested on a native Windows machine. macOS is deferred separately. This handoff prepares the C++23 and Qt 6.11.2 application at version `0.1.9`; it does not claim Windows qualification or provide a release package.
+These commands build the C++23 and Qt application on Windows. Windows support is experimental; a tested Windows package is not yet available.
 
 ## Toolchain
 
@@ -69,14 +69,8 @@ python3 scripts/test-cpp-windows-build.py
 
 This regression uses disposable command stubs. It checks environment and job validation, build failure ordering, the default no-playback path, and the explicit playback target launch.
 
-## Confirmed boundaries and follow-up
+## Packaging
 
-- The Linux source installer, Linux runtime stager, Arch package, and diagnostic archive are Linux-only. They must not be used as Windows packaging commands.
+- The Linux source installer and Linux packaging scripts do not create Windows packages.
 - The first configure downloads Lexbor 3.0.0 from its pinned URL and verifies its SHA-256 hash, so the first configure needs network access. Runtime behavior remains local only.
-- Windows packaging is still pending. Use Qt's `windeployqt` after a successful native build, then stage the MinGW UCRT runtime, libmpv, Qt PDF, and their transitive DLLs. Do not publish an installer from this handoff.
-- The Linux-only secure file-handle path is guarded by `Q_OS_LINUX`; Windows currently uses Qt file reopening after validation. Review that race boundary on Windows before release qualification.
-- `local_files.cpp` builds root containment with `QDir::separator()`. Validate drive roots, mixed separators, Unicode paths, and paths with spaces on Windows before release qualification.
-- Marker publication uses `std::filesystem::create_hard_link`. Validate same-volume temporary paths and the warning behavior when the temporary directory and course root are on different volumes.
-- The source was not compiled or executed on Windows in this environment. The native Windows machine must record compiler, CMake, Qt, package, CTest, and playback results before a release is considered.
-
-No CI workflow or release asset is changed by this handoff.
+- Use Qt's `windeployqt` after a successful native build, then include the MinGW UCRT runtime, libmpv, Qt PDF, and their required DLLs with the application. A Windows packaging script is not yet provided.

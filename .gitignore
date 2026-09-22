@@ -18,3 +18,8 @@
 /docs/research/
 /docs/design-cpp-window.md
 /docs/stats-and-identity-plan.md
+/cpp-app/README.md
+/.github/workflows/
+/scripts/ci-cpp-linux.sh
+/scripts/check-cpp-traceability.cmake
+/scripts/test-cpp-traceability.cmake

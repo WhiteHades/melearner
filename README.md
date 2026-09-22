@@ -7,7 +7,7 @@
 Local only desktop learning from course files already on your machine.
 
 [![platform](https://img.shields.io/badge/platform-Linux-8f2d25?style=flat)](docs/install.md)
-[![stack](https://img.shields.io/badge/stack-C%2B%2B23%20%C2%B7%20Qt%206.11-8f2d25?style=flat)](cpp-app/README.md)
+[![stack](https://img.shields.io/badge/stack-C%2B%2B23%20%C2%B7%20Qt%206.11-8f2d25?style=flat)](docs/development.md)
 [![storage](https://img.shields.io/badge/storage-local%20SQLite-8f2d25?style=flat)](docs/privacy-and-legal.md)
 [![license](https://img.shields.io/badge/license-MIT-8f2d25?style=flat)](LICENSE)
 
@@ -31,7 +31,7 @@ Run it with:
 $HOME/.local/bin/melearner
 ```
 
-The Arch package and portable archive use the same C++ executable and are being qualified from the Linux release build.
+The current source version is `0.1.9`. Binary packages for this version are not yet available.
 
 ## First run
 
@@ -53,7 +53,7 @@ Progress is stored in local SQLite under the C++ application data directory.
 
 ## Development
 
-See [C++ development](cpp-app/README.md), [Windows preparation](docs/windows-development.md), [installation](docs/install.md), and [usage](docs/usage.md).
+See [building from source](docs/development.md), [Windows builds](docs/windows-development.md), [installation](docs/install.md), and [usage](docs/usage.md).
 
 ## License
 

@@ -35,11 +35,11 @@ cd "$repo_root"
 
 for tool in cmake ctest ninja c++ pkg-config; do
   if ! command -v "$tool" >/dev/null; then
-    fail "Missing build tool: $tool. See cpp-app/README.md for development prerequisites."
+    fail "Missing build tool: $tool. See docs/development.md for development prerequisites."
   fi
 done
 if ! pkg-config --print-errors --exists Qt6Widgets Qt6OpenGLWidgets Qt6Network Qt6Pdf Qt6Test sqlite3 mpv libzip md4c; then
-  fail "Missing native development libraries (including Qt Test). See cpp-app/README.md."
+  fail "Missing native development libraries (including Qt Test). See docs/development.md."
 fi
 
 cmake --preset linux-release
