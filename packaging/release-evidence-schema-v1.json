@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/WhiteHades/melearner/schemas/release-evidence-v1.json",
-  "title": "melearner four-artifact release evidence v1",
+  "title": "melearner Linux release evidence v1",
   "type": "object",
   "additionalProperties": false,
   "$defs": {
@@ -52,9 +52,7 @@
           "type": "string",
           "enum": [
             "appimage-linux-x86_64",
-            "arch-linux-x86_64",
-            "dmg-macos-universal",
-            "msi-windows-x86_64"
+            "arch-linux-x86_64"
           ]
         },
         "manifestPath": {
@@ -102,8 +100,8 @@
       "items": {
         "$ref": "#/$defs/artifactManifest"
       },
-      "minItems": 4,
-      "maxItems": 4,
+      "minItems": 2,
+      "maxItems": 2,
       "uniqueItems": true,
       "allOf": [
         {
@@ -126,30 +124,6 @@
             "properties": {
               "id": {
                 "const": "arch-linux-x86_64"
-              }
-            }
-          }
-        },
-        {
-          "contains": {
-            "required": [
-              "id"
-            ],
-            "properties": {
-              "id": {
-                "const": "dmg-macos-universal"
-              }
-            }
-          }
-        },
-        {
-          "contains": {
-            "required": [
-              "id"
-            ],
-            "properties": {
-              "id": {
-                "const": "msi-windows-x86_64"
               }
             }
           }

@@ -162,5 +162,66 @@ set(whitespace_profiles_path "${temp_dir}/whitespace-reference-profiles.json")
 file(WRITE "${whitespace_profiles_path}" "${whitespace_reference_profiles}")
 run_checker("whitespace reference profile identity" FALSE "${valid_runtime_path}" "${whitespace_profiles_path}")
 
+set(release_evidence_schema_path "${CMAKE_CURRENT_LIST_DIR}/../packaging/release-evidence-schema-v1.json")
+file(READ "${release_evidence_schema_path}" release_evidence_schema_json)
+string(JSON artifact_type ERROR_VARIABLE artifact_type_error GET
+  "${release_evidence_schema_json}" properties artifacts type)
+if(artifact_type_error OR NOT artifact_type STREQUAL "array")
+  message(FATAL_ERROR "release evidence artifacts must be an array")
+endif()
+
+string(JSON artifact_min_items ERROR_VARIABLE artifact_min_error GET
+  "${release_evidence_schema_json}" properties artifacts minItems)
+string(JSON artifact_max_items ERROR_VARIABLE artifact_max_error GET
+  "${release_evidence_schema_json}" properties artifacts maxItems)
+string(JSON artifact_unique_items ERROR_VARIABLE artifact_unique_error GET
+  "${release_evidence_schema_json}" properties artifacts uniqueItems)
+if(artifact_min_error OR artifact_max_error OR artifact_unique_error
+    OR NOT artifact_min_items EQUAL 2 OR NOT artifact_max_items EQUAL 2
+    OR NOT artifact_unique_items)
+  message(FATAL_ERROR "release evidence artifacts must require exactly two unique entries")
+endif()
+
+string(JSON artifact_item_ref ERROR_VARIABLE artifact_item_error GET
+  "${release_evidence_schema_json}" properties artifacts items "$ref")
+if(artifact_item_error OR NOT artifact_item_ref STREQUAL "#/$defs/artifactManifest")
+  message(FATAL_ERROR "release evidence artifacts must use artifactManifest items")
+endif()
+
+set(expected_artifact_ids
+  appimage-linux-x86_64
+  arch-linux-x86_64)
+list(LENGTH expected_artifact_ids expected_artifact_count)
+string(JSON artifact_id_count ERROR_VARIABLE artifact_id_count_error LENGTH
+  "${release_evidence_schema_json}" "$defs" artifactManifest properties id enum)
+if(artifact_id_count_error OR NOT artifact_id_count EQUAL expected_artifact_count)
+  message(FATAL_ERROR "artifactManifest must contain exactly the two Linux artifact IDs")
+endif()
+math(EXPR last_artifact_id "${expected_artifact_count} - 1")
+foreach(index RANGE 0 ${last_artifact_id})
+  list(GET expected_artifact_ids ${index} expected_id)
+  string(JSON artifact_id ERROR_VARIABLE artifact_id_error GET
+    "${release_evidence_schema_json}" "$defs" artifactManifest properties id enum ${index})
+  if(artifact_id_error OR NOT artifact_id STREQUAL expected_id)
+    message(FATAL_ERROR "artifactManifest artifact ID enum changed unexpectedly")
+  endif()
+endforeach()
+
+string(JSON required_artifact_count ERROR_VARIABLE required_artifact_error LENGTH
+  "${release_evidence_schema_json}" properties artifacts allOf)
+if(required_artifact_error OR NOT required_artifact_count EQUAL expected_artifact_count)
+  message(FATAL_ERROR "Linux release evidence must require exactly two artifact IDs")
+endif()
+math(EXPR last_required_artifact "${expected_artifact_count} - 1")
+foreach(index RANGE 0 ${last_required_artifact})
+  list(GET expected_artifact_ids ${index} expected_id)
+  string(JSON required_artifact_id ERROR_VARIABLE required_artifact_id_error GET
+    "${release_evidence_schema_json}" properties artifacts allOf ${index}
+    contains properties id const)
+  if(required_artifact_id_error OR NOT required_artifact_id STREQUAL expected_id)
+    message(FATAL_ERROR "Linux release evidence artifact requirements changed unexpectedly")
+  endif()
+endforeach()
+
 file(REMOVE_RECURSE "${temp_dir}")
-message(STATUS "C++ release contract self-test OK: placeholders rejected and Linux-only substantive inputs accepted")
+message(STATUS "C++ release contract self-test OK: placeholders rejected and Linux-only artifact aggregate enforced")
