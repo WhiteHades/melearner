@@ -1,11 +1,44 @@
 pkgname=melearner-bin
 pkgver=0.1.0
-pkgrel=94
+pkgrel=95
 pkgdesc="local course learner"
 arch=("x86_64")
 url="https://github.com/WhiteHades/melearner"
 license=("MIT")
-depends=("fontconfig" "freetype2" "glibc" "libglvnd" "libx11" "wayland")
+depends=(
+  "alsa-lib"
+  "fontconfig"
+  "freetype2"
+  "glibc"
+  "libdrm"
+  "libglvnd"
+  "libpipewire"
+  "libpulse"
+  "libx11"
+  "libxcb"
+  "libxkbcommon"
+  "libxkbcommon-x11"
+  "libxau"
+  "libxdmcp"
+  "libxext"
+  "libxfixes"
+  "libxpresent"
+  "libxrandr"
+  "libxrender"
+  "libxss"
+  "libxv"
+  "mesa"
+  "ocl-icd"
+  "pipewire-jack"
+  "vulkan-icd-loader"
+  "wayland"
+  "xcb-util"
+  "xcb-util-cursor"
+  "xcb-util-image"
+  "xcb-util-keysyms"
+  "xcb-util-renderutil"
+  "xcb-util-wm"
+)
 provides=("melearner=${pkgver}")
 conflicts=("melearner")
 options=("!strip")
@@ -13,10 +46,11 @@ source=()
 sha256sums=()
 
 package() {
-  if [[ -z "${MELEARNER_NATIVE_APPDIR:-}" || ! -x "${MELEARNER_NATIVE_APPDIR}/usr/bin/melearner" ]]; then
-    error "MELEARNER_NATIVE_APPDIR must point to an audited native package stage"
+  if [[ -z "${MELEARNER_CPP_STAGE:-}" || ! -d "${MELEARNER_CPP_STAGE}/usr" || -L "${MELEARNER_CPP_STAGE}/usr" ]]; then
+    error "MELEARNER_CPP_STAGE must point to a C++ package stage"
     return 1
   fi
 
-  cp -a "${MELEARNER_NATIVE_APPDIR}/usr" "${pkgdir}/usr"
+  install -d "${pkgdir}/usr"
+  cp -a "${MELEARNER_CPP_STAGE}/usr/." "${pkgdir}/usr/"
 }

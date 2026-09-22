@@ -2,7 +2,7 @@
 
 The application version stays at `0.1.0`. The CMake project version is the source for the C++ executable and new package metadata; do not bump it during the cutover.
 
-The Linux C++ replacement is under implementation. Do not treat a successful build as release qualification. The old implementations will be deleted after the replacement passes Linux verification; macOS and Windows package qualification is pending under ADR 0013.
+The C++23/Qt application is the only implementation. Linux installer, runtime, and legal qualification remain incomplete; macOS and Windows package qualification is also pending under ADR 0013.
 
 ## Build and test
 
@@ -62,3 +62,5 @@ bash scripts/test-cpp-linux-packaging.sh
 ```
 
 The Python tests require Linux, Python 3.10 or newer, CMake 3.20 or newer, a C compiler, GNU tar with zstd, and readelf. The archive tests configure a real disposable CMake project and use real tar/zstd, but substitute the application staging step. The runtime tests compile small ELF libraries and a loader using the production RPATH values, move the package directory, and load the plugin without `LD_LIBRARY_PATH`. They also run the production ELF audit function against real dependency records. These tests do not run patchelf or the complete Qt runtime stager. The shell preflight test requires the production CMake 4.4+ and packaging prerequisites.
+
+The C++ Arch package path uses `bash scripts/package-cpp-arch.sh --build-dir build/cpp-release` and the existing CMake runtime stager; its isolated `makepkg` regression is `python3 scripts/test-cpp-arch-packaging.py`. The packager refuses to run `makepkg` unless the staged tree contains the exact `0.1.0` runtime metadata, `/usr/bin/melearner` launcher, absolute `/usr/bin/melearner` desktop `Exec`, no superseded browser runtime, and `LICENSE`, `THIRD_PARTY_NOTICES`, `melearner.spdx.json`, `runtime-lock.json`, and `reference-profiles-v1.json`. The repository currently lacks the notices and SPDX inputs, so this path remains blocked and does not qualify a release.
