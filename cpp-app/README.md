@@ -19,6 +19,14 @@ ctest --preset linux-dev
 ./build/cpp-dev/melearner
 ```
 
+For the full-fixture Library load check, build `linux-release`, then run:
+
+```sh
+TMPDIR="$PWD/.tmp/cpp-tests" ./build/cpp-release/library_load_test
+```
+
+This optional diagnostic creates the existing 100,000-Lesson fixture, scans its 99,802 remaining files, and measures event-loop responsiveness, paging, search, private resident memory on Linux, shutdown, and reopening the indexed Library. It removes its temporary data on exit and runs separately from routine CTest. It does not qualify an installed package or measure video rendering.
+
 Tests create isolated temporary Libraries. The app uses the distinct Qt application identity `WhiteHades/melearner-cpp-v1` and database `library-v1.sqlite3`. It does not read old app databases.
 
 Normal playback uses libmpv's automatic hardware-decoder selection, with its software fallback. Run `melearner --software-decoding` to disable hardware decoding for troubleshooting or qualification. Settings → About reports the active decoder. The live render test checks the active decoder as well as changing video frames. See [mpv's decoding options](https://mpv.io/manual/stable/#options-hwdec).

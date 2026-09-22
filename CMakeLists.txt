@@ -59,10 +59,15 @@ if(BUILD_TESTING)
     set_tests_properties(${test} PROPERTIES ENVIRONMENT
       "QT_QPA_PLATFORM=offscreen;TMPDIR=${CMAKE_CURRENT_SOURCE_DIR}/.tmp/cpp-tests" TIMEOUT 60)
   endforeach()
+  # Run on a real Wayland/X11 display. Offscreen Qt cannot create the GL widget.
   foreach(test IN ITEMS playback_render main_playback)
     add_executable(${test}_test cpp-app/tests/${test}_test.cpp)
     target_link_libraries(${test}_test PRIVATE melearner_app Qt6::Test)
     target_compile_definitions(${test}_test PRIVATE MELEARNER_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
   endforeach()
-  # Run these executables on a real Wayland/X11 display. Offscreen Qt cannot create the GL widget.
+  # Explicit diagnostic run: materializes the full fixture, outside routine CTest.
+  add_executable(library_load_test cpp-app/tests/library_load_test.cpp
+    cpp-app/tests/fixtures/parity_fixture.cpp
+    cpp-app/tests/fixtures/parity_recipe_v1.cpp)
+  target_link_libraries(library_load_test PRIVATE melearner_app Qt6::Test)
 endif()
