@@ -1,6 +1,6 @@
 # Remove stale and redundant artifacts
 
-Stale files, generated leftovers, and obsolete code make this local-first desktop app harder to verify and release. This repo treats that clutter as a correctness risk, not harmless noise.
+Stale files, generated leftovers, and obsolete code make this local only desktop app harder to verify and release. This repo treats that clutter as a correctness risk, not harmless noise.
 
 ## Decision
 
@@ -19,7 +19,7 @@ Deletion must stay conservative around user data and required tooling. Do not re
 
 - User libraries, app databases, or course marker files outside isolated test fixtures.
 - Required source files, package manager lockfiles, or active dependency installs.
-- Active local build caches used for iterative development installs, especially `.next`, `out`, `src-tauri/target`, and `tsconfig.tsbuildinfo`. These ignored paths are not stale merely because they are generated; deleting `src-tauri/target` forces slow full Tauri/Rust rebuilds.
+- Active local build caches used for iterative development installs, including `build/cpp-release` and `build/cpp-sanitize`. These ignored paths are not stale merely because they are generated; deleting them forces full native rebuilds.
 - Release artifacts before they have been installed, uploaded, checksummed, or otherwise consumed.
 - Current behavior that still has a tested product purpose. Pre-native database compatibility and obsolete-schema migration, backup, restore, and rollback paths are not current behavior and must not be retained. An unchanged current native database and current `.melearner-course.json` identity markers are current user data, not stale compatibility artifacts.
 

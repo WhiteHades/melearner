@@ -2,7 +2,7 @@
 
 The application version is `0.1.9`. The CMake project version is the source for the C++ executable and package metadata; keep all release metadata aligned with it.
 
-The C++23/Qt application is the only implementation. Linux installer, runtime, and legal qualification remain incomplete; macOS and Windows package qualification is also pending under ADR 0013.
+The C++23/Qt application is the only implementation. Linux installer, runtime, and legal qualification remain incomplete. Windows will be built and tested next on a Windows PC; macOS is deferred under ADR 0013.
 
 ## Build and test
 

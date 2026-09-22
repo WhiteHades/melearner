@@ -49,7 +49,7 @@ Progress is stored in local SQLite under the C++ application data directory.
 - Search across courses, sections, and lessons
 - Local SQLite progress, notes, and learning activity
 - Durable course identity for folder moves and renames
-- Offline by default: no accounts, telemetry, or sync
+- Works entirely on your machine
 
 ## Development
 

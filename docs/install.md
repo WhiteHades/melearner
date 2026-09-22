@@ -41,5 +41,7 @@ The package path is still undergoing runtime and legal-input qualification.
 
 ## Other platforms
 
-macOS and Windows are planned after the Linux-first implementation. No legacy
-runtime or compatibility package is shipped.
+Windows development will continue on a Windows PC after the Linux release.
+macOS is deferred. No legacy runtime or compatibility package is shipped.
+
+For the Windows developer build handoff, see [Windows development](windows-development.md). Windows release qualification and packaging remain deferred until a native Windows machine completes that checklist.
