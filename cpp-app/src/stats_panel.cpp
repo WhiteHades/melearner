@@ -5,7 +5,6 @@
 #include <QColor>
 #include <QDate>
 #include <QEvent>
-#include <QFontDatabase>
 #include <QGroupBox>
 #include <QHeaderView>
 #include <QLabel>
@@ -13,7 +12,6 @@
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QResizeEvent>
-#include <QStyle>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -75,13 +73,10 @@ QString activityText(const QDate& date, const library::ActivityDay& day) {
              countText(day.lessonsTouched), countText(day.completions));
 }
 
-QFont editorialFont(const QFont& base, qreal scale, bool bold = false) {
+QFont headingFont(const QFont& base, qreal scale) {
     auto font = base;
-    if (QFontDatabase::families().contains(QStringLiteral("Liberation Serif"))) {
-        font.setFamily(QStringLiteral("Liberation Serif"));
-    }
     font.setPointSizeF(base.pointSizeF() * scale);
-    font.setBold(bold);
+    font.setWeight(QFont::DemiBold);
     return font;
 }
 
@@ -103,7 +98,9 @@ int activityLevel(const library::ActivityDay& day, std::uint64_t maximumWatched)
 
 QLabel* plainLabel(const QString& objectName, const QString& accessibleName) {
     auto* label = new QLabel;
-    label->setFont(QApplication::font());
+    auto font = QApplication::font();
+    font.setWeight(QFont::Normal);
+    label->setFont(font);
     label->setObjectName(objectName);
     label->setTextFormat(Qt::PlainText);
     label->setAccessibleName(accessibleName);
@@ -118,12 +115,13 @@ QGroupBox* metricBox(
     QLabel** value,
     QLabel** detail) {
     auto* box = new QGroupBox(title);
-    box->setFont(editorialFont(box->font(), 1.05, true));
+    box->setFont(headingFont(box->font(), 1.12));
     auto* layout = new QVBoxLayout(box);
-    layout->setContentsMargins(10, 8, 10, 8);
-    layout->setSpacing(2);
+    layout->setContentsMargins(12, 10, 12, 12);
+    layout->setSpacing(4);
     *value = plainLabel(valueName, title + QObject::tr(" value"));
-    (*value)->setFont(editorialFont(QApplication::font(), 1.65, true));
+    (*value)->setFont(headingFont(QApplication::font(), 1.3));
+    (*value)->setWordWrap(false);
     *detail = plainLabel(detailName, title + QObject::tr(" detail"));
     (*detail)->setProperty("statsRole", "detail");
     layout->addWidget(*value);
@@ -143,7 +141,8 @@ void configureTable(QTableWidget* table) {
     table->verticalHeader()->setVisible(false);
     table->horizontalHeader()->setStretchLastSection(true);
     table->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
-    table->setAlternatingRowColors(true);
+    table->setAlternatingRowColors(false);
+    table->setShowGrid(false);
     table->setFrameShape(QFrame::NoFrame);
 }
 
@@ -169,13 +168,13 @@ StatsPanel::StatsPanel(library::Library& library, QWidget* parent)
     setMinimumWidth(320);
 
     auto* root = new QVBoxLayout(this);
-    root->setContentsMargins(0, 8, 0, 20);
-    root->setSpacing(12);
+    root->setContentsMargins(0, 12, 0, 24);
+    root->setSpacing(16);
 
     auto* heading = new QLabel(tr("Learning stats"));
     heading->setObjectName(QStringLiteral("statsHeading"));
     heading->setAccessibleName(tr("Learning statistics"));
-    heading->setFont(editorialFont(heading->font(), 1.55, true));
+    heading->setFont(headingFont(heading->font(), 1.3));
     root->addWidget(heading);
 
     status_ = plainLabel(QStringLiteral("statsStatus"), tr("Statistics status"));
@@ -183,8 +182,8 @@ StatsPanel::StatsPanel(library::Library& library, QWidget* parent)
     root->addWidget(status_);
 
     auto* totals = new QGridLayout; totals_ = totals;
-    totals->setHorizontalSpacing(8);
-    totals->setVerticalSpacing(8);
+    totals->setHorizontalSpacing(12);
+    totals->setVerticalSpacing(12);
     totals->addWidget(metricBox(tr("Courses"), QStringLiteral("coursesValue"),
                                 QStringLiteral("coursesDetail"), &coursesValue_, &coursesDetail_),
                       0, 0);
@@ -202,11 +201,11 @@ StatsPanel::StatsPanel(library::Library& library, QWidget* parent)
     root->addLayout(totals);
 
     auto* breakdown = new QGridLayout; breakdown_ = breakdown;
-    breakdown->setHorizontalSpacing(10);
-    breakdown->setVerticalSpacing(10);
+    breakdown->setHorizontalSpacing(12);
+    breakdown->setVerticalSpacing(12);
 
     auto* mediaBox = new QGroupBox(tr("Media mix"));
-    mediaBox->setFont(editorialFont(mediaBox->font(), 1.05, true));
+    mediaBox->setFont(headingFont(mediaBox->font(), 1.12));
     auto* mediaLayout = new QVBoxLayout(mediaBox);
     media_ = new QTableWidget(0, 4, mediaBox);
     media_->setObjectName(QStringLiteral("mediaTable"));
@@ -218,7 +217,7 @@ StatsPanel::StatsPanel(library::Library& library, QWidget* parent)
     breakdown->addWidget(mediaBox, 0, 0);
 
     auto* coursesBox = new QGroupBox(tr("Top courses")); coursesBox_ = coursesBox;
-    coursesBox->setFont(editorialFont(coursesBox->font(), 1.05, true));
+    coursesBox->setFont(headingFont(coursesBox->font(), 1.12));
     auto* coursesLayout = new QVBoxLayout(coursesBox);
     topCourses_ = new QTableWidget(0, 4, coursesBox);
     topCourses_->setObjectName(QStringLiteral("topCoursesTable"));
@@ -233,7 +232,7 @@ StatsPanel::StatsPanel(library::Library& library, QWidget* parent)
     root->addLayout(breakdown);
 
     auto* activityBox = new QGroupBox(tr("Activity · 12 weeks"));
-    activityBox->setFont(editorialFont(activityBox->font(), 1.05, true));
+    activityBox->setFont(headingFont(activityBox->font(), 1.12));
     auto* activityLayout = new QVBoxLayout(activityBox);
     auto* activityHint = plainLabel(QStringLiteral("activityHint"), tr("Activity description"));
     activityHint->setText(tr("Each cell shows a relative activity level; focus a cell for its date and exact value."));
@@ -484,18 +483,22 @@ void StatsPanel::changeEvent(QEvent* event) {
 void StatsPanel::updateLayout() {
     if (!breakdown_) return;
     const bool narrow = width() < std::max(900, fontMetrics().height() * 55);
+    const bool singleMetricColumn = width() < std::max(520, fontMetrics().horizontalAdvance(tr("Progress time")) * 2 + 64);
     const QList<QWidget*> metrics = {coursesValue_->parentWidget(), completionValue_->parentWidget(),
                                     watchedValue_->parentWidget(), storageValue_->parentWidget()};
-    for (int index = 0; index < metrics.size(); ++index)
-        totals_->addWidget(metrics[index], narrow ? index / 2 : 0, narrow ? index % 2 : index);
-    for (int column = 0; column < 4; ++column) totals_->setColumnStretch(column, !narrow || column < 2 ? 1 : 0);
+    for (int index = 0; index < metrics.size(); ++index) {
+        const int row = singleMetricColumn ? index : narrow ? index / 2 : 0;
+        const int column = singleMetricColumn ? 0 : narrow ? index % 2 : index;
+        totals_->addWidget(metrics[index], row, column);
+    }
+    for (int column = 0; column < 4; ++column)
+        totals_->setColumnStretch(column, singleMetricColumn ? (column == 0 ? 1 : 0) : (!narrow || column < 2 ? 1 : 0));
     breakdown_->addWidget(coursesBox_, narrow ? 1 : 0, narrow ? 0 : 1);
     breakdown_->setColumnStretch(1, narrow ? 0 : 1);
     const int rowHeight = std::max(40, fontMetrics().lineSpacing() + 12);
     for (auto* table : {media_, topCourses_}) {
         table->verticalHeader()->setDefaultSectionSize(rowHeight);
-        table->setFixedHeight(table->horizontalHeader()->sizeHint().height() + rowHeight * std::max(1, table->rowCount())
-                             + table->style()->pixelMetric(QStyle::PM_ScrollBarExtent) + 4);
+        table->setFixedHeight(table->horizontalHeader()->sizeHint().height() + rowHeight * std::max(1, table->rowCount()) + 4);
         table->horizontalHeader()->setMinimumSectionSize(table->fontMetrics().horizontalAdvance(tr("Completed")) + 20);
         table->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     }
