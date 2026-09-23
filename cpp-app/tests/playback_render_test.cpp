@@ -1,10 +1,14 @@
 #include "mpv_video_widget.hpp"
 #include "player.hpp"
+#include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QGraphicsOpacityEffect>
 #include <QImage>
 #include <QSignalSpy>
 #include <QTemporaryDir>
+#include <QVBoxLayout>
+#include <QWidget>
 #include <QtTest>
 
 namespace {
@@ -45,7 +49,15 @@ private slots:
     connect(&player, &melearner::Player::aboutToShutdown, &player, [] {
       QTest::qSleep(100);
     }, Qt::DirectConnection);
-    melearner::MpvVideoWidget video(&player);
+    QWidget shell;
+    shell.setObjectName(QStringLiteral("renderComposite"));
+    shell.setAttribute(Qt::WA_StyledBackground);
+    shell.setStyleSheet(QStringLiteral("QWidget#renderComposite { background: #1b1917; }"));
+    shell.resize(640, 360);
+    auto* shellLayout = new QVBoxLayout(&shell);
+    shellLayout->setContentsMargins(0, 0, 0, 0);
+    melearner::MpvVideoWidget video(&player, &shell);
+    shellLayout->addWidget(&video);
     QSignalSpy rendered(&video, &melearner::MpvVideoWidget::renderContextReady);
     QSignalSpy renderErrors(&video, &melearner::MpvVideoWidget::renderError);
     QSignalSpy loaded(&player, &melearner::Player::fileLoaded);
@@ -65,7 +77,20 @@ private slots:
       return false;
     };
     player.setApprovedRoots({root, output.path()});
-    video.resize(640, 360); video.show(); player.start();
+    QWidget controls(&video);
+    controls.setObjectName(QStringLiteral("playerControls"));
+    controls.setAttribute(Qt::WA_StyledBackground);
+    controls.setStyleSheet(QStringLiteral("QWidget#playerControls { background: rgba(18, 18, 18, 235); }"));
+    auto* controlsOpacity = new QGraphicsOpacityEffect(&controls);
+    controlsOpacity->setOpacity(1.0);
+    controls.setGraphicsEffect(controlsOpacity);
+    const auto alignControls = [&controls, &video] {
+        controls.setGeometry(0, qMax(0, video.height() - 48), video.width(), 48);
+        controls.raise();
+    };
+    shell.show();
+    alignControls();
+    player.start();
     QTRY_VERIFY_WITH_TIMEOUT(rendered.count() == 1, 10000);
     QVERIFY(player.setVolume(0));
     QElapsedTimer firstFrame; firstFrame.start();
@@ -87,6 +112,10 @@ private slots:
     const auto directory = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
     if (!directory.isEmpty()) QVERIFY(initial.save(directory + '/' + QTest::currentDataTag() + "-initial.png"));
     QVERIFY2(hasIntactColorBar(initial), "Decoded color bar is corrupted in the framebuffer");
+    QCoreApplication::processEvents();
+    const auto composite = shell.grab().toImage().copy(video.geometry());
+    if (!directory.isEmpty()) QVERIFY(composite.save(directory + '/' + QTest::currentDataTag() + "-composite.png"));
+    QVERIFY2(hasIntactColorBar(composite), "Window compositing dimmed the decoded color bar");
     qInfo("Visible first frame: %lld ms", firstFrame.elapsed());
     QTRY_VERIFY(!decoders.isEmpty() && !decoders.last().first().toString().isEmpty());
     qInfo().noquote() << "Active decoder:" << decoders.last().first().toString();
@@ -101,13 +130,17 @@ private slots:
     const auto pauseId = player.pause(); QVERIFY(pauseId);
     QTRY_VERIFY_WITH_TIMEOUT(hasReply(commands, pauseId) || hasReply(errors, pauseId), 5000);
     QVERIFY2(hasReply(commands, pauseId), "Pause failed; see Player command failure above");
-    video.resize(800, 450);
+    shell.resize(800, 450);
     QTest::qWait(150);
+    alignControls();
     QVERIFY(!video.grabFramebuffer().isNull());
     const auto screenshotPath = output.path() + "/frame.png";
     qInfo() << "Screenshot requested at position:"
             << (positions.isEmpty() ? -1 : positions.last().first().toLongLong()) << "ms";
     QVERIFY2(hasIntactColorBar(video.grabFramebuffer()), "Resize corrupted the decoded color bar");
+    QCoreApplication::processEvents();
+    QVERIFY2(hasIntactColorBar(shell.grab().toImage().copy(video.geometry())),
+             "Window compositing dimmed the decoded color bar after resize");
     if (!directory.isEmpty()) QVERIFY(video.grabFramebuffer().save(directory + '/' + QTest::currentDataTag() + ".png"));
     const auto screenshotId = player.screenshot(screenshotPath); QVERIFY(screenshotId);
     QTRY_VERIFY_WITH_TIMEOUT(hasReply(commands, screenshotId) || hasReply(errors, screenshotId), 5000);
