@@ -39,7 +39,7 @@ target_compile_options(melearner_app PRIVATE
 set_source_files_properties(cpp-app/schema/library-v1.sql PROPERTIES QT_RESOURCE_ALIAS "schema/library-v1.sql")
 qt_add_resources(melearner_app assets PREFIX / FILES
   cpp-app/assets/melearner-logo.png cpp-app/assets/study-still-life.png
-  cpp-app/assets/fonts/LiberationSerif-Regular.ttf cpp-app/assets/fonts/LiberationSerif-Bold.ttf
+  cpp-app/assets/fonts/Geist.ttf
   cpp-app/schema/library-v1.sql)
 
 add_executable(melearner cpp-app/src/main.cpp)
@@ -61,7 +61,7 @@ install(FILES cpp-app/assets/melearner-logo.png
   DESTINATION ${CMAKE_INSTALL_DATADIR}/pixmaps
   RENAME io.github.whitehades.melearner.png)
 install(FILES cpp-app/assets/fonts/LICENSE
-  DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/melearner/liberation-fonts)
+  DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/melearner/geist)
 
 if(BUILD_TESTING)
   find_package(Qt6 REQUIRED COMPONENTS Test)
