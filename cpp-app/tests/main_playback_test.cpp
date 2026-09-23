@@ -40,6 +40,8 @@ private slots:
     QVERIFY(QDir().mkpath(root + "/Video course/Section"));
     QVERIFY(QFile::copy(QStringLiteral(MELEARNER_SOURCE_DIR) + "/fixtures/parity/media/Systems 日本語/01 H264 AAC.mp4",
       root + "/Video course/Section/01 Video.mp4"));
+    QVERIFY(QFile::copy(QStringLiteral(MELEARNER_SOURCE_DIR) + "/fixtures/parity/documents/blank-500-pages.pdf",
+      root + "/Video course/Section/02 Reading.pdf"));
     const auto database = data.path() + "/library.sqlite3";
     qint64 saved = 0;
     for (int launch = 0; launch < 2; ++launch) {
@@ -126,6 +128,39 @@ private slots:
         qInfo("Playback GUI heartbeat: %d samples, longest gap %lld ms", ticks, worstGap);
         QVERIFY(ticks >= 20); QVERIFY2(worstGap < 150, "Playback stalled the GUI event loop");
         saved = positions.last().at(0).toLongLong();
+
+        // Switching through a document must not leave the video player in a
+        // stale loading state. The saved video position should survive the
+        // PDF transition, and the returned video must still play.
+        const auto sectionIndex = lessons->model()->index(0, 0);
+        QTRY_COMPARE_WITH_TIMEOUT(lessons->model()->rowCount(sectionIndex), 2, 10000);
+        QModelIndex videoIndex;
+        QModelIndex pdfIndex;
+        for (int row = 0; row < lessons->model()->rowCount(sectionIndex); ++row) {
+          const auto index = lessons->model()->index(row, 0, sectionIndex);
+          const auto text = lessons->model()->data(index, Qt::DisplayRole).toString();
+          if (text.startsWith(QStringLiteral("01 Video"))) videoIndex = index;
+          if (text.startsWith(QStringLiteral("02 Reading"))) pdfIndex = index;
+        }
+        QVERIFY(videoIndex.isValid()); QVERIFY(pdfIndex.isValid());
+        auto* lessonTitle = window.findChild<QLabel*>("lessonTitle"); QVERIFY(lessonTitle);
+        lessons->setCurrentIndex(pdfIndex); QTest::keyClick(lessons, Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(lessonTitle->text(), QString("02 Reading"), 5000);
+        QTRY_VERIFY_WITH_TIMEOUT(!play->isEnabled(), 5000);
+        lessons->setCurrentIndex(videoIndex); loaded.clear(); positions.clear();
+        QTest::keyClick(lessons, Qt::Key_Return);
+        QTRY_COMPARE_WITH_TIMEOUT(lessonTitle->text(), QString("01 Video"), 5000);
+        QTRY_VERIFY_WITH_TIMEOUT(loaded.count() == 1, 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(play->isEnabled(), 5000);
+        const auto transitioned = loaded.first().at(2).toLongLong();
+        QVERIFY2(qAbs(transitioned - saved) < 500,
+          qPrintable(QString("PDF transition changed saved position from %1 ms to %2 ms").arg(saved).arg(transitioned)));
+        QTest::mouseClick(play, Qt::LeftButton);
+        QTRY_COMPARE_WITH_TIMEOUT(play->text(), QString("Pause"), 5000);
+        QTRY_VERIFY_WITH_TIMEOUT(!positions.isEmpty() && positions.last().at(0).toLongLong() > transitioned + 100, 5000);
+        QTest::mouseClick(play, Qt::LeftButton);
+        QTRY_COMPARE_WITH_TIMEOUT(play->text(), QString("Play"), 5000);
+        saved = positions.last().at(0).toLongLong();
         for (const int width : {560, 768, 1280}) {
           window.resize(width, 720); QCoreApplication::processEvents(); QVERIFY(window.width() <= width);
           QVERIFY(surface->rect().contains(controls->geometry()));
@@ -153,7 +188,7 @@ private slots:
         if (!captureDirectory.isEmpty()) QVERIFY(window.grab().save(captureDirectory + QString("/player-minimum-%1x.png").arg(fontScale)));
         window.resize(1280, 720);
         auto* appearance = window.findChild<QPushButton*>("appearance")->menu();
-        const QStringList colors{"#faf7f2", "#1b1917", "#f8f0e3"};
+        const QStringList colors{"#faf7f2", "#18181b", "#f8f0e3"};
         for (int theme : {1, 2, 0}) {
           appearance->actions().at(theme)->trigger();
           QTRY_COMPARE(QApplication::palette().color(QPalette::Window).name(), colors.at(theme));
