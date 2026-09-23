@@ -200,6 +200,8 @@ private slots:
     QVERIFY(summary.open(QIODevice::WriteOnly)); summary.write("Course summary."); summary.close();
     MainWindow window(files.path() + "/library.sqlite3");
     window.show();
+    QCOMPARE(window.font().family(), QString("Geist"));
+    QVERIFY(window.font().pointSizeF() >= font.pointSizeF());
     auto* choose = window.findChild<QPushButton*>("chooseRoot");
     QVERIFY(choose);
     QTRY_VERIFY(choose->isEnabled());
