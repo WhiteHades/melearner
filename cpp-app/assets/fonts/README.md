@@ -1,5 +1,7 @@
-# Heading fonts
+# UI font
 
-Liberation Serif 2.1.5, regular and bold, is embedded for editorial headings. Controls retain the platform UI font and text scaling.
+Geist is embedded for interface text and headings. Its variable weight supports regular and semibold text in one file. Qt retains system fallback fonts for scripts the font does not cover and respects larger system text sizes.
 
-Unmodified font files from Arch Linux `ttf-liberation 2.1.5-2`, upstream <https://github.com/liberationfonts/liberation-fonts>. Redistribution is covered by the included SIL Open Font License 1.1. CMake installs that license with the application.
+The unmodified font comes from [Google Fonts](https://github.com/google/fonts/tree/718e1db4deb9e4d9d85a0ead1b9f5fde2761ccfd/ofl/geist), maintained upstream by [Vercel](https://github.com/vercel/geist-font). The included SIL Open Font License 1.1 is installed with the application.
+
+SHA-256: `73894e0448cae90a92b6c2f8732b7bb9acb7b94c418bff559dad4a18e1de9659`.
