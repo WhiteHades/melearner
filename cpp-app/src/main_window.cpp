@@ -69,15 +69,10 @@
 namespace lib = melearner::library;
 namespace {
 QString tooltip(const QString& text) { return "<qt>" + text.toHtmlEscaped() + "</qt>"; }
-QFont editorialFont(const QFont& base, double scale, bool bold = false) {
-  static const bool registered = [] {
-    QFontDatabase::addApplicationFont(":/cpp-app/assets/fonts/LiberationSerif-Regular.ttf");
-    QFontDatabase::addApplicationFont(":/cpp-app/assets/fonts/LiberationSerif-Bold.ttf");
-    return true;
-  }();
-  Q_UNUSED(registered);
-  auto font = base; font.setFamily("Liberation Serif");
-  font.setPointSizeF(base.pointSizeF() * scale); font.setBold(bold); return font;
+QFont headingFont(const QFont& base, double scale, bool bold = false) {
+  auto font = base;
+  font.setPointSizeF(base.pointSizeF() * scale);
+  font.setWeight(bold ? QFont::DemiBold : QFont::Normal); return font;
 }
 class ElidingLabel final : public QLabel {
 public:
@@ -138,6 +133,12 @@ QListView* list(const QString& name, PagedListModel* model) {
 MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwareDecoding)
     : QMainWindow(parent), library_(databasePath, this), player_(new melearner::Player(this,
         softwareDecoding ? melearner::Player::DecodeMode::Software : melearner::Player::DecodeMode::Automatic)) {
+  static const int fontId = QFontDatabase::addApplicationFont(":/cpp-app/assets/fonts/Geist.ttf");
+  if (qApp->style()->objectName() != "fusion") QApplication::setStyle("Fusion");
+  auto interfaceFont = QApplication::font();
+  if (fontId >= 0) interfaceFont.setFamily(QFontDatabase::applicationFontFamilies(fontId).first());
+  if (interfaceFont.pointSizeF() > 0) interfaceFont.setPointSizeF(std::max(11.0, interfaceFont.pointSizeF()));
+  QApplication::setFont(interfaceFont);
   setWindowTitle("melearner"); setMinimumSize(560, 400); resize(1200, 780);
   setWindowIcon(QIcon(":/cpp-app/assets/melearner-logo.png"));
   auto* center = new QWidget; center->setObjectName("appShell"); setCentralWidget(center);
@@ -147,7 +148,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   brand->setObjectName("brand"); brand->setAccessibleName("melearner"); toolbar->addWidget(brand);
   back_ = button(tr("Courses"), "backToLibrary"); back_->hide(); toolbar->addWidget(back_);
   title_ = new ElidingLabel(tr("Your learning path")); title_->setObjectName("routeTitle");
-  auto heading = editorialFont(font(), 2.3, true); title_->setFont(heading);
+  auto heading = headingFont(font(), 1.8, true); title_->setFont(heading);
   title_->setMinimumWidth(0); title_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
   outlineToggle_ = button(tr("Lessons"), "toggleOutline"); outlineToggle_->hide(); toolbar->addWidget(outlineToggle_);
   searchButton_ = button(tr("Search your courses…"), "searchLibrary");
@@ -203,7 +204,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   auto* heroText = new QVBoxLayout; heroText->setSpacing(8); heroText->addWidget(title_);
   routeDescription_ = new QLabel(tr("Continue a lesson or explore your courses."));
   routeDescription_->setObjectName("routeDescription"); routeDescription_->setWordWrap(true);
-  routeDescription_->setFont(editorialFont(font(), 1.2)); heroText->addWidget(routeDescription_);
+  routeDescription_->setFont(font()); heroText->addWidget(routeDescription_);
   rootLabel_ = new ElidingLabel; rootLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
   rootLabel_->setObjectName("rootPath");
   rootLabel_->setTextFormat(Qt::PlainText);
@@ -223,7 +224,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   resumePanel_ = new QWidget; resumePanel_->setObjectName("resumePanel"); resumePanel_->setAttribute(Qt::WA_StyledBackground);
   auto* resumeLayout = new QHBoxLayout(resumePanel_); resumeLayout->setContentsMargins(22, 18, 22, 18);
   auto* resumeTitles = new QVBoxLayout;
-  auto* resumeHeading = new QLabel(tr("Continue learning")); resumeHeading->setFont(editorialFont(font(), 1.35, true));
+  auto* resumeHeading = new QLabel(tr("Continue learning")); resumeHeading->setFont(headingFont(font(), 1.15, true));
   resumeTitles->addWidget(resumeHeading); resumeTitles->addSpacing(6);
   resumeCourse_ = new ElidingLabel; resumeLesson_ = new ElidingLabel;
   resumeCourse_->setObjectName("resumeCourseTitle"); resumeLesson_->setObjectName("resumeLessonTitle");
@@ -255,7 +256,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   split_ = new QSplitter(Qt::Horizontal); split_->setChildrenCollapsible(false);
   outline_ = new QWidget; outline_->setMinimumWidth(240); outline_->setObjectName("courseOutline"); outline_->setAttribute(Qt::WA_StyledBackground);
   auto* outlineLayout = new QVBoxLayout(outline_); outlineLayout->setContentsMargins(12, 14, 12, 12);
-  auto* outlineTitle = new QLabel(tr("Course outline")); outlineTitle->setFont(editorialFont(font(), 1.35, true));
+  auto* outlineTitle = new QLabel(tr("Course outline")); outlineTitle->setFont(headingFont(font(), 1.0, true));
   outlineTitle->setMargin(4); outlineLayout->addWidget(outlineTitle);
   outlineModel_ = new melearner::CourseOutlineModel(library_, this);
   lessons_ = new QTreeView; lessons_->setObjectName("lessons"); lessons_->setAccessibleName(tr("Course sections and lessons"));
@@ -275,12 +276,13 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   contentScroll->setObjectName("lessonScroll"); contentScroll->viewport()->installEventFilter(this);
   auto* contentBody = new QWidget; contentScroll->setWidget(contentBody); content_ = contentScroll; content_->setMinimumWidth(0);
   auto* contentLayout = new QVBoxLayout(contentBody); contentLayout->setContentsMargins(12, 0, 0, 0);
-  lessonTitle_ = new ElidingLabel(tr("Select a lesson")); lessonTitle_->setFont(editorialFont(font(), 1.6, true));
+  lessonTitle_ = new ElidingLabel(tr("Select a lesson")); lessonTitle_->setFont(headingFont(font(), 1.2, true));
   lessonTitle_->setObjectName("lessonTitle");
   lessonTitle_->setMinimumWidth(0); lessonTitle_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
   contentLayout->addWidget(lessonTitle_);
   externalOpen_ = button(tr("Open in default app"), "openDocumentExternally"); externalOpen_->hide();
-  contentLayout->addWidget(externalOpen_);
+  externalOpen_->setProperty("variant", "ghost");
+  contentLayout->addWidget(externalOpen_, 0, Qt::AlignLeft);
   media_ = new QStackedWidget; video_ = new melearner::MpvVideoWidget(player_, media_);
   video_->setObjectName("videoSurface"); video_->setFocusPolicy(Qt::StrongFocus);
   video_->setAccessibleName(tr("Video player"));
@@ -489,7 +491,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
         QTextBlockFormat paragraph; paragraph.setBottomMargin(12); paragraph.setLineHeight(140, QTextBlockFormat::ProportionalHeight);
         QTextCharFormat text;
         if (block.kind == melearner::documents::BlockKind::heading) {
-          text.setFontWeight(QFont::Bold); text.setFontPointSize(22 - std::min<int>(block.level, 6));
+          text.setFontWeight(QFont::DemiBold); text.setFontPointSize(font().pointSizeF() * (1.8 - std::min<int>(block.level, 6) * 0.1));
           paragraph.setTopMargin(16);
         } else if (block.kind == melearner::documents::BlockKind::code) {
           text.setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
@@ -1154,7 +1156,7 @@ void MainWindow::updateLayout() {
   if (!rescan_ || !choose_) return;
   const bool compact = width() < std::max(768, fontMetrics().height() * 40);
   const bool compactHeader = compact;
-  title_->setFont(editorialFont(font(), compact || course_ ? 1.5 : 2.3, true));
+  title_->setFont(headingFont(font(), course_ ? 1.1 : compact ? 1.5 : 1.8, true));
   if (!course_) {
     const bool activity = libraryTabs_->currentIndex() == 1;
     title_->setText(activity ? tr("Your learning activity") : tr("Your learning path"));
@@ -1202,14 +1204,14 @@ void MainWindow::applyAppearance(const QString& appearance) {
   const bool dark = appearance == "dark";
   const bool cozy = appearance == "cozy";
   auto palette = QApplication::palette();
-  const QColor ink(dark ? "#f5f0e9" : "#2c211e");
-  const QString surface = dark ? "#1b1917" : cozy ? "#f8f0e3" : "#faf7f2";
-  const QString base = dark ? "#24211e" : cozy ? "#fff9ed" : "#fffdfa";
-  const QString border = dark ? "#403a34" : "#e7e0d8";
-  const QString hover = dark ? "#382b28" : cozy ? "#eee0d1" : "#f3e7e1";
-  const QString accent = dark ? "#efaaa1" : "#a72c23";
+  const QColor ink(dark ? "#fafafa" : "#242124");
+  const QString surface = dark ? "#18181b" : cozy ? "#f8f0e3" : "#faf7f2";
+  const QString base = dark ? "#202024" : cozy ? "#fff9ed" : "#fffdfa";
+  const QString border = dark ? "#35353b" : "#e7e0d8";
+  const QString hover = dark ? "#30262a" : cozy ? "#eee0d1" : "#f3e7e1";
+  const QString accent = dark ? "#f0a0a4" : "#a72c23";
   const QString onAccent = dark ? "#181817" : "#fffefa";
-  const QString muted = dark ? "#b8ada2" : "#746a61";
+  const QString muted = dark ? "#b5b5bf" : "#746a61";
   palette.setColor(QPalette::Window, QColor(surface));
   palette.setColor(QPalette::WindowText, ink);
   palette.setColor(QPalette::Base, QColor(base));
@@ -1303,17 +1305,25 @@ void MainWindow::applyAppearance(const QString& appearance) {
     QMenu::separator { height: 1px; background: %3; margin: 4px 8px; }
     QSplitter::handle { background: %8; }
     QSplitter::handle:hover { background: %3; }
+    QScrollBar:vertical { width: 10px; background: transparent; margin: 4px 0; }
+    QScrollBar:horizontal { height: 10px; background: transparent; margin: 0 4px; }
+    QScrollBar::handle { background: %3; border-radius: 4px; }
+    QScrollBar::handle:vertical { min-height: 32px; }
+    QScrollBar::handle:horizontal { min-width: 32px; }
+    QScrollBar::handle:hover { background: %7; }
+    QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
+    QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
     QToolTip { background: %1; color: %2; border: 1px solid %3; padding: 6px; }
     QTabWidget::pane { border: 0; }
     QTabBar::tab { background: %8; color: %7; border-bottom: 2px solid transparent; padding: 8px 16px; }
     QTabBar::tab:selected { color: %2; border-bottom-color: %5; }
     QTabBar::tab:hover { background: %4; }
-    QGroupBox { background: %1; border: 1px solid %3; border-radius: 10px; margin-top: 18px; padding: 10px; font-weight: 600; }
-    QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 10px; padding: 0 5px; background: %8; }
+    QGroupBox { background: %1; border: 1px solid %3; border-radius: 8px; margin-top: 0; padding: %9px 12px 12px; font-weight: 600; }
+    QGroupBox::title { subcontrol-origin: padding; subcontrol-position: top left; left: 12px; top: 10px; padding: 0; background: transparent; }
     QHeaderView::section { background: %8; color: %2; border: 0; border-bottom: 1px solid %3; padding: 6px; }
     QLabel#rootPath, QLabel#appStatus, QLabel#routeDescription { color: %7; }
     QLabel#statsStatus, QLabel#activityHint, QLabel#activityDetail, QLabel[statsRole="detail"] { color: %7; }
   )").arg(base, ink.name(), border, hover, accent, onAccent,
-    muted, surface));
+    muted, surface).arg(QFontMetrics(headingFont(font(), 1.12, true)).height() + 26));
   updateLayout();
 }
