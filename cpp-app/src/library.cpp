@@ -1616,7 +1616,23 @@ private:
     Statement statement(
         db,
         QStringLiteral(
-            "WITH ordered_lessons AS ("
+            // The course page is built first so the window functions below only
+            // rank the lessons of the courses on this page. They previously
+            // ranked every lesson in the library to return at most four rows,
+            // and this runs on every return to the Library.
+            "WITH course_page AS ("
+            "SELECT c.id, c.name, c.path, c.missing_since, c.last_accessed, count(l.id) AS lesson_count, "
+            "coalesce(sum(CASE WHEN l.completed = 1 THEN 1 ELSE 0 END), 0) AS completed_lessons, "
+            "coalesce(sum(l.watched_time), 0) AS watched_seconds "
+            "FROM courses c LEFT JOIN lessons l ON l.course_id = c.id "
+            "WHERE c.missing_since IS NULL "
+            "AND EXISTS (SELECT 1 FROM lessons meaningful WHERE meaningful.course_id = c.id) "
+            "GROUP BY c.id "
+            "ORDER BY CASE WHEN c.last_accessed IS NULL THEN 1 ELSE 0 END, "
+            "c.last_accessed DESC, c.name COLLATE MELEARNER_NATURAL, c.id "
+            "LIMIT ?1 OFFSET ?2), "
+            "page_courses AS (SELECT id FROM course_page), "
+            "ordered_lessons AS ("
             "SELECT l.id, l.course_id, l.section_id, s.name AS section_name, "
             "l.name AS lesson_name, l.path, l.relative_path, "
             "l.type, l.duration, l.watched_time, l.last_position, l.file_size, l.order_index, "
@@ -1628,18 +1644,10 @@ private:
             "CASE WHEN l.completed = 0 THEN 0 ELSE 1 END, s.order_index, "
             "s.name COLLATE MELEARNER_NATURAL, s.id, l.order_index, "
             "l.name COLLATE MELEARNER_NATURAL, l.id) AS selection_rank "
-            "FROM lessons l JOIN sections s ON s.id = l.section_id AND s.course_id = l.course_id), "
-            "course_page AS ("
-            "SELECT c.id, c.name, c.path, c.missing_since, c.last_accessed, count(l.id) AS lesson_count, "
-            "coalesce(sum(CASE WHEN l.completed = 1 THEN 1 ELSE 0 END), 0) AS completed_lessons, "
-            "coalesce(sum(l.watched_time), 0) AS watched_seconds "
-            "FROM courses c LEFT JOIN lessons l ON l.course_id = c.id "
-            "WHERE c.missing_since IS NULL "
-            "AND EXISTS (SELECT 1 FROM lessons meaningful WHERE meaningful.course_id = c.id) "
-            "GROUP BY c.id "
-            "ORDER BY CASE WHEN c.last_accessed IS NULL THEN 1 ELSE 0 END, "
-            "c.last_accessed DESC, c.name COLLATE MELEARNER_NATURAL, c.id "
-            "LIMIT ?1 OFFSET ?2) "
+            "FROM lessons l "
+            "JOIN sections s ON s.id = l.section_id AND s.course_id = l.course_id "
+            // Only the courses on this page need a ranked lesson.
+            "JOIN page_courses ON page_courses.id = l.course_id) "
             "SELECT cp.id, cp.name, cp.path, cp.missing_since, cp.last_accessed, cp.lesson_count, "
             "cp.completed_lessons, cp.watched_seconds, "
             "ol.id, ol.course_id, ol.section_id, ol.section_name, ol.lesson_name, ol.path, ol.relative_path, "
@@ -1693,24 +1701,27 @@ private:
     };
 
     {
+        // One pass over the lessons table supplies the count and all four sums.
+        // These were five separate scans of the same rows, and this statement
+        // runs every few seconds while video plays.
         Statement totals(
             db,
             QStringLiteral(
-                "WITH filtered_courses AS (%1) "
+                "WITH filtered_courses AS (%1), lesson_totals AS ("
+                "SELECT count(*) AS lesson_count, "
+                "coalesce(sum(lessons.completed), 0) AS completed, "
+                "coalesce(sum(lessons.file_size), 0) AS bytes, "
+                "coalesce(sum(lessons.watched_time), 0) AS watched, "
+                "coalesce(sum(lessons.duration), 0) AS duration "
+                "FROM lessons JOIN filtered_courses ON filtered_courses.id = lessons.course_id) "
                 "SELECT "
                 "(SELECT count(*) FROM filtered_courses), "
                 "(SELECT count(*) FROM filtered_courses WHERE missing_since IS NULL), "
                 "(SELECT count(*) FROM filtered_courses WHERE missing_since IS NOT NULL), "
                 "(SELECT count(*) FROM sections JOIN filtered_courses ON filtered_courses.id = sections.course_id), "
-                "(SELECT count(*) FROM lessons JOIN filtered_courses ON filtered_courses.id = lessons.course_id), "
-                "(SELECT coalesce(sum(lessons.completed), 0) FROM lessons "
-                " JOIN filtered_courses ON filtered_courses.id = lessons.course_id), "
-                "(SELECT coalesce(sum(lessons.file_size), 0) FROM lessons "
-                " JOIN filtered_courses ON filtered_courses.id = lessons.course_id), "
-                "(SELECT coalesce(sum(lessons.watched_time), 0) FROM lessons "
-                " JOIN filtered_courses ON filtered_courses.id = lessons.course_id), "
-                "(SELECT coalesce(sum(lessons.duration), 0) FROM lessons "
-                " JOIN filtered_courses ON filtered_courses.id = lessons.course_id)"
+                "lesson_totals.lesson_count, lesson_totals.completed, "
+                "lesson_totals.bytes, lesson_totals.watched, lesson_totals.duration "
+                "FROM lesson_totals"
             ).arg(courseSource));
         bindScope(totals, scope);
         if (totals.step() != SQLITE_ROW) {

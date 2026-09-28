@@ -515,7 +515,11 @@ void htmlPushChildren(
 }
 
 [[nodiscard]] ReadResult parseHtml(const QString& path, const QByteArray& bytes) {
-    if (!decodeUtf8(bytes).has_value()) {
+    // The decoded text is handed to the parser rather than decoded twice: the
+    // validation below and the walk that follows used to each build a full copy
+    // of every HTML and Markdown file in the library.
+    const auto text = decodeUtf8(bytes);
+    if (!text.has_value()) {
         return readFailure(makeError(
             ErrorCode::malformed_utf8,
             QStringLiteral("HTML document is not valid UTF-8"),
@@ -540,10 +544,13 @@ void htmlPushChildren(
 
     lxb_html_document_scripting_set(parser, false);
     lxb_html_document_dom_opt_set(parser, LXB_DOM_DOCUMENT_OPT_WO_EVENTS);
+    // The parser reads the validated text rather than the raw bytes, so the
+    // file is decoded once rather than once here and once to check it.
+    const auto utf8 = text->toUtf8();
     const auto status = lxb_html_document_parse(
         parser,
-        reinterpret_cast<const lxb_char_t*>(bytes.constData()),
-        static_cast<size_t>(bytes.size()));
+        reinterpret_cast<const lxb_char_t*>(utf8.constData()),
+        static_cast<size_t>(utf8.size()));
     if (status != LXB_STATUS_OK) {
         return readFailure(makeError(
             ErrorCode::malformed_document,
@@ -804,7 +811,8 @@ int markdownText(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* user
 }
 
 [[nodiscard]] ReadResult parseMarkdown(const QString& path, const QByteArray& bytes) {
-    if (!decodeUtf8(bytes).has_value()) {
+    const auto text = decodeUtf8(bytes);
+    if (!text.has_value()) {
         return readFailure(makeError(
             ErrorCode::malformed_utf8,
             QStringLiteral("Markdown document is not valid UTF-8"),
@@ -820,9 +828,12 @@ int markdownText(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* user
     parser.enter_span = markdownEnterSpan;
     parser.leave_span = markdownLeaveSpan;
     parser.text = markdownText;
+    // The parser reads the validated text rather than the raw bytes, so the
+    // file is decoded once rather than once here and once to check it.
+    const auto utf8 = text->toUtf8();
     const auto result = md_parse(
-        bytes.constData(),
-        static_cast<MD_SIZE>(bytes.size()),
+        utf8.constData(),
+        static_cast<MD_SIZE>(utf8.size()),
         &parser,
         &state);
     if (state.error.has_value()) {

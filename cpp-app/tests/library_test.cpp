@@ -204,6 +204,7 @@ private slots:
     void immediateCloseFlushesProgress();
     void markerAndMissingCourseIdentitySurviveRescan();
     void searchesPagedNamesAndResolvesMissingState();
+    void aggregatesAndRanksAgreeWithTheRawTables();
 };
 
 void LibraryTest::scansIntoPagedCourseAndLessonRows() {
@@ -1109,6 +1110,148 @@ void LibraryTest::searchesPagedNamesAndResolvesMissingState() {
     SearchPage escapedSearch;
     QVERIFY(readSearch(library, searchReady, QStringLiteral("Course\" OR *"), 0, 100, &escapedSearch));
     QCOMPARE(escapedSearch.query, QStringLiteral("Course\" OR *"));
+}
+
+void LibraryTest::aggregatesAndRanksAgreeWithTheRawTables() {
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const auto root = temporary.filePath(QStringLiteral("root"));
+    // Enough courses and sections that the aggregates and the window functions
+    // in stats and resume both have real work to do, and enough lessons that a
+    // scan worth a resumed page is produced.
+    constexpr int courseCount = 6;
+    for (int course = 0; course < courseCount; ++course) {
+        for (int section = 0; section < 3; ++section) {
+            const auto sectionPath = root + QStringLiteral("/Course %1/Section %2").arg(course).arg(section);
+            QVERIFY(QDir().mkpath(sectionPath));
+            for (int lesson = 0; lesson < 5; ++lesson) {
+                writeFile(sectionPath + QStringLiteral("/Lesson %1.txt").arg(lesson));
+            }
+        }
+    }
+    const auto database = temporary.filePath(QStringLiteral("library.sqlite3"));
+
+    Library library(database);
+    QSignalSpy opened(&library, &Library::opened);
+    QSignalSpy scanFinished(&library, &Library::scanFinished);
+    QSignalSpy progressSaved(&library, &Library::progressSaved);
+    Startup startup;
+    QVERIFY(openLibrary(library, opened, &startup));
+    ScanResult scan;
+    QVERIFY(scanLibrary(library, scanFinished, root, &scan));
+    QCOMPARE(scan.courses, std::uint64_t{courseCount});
+    QCOMPARE(scan.lessons, std::uint64_t{courseCount * 3 * 5});
+
+    // A scan cannot learn a duration from a text file, so durations and sizes
+    // are seeded the way a library has them after playback. The values differ
+    // per row, so an aggregate that mixed up two columns would not add up.
+    QString sqliteError;
+    QVERIFY2(executeSqlite(database,
+        QStringLiteral("UPDATE lessons SET duration = 60 + (rowid % 90), file_size = 1000 + (rowid % 17);"),
+        &sqliteError), qPrintable(sqliteError));
+
+    // Read the lesson rows the library itself reports, so the expected totals
+    // come from the same path the aggregates walk rather than from the seed.
+    QSignalSpy coursesReady(&library, &Library::coursesReady);
+    QSignalSpy lessonsReady(&library, &Library::lessonsReady);
+    CoursePage courses;
+    QVERIFY(readCourses(library, coursesReady, &courses));
+    QCOMPARE(courses.total, std::uint64_t{courseCount});
+    std::uint64_t totalDuration = 0;
+    std::uint64_t totalBytes = 0;
+    for (const auto& course : courses.rows) {
+        LessonPage lessons;
+        QVERIFY(readLessons(library, lessonsReady, course.id, &lessons));
+        QCOMPARE(lessons.total, std::uint64_t{15});
+        for (const auto& lesson : lessons.rows) {
+            totalDuration += lesson.duration;
+            totalBytes += lesson.fileSize;
+        }
+    }
+    QVERIFY(totalDuration > 0);
+    // Complete the first lesson of each course, so the ranking has a completed
+    // lesson to skip and an incomplete one to choose. This is done after the
+    // totals are read because saving progress also records a duration, which
+    // would move the total the aggregates are checked against.
+    for (const auto& course : courses.rows) {
+        LessonPage lessons;
+        QVERIFY(readLessons(library, lessonsReady, course.id, &lessons));
+        QVERIFY(!lessons.rows.isEmpty());
+        // The recorded duration is the lesson's own, so completing it does not
+        // move the total the aggregates are checked against. Progress is
+        // recorded in milliseconds and stored in seconds.
+        const auto& lesson = lessons.rows.front();
+        QSignalSpy saved(&library, &Library::progressSaved);
+        QVERIFY(library.saveProgress(lesson.id, 10'000,
+            static_cast<std::uint64_t>(lesson.duration) * 1'000, true) != 0);
+        QVERIFY(waitFor(saved, 5'000));
+    }
+
+    // Saving progress advances the revision, so the stats request is made with
+    // the revision the last save reported.
+    const auto revision = qvariant_cast<ProgressResult>(progressSaved.last().at(1)).revision;
+    QVERIFY(revision != 0);
+    QSignalSpy statsReady(&library, &Library::statsReady);
+    LibraryStats stats;
+    QVERIFY(readStats(library, statsReady, revision, &stats));
+    // The lesson count and the duration total come from one scan of the lessons
+    // table now, so they are checked against what the paged read reported.
+    QCOMPARE(stats.lessons, std::uint64_t{courseCount * 3 * 5});
+    QCOMPARE(stats.sections, std::uint64_t{courseCount * 3});
+    QCOMPARE(stats.totalCourses, std::uint64_t{courseCount});
+    QCOMPARE(stats.availableCourses, std::uint64_t{courseCount});
+    QCOMPARE(stats.missingCourses, std::uint64_t{0});
+    QCOMPARE(stats.completedLessons, std::uint64_t{courseCount});
+    QCOMPARE(stats.totalSeconds, totalDuration);
+    QCOMPARE(stats.bytes, totalBytes);
+    // The percentage is rounded half up from the same two counts, not truncated.
+    QCOMPARE(stats.completionPercent,
+             static_cast<std::uint32_t>((stats.completedLessons * 100U + stats.lessons / 2U)
+                                        / stats.lessons));
+    // The media mix aggregates the same rows, so it has to agree with the totals
+    // rather than being an independent count.
+    std::uint64_t mediaLessons = 0;
+    for (const auto& media : stats.mediaTypes) mediaLessons += media.lessons;
+    QCOMPARE(mediaLessons, stats.lessons);
+    QCOMPARE(stats.mediaTypes.size(), std::uint8_t{1});
+    QCOMPARE(stats.mediaTypes.front().lessons, stats.lessons);
+    QCOMPARE(stats.mediaTypes.front().bytes, stats.bytes);
+    QCOMPARE(stats.mediaTypes.front().watchedSeconds, stats.watchedSeconds);
+    // The top-courses list is capped at four courses, so it covers a slice of the
+    // lessons rather than all of them. Each of those four must carry the same
+    // lesson count the paged read reported for it, which is what a top-courses
+    // aggregate mixed up with a whole-library one would get wrong.
+    QCOMPARE(stats.topCourses.size(), std::uint8_t{4});
+    for (const auto& top : stats.topCourses) {
+        QCOMPARE(top.lessons, std::uint64_t{15});
+        QVERIFY(top.completedLessons <= 1);
+        QVERIFY(top.bytes <= stats.bytes);
+        QVERIFY(top.watchedSeconds <= stats.watchedSeconds);
+    }
+
+    // The resume query only ranks the lessons of the courses on its page now.
+    // Each returned entry must be that course's first incomplete lesson, which
+    // is what the ranking promised before it was scoped.
+    QSignalSpy resumeReady(&library, &Library::resumeReady);
+    ResumePage resume;
+    QVERIFY(readResume(library, resumeReady, 0, 4, &resume));
+    QCOMPARE(resume.total, std::uint64_t{courseCount});
+    QVERIFY(!resume.rows.isEmpty());
+    for (const auto& entry : resume.rows) {
+        QVERIFY(entry.hasLesson);
+        // A completed lesson is never the resume point, because the ranking puts
+        // incomplete lessons first.
+        QVERIFY(!entry.lesson.completed);
+        QVERIFY(entry.course.completedLessons < entry.course.lessonCount);
+    }
+    // Paging past the first page returns different courses rather than repeating
+    // the same rows, which is what a page-scoped ranking must still do.
+    ResumePage second;
+    QVERIFY(readResume(library, resumeReady, 4, 4, &second));
+    QVERIFY(!second.rows.isEmpty());
+    for (const auto& entry : resume.rows) {
+        for (const auto& other : second.rows) QVERIFY(entry.course.id != other.course.id);
+    }
 }
 
 QTEST_MAIN(LibraryTest)

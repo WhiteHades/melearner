@@ -2,6 +2,7 @@
 #include "pdf_reader.hpp"
 #include <QAbstractScrollArea>
 #include <QMap>
+#include <QSet>
 
 class PdfView final : public QAbstractScrollArea {
   Q_OBJECT
@@ -30,7 +31,10 @@ private:
   bool fit_ = true;
   struct Cached { QImage image; quint64 used; };
   QMap<melearner::pdf::TileKey, Cached> cache_;
+  // A tile is in flight if its key appears in pending_; the paint loop tests
+  // that per uncached tile, so a set answers it without copying the map.
   QMap<quint64, melearner::pdf::TileKey> pending_;
+  QSet<melearner::pdf::TileKey> pendingKeys_;
   QMap<melearner::pdf::TileKey, quint64> failedTiles_;
   void layoutPages(int previousScale = -1);
   void rememberFailedTile(const melearner::pdf::TileKey& key);

@@ -19,6 +19,7 @@ PdfView::PdfView(QWidget* parent) : QAbstractScrollArea(parent) {
     } else if (const auto* tile = std::get_if<pdf::Tile>(&result)) {
       const auto pending = pending_.find(id);
       if (pending == pending_.end()) return;
+      pendingKeys_.remove(pending.value());
       const auto expected = pending.value();
       pending_.erase(pending);
       if (tile->generation != generation_ || tile->key != expected || tile->key.scale != scale_) {
@@ -35,6 +36,7 @@ PdfView::PdfView(QWidget* parent) : QAbstractScrollArea(parent) {
     } else if (const auto* error = std::get_if<pdf::Error>(&result)) {
       const auto pending = pending_.find(id);
       if (pending != pending_.end()) {
+        pendingKeys_.remove(pending.value());
         const auto key = pending.value();
         pending_.erase(pending);
         if (error->code != pdf::Error::cancelled) {
@@ -55,7 +57,7 @@ PdfView::PdfView(QWidget* parent) : QAbstractScrollArea(parent) {
   connect(horizontalScrollBar(), &QScrollBar::valueChanged, viewport(), qOverload<>(&QWidget::update));
 }
 void PdfView::clear() {
-  openId_ = 0; generation_ = 0; pages_.clear(); tops_.clear(); cache_.clear(); pending_.clear();
+  openId_ = 0; generation_ = 0; pages_.clear(); tops_.clear(); cache_.clear(); pending_.clear(); pendingKeys_.clear();
   failedTiles_.clear();
   verticalScrollBar()->setRange(0, 0); horizontalScrollBar()->setRange(0, 0); viewport()->update();
   reader_.clear();
@@ -112,7 +114,7 @@ void PdfView::layoutPages(int previousScaleOverride) {
     verticalScrollBar()->setValue(std::clamp(
         target, verticalScrollBar()->minimum(), verticalScrollBar()->maximum()));
   }
-  cache_.clear(); pending_.clear(); failedTiles_.clear(); viewport()->update();
+  cache_.clear(); pending_.clear(); pendingKeys_.clear(); failedTiles_.clear(); viewport()->update();
   reader_.cancelTiles(generation_);
   emit pageChanged(currentPage() + 1, pages_.size());
 }
@@ -142,8 +144,9 @@ void PdfView::paintEvent(QPaintEvent*) {
         auto cached = cache_.find(key);
         if (cached != cache_.end()) {
           cached->used = ++clock_; painter.drawImage(origin + QPoint(x * 512, y * 512), cached->image);
-        } else if (!failedTiles_.contains(key) && !pending_.values().contains(key)) {
-          const auto id = reader_.tile(generation_, key); if (id) pending_.insert(id, key);
+        } else if (!failedTiles_.contains(key) && !pendingKeys_.contains(key)) {
+          const auto id = reader_.tile(generation_, key);
+          if (id) { pending_.insert(id, key); pendingKeys_.insert(key); }
         }
       }
     }
