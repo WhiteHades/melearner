@@ -13,9 +13,29 @@ On Arch, `qt6-webengine` supplies Qt PDF. melearner links the native Qt PDF
 library and does not embed a browser or QML runtime. PDF pages are rendered
 on a worker thread into a bounded tile cache.
 
-The first configure downloads the SHA-256-pinned Lexbor 3.0.0 source archive
-for HTML parsing. Its license and notice are included in the installation.
-The application itself is local only.
+The first configure downloads two SHA-256-pinned source archives. Lexbor 3.0.0
+supplies HTML parsing, and the pinned shadcn-cpp commit supplies every interface
+component, its theme and its font. Both licenses are included in the
+installation. The application itself is local only.
+
+## Interface
+
+Every control, the colour theme and the interface font come from shadcn-cpp,
+pinned to one reviewed commit in `cpp-app/cmake/shadcn.cmake`. The application
+holds no local stylesheet and no local palette: a colour mode change is an
+install of the theme, and the two modes are the neutral theme's light and dark
+values.
+
+`cpp-app/src/theme.hpp` is the bridge. It reads the installed theme for the
+widgets the application still paints itself, such as the list rows, and it
+supplies the two answers the theme does not: the system's high contrast palette
+mapped onto the theme's roles, and the platform's reduced motion signal, which
+Qt 6.11 exposes as the widget animation duration.
+
+One component came from melearner rather than from the shadcn/ui catalogue:
+the Stats activity grid, added to shadcn-cpp as a `Heatmap` because the pinned
+upstream registry has no equivalent. That addition is recorded in the
+component library, not here.
 
 ## Build and test
 
@@ -76,7 +96,27 @@ Tests use isolated temporary libraries. Application data paths are listed in
 
 The Linux player is an in-window OpenGL surface. It uses libmpv in process and
 does not launch an external player or codec helper. Media files are opened from
-the selected course root after path validation.
+the selected course root after path validation. The transport is built from
+shadcn components, but the decode and the surface are not: the component
+library's optional media player takes a URL and owns its own transport, and this
+application needs to drive a path it has already validated, seek to a saved
+position, add a subtitle file and report progress.
+
+## Measured work
+
+The statements that run often are held to measured numbers rather than assumed
+ones. On a synthetic 400-course, 48,000-lesson library:
+
+| Path | Before | After |
+| --- | --- | --- |
+| Library stats, one scan instead of five | 12.8 ms | 6.5 ms |
+| Resume, ranking only the page's lessons | 151 ms | 16 ms |
+
+Stats runs every few seconds while video plays, and resume runs on every return
+to the Library, which is why both are worth measuring. Other repeated work was
+removed rather than measured: a PDF tile cache that survived a resize, a
+position label that redrew once a second instead of once a frame, and HTML and
+Markdown files that were decoded twice.
 
 ## Packaging
 
