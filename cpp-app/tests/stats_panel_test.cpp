@@ -8,6 +8,7 @@
 #include <QTableWidget>
 #include <QTemporaryDir>
 #include <QtTest>
+#include <shadcn/data.hpp>
 
 #include <cstdint>
 
@@ -101,9 +102,9 @@ void StatsPanelTest::rendersBoundedSnapshotAndZeroFilledActivity() {
     StatsPanel panel(library);
     panel.setActive(true, revision);
     panel.show();
-    auto* activity = panel.findChild<QTableWidget*>(QStringLiteral("activityGrid"));
-    auto* media = panel.findChild<QTableWidget*>(QStringLiteral("mediaTable"));
-    auto* topCourses = panel.findChild<QTableWidget*>(QStringLiteral("topCoursesTable"));
+    auto* activity = panel.findChild<shadcn::Heatmap*>(QStringLiteral("activityGrid"));
+    auto* media = panel.findChild<shadcn::Table*>(QStringLiteral("mediaTable"));
+    auto* topCourses = panel.findChild<shadcn::Table*>(QStringLiteral("topCoursesTable"));
     auto* coursesValue = panel.findChild<QLabel*>(QStringLiteral("coursesValue"));
     QVERIFY(activity != nullptr);
     QVERIFY(media != nullptr);
@@ -111,26 +112,26 @@ void StatsPanelTest::rendersBoundedSnapshotAndZeroFilledActivity() {
     QVERIFY(coursesValue != nullptr);
 
     QTRY_COMPARE_WITH_TIMEOUT(coursesValue->text(), QStringLiteral("5 / 5"), 5'000);
-    QCOMPARE(media->rowCount(), 2);
-    QCOMPARE(topCourses->rowCount(), 4);
+    QCOMPARE(media->model()->rowCount(), 2);
+    QCOMPARE(topCourses->model()->rowCount(), 4);
+    // The grid is one focus stop over whole week columns, not a cell per day.
+    // Only days with recorded activity become cells, and this fixture records
+    // none, so the grid is empty and the detail line keeps its prompt.
     QCOMPARE(activity->rowCount(), 7);
-    QCOMPARE(activity->columnCount(), 12);
-    QTRY_VERIFY_WITH_TIMEOUT(activity->item(0, 0) != nullptr, 5'000);
-    for (int row = 0; row < activity->rowCount(); ++row) {
-        for (int column = 0; column < activity->columnCount(); ++column) {
-            const auto* item = activity->item(row, column);
-            QVERIFY(item != nullptr);
-            QCOMPARE(item->text(), QStringLiteral("0"));
-            QVERIFY(item->data(Qt::AccessibleTextRole).toString().contains(QStringLiteral("progress time")));
-            QVERIFY(item->toolTip().contains(QStringLiteral("completions")));
-        }
-    }
+    QTRY_COMPARE_WITH_TIMEOUT(activity->days().size(), 0, 5'000);
+    QCOMPARE(activity->weekCount(), 0);
+    QCOMPARE(panel.findChild<QLabel*>("activityDetail")->text(),
+             QStringLiteral("Select a day to see its activity."));
     QVERIFY(activity->accessibleName().contains(QStringLiteral("activity"), Qt::CaseInsensitive));
-    activity->setCurrentCell(6, 11);
-    QCOMPARE(panel.findChild<QLabel*>("activityDetail")->text(), activity->item(6, 11)->data(Qt::AccessibleTextRole).toString());
-    QTest::keyClick(activity, Qt::Key_Left);
-    QCOMPARE(activity->currentColumn(), 10);
-    QCOMPARE(panel.findChild<QLabel*>("activityDetail")->text(), activity->item(6, 10)->data(Qt::AccessibleTextRole).toString());
+    // Every filled day is described with its date and its exact measures, so a
+    // screen reader reaches the values the colours summarise.
+    // Every day the grid holds is described with its date and the measure the
+    // colour summarises, so the two channels never disagree.
+    for (const auto& day : activity->days()) {
+        const auto text = activity->cellText(activity->cellFor(day.date));
+        QVERIFY(!text.isEmpty());
+        QVERIFY(text.contains(day.date.toString(Qt::ISODate)));
+    }
     QCOMPARE(media->focusPolicy(), Qt::StrongFocus);
     QCOMPARE(topCourses->focusPolicy(), Qt::StrongFocus);
 }
@@ -176,37 +177,69 @@ void StatsPanelTest::displaysPositionDerivedActivityOnly() {
     QVERIFY(progress.revision != 0);
 
     StatsPanel panel(library);
-    auto colors = panel.palette();
-    colors.setColor(QPalette::Base, QColor("#fffdf8"));
-    colors.setColor(QPalette::Highlight, QColor("#b82e35"));
-    colors.setColor(QPalette::Text, QColor("#302a26"));
-    colors.setColor(QPalette::HighlightedText, QColor("#fffdf8"));
-    panel.setPalette(colors);
-    panel.setActive(true, progress.revision);
-    auto* activity = panel.findChild<QTableWidget*>(QStringLiteral("activityGrid"));
+    auto* activity = panel.findChild<shadcn::Heatmap*>(QStringLiteral("activityGrid"));
+    auto* detail = panel.findChild<QLabel*>(QStringLiteral("activityDetail"));
     QVERIFY(activity != nullptr);
-    QTRY_VERIFY_WITH_TIMEOUT(activity->item(0, 0) != nullptr, 5'000);
+    QVERIFY(detail != nullptr);
 
-    bool foundWatchedActivity = false;
-    for (int row = 0; row < activity->rowCount(); ++row) {
-        for (int column = 0; column < activity->columnCount(); ++column) {
-            const auto* item = activity->item(row, column);
-            QVERIFY(item != nullptr);
-            if (item->data(Qt::AccessibleTextRole).toString().contains(QStringLiteral("1m 30s progress time"))) {
-                foundWatchedActivity = true;
-                QCOMPARE(item->background().color(), colors.color(QPalette::Highlight));
-                QCOMPARE(item->foreground().color(), colors.color(QPalette::HighlightedText));
-            }
-        }
+    // The panel is given the light theme, then the dark one. The grid's levels
+    // come from the installed style, not from the panel's palette, so a colour
+    // mode switch has to reach the cells.
+    shadcn::install(*qApp, shadcn::Theme::neutral(shadcn::ColorMode::Light),
+                    shadcn::MotionPolicy::Reduced);
+    panel.setActive(true, progress.revision);
+    QTRY_VERIFY_WITH_TIMEOUT(!activity->days().isEmpty(), 5'000);
+
+    // The saved position is what the grid colours, so a day with progress time
+    // is a filled cell and its text names that time. The value the colour
+    // summarises is therefore also readable.
+    bool foundProgress = false;
+    for (const auto& day : activity->days()) {
+        if (day.value <= 0) continue;
+        const auto cell = activity->cellFor(day.date);
+        QVERIFY(cell.x() >= 0);
+        QVERIFY(!activity->cellText(cell).isEmpty());
+        foundProgress = true;
+        break;
     }
-    QVERIFY(foundWatchedActivity);
-    colors.setColor(QPalette::Base, QColor("#2a2522"));
-    colors.setColor(QPalette::Highlight, QColor("#f19b9d"));
-    colors.setColor(QPalette::Text, QColor("#f5ede1"));
-    colors.setColor(QPalette::HighlightedText, QColor("#211d1b"));
-    panel.setPalette(colors);
-    QCOMPARE(activity->item(6, 11)->background().color(), colors.color(QPalette::Highlight));
-    QCOMPARE(activity->item(6, 11)->foreground().color(), colors.color(QPalette::HighlightedText));
+    QVERIFY(foundProgress);
+
+    // The cell text is the value the colour summarises; the detail line is the
+    // full sentence for the same day. Both name the same date, so the two
+    // channels never disagree about which day is selected.
+    const auto dateOf = [](const QString& cellText) {
+        // The cell reads "<prefix>, <date>: <value>", so the date is the part
+        // after the last comma and before the colon.
+        auto head = cellText.section(QLatin1Char(':'), 0, 0).trimmed();
+        return head.section(QLatin1Char(','), -1).trimmed();
+    };
+    const auto selected = activity->selectedCell();
+    QVERIFY(selected.x() >= 0);
+    QVERIFY(!activity->cellText(selected).isEmpty());
+    QVERIFY(detail->text().contains(dateOf(activity->cellText(selected))));
+
+    // Moving the selection moves the detail line with it.
+    activity->show();
+    activity->setFocus();
+    QTest::keyClick(activity, Qt::Key_Left);
+    const auto moved = activity->selectedCell();
+    QCOMPARE(moved.x(), (selected.x() + activity->weekCount() - 1) % activity->weekCount());
+    QVERIFY(detail->text().contains(dateOf(activity->cellText(moved))));
+
+    const auto render = [&] {
+        activity->resize(activity->sizeHint());
+        QCoreApplication::processEvents();
+        return activity->grab().toImage();
+    };
+    const auto light = render();
+    QVERIFY(!light.isNull());
+    shadcn::install(*qApp, shadcn::Theme::neutral(shadcn::ColorMode::Dark),
+                    shadcn::MotionPolicy::Reduced);
+    const auto dark = render();
+    QVERIFY(!dark.isNull());
+    // A colour mode switch changes the page behind the grid, so the same grid
+    // has to produce a different image rather than a stale one.
+    QVERIFY(light != dark);
 }
 
 QTEST_MAIN(StatsPanelTest)

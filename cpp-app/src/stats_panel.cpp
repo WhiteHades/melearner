@@ -1,29 +1,26 @@
 #include "stats_panel.hpp"
+#include "theme.hpp"
 
+#include <shadcn/controls.hpp>
 #include <QAbstractItemView>
 #include <QApplication>
-#include <QColor>
 #include <QDate>
 #include <QEvent>
 #include <QGroupBox>
 #include <QHeaderView>
 #include <QLabel>
 #include <QLocale>
-#include <QTableWidget>
-#include <QTableWidgetItem>
 #include <QResizeEvent>
+#include <QStandardItemModel>
 #include <QVBoxLayout>
 
 #include <algorithm>
-#include <cmath>
 #include <utility>
 
 namespace melearner {
 namespace {
 
 constexpr int kActivityDays = 84;
-constexpr int kActivityRows = 7;
-constexpr int kActivityColumns = 12;
 constexpr int kMediaRows = 4;
 constexpr int kTopCourseRows = 4;
 
@@ -73,27 +70,18 @@ QString activityText(const QDate& date, const library::ActivityDay& day) {
              countText(day.lessonsTouched), countText(day.completions));
 }
 
+/// The value a day contributes to the heatmap. Progress time is what the grid
+/// colours, because it is the one measure that rises with study rather than with
+/// the number of files a scan happened to find.
+double heatmapValue(const library::ActivityDay& day) {
+    return static_cast<double>(day.watchedSeconds);
+}
+
 QFont headingFont(const QFont& base, qreal scale) {
     auto font = base;
     font.setPointSizeF(base.pointSizeF() * scale);
     font.setWeight(QFont::DemiBold);
     return font;
-}
-
-bool hasActivity(const library::ActivityDay& day) {
-    return day.watchedSeconds != 0 || day.lessonsTouched != 0 || day.completions != 0;
-}
-
-int activityLevel(const library::ActivityDay& day, std::uint64_t maximumWatched) {
-    if (!hasActivity(day)) {
-        return 0;
-    }
-    if (maximumWatched == 0) {
-        return 4;
-    }
-    const auto ratio = static_cast<long double>(day.watchedSeconds)
-        / static_cast<long double>(maximumWatched);
-    return std::clamp(1 + static_cast<int>(ratio * 3.0L), 1, 4);
 }
 
 QLabel* plainLabel(const QString& objectName, const QString& accessibleName) {
@@ -129,7 +117,7 @@ QGroupBox* metricBox(
     return box;
 }
 
-void configureTable(QTableWidget* table) {
+void configureTable(shadcn::Table* table) {
     table->setFont(QApplication::font());
     table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table->setFocusPolicy(Qt::StrongFocus);
@@ -146,17 +134,14 @@ void configureTable(QTableWidget* table) {
     table->setFrameShape(QFrame::NoFrame);
 }
 
-double luminance(const QColor& color) {
-    const auto linear = [](double value) { return value <= 0.04045 ? value / 12.92 : std::pow((value + 0.055) / 1.055, 2.4); };
-    return 0.2126 * linear(color.redF()) + 0.7152 * linear(color.greenF()) + 0.0722 * linear(color.blueF());
-}
-
-QTableWidgetItem* tableItem(const QString& text, const QString& accessibleText = {}) {
-    auto* item = new QTableWidgetItem(text);
-    item->setData(Qt::AccessibleTextRole, accessibleText.isEmpty() ? text : accessibleText);
-    item->setData(Qt::AccessibleDescriptionRole, accessibleText.isEmpty() ? text : accessibleText);
-    item->setToolTip(accessibleText.isEmpty() ? text : accessibleText);
-    item->setStatusTip(accessibleText.isEmpty() ? text : accessibleText);
+/// A cell carries the whole row in its accessible name and description, so a
+/// screen reader reads one meaningful cell rather than four disconnected values.
+QStandardItem* tableItem(const QString& text, const QString& accessibleText) {
+    auto* item = new QStandardItem(text);
+    item->setData(accessibleText, Qt::AccessibleTextRole);
+    item->setData(accessibleText, Qt::AccessibleDescriptionRole);
+    item->setToolTip(accessibleText);
+    item->setTextAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     return item;
 }
 
@@ -207,24 +192,27 @@ StatsPanel::StatsPanel(library::Library& library, QWidget* parent)
     auto* mediaBox = new QGroupBox(tr("Media mix"));
     mediaBox->setFont(headingFont(mediaBox->font(), 1.12));
     auto* mediaLayout = new QVBoxLayout(mediaBox);
-    media_ = new QTableWidget(0, 4, mediaBox);
+    media_ = new shadcn::Table;
     media_->setObjectName(QStringLiteral("mediaTable"));
     media_->setAccessibleName(tr("Media mix").append(tr(" table")));
-    media_->setHorizontalHeaderLabels({tr("Type"), tr("Lessons"), tr("Completed"), tr("Progress")});
-    media_->setSelectionMode(QAbstractItemView::NoSelection);
     configureTable(media_);
+    mediaModel_ = new QStandardItemModel(0, 4, media_);
+    (void)mediaModel_;
+    mediaModel_->setHorizontalHeaderLabels({tr("Type"), tr("Lessons"), tr("Completed"), tr("Progress")});
+    media_->setModel(mediaModel_);
     mediaLayout->addWidget(media_);
     breakdown->addWidget(mediaBox, 0, 0);
 
     auto* coursesBox = new QGroupBox(tr("Top courses")); coursesBox_ = coursesBox;
     coursesBox->setFont(headingFont(coursesBox->font(), 1.12));
     auto* coursesLayout = new QVBoxLayout(coursesBox);
-    topCourses_ = new QTableWidget(0, 4, coursesBox);
+    topCourses_ = new shadcn::Table;
     topCourses_->setObjectName(QStringLiteral("topCoursesTable"));
     topCourses_->setAccessibleName(tr("Top courses table"));
-    topCourses_->setHorizontalHeaderLabels({tr("Course"), tr("Complete"), tr("Progress"), tr("Storage")});
-    topCourses_->setSelectionMode(QAbstractItemView::NoSelection);
     configureTable(topCourses_);
+    topCoursesModel_ = new QStandardItemModel(0, 4, topCourses_);
+    topCoursesModel_->setHorizontalHeaderLabels({tr("Course"), tr("Complete"), tr("Progress"), tr("Storage")});
+    topCourses_->setModel(topCoursesModel_);
     coursesLayout->addWidget(topCourses_);
     breakdown->addWidget(coursesBox, 0, 1);
     breakdown->setColumnStretch(0, 1);
@@ -235,35 +223,25 @@ StatsPanel::StatsPanel(library::Library& library, QWidget* parent)
     activityBox->setFont(headingFont(activityBox->font(), 1.12));
     auto* activityLayout = new QVBoxLayout(activityBox);
     auto* activityHint = plainLabel(QStringLiteral("activityHint"), tr("Activity description"));
-    activityHint->setText(tr("Each cell shows a relative activity level; focus a cell for its date and exact value."));
+    activityHint->setText(tr("Each cell shows a relative activity level. Use the arrow keys to move between days."));
     activityLayout->addWidget(activityHint);
-    activity_ = new QTableWidget(kActivityRows, kActivityColumns, activityBox);
+    activity_ = new shadcn::Heatmap(activityBox);
     activity_->setObjectName(QStringLiteral("activityGrid"));
     activity_->setAccessibleName(tr("84-day learning activity"));
-    activity_->setSelectionMode(QAbstractItemView::SingleSelection);
-    activity_->setSelectionBehavior(QAbstractItemView::SelectItems);
-    activity_->setFocusPolicy(Qt::StrongFocus);
-    activity_->setTabKeyNavigation(false);
-    activity_->setCornerButtonEnabled(false);
-    configureTable(activity_);
-    activity_->verticalHeader()->setVisible(true);
-    activity_->horizontalHeader()->setVisible(true);
-    activity_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
-    activity_->verticalHeader()->setSectionResizeMode(QHeaderView::Stretch);
-    activity_->setMinimumHeight(230);
-    activity_->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    activity_->horizontalHeader()->setMinimumSectionSize(40);
-    activity_->setShowGrid(false);
-    activity_->setGridStyle(Qt::NoPen);
+    // The grid's own cell text stays a bare date and value. A prefix would make
+    // every arrow key press announce a whole sentence, and the panel already
+    // names the selected day in full in the line below the grid.
+    activity_->setAccessiblePrefix(QString());
     activityLayout->addWidget(activity_);
     activityDetail_ = plainLabel(QStringLiteral("activityDetail"), tr("Selected activity"));
     activityDetail_->setText(tr("Select a day to see its activity."));
     activityLayout->addWidget(activityDetail_);
-    connect(activity_, &QTableWidget::currentCellChanged, this, [this](int row, int column) {
-        const auto* item = activity_->item(row, column);
-        activityDetail_->setText(item ? item->data(Qt::AccessibleTextRole).toString()
-                                    : tr("Select a day to see its activity."));
-    });
+    // The heatmap is one focus stop, so a pointer click and a keyboard Return
+    // both have to reach the same place the table's cell selection used to.
+    connect(activity_, &shadcn::Heatmap::cellActivated, this,
+            [this](const QDate& date, double) { activityDetail_->setText(activityDetailFor(date)); });
+    connect(activity_, &shadcn::Heatmap::selectionChanged, this,
+            [this](const QDate& date, double) { activityDetail_->setText(activityDetailFor(date)); });
     root->addWidget(activityBox);
     root->addStretch();
 
@@ -351,13 +329,11 @@ void StatsPanel::resetProjection(const QString& status) {
     for (auto* label : {coursesDetail_, completionDetail_, watchedDetail_, storageDetail_}) {
         label->clear();
     }
-    media_->setRowCount(0);
-    topCourses_->setRowCount(0);
-    activity_->clearContents();
-    activity_->clearSpans();
-    activity_->clearSelection();
-    activity_->setHorizontalHeaderLabels(QStringList(kActivityColumns, QString()));
-    activity_->setVerticalHeaderLabels(QStringList(kActivityRows, QString()));
+    mediaModel_->removeRows(0, mediaModel_->rowCount());
+    topCoursesModel_->removeRows(0, topCoursesModel_->rowCount());
+    activityDays_.clear();
+    (void)activity_->setDays({});
+    activityDetail_->setText(tr("Select a day to see its activity."));
     setStatus(status);
 }
 
@@ -387,32 +363,32 @@ void StatsPanel::renderSnapshot(const library::LibraryStats& stats) {
 }
 
 void StatsPanel::renderMedia(const QVector<library::MediaTypeStats>& rows) {
-    media_->setRowCount(rows.size());
-    for (int row = 0; row < rows.size(); ++row) {
-        const auto& item = rows.at(row);
+    mediaModel_->removeRows(0, mediaModel_->rowCount());
+    for (const auto& item : rows) {
         const auto accessible = tr("%1: lessons: %2, completed: %3, progress time: %4")
                                     .arg(titleCase(item.type), countText(item.lessons),
                                          countText(item.completed), durationText(item.watchedSeconds));
-        media_->setItem(row, 0, tableItem(titleCase(item.type), accessible));
-        media_->setItem(row, 1, tableItem(countText(item.lessons), accessible));
-        media_->setItem(row, 2, tableItem(countText(item.completed), accessible));
-        media_->setItem(row, 3, tableItem(durationText(item.watchedSeconds), accessible));
+        const auto row = mediaModel_->rowCount();
+        mediaModel_->appendRow({tableItem(titleCase(item.type), accessible),
+                                tableItem(countText(item.lessons), accessible),
+                                tableItem(countText(item.completed), accessible),
+                                tableItem(durationText(item.watchedSeconds), accessible)});
+        Q_UNUSED(row);
     }
 }
 
 void StatsPanel::renderTopCourses(const QVector<library::TopCourseStats>& rows) {
-    topCourses_->setRowCount(rows.size());
-    for (int row = 0; row < rows.size(); ++row) {
-        const auto& item = rows.at(row);
+    topCoursesModel_->removeRows(0, topCoursesModel_->rowCount());
+    for (const auto& item : rows) {
         const auto accessible = tr("%1: lessons complete: %2 of %3, progress time: %4, stored: %5")
                                     .arg(item.name, countText(item.completedLessons), countText(item.lessons),
                                          durationText(item.watchedSeconds), bytesText(item.bytes));
-        topCourses_->setItem(row, 0, tableItem(item.name, accessible));
-        topCourses_->setItem(row, 1,
-                             tableItem(tr("%1 / %2").arg(countText(item.completedLessons), countText(item.lessons)),
-                                       accessible));
-        topCourses_->setItem(row, 2, tableItem(durationText(item.watchedSeconds), accessible));
-        topCourses_->setItem(row, 3, tableItem(bytesText(item.bytes), accessible));
+        topCoursesModel_->appendRow(
+            {tableItem(item.name, accessible),
+             tableItem(tr("%1 / %2").arg(countText(item.completedLessons), countText(item.lessons)),
+                       accessible),
+             tableItem(durationText(item.watchedSeconds), accessible),
+             tableItem(bytesText(item.bytes), accessible)});
     }
 }
 
@@ -427,45 +403,53 @@ void StatsPanel::renderActivity(const library::ActivityDayPage& page) {
         return;
     }
     const auto first = through.addDays(-(kActivityDays - 1));
-    QMap<QDate, library::ActivityDay> days;
+    activityDays_.clear();
+    QList<shadcn::HeatmapDay> days;
     std::uint64_t maximumWatched = 0;
     for (const auto& day : page.rows) {
         const auto date = QDate::fromString(day.date, Qt::ISODate);
-        if (!date.isValid() || date < first || date > through || days.contains(date)) {
+        if (!date.isValid() || date < first || date > through || activityDays_.contains(date)) {
             setStatus(tr("Activity dates are invalid."));
             return;
         }
-        days.insert(date, day);
+        activityDays_.insert(date, day);
         maximumWatched = std::max(maximumWatched, day.watchedSeconds);
     }
 
-    QStringList weekLabels;
-    weekLabels.reserve(kActivityColumns);
-    for (int column = 0; column < kActivityColumns; ++column) {
-        weekLabels.append(first.addDays(column * kActivityRows).toString(QStringLiteral("MM/dd")));
+    // The grid is bucketed against the busiest day in the window, so the ramp
+    // always uses its whole range. A window with no activity at all would make
+    // every ratio divide by zero, so it is given a maximum of one and the grid
+    // then shows a single quiet level rather than nothing.
+    activity_->setMaximum(maximumWatched > 0 ? static_cast<double>(maximumWatched) : 1.0);
+    days.reserve(activityDays_.size());
+    for (auto it = activityDays_.constBegin(); it != activityDays_.constEnd(); ++it)
+        days.append({it.key(), heatmapValue(it.value())});
+    // A window shorter than the grid still needs a maximum, and a rejected value
+    // here would leave the previous grid on screen, so the result is checked.
+    if (!activity_->setDays(days)) {
+        setStatus(tr("Activity data is invalid."));
+        return;
     }
-    QStringList dayLabels;
-    dayLabels.reserve(kActivityRows);
-    for (int row = 0; row < kActivityRows; ++row) {
-        dayLabels.append(QLocale().dayName(first.addDays(row).dayOfWeek(), QLocale::ShortFormat));
+    // The most recent day is selected by the component, so its detail line is
+    // filled in rather than left showing the prompt.
+    const auto selected = activity_->selectedCell();
+    if (selected.x() >= 0 && selected.y() >= 0) {
+        const auto& text = activity_->cellText(selected);
+        if (!text.isEmpty()) {
+            const auto date = QDate::fromString(text.section(QLatin1Char(':'), 0, 0).trimmed(),
+                                                Qt::ISODate);
+            activityDetail_->setText(activityDetailFor(date));
+        }
     }
-    activity_->setHorizontalHeaderLabels(weekLabels);
-    activity_->setVerticalHeaderLabels(dayLabels);
-    activity_->clearContents();
-    for (int index = 0; index < kActivityDays; ++index) {
-        const auto date = first.addDays(index);
-        const auto found = days.constFind(date);
-        const auto day = found == days.cend() ? library::ActivityDay{} : found.value();
-        const auto level = activityLevel(day, maximumWatched);
-        const auto accessible = activityText(date, day);
-        auto* item = tableItem(QString::number(level), accessible);
-        item->setTextAlignment(Qt::AlignCenter);
-        item->setData(Qt::UserRole, date.toString(Qt::ISODate));
-        activity_->setItem(index % kActivityRows, index / kActivityRows, item);
-    }
-    updateActivityColors();
-    activity_->setCurrentCell(-1, -1);
     setStatus(tr("Activity updated."));
+}
+
+QString StatsPanel::activityDetailFor(const QDate& date) const {
+    const auto found = activityDays_.constFind(date);
+    if (found == activityDays_.cend()) {
+        return tr("Select a day to see its activity.");
+    }
+    return activityText(date, *found);
 }
 
 void StatsPanel::setStatus(QString message) {
@@ -476,7 +460,6 @@ void StatsPanel::resizeEvent(QResizeEvent* event) { QWidget::resizeEvent(event);
 
 void StatsPanel::changeEvent(QEvent* event) {
     QWidget::changeEvent(event);
-    if (event->type() == QEvent::PaletteChange) updateActivityColors();
     if (event->type() == QEvent::FontChange) updateLayout();
 }
 
@@ -498,37 +481,15 @@ void StatsPanel::updateLayout() {
     const int rowHeight = std::max(40, fontMetrics().lineSpacing() + 12);
     for (auto* table : {media_, topCourses_}) {
         table->verticalHeader()->setDefaultSectionSize(rowHeight);
-        table->setFixedHeight(table->horizontalHeader()->sizeHint().height() + rowHeight * std::max(1, table->rowCount()) + 4);
-        table->horizontalHeader()->setMinimumSectionSize(table->fontMetrics().horizontalAdvance(tr("Completed")) + 20);
+        const auto rows = std::max(1, table->model() ? table->model()->rowCount() : 0);
+        table->setFixedHeight(table->horizontalHeader()->sizeHint().height() + rowHeight * rows + 4);
+        table->horizontalHeader()->setMinimumSectionSize(
+            table->fontMetrics().horizontalAdvance(tr("Completed")) + 20);
         table->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     }
-    activity_->setMinimumHeight(rowHeight * 8 + 24);
-    activity_->horizontalHeader()->setMinimumSectionSize(std::max(40, activity_->fontMetrics().horizontalAdvance("00/00") + 16));
-}
-
-void StatsPanel::updateActivityColors() {
-    if (!activity_) return;
-    const auto base = palette().color(QPalette::Base);
-    const auto accent = palette().color(QPalette::Highlight);
-    const auto ink = palette().color(QPalette::Text);
-    const auto onAccent = palette().color(QPalette::HighlightedText);
-    for (int row = 0; row < kActivityRows; ++row) {
-        for (int column = 0; column < kActivityColumns; ++column) {
-            auto* item = activity_->item(row, column); if (!item) continue;
-            const double amount = std::clamp(item->text().toInt(), 0, 4) / 4.0;
-            const QColor background = QColor::fromRgbF(
-                base.redF() + (accent.redF() - base.redF()) * amount,
-                base.greenF() + (accent.greenF() - base.greenF()) * amount,
-                base.blueF() + (accent.blueF() - base.blueF()) * amount);
-            const double light = luminance(background);
-            const auto contrast = [light](const QColor& text) {
-                const double other = luminance(text);
-                return (std::max(light, other) + 0.05) / (std::min(light, other) + 0.05);
-            };
-            item->setBackground(background);
-            item->setForeground(contrast(ink) >= contrast(onAccent) ? ink : onAccent);
-        }
-    }
+    // The heatmap is sized by its own hint, which already accounts for the axis
+    // and the legend, so the panel only has to let it keep that height.
+    activity_->setMinimumHeight(activity_->sizeHint().height());
 }
 
 }  // namespace melearner

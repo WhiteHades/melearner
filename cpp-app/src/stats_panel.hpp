@@ -2,6 +2,8 @@
 
 #include "library.hpp"
 
+#include <shadcn/data.hpp>
+#include <QDate>
 #include <QMap>
 #include <QWidget>
 
@@ -9,7 +11,7 @@
 
 class QLabel;
 class QGridLayout;
-class QTableWidget;
+class QStandardItemModel;
 
 namespace melearner {
 
@@ -51,7 +53,8 @@ private:
     void renderTopCourses(const QVector<library::TopCourseStats>& rows);
     void setStatus(QString message);
     void updateLayout();
-    void updateActivityColors();
+    // The full sentence for a day, from the last activity page.
+    [[nodiscard]] QString activityDetailFor(const QDate& date) const;
 
     library::Library& library_;
     QLabel* status_ = nullptr;
@@ -64,9 +67,14 @@ private:
     QLabel* storageValue_ = nullptr;
     QLabel* storageDetail_ = nullptr;
     QLabel* activityDetail_ = nullptr;
-    QTableWidget* media_ = nullptr;
-    QTableWidget* topCourses_ = nullptr;
-    QTableWidget* activity_ = nullptr;
+    shadcn::Table* media_ = nullptr;
+    shadcn::Table* topCourses_ = nullptr;
+    shadcn::Heatmap* activity_ = nullptr;
+    QStandardItemModel* mediaModel_ = nullptr;
+    QStandardItemModel* topCoursesModel_ = nullptr;
+    /// The last activity page, so a selected day can be described in full
+    /// rather than only by the value the grid colours it with.
+    QMap<QDate, library::ActivityDay> activityDays_;
     QGridLayout* breakdown_ = nullptr;
     QGridLayout* totals_ = nullptr;
     QWidget* coursesBox_ = nullptr;

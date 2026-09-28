@@ -16,6 +16,7 @@
 #include <QPainter>
 #include <QPdfWriter>
 #include <shadcn/widgets.hpp>
+#include <shadcn/data.hpp>
 #include <shadcn/navigation.hpp>
 #include <QTableWidget>
 #include <QScrollArea>
@@ -119,7 +120,12 @@ private slots:
     auto* tabs = window.findChild<shadcn::Tabs*>("libraryTabs"); QVERIFY(tabs); tabs->setCurrentValue("stats");
     auto* count = window.findChild<QLabel*>("coursesValue"); QTRY_COMPARE(count->text(), QString("1 / 1"));
     auto* completion = window.findChild<QLabel*>("completionValue"); QTRY_COMPARE(completion->text(), QString("0%"));
-    auto* activity = window.findChild<QTableWidget*>("activityGrid"); QTRY_VERIFY(activity->item(6, 11));
+    // The activity grid is one focus stop over whole week columns, so it holds
+    // no cells for a library that has recorded no activity yet.
+    auto* activity = window.findChild<shadcn::Heatmap*>("activityGrid"); QVERIFY(activity);
+    QCOMPARE(activity->rowCount(), 7);
+    QTRY_COMPARE(activity->days().size(), 0);
+    QVERIFY(activity->accessibleName().contains(QStringLiteral("activity"), Qt::CaseInsensitive));
     for (int width : {560, 768, 1280}) {
       window.resize(width, 720); QCoreApplication::processEvents();
       auto* scroll = window.findChild<QScrollArea*>("statsScroll");
