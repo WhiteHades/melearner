@@ -182,8 +182,14 @@ private slots:
     QCOMPARE(activity->rowCount(), 7);
     QTRY_COMPARE(activity->days().size(), 0);
     QVERIFY(activity->accessibleName().contains(QStringLiteral("activity"), Qt::CaseInsensitive));
+    auto* rail = window.findChild<shadcn::Sidebar*>();
     for (int width : {560, 768, 1280}) {
       window.resize(width, 720); QCoreApplication::processEvents();
+      // The rail slides rather than jumps, so a capture taken straight after a resize
+      // photographs it part way across and every element in it looks truncated. A
+      // capture that is going to be looked at has to wait for the width the rail is
+      // going to keep.
+      if (rail && rail->isOpen()) QTRY_VERIFY(rail->width() == rail->expandedWidth());
       auto* scroll = window.findChild<QScrollArea*>("statsScroll");
       QTRY_COMPARE(scroll->horizontalScrollBar()->maximum(), 0);
       const auto captures = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
