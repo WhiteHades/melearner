@@ -5,7 +5,7 @@
 #include <QCoreApplication>
 #include <QCommandLineParser>
 #include <QDir>
-#include <QMessageBox>
+#include <QTextStream>
 #include <QStandardPaths>
 #include <QSurfaceFormat>
 #include <string_view>
@@ -63,14 +63,21 @@ int main(int argc, char** argv) {
   QCommandLineParser arguments;
   configureCommandLineParser(arguments);
   arguments.process(application);
+  // These two failures happen before there is a window to own a dialog, so they
+  // are reported on stderr instead. A message box would also be the one
+  // interface surface left outside the component library.
+  const auto fail = [](const QString& message) {
+    QTextStream(stderr) << "melearner: " << message << Qt::endl;
+    return 1;
+  };
   const auto data = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
   if (!QDir().mkpath(data)) {
-    QMessageBox::critical(nullptr, "melearner", "Cannot create the C++ data directory. Check its permissions."); return 1;
+    return fail(QStringLiteral("Cannot create the data directory. Check its permissions."));
   }
   SingleInstance instance(data);
   const auto acquired = instance.acquire();
   if (acquired == SingleInstance::Result::Forwarded) return 0;
-  if (acquired == SingleInstance::Result::Error) { QMessageBox::critical(nullptr, "melearner", instance.error()); return 1; }
+  if (acquired == SingleInstance::Result::Error) return fail(instance.error());
   MainWindow window(QDir(data).filePath("library-v1.sqlite3"), nullptr, arguments.isSet("software-decoding"));
   QObject::connect(&instance, &SingleInstance::activationRequested, &window, [&window] {
     if (window.isMinimized()) window.showNormal();

@@ -16,7 +16,6 @@ class QAction;
 class QLabel;
 class QListView;
 class QTreeView;
-class QSlider;
 class QStackedWidget;
 class PagedListModel;
 class QTextEdit;
