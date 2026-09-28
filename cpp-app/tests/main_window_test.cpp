@@ -9,7 +9,6 @@
 #include <QLabel>
 #include <QListView>
 #include <QTreeView>
-#include <QLineEdit>
 #include <QListWidget>
 #include <QPushButton>
 #include <QPointer>
@@ -17,6 +16,7 @@
 #include <QPdfWriter>
 #include <shadcn/widgets.hpp>
 #include <shadcn/data.hpp>
+#include <shadcn/overlays.hpp>
 #include <shadcn/navigation.hpp>
 #include <QTableWidget>
 #include <QScrollArea>
@@ -70,8 +70,11 @@ private slots:
 
     QTest::keyClick(&window, Qt::Key_F1);
     QPointer<QDialog> shortcuts = window.findChild<QDialog*>("shortcutHelp"); QTRY_VERIFY(shortcuts && shortcuts->isVisible());
-    auto* filter = shortcuts->findChild<QLineEdit*>("keyboardPopupFilter"); QVERIFY(filter);
-    auto* rows = shortcuts->findChild<QListWidget*>("keyboardPopupList"); QVERIFY(rows);
+    // The popup is a shadcn dialog holding a shadcn command list.
+    auto* command = shortcuts->findChild<shadcn::Command*>("keyboardPopupCommand"); QVERIFY(command);
+    auto* filter = static_cast<QLineEdit*>(&command->search()); QVERIFY(filter);
+    auto* rows = &command->list(); QVERIFY(rows);
+    QVERIFY(!shortcuts->property("shadcnPanel").isNull() || rows->count() > 0);
     QVERIFY(rows->count() > 10); filter->setText("play"); QTRY_VERIFY(rows->count() > 0);
     shortcuts->reject(); QTRY_VERIFY(shortcuts.isNull());
 
@@ -91,13 +94,33 @@ private slots:
     input->clearFocus(); input->deleteLater(); QCoreApplication::processEvents();
 
     QTest::keyClick(&window, Qt::Key_Space, Qt::ControlModifier);
-    QPointer<QDialog> palette = window.findChild<QDialog*>("commandPalette"); QTRY_VERIFY(palette && palette->isVisible());
-    filter = palette->findChild<QLineEdit*>("keyboardPopupFilter");
-    rows = palette->findChild<QListWidget*>("keyboardPopupList");
-    filter->setText("rescan root"); QCOMPARE(rows->count(), 1);
-    filter->setText("last item"); QCOMPARE(rows->count(), 1);
+    QPointer<QDialog> palette = window.findChild<QDialog*>("commandPalette");
+    QTRY_VERIFY(palette && palette->isVisible());
+    auto* paletteCommand = palette->findChild<shadcn::Command*>("keyboardPopupCommand");
+    QVERIFY(paletteCommand);
+    filter = static_cast<QLineEdit*>(&paletteCommand->search());
+    rows = &paletteCommand->list();
+    // The command list searches the label, the binding and the context, so a
+    // command is reachable by any of the three. It hides unmatched rows rather
+    // than removing them, so the count is over the visible rows.
+    const auto visibleRows = [rows] {
+      int count = 0;
+      for (int row = 0; row < rows->count(); ++row)
+        if (!rows->item(row)->isHidden()) ++count;
+      return count;
+    };
+    filter->setText("rescan root"); QTRY_VERIFY(visibleRows() == 1);
+    filter->setText("last item"); QTRY_VERIFY(visibleRows() == 1);
+    filter->setText("no command matches this");
+    QTRY_VERIFY(visibleRows() == 0);
+    filter->setText("last item"); QTRY_VERIFY(visibleRows() == 1);
+    // Return runs the highlighted command, so the selection moves in the window
+    // rather than only closing the palette.
     QTest::keyClick(filter, Qt::Key_Return);
     QTRY_COMPARE(courses->currentIndex().row(), 1);
+    // The dialog deletes itself on close, so a null pointer is the closed state
+    // as much as a hidden one.
+    QTRY_VERIFY(palette.isNull() || !palette->isVisible());
   }
   void statsFollowCourseProgress_data() {
     QTest::addColumn<int>("fontScale");

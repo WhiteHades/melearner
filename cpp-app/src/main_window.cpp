@@ -87,30 +87,31 @@ protected:
       fontMetrics().elidedText(text(), Qt::ElideRight, contentsRect().width()));
   }
 };
-void populateKeyboardPopup(QDialog* dialog, QLineEdit* query, QListWidget* list,
-    const QList<QAction*>& actions, bool commandPalette) {
-  list->clear();
-  const auto filter = query->text().trimmed();
+/// Fill a shadcn command list with the window's keyboard commands. The component
+/// does the filtering and the arrow-key movement, so this only decides which
+/// actions are offered and how each one reads.
+void populateKeyboardPopup(shadcn::Command& command, const QList<QAction*>& actions,
+    bool commandPalette) {
+  command.list().clear();
   for (auto* action : actions) {
-    if (!action || (!commandPalette && !action->property("showInKeyboardPopup").toBool())) continue;
+    if (!action) continue;
+    if (!commandPalette && !action->property("showInKeyboardPopup").toBool()) continue;
     const auto label = action->text();
     const auto keys = action->property("shortcutText").toString();
     const auto context = action->property("shortcutContext").toString();
     const auto haystack = QStringLiteral("%1 %2 %3").arg(label, keys, context);
-    if (!filter.isEmpty() && !haystack.contains(filter, Qt::CaseInsensitive)) continue;
-    auto* item = new QListWidgetItem(QStringLiteral("%1    %2  ·  %3").arg(keys, label, context), list);
-    item->setData(Qt::UserRole, QVariant::fromValue<qulonglong>(reinterpret_cast<quintptr>(action)));
-    item->setToolTip(haystack);
-    item->setTextAlignment(Qt::AlignVCenter | Qt::AlignLeft);
-    item->setFlags(item->flags() | Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+    if (!commandPalette && keys.isEmpty()) continue;
+    // The label carries the binding, because a shortcut list that hides the
+    // binding next to the command is not a shortcut list.
+    const auto row = keys.isEmpty() ? label
+        : QObject::tr("%1    %2").arg(keys, label);
+    // The keywords are searched alongside the label, so a command is reachable
+    // by its name, its binding or its context.
+    auto& item = command.addItem(row, QVariant::fromValue<qulonglong>(
+      reinterpret_cast<quintptr>(action)), {keys, context});
+    item.setToolTip(haystack);
   }
-  if (list->count() > 0) list->setCurrentRow(0);
-  dialog->setWindowTitle(commandPalette ? QObject::tr("Command palette") : QObject::tr("Keyboard shortcuts"));
-}
-QAction* keyboardActionForItem(QListWidgetItem* item) {
-  if (!item) return nullptr;
-  const auto raw = item->data(Qt::UserRole).toULongLong();
-  return reinterpret_cast<QAction*>(static_cast<quintptr>(raw));
+  if (command.list().count() > 0) command.list().setCurrentRow(0);
 }
 QString clockText(qint64 milliseconds) {
   const auto seconds = std::max<qint64>(0, milliseconds / 1000);
@@ -876,45 +877,45 @@ QAction* MainWindow::keyboardCommand(const QString& id) const {
   return keyboardCommands_.value(id, nullptr);
 }
 void MainWindow::showKeyboardPopup(bool commandPalette) {
-  if (const auto* open = findChild<QDialog*>(commandPalette ? "commandPalette" : "shortcutHelp"); open && open->isVisible()) return;
-  auto* dialog = new QDialog(this);
-  dialog->setObjectName(commandPalette ? "commandPalette" : "shortcutHelp");
+  const auto name = commandPalette ? "commandPalette" : "shortcutHelp";
+  if (const auto* open = findChild<QDialog*>(name); open && open->isVisible()) return;
+  // A shadcn dialog supplies the panel, the backdrop, focus containment, focus
+  // restoration on close, outside-click dismissal and the open transition. The
+  // command list inside it is a shadcn Command, which supplies the search field,
+  // the filtering and the arrow-key movement.
+  auto* dialog = new shadcn::Dialog(this);
+  dialog->setObjectName(name);
   dialog->setAttribute(Qt::WA_DeleteOnClose);
-  dialog->setModal(true);
-  dialog->resize(620, 520);
-  auto* layout = new QVBoxLayout(dialog);
-  layout->setContentsMargins(20, 18, 20, 16); layout->setSpacing(10);
-  auto* heading = new QLabel(commandPalette ? tr("Run a command") : tr("Keyboard shortcuts"), dialog);
-  heading->setObjectName("keyboardPopupTitle");
-  auto headingFont = heading->font(); headingFont.setWeight(QFont::DemiBold); headingFont.setPointSizeF(headingFont.pointSizeF() * 1.12); heading->setFont(headingFont);
-  layout->addWidget(heading);
-  auto* hint = new QLabel(commandPalette ? tr("Type to filter commands · Enter to run · Esc to close")
-                                         : tr("Type to filter · Enter to run a command · Esc to close"), dialog);
-  hint->setObjectName("keyboardPopupHint"); hint->setWordWrap(true); layout->addWidget(hint);
-  auto* query = new QLineEdit(dialog); query->setObjectName("keyboardPopupFilter");
-  query->setPlaceholderText(commandPalette ? tr("Search commands…") : tr("Filter shortcuts…"));
-  query->setAccessibleName(commandPalette ? tr("Command filter") : tr("Shortcut filter"));
-  layout->addWidget(query);
-  auto* list = new QListWidget(dialog); list->setObjectName("keyboardPopupList");
-  list->setSelectionMode(QAbstractItemView::SingleSelection); list->setUniformItemSizes(true);
-  list->setAlternatingRowColors(false); list->setFrameShape(QFrame::NoFrame); layout->addWidget(list, 1);
+  dialog->setTitle(commandPalette ? tr("Run a command") : tr("Keyboard shortcuts"));
+  dialog->setDescription(commandPalette
+      ? tr("Type to filter commands, then press Enter to run one.")
+      : tr("Type to filter, then press Enter to run a command."));
+  dialog->setContentWidth(620);
+  auto* command = new shadcn::Command(dialog);
+  command->setObjectName("keyboardPopupCommand");
+  command->search().setPlaceholderText(commandPalette ? tr("Search commands…") : tr("Filter shortcuts…"));
+  command->search().setAccessibleName(commandPalette ? tr("Command filter") : tr("Shortcut filter"));
+  command->setEmptyText(commandPalette ? tr("No matching commands.") : tr("No matching shortcuts."));
+  dialog->content().addWidget(command, 1);
   const QPointer<QWidget> invoker = QApplication::focusWidget();
-  populateKeyboardPopup(dialog, query, list, keyboardActions_, commandPalette);
-  connect(query, &QLineEdit::textChanged, dialog, [dialog, query, list, this, commandPalette] {
-    populateKeyboardPopup(dialog, query, list, keyboardActions_, commandPalette);
-  });
-  const auto runSelected = [this, dialog, list, invoker] {
-    const QPointer<QAction> action = keyboardActionForItem(list->currentItem());
+  populateKeyboardPopup(*command, keyboardActions_, commandPalette);
+
+  // The command component already turns Return in the search field and
+  // activation in the list into one triggered signal, so this window does not
+  // reimplement that key handling.
+  connect(command, &shadcn::Command::triggered, dialog, [this, dialog, invoker](const QVariant& data) {
+    const QPointer<QAction> action = reinterpret_cast<QAction*>(
+      static_cast<quintptr>(data.toULongLong()));
     if (!action || !action->isEnabled()) return;
     dialog->accept();
+    // The command runs after the dialog has closed, so a command that opens
+    // another dialog is not immediately dismissed by the one closing.
     QTimer::singleShot(0, this, [invoker, action] {
       if (invoker) invoker->setFocus(Qt::OtherFocusReason);
       if (action) action->trigger();
     });
-  };
-  connect(query, &QLineEdit::returnPressed, dialog, runSelected);
-  connect(list, &QListWidget::itemActivated, dialog, [runSelected](QListWidgetItem*) { runSelected(); });
-  dialog->show(); query->setFocus();
+  });
+  dialog->open();
 }
 bool MainWindow::isTextInputFocused() const {
   auto* focus = QApplication::focusWidget();
