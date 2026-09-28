@@ -64,6 +64,22 @@ private slots:
     }
     view.setZoom(2); view.jumpToPage(500); QTRY_VERIFY(view.cachedTiles() > 0);
     QVERIFY(view.cachedTiles() <= 64);
+
+    // A tile is keyed by its page and scale, so a resize that leaves the scale
+    // alone must keep the cache. Re-rendering every visible tile for each pixel
+    // of a window drag is what dropping it caused.
+    const auto beforeResize = view.cachedTiles();
+    QVERIFY(beforeResize > 0);
+    view.resize(620, 500);
+    QCOMPARE(view.cachedTiles(), beforeResize);
+    view.resize(600, 500);
+    QCOMPARE(view.cachedTiles(), beforeResize);
+    // Fit width recomputes the scale from the width, so a resize that changes it
+    // must still discard the tiles rather than show the wrong zoom.
+    const auto zoomed = view.zoomForTesting();
+    view.resize(700, 500);
+    if (view.zoomForTesting() != zoomed) QVERIFY(view.cachedTiles() < beforeResize + 64);
+
     view.clear(); QCOMPARE(view.cachedTiles(), 0);
     reader.close();
   }

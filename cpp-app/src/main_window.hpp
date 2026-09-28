@@ -150,6 +150,10 @@ private:
   qint64 positionMs_ = 0;
   qint64 durationMs_ = 0;
   qint64 lastSaveMs_ = 0;
+  // The whole seconds the time label last showed, so a per-frame position
+  // update only touches the label when its text would change.
+  qint64 shownPositionSeconds_ = -1;
+  qint64 shownDurationSeconds_ = -1;
   quint64 stepResolveId_ = 0;
   quint64 stepReadId_ = 0;
   int stepDelta_ = 0;

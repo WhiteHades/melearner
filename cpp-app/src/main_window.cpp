@@ -689,6 +689,11 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   connect(play_, &QPushButton::clicked, this, [this] { if (paused_) (void)player_->play(); else (void)player_->pause(); });
   connect(seek_, &shadcn::Slider::valuesChanged, this, [this](const QVector<double>& values) {
     if (values.isEmpty() || !playerLoaded_ || durationMs_ <= 0) return;
+    // A seek jumps the position, so the readouts have to be marked stale. The
+    // next position update redraws them, and while paused that update may not
+    // arrive, so the label is refreshed here too.
+    shownPositionSeconds_ = -1;
+    time_->setText(clockText(durationMs_ * values.first() / 10000.0) + " / " + clockText(durationMs_));
     (void)player_->seek(static_cast<qint64>(durationMs_ * values.first() / 10000.0));
   });
   connect(&mute, &QAction::triggered, this, [this](bool checked) { (void)player_->setMuted(checked); });
@@ -718,15 +723,30 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   connect(player_, &melearner::Player::fileLoaded, this, [this](const QString& path, qint64 duration, qint64 position, quint64 generation) {
     if (!lesson_ || path != lesson_->path || generation != playerLoadId_) return;
     playerLoaded_ = true; durationMs_ = duration; positionMs_ = position;
+    shownPositionSeconds_ = -1; shownDurationSeconds_ = -1;
     play_->setEnabled(true); seek_->setEnabled(duration > 0); status_->setText(tr("Ready to play"));
   });
   connect(player_, &melearner::Player::positionChanged, this, [this](qint64 position, qint64 duration) {
     if (!playerLoaded_) return;
+    // The position is tracked exactly on every emission, because that is what
+    // gets saved, but the readouts are only refreshed when a displayed value
+    // would actually change. A time label shows whole seconds, so redrawing it
+    // twenty-five times a second redraws the same text twenty-four times.
     positionMs_ = position; durationMs_ = duration;
-    time_->setText(clockText(position) + " / " + clockText(duration));
-    const QSignalBlocker blocker(seek_);
+    const auto shownPosition = position / 1000;
+    const auto shownDuration = duration / 1000;
+    if (shownPosition != shownPositionSeconds_ || shownDuration != shownDurationSeconds_) {
+      shownPositionSeconds_ = shownPosition;
+      shownDurationSeconds_ = shownDuration;
+      time_->setText(clockText(position) + " / " + clockText(duration));
+    }
+    // The timeline is a ten-thousandth-of-the-lesson control, so it needs finer
+    // resolution than a second, but only when the thumb would actually move.
     const QVector<double> target{duration > 0 ? static_cast<double>(position) * 10000.0 / duration : 0.0};
-    if (seek_->values() != target) seek_->setValues(target);
+    if (seek_->values() != target) {
+      const QSignalBlocker blocker(seek_);
+      seek_->setValues(target);
+    }
     if (QDateTime::currentMSecsSinceEpoch() - lastSaveMs_ >= 5000) savePosition();
   });
   connect(player_, &melearner::Player::pausedChanged, this, [this](bool paused) {
@@ -1124,6 +1144,7 @@ void MainWindow::showLesson(const lib::Lesson& lesson) {
   documentRequestId_ = 0; documentGeneration_ = 0; documentOffsets_.clear();
   documentPrevious_->setEnabled(false); documentNext_->setEnabled(false);
   positionMs_ = static_cast<qint64>(lesson.lastPosition * 1000); durationMs_ = static_cast<qint64>(lesson.duration * 1000);
+  shownPositionSeconds_ = -1; shownDurationSeconds_ = -1;
   lastSaveMs_ = QDateTime::currentMSecsSinceEpoch(); lessonTitle_->setText(lesson.name);
   lessonTitle_->setToolTip(tooltip(lesson.name));
   complete_->setEnabled(true); complete_->setText(lesson.completed ? tr("Mark incomplete") : tr("Mark complete"));

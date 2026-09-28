@@ -95,6 +95,7 @@ void PdfView::layoutPages(int previousScaleOverride) {
     }
   }
   const int page = std::min(previousPage, static_cast<int>(pages_.size()) - 1);
+  const int previousRenderedScale = scale_;
   if (fit_) scale_ = std::clamp(qFloor((viewport()->width() - 24) * 16.0 / pages_[page].width()), 4, 64);
   tops_.clear(); int top = 12; int widest = 0;
   for (const auto& size : pages_) {
@@ -114,8 +115,15 @@ void PdfView::layoutPages(int previousScaleOverride) {
     verticalScrollBar()->setValue(std::clamp(
         target, verticalScrollBar()->minimum(), verticalScrollBar()->maximum()));
   }
-  cache_.clear(); pending_.clear(); pendingKeys_.clear(); failedTiles_.clear(); viewport()->update();
-  reader_.cancelTiles(generation_);
+  // A tile is keyed by its page and its scale, so a resize that leaves the scale
+  // alone leaves every cached tile valid. Dropping them on every resize event
+  // re-rendered every visible tile for each pixel of a window drag; the reader
+  // only re-renders when the scale or the document actually changed.
+  if (scale_ != previousRenderedScale) {
+    cache_.clear(); pending_.clear(); pendingKeys_.clear(); failedTiles_.clear();
+    reader_.cancelTiles(generation_);
+  }
+  viewport()->update();
   emit pageChanged(currentPage() + 1, pages_.size());
 }
 void PdfView::fitWidth() { fit_ = true; layoutPages(); }

@@ -14,6 +14,9 @@ public:
   void setZoom(double zoom);
   void jumpToPage(int page); // One-based for the learner-facing controls.
   int cachedTiles() const { return cache_.size(); }
+  // The render scale, in sixteenths of a point. A tile is keyed by it, so a
+  // relayout at the same scale keeps every cached tile.
+  int zoomForTesting() const { return scale_; }
 signals:
   void statusChanged(QString message);
   void pageChanged(int current, int total);
