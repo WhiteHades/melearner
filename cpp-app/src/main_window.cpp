@@ -274,34 +274,26 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   // A control that acts on the whole application sits in the rail's footer, not in
   // the header of whatever page happens to be open. It is the same control on every
   // page, and a page header is for things that act on the page.
-  auto& settingsMenuButton = sidebar_->addMenuButton(tr("Settings"));
+  auto& settingsMenuButton = sidebar_->addFooterMenuButton(tr("Settings"));
   settingsMenuButton.setMenu(appearanceMenu);
   settingsMenuButton.setAccessibleName(tr("Application settings"));
   settingsMenuButton.setToolTip(tr("Application settings"));
   settingsMenuButton.setObjectName("appearance");
   (void)&aboutItem;
-  // Where the library was built from. It is a fact about the page rather than a
-  // heading, so it sits under the content as a quiet line with the counts, and it is
-  // selectable so a reader can copy the path.
-  auto* footer = new QHBoxLayout; footer->setContentsMargins(0, 4, 0, 0); footer->setSpacing(12);
-  rootLabel_ = new ElidingLabel; rootLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
-  rootLabel_->setObjectName("rootPath");
-  rootLabel_->setTextFormat(Qt::PlainText);
-  rootLabel_->setMinimumWidth(0); rootLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-  rootLabel_->setAccessibleName(tr("Root folder"));
-  footer->addWidget(rootLabel_, 1);
-  routeDescription_ = new shadcn::Label(tr("Continue a lesson or explore your courses."), center);
-  routeDescription_->setObjectName("routeDescription"); routeDescription_->setWordWrap(true);
-  footer->addWidget(routeDescription_);
   routes_ = new QStackedWidget; shell->addWidget(routes_, 1);
-  // The line about where the library came from sits below the page, under a rule, so
-  // it reads as a footnote on the data rather than as a heading above it.
-  shell->addLayout(footer);
   center->addSidebar(*sidebar_);
   center->content().addWidget(inset_);
-  libraryTabs_ = new shadcn::Tabs; libraryTabs_->setObjectName("libraryTabs");
+  // The rail starts from the width the window has, so a window that opens narrow
+  // begins with the rail off-canvas rather than hidden until something resizes it.
+  railShownForWidth_ = width() >= railFitsBesideContent();
+  sidebar_->setOpen(railShownForWidth_);
+  // The library's two pages are the rail's navigation, not a row of tabs under the
+  // header. A reader's eye starts at the leading edge, and navigation that lives
+  // there is where they look for it on every page rather than somewhere they have to
+  // come back to.
+  libraryStack_ = new shadcn::Tabs; libraryStack_->setObjectName("libraryStack");
   auto* libraryPage = new QWidget; auto* libraryLayout = new QVBoxLayout(libraryPage);
-  libraryLayout->setContentsMargins(0, 12, 0, 0);
+  libraryLayout->setContentsMargins(0, 0, 0, 0);
   libraryLayout->addWidget(choose_, 0, Qt::AlignLeft);
   // The card owns the vertical padding and the gaps, so nothing sits between it
   // and the Continue control that could clip it.
@@ -330,16 +322,34 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   empty_->setTitle(tr("Opening your Library…")); libraryLayout->addWidget(empty_, 1);
   courseModel_ = new PagedListModel(128, this); courses_ = list("courses", courseModel_);
   libraryLayout->addWidget(courses_, 1);
-  static_cast<void>(libraryTabs_->addTab("courses", tr("Courses")));
-  libraryTabs_->addContent("courses", *libraryPage);
+  static_cast<void>(libraryStack_->addTab("courses", tr("Courses")));
+  libraryStack_->addContent("courses", *libraryPage);
   statsScroll_ = new shadcn::ScrollArea; statsScroll_->setObjectName("statsScroll");
   statsScroll_->setWidgetResizable(true);
   stats_ = new melearner::StatsPanel(library_); statsScroll_->setWidget(stats_);
-  static_cast<void>(libraryTabs_->addTab("stats", tr("Stats")));
-  libraryTabs_->addContent("stats", *statsScroll_);
-  libraryTabs_->setCurrentValue("courses");
-  routes_->addWidget(libraryTabs_);
-  connect(libraryTabs_, &shadcn::Tabs::currentChanged, this, [this] { observeRevision(libraryRevision_); updateLayout(); });
+  static_cast<void>(libraryStack_->addTab("stats", tr("Stats")));
+  libraryStack_->addContent("stats", *statsScroll_);
+  libraryStack_->setCurrentValue("courses");
+  // The rail is the navigation, so the bar of tabs has nothing left to say. Two sets
+  // of tabs saying the same thing in two places is the mixture a component library
+  // exists to prevent rather than produce.
+  libraryStack_->setListVisible(false);
+  routes_->addWidget(libraryStack_);
+  // The rail's items and the stack are two views of one value. The rail drives the
+  // stack, and the stack reports back, so a change from anywhere, including the
+  // keyboard, keeps the rail's item in step with what is on screen.
+  libraryNav_ = &sidebar_->addMenuButton(tr("Courses"), true);
+  libraryNav_->setObjectName("navLibrary"); libraryNav_->setAccessibleName(tr("Your courses"));
+  statsNav_ = &sidebar_->addMenuButton(tr("Stats"));
+  statsNav_->setObjectName("navStats"); statsNav_->setAccessibleName(tr("Your progress"));
+  connect(libraryNav_, &QPushButton::clicked, this, [this] { libraryStack_->setCurrentValue("courses"); });
+  connect(statsNav_, &QPushButton::clicked, this, [this] { libraryStack_->setCurrentValue("stats"); });
+  connect(libraryStack_, &shadcn::Tabs::currentChanged, this, [this](const QString& value) {
+    markNav(value == QLatin1String("stats"));
+    observeRevision(libraryRevision_);
+    updateLayout();
+  });
+  markNav(false);
   split_ = new shadcn::ResizablePanelGroup(Qt::Horizontal);
   outline_ = new QWidget; outline_->setMinimumWidth(240); outline_->setObjectName("courseOutline"); outline_->setAttribute(Qt::WA_StyledBackground);
   auto* outlineLayout = new QVBoxLayout(outline_); outlineLayout->setContentsMargins(12, 14, 12, 12);
@@ -545,12 +555,26 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   auto* next = button(tr("Next"), "nextLesson"); lessonNavigation_->addWidget(next); contentLayout->addLayout(lessonNavigation_);
   split_->addWidget(content_); split_->setStretchFactor(0, 0); split_->setStretchFactor(1, 1); split_->setSizes({280, 820});
   routes_->addWidget(split_);
-  status_ = new QLabel(tr("Opening Library…")); status_->setWordWrap(true); status_->setAccessibleName(tr("Status"));
+  // One quiet line under the content: what the application is doing, or how much of
+  // the library there is, on the leading side, and the folder the library was built
+  // from on the trailing side. Both are facts about the data rather than headings.
+  // The path is last and selectable, because it is the long one and the thing a
+  // reader most often wants to copy.
+  status_ = new shadcn::Label(tr("Opening Library…"), center);
+  status_->setWordWrap(true); status_->setAccessibleName(tr("Status"));
   status_->setTextFormat(Qt::PlainText);
   status_->setObjectName("appStatus");
   status_->setMinimumWidth(0); status_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-  auto* statusRow = new QHBoxLayout; statusRow->addWidget(status_, 1);
-  cancelScan_ = button(tr("Cancel scan"), "cancelScan"); cancelScan_->hide(); statusRow->addWidget(cancelScan_); shell->addLayout(statusRow);
+  auto* statusRow = new QHBoxLayout; statusRow->setContentsMargins(0, 4, 0, 0); statusRow->setSpacing(12);
+  statusRow->addWidget(status_, 1);
+  cancelScan_ = button(tr("Cancel scan"), "cancelScan"); cancelScan_->hide(); statusRow->addWidget(cancelScan_);
+  rootLabel_ = new ElidingLabel; rootLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+  rootLabel_->setObjectName("rootPath");
+  rootLabel_->setTextFormat(Qt::PlainText);
+  rootLabel_->setMinimumWidth(0); rootLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+  rootLabel_->setAccessibleName(tr("Root folder"));
+  statusRow->addWidget(rootLabel_, 1, Qt::AlignRight);
+  shell->addLayout(statusRow);
   connect(cancelScan_, &QPushButton::clicked, this, [this] {
     if (!scanId_) return;
     status_->setText(library_.cancelScan(scanId_) ? tr("Canceling scan…") : tr("Scan is committing. Please wait."));
@@ -561,7 +585,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     if (!path.isEmpty()) chooseRoot(path);
   });
   connect(rescan_, &QPushButton::clicked, this, [this] { chooseRoot(rootPath_); });
-  connect(back_, &QPushButton::clicked, this, [this] { libraryTabs_->setCurrentValue("courses"); showLibrary(); });
+  connect(back_, &QPushButton::clicked, this, [this] { libraryStack_->setCurrentValue("courses"); showLibrary(); });
   connect(outlineToggle_, &QPushButton::clicked, this, [this] { compactOutline_ = !compactOutline_; updateLayout(); });
   connect(courseModel_, &PagedListModel::pageRequested, this, [this](int offset) {
     const auto id = library_.courses(offset);
@@ -1068,7 +1092,7 @@ void MainWindow::toggleOutlineBranch(bool expand) {
 void MainWindow::installKeyboardFilters() {
   const QList<QWidget*> widgets = {static_cast<QWidget*>(this), centralWidget(), static_cast<QWidget*>(courses_),
     static_cast<QWidget*>(lessons_), static_cast<QWidget*>(documentView_), static_cast<QWidget*>(video_),
-    playerControls_, content_, static_cast<QWidget*>(libraryTabs_)};
+    playerControls_, content_, static_cast<QWidget*>(libraryStack_)};
   for (auto* widget : widgets) {
     if (!widget) continue;
     widget->installEventFilter(this);
@@ -1167,12 +1191,12 @@ void MainWindow::showLibrary() {
   choose_->show(); rescan_->show();
   restoreCourseSelection_ = returnCourseRow_ >= 0;
   courseModel_->reset(); refreshResume();
-  if (libraryTabs_->currentValue() == QLatin1String("courses")) courses_->setFocus(); else libraryTabs_->setFocus();
+  if (libraryStack_->currentValue() == QLatin1String("courses")) courses_->setFocus(); else libraryStack_->setFocus();
   updateLayout();
 }
 void MainWindow::observeRevision(quint64 revision) {
   libraryRevision_ = std::max(libraryRevision_, revision);
-  stats_->setActive(!course_ && libraryTabs_->currentValue() == QLatin1String("stats"), libraryRevision_);
+  stats_->setActive(!course_ && libraryStack_->currentValue() == QLatin1String("stats"), libraryRevision_);
 }
 void MainWindow::trackMutation(quint64 requestId) {
   if (requestId) mutationRequests_.insert(requestId);
@@ -1260,9 +1284,10 @@ void MainWindow::resizeEvent(QResizeEvent* event) {
   // brings it back with the trigger or the keyboard shortcut.
   if (sidebar_) {
     const auto roomy = width() >= railFitsBesideContent();
-    // Only a width change moves the rail, and only when it crosses the threshold.
-    // Following the reader's own toggling would fight them: open the window wide,
-    // collapse the rail by hand, and a two pixel resize would open it again.
+    // The first decision is taken from the width the window actually has, and after
+    // that only a crossing of the threshold moves the rail. Following the reader's
+    // own toggling would fight them: open the window wide, collapse the rail by
+    // hand, and a two pixel resize would open it again.
     if (roomy != railShownForWidth_) {
       railShownForWidth_ = roomy;
       sidebar_->setOpen(roomy);
@@ -1331,11 +1356,9 @@ void MainWindow::updateLayout() {
   const bool compactHeader = compact;
   title_->setFont(headingFont(font(), course_ ? 1.1 : compact ? 1.5 : 1.8, true));
   if (!course_) {
-    const bool activity = libraryTabs_->currentValue() == QLatin1String("stats");
+    const bool activity = libraryStack_->currentValue() == QLatin1String("stats");
     title_->setText(activity ? tr("Your learning activity") : tr("Your learning path"));
-    routeDescription_->setText(activity ? tr("Your progress, course by course.") : tr("Continue a lesson or explore your courses."));
   }
-  routeDescription_->setVisible(!course_ && !compact && height() >= 600);
   static_cast<QBoxLayout*>(resumePanel_->layout())->setDirection(compact ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight);
   title_->setVisible(!course_ || !compactHeader || fontMetrics().height() < 24);
   if (searchField_) searchField_->setVisible(!course_);
@@ -1365,6 +1388,12 @@ void MainWindow::showError(const QString& message) {
   status_->setText(message); status_->setToolTip(tooltip(message)); qWarning().noquote() << message;
 }
 void MainWindow::closeEvent(QCloseEvent* event) { savePosition(); QMainWindow::closeEvent(event); }
+void MainWindow::markNav(bool stats) {
+  if (!libraryNav_ || !statsNav_) return;
+  libraryNav_->setChecked(!stats);
+  statsNav_->setChecked(stats);
+}
+
 int MainWindow::railFitsBesideContent() const {
   // The rail is a fixed width, and the page needs room for a wide table and a
   // readable line of body text. The threshold is the sum, not a magic number: it

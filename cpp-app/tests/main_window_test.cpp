@@ -168,7 +168,12 @@ private slots:
     MainWindow window(files.path() + "/library.sqlite3"); window.show();
     QTRY_VERIFY(window.findChild<QPushButton*>("chooseRoot")->isEnabled()); window.chooseRoot(root);
     auto* courses = window.findChild<QListView*>("courses"); QTRY_COMPARE(courses->model()->rowCount(), 1);
-    auto* tabs = window.findChild<shadcn::Tabs*>("libraryTabs"); QVERIFY(tabs); tabs->setCurrentValue("stats");
+    // The stats page is reached from the rail now, not from a row of tabs under the
+    // header, so the test drives it the way a reader does.
+    auto* statsNav = window.findChild<QPushButton*>("navStats"); QVERIFY(statsNav);
+    QTest::mouseClick(statsNav, Qt::LeftButton);
+    auto* tabs = window.findChild<shadcn::Tabs*>("libraryStack"); QVERIFY(tabs);
+    QCOMPARE(tabs->currentValue(), QString("stats"));
     auto* count = window.findChild<QLabel*>("coursesValue"); QTRY_COMPARE(count->text(), QString("1 / 1"));
     auto* completion = window.findChild<QLabel*>("completionValue"); QTRY_COMPARE(completion->text(), QString("0%"));
     // The activity grid is one focus stop over whole week columns, so it holds
@@ -376,8 +381,16 @@ private slots:
       // The threshold is the rail's own width plus the room a page needs, so the
       // test asks the window rather than repeating a number that would be wrong the
       // moment either half changed.
+      // The rail slides rather than jumps, so a check taken while it is on its way
+      // reads a width nobody will ever see. Wait for the slide to finish, which is
+      // when the rail has the width it is going to keep.
       const auto roomy = width >= window.railFitsBesideContent();
       QCOMPARE(rail->isOpen(), roomy);
+      if (roomy) {
+        const auto settled = rail->expandedWidth();
+        QTRY_VERIFY(rail->width() == settled);
+        QCOMPARE(rail->width(), settled);
+      }
       QCOMPARE(settings->isVisible(), roomy);
       QVERIFY(trigger->isVisible());
       QCOMPARE(courses->horizontalScrollBar()->maximum(), 0);

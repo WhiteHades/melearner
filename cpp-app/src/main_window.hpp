@@ -44,6 +44,10 @@ public:
   [[nodiscard]] int railFitsBesideContent() const;
 protected:
   void resizeEvent(QResizeEvent* event) override;
+  /// Marks one of the rail's library items as the open page. The rail cannot own
+  /// the value, because the stack can be changed from anywhere, and two copies of
+  /// one value is where they stop agreeing.
+  void markNav(bool stats);
   void closeEvent(QCloseEvent* event) override;
   void keyPressEvent(QKeyEvent* event) override;
   bool eventFilter(QObject* watched, QEvent* event) override;
@@ -68,7 +72,11 @@ private:
   QString requestedRoot_;
   melearner::library::Settings settings_;
   quint64 libraryRevision_ = 0;
-  shadcn::Tabs* libraryTabs_;
+  shadcn::Tabs* libraryStack_ = nullptr;
+  // The rail's items for the library's two pages. They and the stack are two views
+  // of one value, so a change from either side keeps the other in step.
+  QPushButton* libraryNav_ = nullptr;
+  QPushButton* statsNav_ = nullptr;
   shadcn::ScrollArea* statsScroll_;
   melearner::StatsPanel* stats_;
   void observeRevision(quint64 revision);
@@ -99,7 +107,6 @@ private:
   shadcn::ScrollArea* content_;
   QLabel* status_;
   QLabel* rootLabel_ = nullptr;
-  QLabel* routeDescription_ = nullptr;
   QLabel* title_;
   QLabel* lessonTitle_;
   shadcn::Empty* empty_;
