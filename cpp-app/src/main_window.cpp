@@ -156,20 +156,62 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   QApplication::setFont(interfaceFont);
   setWindowTitle("melearner"); setMinimumSize(560, 400); resize(1200, 780);
   setWindowIcon(QIcon(":/cpp-app/assets/melearner-logo.png"));
-  auto* center = new QWidget; center->setObjectName("appShell"); setCentralWidget(center);
-  auto* shell = new QVBoxLayout(center); shell->setContentsMargins(16, 12, 16, 8); shell->setSpacing(10);
-  auto* toolbar = new QHBoxLayout;
-  auto* brand = new QLabel; brand->setPixmap(windowIcon().pixmap(32, 32)); brand->setFixedSize(32, 32);
-  brand->setObjectName("brand"); brand->setAccessibleName("melearner"); toolbar->addWidget(brand);
-  back_ = button(tr("Courses"), "backToLibrary", shadcn::Variant::Ghost); back_->hide(); toolbar->addWidget(back_);
+  // The window is a sidebar and an inset. Navigation belongs on the leading edge
+  // where a reader's eye starts and where it stays reachable at every width, and
+  // the page gets the rest. A toolbar across the top puts navigation somewhere the
+  // reader has to look back to on every page, and at a narrow width it is the first
+  // thing to be dropped, which takes navigation with it.
+  auto* center = new shadcn::SidebarProvider; center->setObjectName("appShell");
+  setCentralWidget(center);
+  sidebar_ = new shadcn::Sidebar(center);
+  sidebar_->setExpandedWidth(232);
+  sidebar_->setCollapsible(shadcn::SidebarCollapsible::Offcanvas);
+  // The brand, at the top of the rail. It is the one thing that is on every page,
+  // which is what the sidebar header is for.
+  auto* brandRow = new QHBoxLayout; brandRow->setContentsMargins(0, 0, 0, 8);
+  brandRow->setSpacing(10);
+  auto* brand = new shadcn::Label({}, sidebar_); brand->setPixmap(windowIcon().pixmap(24, 24));
+  brand->setFixedSize(24, 24); brand->setObjectName("brand");
+  brand->setAccessibleName("melearner"); brandRow->addWidget(brand);
+  auto* brandName = new shadcn::Label(tr("melearner"), sidebar_);
+  brandName->setObjectName("brandName");
+  auto brandFont = brandName->font(); brandFont.setWeight(QFont::DemiBold);
+  brandName->setFont(brandFont); brandRow->addWidget(brandName);
+  brandRow->addStretch();
+  sidebar_->header().addLayout(brandRow);
+  inset_ = new shadcn::SidebarInset(center);
+  auto* shell = &inset_->content();
+  shell->setContentsMargins(16, 12, 16, 8); shell->setSpacing(10);
+  // The header row carries where you are and the two controls that act on the whole
+  // application. The search is a field rather than a button, because a reader types
+  // into it and a button that opens a dialog is a step they did not ask for.
+  auto* toolbar = new QHBoxLayout; toolbar->setSpacing(8);
+  auto* trigger = new shadcn::SidebarTrigger(inset_);
+  trigger->setObjectName("sidebarTrigger");
+  trigger->setAccessibleName(tr("Toggle navigation"));
+  trigger->setToolTip(tr("Toggle navigation (Ctrl+B)"));
+  connect(trigger, &QPushButton::clicked, this, [this, center] { center->toggleSidebar(); });
+  toolbar->addWidget(trigger);
+  // The way back to the library only exists once the reader is inside a course, so
+  // it appears in the header when there is somewhere to go back to and not before.
+  back_ = button(tr("Courses"), "backToLibrary", shadcn::Variant::Ghost); back_->hide();
+  toolbar->addWidget(back_);
   title_ = new ElidingLabel(tr("Your learning path")); title_->setObjectName("routeTitle");
-  auto heading = headingFont(font(), 1.8, true); title_->setFont(heading);
+  auto heading = headingFont(font(), 1.3, true); title_->setFont(heading);
   title_->setMinimumWidth(0); title_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+  toolbar->addWidget(title_, 1);
   outlineToggle_ = button(tr("Lessons"), "toggleOutline", shadcn::Variant::Ghost); outlineToggle_->hide(); toolbar->addWidget(outlineToggle_);
-  searchButton_ = button(tr("Search your courses…"), "searchButton", shadcn::Variant::Ghost);
-  searchButton_->setAccessibleName(tr("Search courses, sections, and lessons"));
-  searchButton_->setMaximumWidth(460); searchButton_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-  toolbar->addWidget(searchButton_, 1); toolbar->addStretch();
+  // The search is a field, not a button. A reader who can see a field types into
+  // it; a button that opens a dialog is a step they did not ask for, and a second
+  // place to look for the same thing.
+  searchField_ = new shadcn::Input; searchField_->setObjectName("searchButton");
+  searchField_->setAccessibleName(tr("Search your Library"));
+  searchField_->setPlaceholderText(tr("Search your courses…"));
+  searchField_->setToolTip(tr("Search Library (Ctrl+K)"));
+  searchField_->setMaximumWidth(460);
+  searchField_->installEventFilter(this);
+  connect(searchField_, &QLineEdit::returnPressed, this, &MainWindow::openSearch);
+  toolbar->addWidget(searchField_);
   auto* shortcuts = button(tr("Keyboard shortcuts"), "showShortcuts",
     shadcn::Variant::Ghost, shadcn::ButtonSize::Icon);
   // An icon button shows no label. The name is the accessible name and the
@@ -179,12 +221,10 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   connect(shortcuts, &QPushButton::clicked, this, [this] { showKeyboardPopup(false); });
   rescan_ = button(tr("Rescan"), "rescanRoot"); rescan_->setParent(center); rescan_->hide(); rescan_->setEnabled(false);
   choose_ = button(tr("Choose root folder"), "chooseRoot", shadcn::Variant::Default); choose_->setEnabled(false);
-  auto* settings = button(tr("Settings"), "appearance",
-    shadcn::Variant::Ghost, shadcn::ButtonSize::Icon);
-  settings->setAccessibleName(tr("Application settings"));
-  settings->setToolTip(tr("Application settings"));
-  searchButton_->setToolTip(tr("Search Library (Ctrl+K)"));
-  auto* appearanceMenu = new shadcn::DropdownMenu(settings);
+  // The menu belongs to the control in the rail, so it is parented there rather
+  // than to a button that no longer exists. A control with no parent is a widget
+  // nothing can find and nothing can show.
+  auto* appearanceMenu = new shadcn::DropdownMenu(sidebar_);
   appearanceMenu->addLabel(tr("Appearance"));
   for (const auto& name : {QString("light"), QString("dark")}) {
     auto& item = appearanceMenu->addItem(name == "dark" ? tr("Dark") : tr("Light"));
@@ -230,23 +270,35 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   });
   connect(QApplication::styleHints()->accessibility(), &QAccessibilityHints::contrastPreferenceChanged, this,
     [this] { applyAppearance(settings_.appearance); });
-  settings->setMenu(appearanceMenu); toolbar->addWidget(settings);
   shell->addLayout(toolbar);
-  auto* hero = new QHBoxLayout; hero->setSpacing(24);
-  auto* heroText = new QVBoxLayout; heroText->setSpacing(8); heroText->addWidget(title_);
-  routeDescription_ = new QLabel(tr("Continue a lesson or explore your courses."));
-  routeDescription_->setObjectName("routeDescription"); routeDescription_->setWordWrap(true);
-  routeDescription_->setFont(font()); heroText->addWidget(routeDescription_);
+  // A control that acts on the whole application sits in the rail's footer, not in
+  // the header of whatever page happens to be open. It is the same control on every
+  // page, and a page header is for things that act on the page.
+  auto& settingsMenuButton = sidebar_->addMenuButton(tr("Settings"));
+  settingsMenuButton.setMenu(appearanceMenu);
+  settingsMenuButton.setAccessibleName(tr("Application settings"));
+  settingsMenuButton.setToolTip(tr("Application settings"));
+  settingsMenuButton.setObjectName("appearance");
+  (void)&aboutItem;
+  // Where the library was built from. It is a fact about the page rather than a
+  // heading, so it sits under the content as a quiet line with the counts, and it is
+  // selectable so a reader can copy the path.
+  auto* footer = new QHBoxLayout; footer->setContentsMargins(0, 4, 0, 0); footer->setSpacing(12);
   rootLabel_ = new ElidingLabel; rootLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
   rootLabel_->setObjectName("rootPath");
   rootLabel_->setTextFormat(Qt::PlainText);
   rootLabel_->setMinimumWidth(0); rootLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-  rootLabel_->setAccessibleName(tr("Root folder")); heroText->addWidget(rootLabel_); hero->addLayout(heroText, 1);
-  heroArtwork_ = new QLabel; heroArtwork_->setObjectName("studyArtwork"); heroArtwork_->setFixedSize(300, 125);
-  heroArtwork_->setPixmap(QPixmap(":/cpp-app/assets/study-still-life.png").scaled(600, 250, Qt::KeepAspectRatio, Qt::SmoothTransformation));
-  auto artwork = heroArtwork_->pixmap(); artwork.setDevicePixelRatio(2); heroArtwork_->setPixmap(artwork);
-  hero->addWidget(heroArtwork_); shell->addLayout(hero);
+  rootLabel_->setAccessibleName(tr("Root folder"));
+  footer->addWidget(rootLabel_, 1);
+  routeDescription_ = new shadcn::Label(tr("Continue a lesson or explore your courses."), center);
+  routeDescription_->setObjectName("routeDescription"); routeDescription_->setWordWrap(true);
+  footer->addWidget(routeDescription_);
   routes_ = new QStackedWidget; shell->addWidget(routes_, 1);
+  // The line about where the library came from sits below the page, under a rule, so
+  // it reads as a footnote on the data rather than as a heading above it.
+  shell->addLayout(footer);
+  center->addSidebar(*sidebar_);
+  center->content().addWidget(inset_);
   libraryTabs_ = new shadcn::Tabs; libraryTabs_->setObjectName("libraryTabs");
   auto* libraryPage = new QWidget; auto* libraryLayout = new QVBoxLayout(libraryPage);
   libraryLayout->setContentsMargins(0, 12, 0, 0);
@@ -510,7 +562,6 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   });
   connect(rescan_, &QPushButton::clicked, this, [this] { chooseRoot(rootPath_); });
   connect(back_, &QPushButton::clicked, this, [this] { libraryTabs_->setCurrentValue("courses"); showLibrary(); });
-  connect(searchButton_, &QPushButton::clicked, this, &MainWindow::openSearch);
   connect(outlineToggle_, &QPushButton::clicked, this, [this] { compactOutline_ = !compactOutline_; updateLayout(); });
   connect(courseModel_, &PagedListModel::pageRequested, this, [this](int offset) {
     const auto id = library_.courses(offset);
@@ -1200,7 +1251,25 @@ void MainWindow::stepLesson(int delta) {
   stepResolveId_ = library_.resolveLesson(course_->id, lesson_->sectionId, lesson_->id);
   if (!stepResolveId_) showError(tr("Library is busy. Try changing lessons again."));
 }
-void MainWindow::resizeEvent(QResizeEvent* event) { QMainWindow::resizeEvent(event); updateLayout(); }
+void MainWindow::resizeEvent(QResizeEvent* event) {
+  QMainWindow::resizeEvent(event);
+  // The rail gives its width back when the window is too narrow to spend it. A
+  // 232 pixel rail on a 560 pixel window leaves the page narrower than a table
+  // needs, and the reader gets a horizontal scrollbar on a page that is meant to
+  // fit. Below the width where both fit, the rail goes off-canvas and the reader
+  // brings it back with the trigger or the keyboard shortcut.
+  if (sidebar_) {
+    const auto roomy = width() >= railFitsBesideContent();
+    // Only a width change moves the rail, and only when it crosses the threshold.
+    // Following the reader's own toggling would fight them: open the window wide,
+    // collapse the rail by hand, and a two pixel resize would open it again.
+    if (roomy != railShownForWidth_) {
+      railShownForWidth_ = roomy;
+      sidebar_->setOpen(roomy);
+    }
+  }
+  updateLayout();
+}
 void MainWindow::keyPressEvent(QKeyEvent* event) {
   if (handleKeyboardEvent(this, event)) return;
   QMainWindow::keyPressEvent(event);
@@ -1267,11 +1336,9 @@ void MainWindow::updateLayout() {
     routeDescription_->setText(activity ? tr("Your progress, course by course.") : tr("Continue a lesson or explore your courses."));
   }
   routeDescription_->setVisible(!course_ && !compact && height() >= 600);
-  const bool highContrast = QApplication::styleHints()->accessibility()->contrastPreference() == Qt::ContrastPreference::HighContrast;
-  heroArtwork_->setVisible(!course_ && !highContrast && width() >= std::max(1280, fontMetrics().height() * 60) && height() >= 700);
   static_cast<QBoxLayout*>(resumePanel_->layout())->setDirection(compact ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight);
   title_->setVisible(!course_ || !compactHeader || fontMetrics().height() < 24);
-  if (searchButton_) searchButton_->setVisible(!course_);
+  if (searchField_) searchField_->setVisible(!course_);
   if (rootLabel_) rootLabel_->setVisible(!course_ && height() >= 600);
   rescan_->hide(); choose_->setVisible(!course_ && rootPath_.isEmpty());
   if (!course_) return;
@@ -1298,6 +1365,16 @@ void MainWindow::showError(const QString& message) {
   status_->setText(message); status_->setToolTip(tooltip(message)); qWarning().noquote() << message;
 }
 void MainWindow::closeEvent(QCloseEvent* event) { savePosition(); QMainWindow::closeEvent(event); }
+int MainWindow::railFitsBesideContent() const {
+  // The rail is a fixed width, and the page needs room for a wide table and a
+  // readable line of body text. The threshold is the sum, not a magic number: it
+  // changes with the rail's own width and with the reader's text size, and a fixed
+  // pixel figure would be wrong for one of them.
+  const auto rail = sidebar_ ? sidebar_->expandedWidth() : 232;
+  const auto page = qMax(520, fontMetrics().height() * 24);
+  return rail + page;
+}
+
 void MainWindow::applyPresentation() {
   const bool compact = settings_.libraryPresentation == "compact";
   // The presentation setting is a row density, and the view owns the density. The

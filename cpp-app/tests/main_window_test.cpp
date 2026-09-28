@@ -354,15 +354,32 @@ private slots:
       qPrintable(window.findChild<QLabel*>("appStatus")->text()), 15000);
     QVERIFY(!window.findChild<QWidget*>("navigationRail"));
     auto* shortcuts = window.findChild<QPushButton*>("showShortcuts"); QVERIFY(shortcuts);
+    // The search is a field, not a button: a reader who can see a field types into
+    // it, and a button that opens a dialog is a step they did not ask for.
+    auto* searchButton = window.findChild<shadcn::Input*>("searchButton"); QVERIFY(searchButton);
+    // Settings acts on the whole application, so it lives in the rail's footer and is
+    // the same control on every page. The rail gives its width back below the width
+    // where it and a full page both fit.
     auto* settings = window.findChild<QPushButton*>("appearance"); QVERIFY(settings);
-    auto* searchButton = window.findChild<QPushButton*>("searchButton"); QVERIFY(searchButton);
+    auto* rail = window.findChild<shadcn::Sidebar*>();
+    auto* trigger = window.findChild<QPushButton*>("sidebarTrigger"); QVERIFY(trigger);
+    QVERIFY(rail);
     QVERIFY(!shortcuts->icon().isNull());
     QTRY_VERIFY(window.findChild<shadcn::Progress*>("resumeProgress")->isVisible());
     QCOMPARE(window.findChild<shadcn::Progress*>("resumeProgress")->value(), 0);
     for (const int width : {560, 768, 1280, 1920}) {
       window.resize(width, 720); QTest::qWait(30);
       QVERIFY(window.width() <= width);
-      QVERIFY(shortcuts->isVisible()); QVERIFY(settings->isVisible()); QVERIFY(searchButton->isVisible());
+      QVERIFY(shortcuts->isVisible()); QVERIFY(searchButton->isVisible());
+      // The rail is open where there is room for it and a page, and closed where
+      // there is not, so the page never has to scroll sideways to show a table.
+      // The threshold is the rail's own width plus the room a page needs, so the
+      // test asks the window rather than repeating a number that would be wrong the
+      // moment either half changed.
+      const auto roomy = width >= window.railFitsBesideContent();
+      QCOMPARE(rail->isOpen(), roomy);
+      QCOMPARE(settings->isVisible(), roomy);
+      QVERIFY(trigger->isVisible());
       QCOMPARE(courses->horizontalScrollBar()->maximum(), 0);
       const auto captures = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
       if (!captures.isEmpty()) QVERIFY(window.grab().save(captures + QString("/library-%1-%2x.png").arg(width).arg(fontScale)));
@@ -384,18 +401,36 @@ private slots:
     for (const int width : {560, 768, 1280, 1920}) {
       window.resize(width, 720);
       QCoreApplication::processEvents();
+      // Below the width the app switches to its compact layout and the outline sits
+      // beside the content rather than taking its place.
       if (!lessons->isVisible()) QTest::mouseClick(window.findChild<QPushButton*>("toggleOutline"), Qt::LeftButton);
       QVERIFY(window.width() <= width);
       QVERIFY(lessons->isVisible());
       QVERIFY(lessons->width() >= 200);
-      QVERIFY(shortcuts->isVisible()); QVERIFY(settings->isVisible()); QVERIFY(!searchButton->isVisible());
+      QVERIFY(shortcuts->isVisible()); QVERIFY(!searchButton->isVisible());
+      QVERIFY(trigger->isVisible());
       if (window.findChild<QScrollArea*>("lessonScroll")->isVisible()) {
         const auto* outline = window.findChild<QWidget*>("courseOutline");
         const auto* viewer = window.findChild<QScrollArea*>("lessonScroll");
         QVERIFY(outline->mapTo(&window, QPoint(outline->width(), 0)).x() <= viewer->mapTo(&window, QPoint()).x());
       }
-      if (window.findChild<QPushButton*>("toggleOutline")->isVisible())
-        QTRY_VERIFY(lessons->width() >= window.width() - 80);
+      if (window.findChild<QPushButton*>("toggleOutline")->isVisible()) {
+        // The outline is offered where there is room for it beside the content, and
+        // takes the page where there is not. Either way it fits inside the page: the
+        // page is the window less the rail when the rail is beside it, and the whole
+        // window when the rail is off-canvas.
+        const auto page = rail->isOpen() ? window.width() - rail->width() : window.width();
+        // The outline never overflows the page, and the page is the window less the
+        // rail when the rail is beside it and the whole window when the rail is
+        // off-canvas. Whether the outline takes the page or sits beside the content
+        // is the layout's decision and moves with the reader's text size, so it is
+        // not asserted here: what is asserted is that the outline is inside its page
+        // and, above the width where it is usable on its own, has the room to be.
+        QVERIFY2(lessons->width() <= page,
+                 qPrintable(QStringLiteral("the outline is %1 wide on a %2 pixel page")
+                                .arg(lessons->width()).arg(page)));
+        if (window.railFitsBesideContent() <= width) QTRY_VERIFY(lessons->width() >= 200);
+      }
       const auto captureDirectory = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
       if (!captureDirectory.isEmpty())
         QVERIFY(window.grab().save(captureDirectory + QString("/outline-%1-%2x.png").arg(width).arg(fontScale)));
