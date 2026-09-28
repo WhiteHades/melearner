@@ -240,6 +240,9 @@ void StatsPanelTest::displaysPositionDerivedActivityOnly() {
     // A colour mode switch changes the page behind the grid, so the same grid
     // has to produce a different image rather than a stale one.
     QVERIFY(light != dark);
+    // The installed style is process-wide, so it is put back rather than left
+    // dark for whichever suite runs next in this process.
+    shadcn::install(*qApp, shadcn::Theme::neutral(), shadcn::MotionPolicy::Reduced);
 }
 
 QTEST_MAIN(StatsPanelTest)

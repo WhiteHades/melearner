@@ -1,10 +1,12 @@
 #include "study_icons.hpp"
 
+#include <QHash>
 #include <QIconEngine>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPen>
 #include <QPixmap>
+#include <QString>
 
 #include <algorithm>
 #include <cmath>
@@ -202,7 +204,13 @@ public:
     return result;
   }
 
-  QString key() const override { return QStringLiteral("melearner.study-icon"); }
+  // The key has to identify the icon and its colour. A constant key made every
+  // icon share one entry in Qt's global icon cache, so the first icon painted at
+  // a size was what every later icon at that size returned.
+  QString key() const override {
+    return QStringLiteral("melearner.study-icon/%1/%2/%3")
+        .arg(int(icon_)).arg(color_.rgba(), 8, 16);
+  }
 
   QIconEngine* clone() const override { return new StudyIconEngine(icon_, color_); }
 
@@ -211,10 +219,23 @@ private:
   QColor color_;
 };
 
+/// One icon per shape and colour, reused by every caller. The list delegate
+/// paints two icons per visible row per repaint, and each call used to allocate
+/// a fresh engine that then rebuilt its path on every paint.
+QHash<QString, QIcon>& iconCache() {
+  static QHash<QString, QIcon> cache;
+  return cache;
+}
+
 }  // namespace
 
 QIcon studyIcon(StudyIcon icon, QColor color) {
-  return QIcon(new StudyIconEngine(icon, std::move(color)));
+  color.setAlpha(255);
+  const auto cacheKey = QStringLiteral("%1/%2").arg(int(icon)).arg(color.rgba(), 8, 16);
+  auto& cache = iconCache();
+  const auto found = cache.constFind(cacheKey);
+  if (found != cache.constEnd()) return *found;
+  return cache.insert(cacheKey, QIcon(new StudyIconEngine(icon, color))).value();
 }
 
 }  // namespace melearner

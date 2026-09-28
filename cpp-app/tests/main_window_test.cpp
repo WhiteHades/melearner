@@ -30,6 +30,8 @@ class MainWindowTest final : public QObject {
   Q_OBJECT
 private slots:
   void initTestCase() { Q_INIT_RESOURCE(assets); }
+  void iconsHaveTransparentBackgroundsAtEveryScale();
+  void iconsStayDistinctFromEachOther();
   void iconsHaveTransparentBackgroundsAtEveryScale() {
     const auto icon = melearner::studyIcon(melearner::StudyIcon::Courses, QColor("#a72c23"));
     for (const auto mode : {QIcon::Normal, QIcon::Disabled}) {
@@ -41,6 +43,29 @@ private slots:
         QVERIFY(pixels.pixelColor(pixels.width() / 2, pixels.height() / 2).alpha() > 0);
       }
     }
+  }
+  void iconsStayDistinctFromEachOther() {
+    // Qt keys its global icon cache on the engine's key. Every icon used to
+    // return the same constant, so the first icon painted at a size was what
+    // every later icon at that size returned.
+    const auto red = QColor("#a72c23");
+    const auto blue = QColor("#1d4ed8");
+    const auto size = QSize(24, 24);
+    const auto render = [&](melearner::StudyIcon icon, const QColor& color) {
+      return melearner::studyIcon(icon, color).pixmap(size).toImage();
+    };
+    const auto play = render(melearner::StudyIcon::Play, red);
+    const auto pause = render(melearner::StudyIcon::Pause, red);
+    const auto search = render(melearner::StudyIcon::Search, red);
+    const auto otherColour = render(melearner::StudyIcon::Play, blue);
+    QVERIFY(play != pause);
+    QVERIFY(play != search);
+    QVERIFY(pause != search);
+    QVERIFY(play != otherColour);
+    // The same request twice returns the same pixels, whether it came from the
+    // cache or was rebuilt.
+    QCOMPARE(render(melearner::StudyIcon::Play, red), play);
+    QCOMPARE(render(melearner::StudyIcon::Play, blue), otherColour);
   }
   void routesErrorsToTheirCurrentOwner() {
     QTemporaryDir files; QVERIFY(files.isValid());
