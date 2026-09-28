@@ -12,12 +12,11 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPushButton>
-#include <QProgressBar>
 #include <QPointer>
 #include <QPainter>
 #include <QPdfWriter>
-#include <QSpinBox>
-#include <QTabWidget>
+#include <shadcn/widgets.hpp>
+#include <shadcn/navigation.hpp>
 #include <QTableWidget>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -117,7 +116,7 @@ private slots:
     MainWindow window(files.path() + "/library.sqlite3"); window.show();
     QTRY_VERIFY(window.findChild<QPushButton*>("chooseRoot")->isEnabled()); window.chooseRoot(root);
     auto* courses = window.findChild<QListView*>("courses"); QTRY_COMPARE(courses->model()->rowCount(), 1);
-    auto* tabs = window.findChild<QTabWidget*>("libraryTabs"); QVERIFY(tabs); tabs->setCurrentIndex(1);
+    auto* tabs = window.findChild<shadcn::Tabs*>("libraryTabs"); QVERIFY(tabs); tabs->setCurrentValue("stats");
     auto* count = window.findChild<QLabel*>("coursesValue"); QTRY_COMPARE(count->text(), QString("1 / 1"));
     auto* completion = window.findChild<QLabel*>("completionValue"); QTRY_COMPARE(completion->text(), QString("0%"));
     auto* activity = window.findChild<QTableWidget*>("activityGrid"); QTRY_VERIFY(activity->item(6, 11));
@@ -132,12 +131,12 @@ private slots:
       if (!captures.isEmpty()) QVERIFY(window.grab().save(captures + QString("/stats-activity-%1-%2x.png").arg(width).arg(fontScale)));
       scroll->verticalScrollBar()->setValue(0);
     }
-    tabs->setCurrentIndex(0);
+    tabs->setCurrentValue("courses");
     courses->setCurrentIndex(courses->model()->index(0, 0)); QTest::keyClick(courses, Qt::Key_Return);
     auto* complete = window.findChild<QPushButton*>("markComplete"); QTRY_VERIFY(complete->isEnabled());
     QTest::mouseClick(complete, Qt::LeftButton); QTRY_COMPARE(complete->text(), QString("Mark incomplete"));
     QTest::mouseClick(window.findChild<QPushButton*>("backToLibrary"), Qt::LeftButton);
-    tabs->setCurrentIndex(1); QTRY_COMPARE(completion->text(), QString("100%"));
+    tabs->setCurrentValue("stats"); QTRY_COMPARE(completion->text(), QString("100%"));
   }
   void opensPdfWithinCourse() {
     QTemporaryDir files; QVERIFY(files.isValid());
@@ -159,8 +158,8 @@ private slots:
     auto* lessons = window.findChild<QTreeView*>("lessons"); QTRY_COMPARE(lessons->model()->rowCount(), 1);
     auto* pdf = window.findChild<PdfView*>(); QVERIFY(pdf);
     QTRY_VERIFY(pdf->cachedTiles() > 0);
-    auto* page = window.findChild<QSpinBox*>("pdfPage"); QTRY_COMPARE(page->maximum(), 3);
-    page->setValue(3); QTRY_VERIFY(pdf->cachedTiles() > 0);
+    auto* page = window.findChild<shadcn::Input*>("pdfPage"); QVERIFY(page);
+    page->setText("3"); QTest::keyClick(page, Qt::Key_Return); QTRY_VERIFY(pdf->cachedTiles() > 0);
     QVERIFY(window.findChild<QPushButton*>("openDocumentExternally")->isVisible());
     QVERIFY(!window.findChild<QPushButton*>("playPause")->isVisible());
     window.resize(1600, 780); QCoreApplication::processEvents();
@@ -169,7 +168,7 @@ private slots:
     QVERIFY(!window.findChild<QAction*>("keyboard-notes"));
     for (const int width : {560, 768, 1280, 1920}) {
       window.resize(width, 720); QTest::qWait(30); QVERIFY(window.width() <= width);
-      QTRY_COMPARE(page->value(), 3);
+      QTRY_COMPARE(page->text(), QString("3"));
       const auto captures = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
       if (!captures.isEmpty()) QVERIFY(window.grab().save(captures + QString("/pdf-%1.png").arg(width)));
     }
@@ -212,10 +211,10 @@ private slots:
     QVERIFY(!window.findChild<QWidget*>("navigationRail"));
     auto* shortcuts = window.findChild<QPushButton*>("showShortcuts"); QVERIFY(shortcuts);
     auto* settings = window.findChild<QPushButton*>("appearance"); QVERIFY(settings);
-    auto* searchButton = window.findChild<QPushButton*>("searchLibrary"); QVERIFY(searchButton);
+    auto* searchButton = window.findChild<QPushButton*>("searchButton"); QVERIFY(searchButton);
     QVERIFY(!shortcuts->icon().isNull());
-    QTRY_VERIFY(window.findChild<QProgressBar*>("resumeProgress")->isVisible());
-    QCOMPARE(window.findChild<QProgressBar*>("resumeProgress")->value(), 0);
+    QTRY_VERIFY(window.findChild<shadcn::Progress*>("resumeProgress")->isVisible());
+    QCOMPARE(window.findChild<shadcn::Progress*>("resumeProgress")->value(), 0);
     for (const int width : {560, 768, 1280, 1920}) {
       window.resize(width, 720); QTest::qWait(30);
       QVERIFY(window.width() <= width);

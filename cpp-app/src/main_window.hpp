@@ -1,6 +1,9 @@
 #pragma once
 #include "library.hpp"
 #include "documents.hpp"
+#include <shadcn/controls.hpp>
+#include <shadcn/navigation.hpp>
+#include <shadcn/widgets.hpp>
 #include <QMainWindow>
 #include <QHash>
 #include <QList>
@@ -13,22 +16,17 @@ class QAction;
 class QLabel;
 class QListView;
 class QTreeView;
-class QPushButton;
 class QSlider;
-class QSplitter;
 class QStackedWidget;
 class PagedListModel;
 class QTextEdit;
 class PdfView;
 class QGridLayout;
 class QBoxLayout;
-class QTabWidget;
-class QMenu;
 class QTimer;
 class QGraphicsOpacityEffect;
 class QPropertyAnimation;
 class QKeyEvent;
-class QProgressBar;
 namespace melearner { class Player; class MpvVideoWidget; class StatsPanel; class CourseOutlineModel; }
 
 class MainWindow final : public QMainWindow {
@@ -62,7 +60,8 @@ private:
   QString rootPath_;
   melearner::library::Settings settings_;
   quint64 libraryRevision_ = 0;
-  QTabWidget* libraryTabs_;
+  shadcn::Tabs* libraryTabs_;
+  shadcn::ScrollArea* statsScroll_;
   melearner::StatsPanel* stats_;
   void observeRevision(quint64 revision);
   quint64 routeGeneration_ = 0;
@@ -74,10 +73,11 @@ private:
   std::optional<melearner::library::Course> course_;
   std::optional<melearner::library::Lesson> lesson_;
   std::optional<melearner::library::CourseEntry> resumeEntry_;
-  QWidget* resumePanel_;
-  QProgressBar* resumeProgress_;
+  shadcn::Card* resumePanel_;
+  shadcn::Progress* resumeProgress_;
   QLabel* resumeCourse_;
   QLabel* resumeLesson_;
+  shadcn::Button* resume_;
   quint64 resumeRequestId_ = 0;
   quint64 resumeGeneration_ = 0;
   quint64 entryRequestId_ = 0;
@@ -86,23 +86,23 @@ private:
   QString rememberedLesson_;
   void refreshResume();
   QStackedWidget* routes_;
-  QSplitter* split_;
+  shadcn::ResizablePanelGroup* split_;
   QWidget* outline_;
-  QWidget* content_;
+  shadcn::ScrollArea* content_;
   QLabel* status_;
   QLabel* rootLabel_ = nullptr;
   QLabel* heroArtwork_ = nullptr;
   QLabel* routeDescription_ = nullptr;
   QLabel* title_;
   QLabel* lessonTitle_;
-  QLabel* empty_;
-  QPushButton* back_;
-  QPushButton* outlineToggle_;
-  QPushButton* rescan_ = nullptr;
-  QPushButton* choose_ = nullptr;
-  QPushButton* cancelScan_ = nullptr;
+  shadcn::Empty* empty_;
+  shadcn::Button* back_;
+  shadcn::Button* outlineToggle_;
+  shadcn::Button* rescan_ = nullptr;
+  shadcn::Button* choose_ = nullptr;
+  shadcn::Button* cancelScan_ = nullptr;
   quint64 scanId_ = 0;
-  QPushButton* complete_;
+  shadcn::Button* complete_;
   QListView* courses_;
   QTreeView* lessons_;
   PagedListModel* courseModel_;
@@ -112,7 +112,7 @@ private:
   melearner::MpvVideoWidget* video_ = nullptr;
   QStackedWidget* media_;
   PdfView* pdf_;
-  QPushButton* searchButton_ = nullptr;
+  shadcn::Button* searchButton_ = nullptr;
   QWidget* playerControls_ = nullptr;
   QGridLayout* playbackLayout_;
   QList<QWidget*> playbackWidgets_;
@@ -124,22 +124,22 @@ private:
   QPropertyAnimation* controlsFade_ = nullptr;
   QLabel* documentStatus_;
   QTextEdit* documentView_;
-  QPushButton* documentPrevious_;
-  QPushButton* documentNext_;
+  shadcn::Button* documentPrevious_;
+  shadcn::Button* documentNext_;
   QBoxLayout* documentNavigation_ = nullptr;
   QBoxLayout* lessonNavigation_ = nullptr;
-  QPushButton* externalOpen_;
+  shadcn::Button* externalOpen_;
   quint64 externalOpenId_ = 0;
   quint64 documentRequestId_ = 0;
   quint64 documentGeneration_ = 0;
   qsizetype documentNextOffset_ = 0;
   QList<qsizetype> documentOffsets_;
-  QPushButton* play_;
-  QSlider* seek_;
+  shadcn::Button* play_;
+  shadcn::Slider* seek_;
   QLabel* time_;
-  QMenu* audio_;
-  QMenu* subtitles_;
-  QMenu* chapters_;
+  shadcn::DropdownMenu* audio_;
+  shadcn::DropdownMenu* subtitles_;
+  shadcn::DropdownMenu* chapters_;
   bool playerLoaded_ = false;
   bool playerLoadRequested_ = false;
   quint64 playerLoadId_ = 0;
@@ -167,6 +167,7 @@ private:
   void showLesson(const melearner::library::Lesson& lesson);
   void updateLayout();
   void showError(const QString& message);
+  void notify(const QString& title, const QString& description = {});
   void applyAppearance(const QString& appearance);
   void applyPresentation();
 };
