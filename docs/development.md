@@ -67,6 +67,33 @@ DISPLAY=:99 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 \
   ./build/cpp-release/main_playback_test
 ```
 
+### Known gap: the video settings menu does not open from the keyboard on Wayland
+
+`main_playback_test` passes on a private X11 display and fails on a real Wayland
+session. The failure is in `playsPausesAndRestoresPosition`: the video player's
+settings button, focused and pressed with Space, does not open its menu.
+
+This is not a slow compositor. The test was given a full second of polling and the
+menu never appeared. A mouse click on the same button opens the menu immediately,
+so the menu itself is fine and the fault is in the keyboard path. The button is
+visible and enabled throughout, and the surrounding keyboard checks in the same test
+pass, so it is not a general loss of keyboard focus.
+
+Why it matters: a reader who does not use a pointer cannot reach the video settings
+at all. This is a keyboard accessibility defect, not a cosmetic one, and it is the
+reason the two playback suites are not part of CTest: they need a display, so this
+never ran in the default check and stayed hidden until the suites were run on the
+machine's own session.
+
+Unresolved. The cause has not been isolated: the same code opens the menu under X11
+and does not under Wayland, so the difference is in how the platform plugin delivers
+the activation to a button that owns a menu, or in the shadcn button's own key
+handling consuming Space before the button's menu logic sees it. It needs an
+investigation with the two paths compared, not a change made on a guess.
+
+The rest of the Wayland run is clean: `playback_render_test` passes 6 of 6 and
+`main_window_test` passes 13 of 13 on the real session with hardware GL.
+
 Use the source installer for the complete local check and installation:
 
 ```bash
