@@ -6,7 +6,6 @@
 #include <QApplication>
 #include <QDate>
 #include <QEvent>
-#include <QGroupBox>
 #include <QHeaderView>
 #include <QLabel>
 #include <QLocale>
@@ -103,25 +102,32 @@ QLabel* plainLabel(const QString& objectName, const QString& accessibleName) {
     return label;
 }
 
-QGroupBox* metricBox(
+/// A titled metric is a shadcn card: the card owns the fill, the border, the
+/// radius and the padding, so no local stylesheet describes it.
+shadcn::Card* metricBox(
     const QString& title,
     const QString& valueName,
     const QString& detailName,
     QLabel** value,
     QLabel** detail) {
-    auto* box = new QGroupBox(title);
-    box->setFont(headingFont(box->font(), 1.12));
-    auto* layout = new QVBoxLayout(box);
-    layout->setContentsMargins(12, 10, 12, 12);
-    layout->setSpacing(4);
+    auto* card = new shadcn::Card;
+    card->setObjectName(QStringLiteral("statsMetric"));
+    card->setTitle(title);
     *value = plainLabel(valueName, title + QObject::tr(" value"));
     (*value)->setFont(headingFont(QApplication::font(), 1.3));
     (*value)->setWordWrap(false);
+    card->content().addWidget(*value);
     *detail = plainLabel(detailName, title + QObject::tr(" detail"));
-    (*detail)->setProperty("statsRole", "detail");
-    layout->addWidget(*value);
-    layout->addWidget(*detail);
-    return box;
+    card->content().addWidget(*detail);
+    return card;
+}
+
+/// A titled section, for the tables and the activity grid.
+shadcn::Card* sectionCard(const QString& title, const QString& objectName) {
+    auto* card = new shadcn::Card;
+    card->setObjectName(objectName);
+    card->setTitle(title);
+    return card;
 }
 
 void configureTable(shadcn::Table* table) {
@@ -196,9 +202,7 @@ StatsPanel::StatsPanel(library::Library& library, QWidget* parent)
     breakdown->setHorizontalSpacing(12);
     breakdown->setVerticalSpacing(12);
 
-    auto* mediaBox = new QGroupBox(tr("Media mix"));
-    mediaBox->setFont(headingFont(mediaBox->font(), 1.12));
-    auto* mediaLayout = new QVBoxLayout(mediaBox);
+    auto* mediaBox = sectionCard(tr("Media mix"), QStringLiteral("mediaCard"));
     media_ = new shadcn::Table;
     media_->setObjectName(QStringLiteral("mediaTable"));
     media_->setAccessibleName(tr("Media mix").append(tr(" table")));
@@ -207,12 +211,11 @@ StatsPanel::StatsPanel(library::Library& library, QWidget* parent)
     (void)mediaModel_;
     mediaModel_->setHorizontalHeaderLabels({tr("Type"), tr("Lessons"), tr("Completed"), tr("Progress")});
     media_->setModel(mediaModel_);
-    mediaLayout->addWidget(media_);
+    mediaBox->content().addWidget(media_);
     breakdown->addWidget(mediaBox, 0, 0);
 
-    auto* coursesBox = new QGroupBox(tr("Top courses")); coursesBox_ = coursesBox;
-    coursesBox->setFont(headingFont(coursesBox->font(), 1.12));
-    auto* coursesLayout = new QVBoxLayout(coursesBox);
+    auto* coursesBox = sectionCard(tr("Top courses"), QStringLiteral("topCoursesCard"));
+    coursesBox_ = coursesBox;
     topCourses_ = new shadcn::Table;
     topCourses_->setObjectName(QStringLiteral("topCoursesTable"));
     topCourses_->setAccessibleName(tr("Top courses table"));
@@ -220,18 +223,16 @@ StatsPanel::StatsPanel(library::Library& library, QWidget* parent)
     topCoursesModel_ = new QStandardItemModel(0, 4, topCourses_);
     topCoursesModel_->setHorizontalHeaderLabels({tr("Course"), tr("Complete"), tr("Progress"), tr("Storage")});
     topCourses_->setModel(topCoursesModel_);
-    coursesLayout->addWidget(topCourses_);
+    coursesBox->content().addWidget(topCourses_);
     breakdown->addWidget(coursesBox, 0, 1);
     breakdown->setColumnStretch(0, 1);
     breakdown->setColumnStretch(1, 1);
     root->addLayout(breakdown);
 
-    auto* activityBox = new QGroupBox(tr("Activity · 12 weeks"));
-    activityBox->setFont(headingFont(activityBox->font(), 1.12));
-    auto* activityLayout = new QVBoxLayout(activityBox);
+    auto* activityBox = sectionCard(tr("Activity · 12 weeks"), QStringLiteral("activityCard"));
     auto* activityHint = plainLabel(QStringLiteral("activityHint"), tr("Activity description"));
     activityHint->setText(tr("Each cell shows a relative activity level. Use the arrow keys to move between days."));
-    activityLayout->addWidget(activityHint);
+    activityBox->content().addWidget(activityHint);
     activity_ = new shadcn::Heatmap(activityBox);
     activity_->setObjectName(QStringLiteral("activityGrid"));
     activity_->setAccessibleName(tr("84-day learning activity"));
@@ -239,10 +240,10 @@ StatsPanel::StatsPanel(library::Library& library, QWidget* parent)
     // every arrow key press announce a whole sentence, and the panel already
     // names the selected day in full in the line below the grid.
     activity_->setAccessiblePrefix(QString());
-    activityLayout->addWidget(activity_);
+    activityBox->content().addWidget(activity_);
     activityDetail_ = plainLabel(QStringLiteral("activityDetail"), tr("Selected activity"));
     activityDetail_->setText(tr("Select a day to see its activity."));
-    activityLayout->addWidget(activityDetail_);
+    activityBox->content().addWidget(activityDetail_);
     // The heatmap is one focus stop, so a pointer click and a keyboard Return
     // both have to reach the same place the table's cell selection used to.
     connect(activity_, &shadcn::Heatmap::cellActivated, this,
