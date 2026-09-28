@@ -1,4 +1,5 @@
 #include "paged_list_model.hpp"
+#include <shadcn/widgets.hpp>
 #include <QApplication>
 #include <QImage>
 #include <QListView>
@@ -67,20 +68,43 @@ private slots:
       QRect titleRect;
       QRect detailRect;
     };
+    // Compared by name, not by operator==: a QColor read from an image carries
+    // a different colour spec than one built from floats, which operator==
+    // treats as unequal even when the channels match.
     const auto exactPixels = [](const QImage& image, const QRect& rect, const QColor& color) {
       int matches = 0;
       const auto clipped = rect.intersected(image.rect());
       for (int y = clipped.top(); y <= clipped.bottom(); ++y) {
         for (int x = clipped.left(); x <= clipped.right(); ++x) {
-          matches += image.pixelColor(x, y) == color;
+          matches += image.pixelColor(x, y).name(QColor::HexRgb) == color.name(QColor::HexRgb);
         }
       }
       return matches;
     };
 
+    // The delegate reads the shadcn theme rather than the Qt palette, because
+    // the component library's install writes only a few palette roles. So the
+    // theme is installed and its own values are what the assertions name.
+    shadcn::install(*qApp, shadcn::Theme::neutral(), shadcn::MotionPolicy::Reduced);
+    const auto theme = shadcn::Theme::neutral();
+    const auto toColor = [&theme](shadcn::Role role) {
+      const auto value = theme.color(role);
+      return QColor::fromRgbF(static_cast<float>(value.r), static_cast<float>(value.g),
+                              static_cast<float>(value.b));
+    };
+    const auto base = toColor(shadcn::Role::Background);
+    const auto text = toColor(shadcn::Role::Foreground);
+    const auto muted = toColor(shadcn::Role::MutedForeground);
+    const auto highlight = toColor(shadcn::Role::Accent);
+    const auto highlighted = toColor(shadcn::Role::AccentForeground);
+
     const auto render = [&](qreal scale, bool selected) {
       auto font = QApplication::font();
-      font.setPointSizeF(font.pointSizeF() * scale);
+      // The shadcn install sets a pixel size, so a point size change would be
+      // ignored and the doubled-text case would render the same as the normal
+      // one. The user's text size is a pixel size on this platform.
+      if (font.pixelSize() > 0) font.setPixelSize(qRound(font.pixelSize() * scale));
+      else font.setPointSizeF(font.pointSizeF() * scale);
       QStyleOptionViewItem option;
       option.initFrom(&view);
       option.widget = &view;
@@ -88,18 +112,8 @@ private slots:
       option.fontMetrics = QFontMetrics(font);
       option.state = QStyle::State_Enabled;
       if (selected) option.state |= QStyle::State_Selected;
-      const QColor base("#f1f1f1");
-      const QColor text("#101010");
-      const QColor muted("#505050");
-      const QColor highlight("#1d4ed8");
-      const QColor highlighted("#ffffff");
-      for (const auto group : {QPalette::Active, QPalette::Inactive}) {
-        option.palette.setColor(group, QPalette::Base, base);
-        option.palette.setColor(group, QPalette::Text, text);
-        option.palette.setColor(group, QPalette::PlaceholderText, muted);
-        option.palette.setColor(group, QPalette::Highlight, highlight);
-        option.palette.setColor(group, QPalette::HighlightedText, highlighted);
-      }
+      option.palette.setColor(QPalette::Base, base);
+      option.palette.setColor(QPalette::Text, text);
       option.rect = QRect(QPoint(), QSize(360, delegate.sizeHint(option, model.index(0)).height()));
       QImage image(option.rect.size(), QImage::Format_ARGB32_Premultiplied);
       image.fill(base);
@@ -107,7 +121,8 @@ private slots:
       delegate.paint(&painter, option, model.index(0));
       auto titleFont = font;
       titleFont.setWeight(QFont::DemiBold);
-      titleFont.setPointSizeF(titleFont.pointSizeF() * 1.06);
+      if (titleFont.pixelSize() > 0) titleFont.setPixelSize(qRound(titleFont.pixelSize() * 1.06));
+      else titleFont.setPointSizeF(titleFont.pointSizeF() * 1.06);
       const QFontMetrics titleMetrics(titleFont);
       const QFontMetrics detailMetrics(font);
       const int titleTop = 10;
@@ -122,14 +137,18 @@ private slots:
     QVERIFY(!normal.image.isNull());
     QVERIFY(!doubled.image.isNull());
     QVERIFY(doubled.image.height() > normal.image.height());
-    QCOMPARE(normal.image.pixelColor(2, normal.image.height() / 2), QColor("#f1f1f1"));
-    QCOMPARE(selected.image.pixelColor(2, selected.image.height() / 2), QColor("#1d4ed8"));
-    QVERIFY(exactPixels(normal.image, normal.titleRect, QColor("#101010")) > 0);
-    QVERIFY(exactPixels(normal.image, normal.detailRect, QColor("#505050")) > 0);
-    QVERIFY(exactPixels(doubled.image, doubled.titleRect, QColor("#101010")) > 0);
-    QVERIFY(exactPixels(doubled.image, doubled.detailRect, QColor("#505050")) > 0);
-    QVERIFY(exactPixels(selected.image, selected.titleRect, QColor("#ffffff")) > 0);
-    QVERIFY(exactPixels(selected.image, selected.detailRect, QColor("#ffffff")) > 0);
+    // A resting row takes the page, a selected row the accent fill, and the
+    // text follows the fill rather than always the page foreground.
+    // Compared by name: a QColor read from an image carries a different colour
+    // spec than one built from floats, which QCOMPARE treats as unequal.
+    QCOMPARE(exactPixels(normal.image, QRect(2, normal.image.height() / 2, 1, 1), base), 1);
+    QCOMPARE(exactPixels(selected.image, QRect(2, selected.image.height() / 2, 1, 1), highlight), 1);
+    QVERIFY(exactPixels(normal.image, normal.titleRect, text) > 0);
+    QVERIFY(exactPixels(normal.image, normal.detailRect, muted) > 0);
+    QVERIFY(exactPixels(doubled.image, doubled.titleRect, text) > 0);
+    QVERIFY(exactPixels(doubled.image, doubled.detailRect, muted) > 0);
+    QVERIFY(exactPixels(selected.image, selected.titleRect, highlighted) > 0);
+    QVERIFY(exactPixels(selected.image, selected.detailRect, highlighted) > 0);
   }
 };
 QTEST_MAIN(PagedListModelTest)

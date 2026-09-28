@@ -30,8 +30,6 @@ class MainWindowTest final : public QObject {
   Q_OBJECT
 private slots:
   void initTestCase() { Q_INIT_RESOURCE(assets); }
-  void iconsHaveTransparentBackgroundsAtEveryScale();
-  void iconsStayDistinctFromEachOther();
   void iconsHaveTransparentBackgroundsAtEveryScale() {
     const auto icon = melearner::studyIcon(melearner::StudyIcon::Courses, QColor("#a72c23"));
     for (const auto mode : {QIcon::Normal, QIcon::Disabled}) {
@@ -156,7 +154,13 @@ private slots:
     QFETCH(int, fontScale);
     const auto originalFont = QApplication::font();
     const auto restoreFont = qScopeGuard([originalFont] { QApplication::setFont(originalFont); });
-    auto font = originalFont; font.setPointSizeF(font.pointSizeF() * fontScale); QApplication::setFont(font);
+    // The shadcn install sets a pixel size, so the text scale has to be applied
+    // to the pixel size or the doubled-text case would render the same as the
+    // normal one.
+    auto font = originalFont;
+    if (font.pixelSize() > 0) font.setPixelSize(qRound(font.pixelSize() * qreal(fontScale)));
+    else font.setPointSizeF(font.pointSizeF() * fontScale);
+    QApplication::setFont(font);
     QTemporaryDir files; QVERIFY(files.isValid());
     const auto root = files.path() + "/Courses";
     QVERIFY(QDir().mkpath(root + "/Reading/Section"));
@@ -236,9 +240,19 @@ private slots:
   }
   void rootToCourseAtSupportedWidths() {
     QFETCH(int, fontScale);
+    // The theme is installed by main(), which a test binary does not run, so the
+    // test installs it. The window then inherits the shadcn style and its font
+    // rather than setting them itself.
+    shadcn::install(*qApp, shadcn::Theme::neutral(), shadcn::MotionPolicy::Reduced);
     const auto originalFont = QApplication::font();
     const auto restoreFont = qScopeGuard([originalFont] { QApplication::setFont(originalFont); });
-    auto font = originalFont; font.setPointSizeF(font.pointSizeF() * fontScale); QApplication::setFont(font);
+    // The shadcn install sets a pixel size, so the text scale has to be applied
+    // to the pixel size or the doubled-text case would render the same as the
+    // normal one.
+    auto font = originalFont;
+    if (font.pixelSize() > 0) font.setPixelSize(qRound(font.pixelSize() * qreal(fontScale)));
+    else font.setPointSizeF(font.pointSizeF() * fontScale);
+    QApplication::setFont(font);
     QTemporaryDir files;
     QVERIFY(QDir(files.path()).mkpath("Courses/A Course/01 Section"));
     QFile lesson(files.path() + "/Courses/A Course/01 Section/01 Introduction.txt");
@@ -254,7 +268,9 @@ private slots:
     MainWindow window(files.path() + "/library.sqlite3");
     window.show();
     QCOMPARE(window.font().family(), QString("Geist"));
-    QVERIFY(window.font().pointSizeF() >= font.pointSizeF());
+    // The window never shrinks the user's text size.
+    if (font.pixelSize() > 0) QVERIFY(window.font().pixelSize() >= font.pixelSize());
+    else QVERIFY(window.font().pointSizeF() >= font.pointSizeF());
     auto* choose = window.findChild<QPushButton*>("chooseRoot");
     QVERIFY(choose);
     QTRY_VERIFY(choose->isEnabled());

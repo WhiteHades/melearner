@@ -72,9 +72,16 @@
 namespace lib = melearner::library;
 namespace {
 QString tooltip(const QString& text) { return "<qt>" + text.toHtmlEscaped() + "</qt>"; }
+/// Scale whichever size the font carries. The shadcn install sets a pixel size,
+/// so a point-size scale is silently ignored and every heading in the window
+/// renders at the body size.
+void scaleFont(QFont& font, double factor) {
+  if (font.pixelSize() > 0) font.setPixelSize(std::max(1, qRound(font.pixelSize() * factor)));
+  else font.setPointSizeF(std::max(1.0, font.pointSizeF() * factor));
+}
 QFont headingFont(const QFont& base, double scale, bool bold = false) {
   auto font = base;
-  font.setPointSizeF(base.pointSizeF() * scale);
+  scaleFont(font, scale);
   font.setWeight(bold ? QFont::DemiBold : QFont::Normal); return font;
 }
 class ElidingLabel final : public QLabel {
@@ -147,11 +154,11 @@ QListView* list(const QString& name, PagedListModel* model) {
 MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwareDecoding)
     : QMainWindow(parent), library_(databasePath, this), player_(new melearner::Player(this,
         softwareDecoding ? melearner::Player::DecodeMode::Software : melearner::Player::DecodeMode::Automatic)) {
-  static const int fontId = QFontDatabase::addApplicationFont(":/cpp-app/assets/fonts/Geist.ttf");
-  if (qApp->style()->objectName() != "fusion") QApplication::setStyle("Fusion");
+  // The font family and size are installed with the shadcn theme, so the window
+  // only picks up the window icon and the size floor.
   auto interfaceFont = QApplication::font();
-  if (fontId >= 0) interfaceFont.setFamily(QFontDatabase::applicationFontFamilies(fontId).first());
-  if (interfaceFont.pointSizeF() > 0) interfaceFont.setPointSizeF(std::max(11.0, interfaceFont.pointSizeF()));
+  if (interfaceFont.pixelSize() > 0) interfaceFont.setPixelSize(std::max(11, interfaceFont.pixelSize()));
+  else if (interfaceFont.pointSizeF() > 0) interfaceFont.setPointSizeF(std::max(11.0, interfaceFont.pointSizeF()));
   QApplication::setFont(interfaceFont);
   setWindowTitle("melearner"); setMinimumSize(560, 400); resize(1200, 780);
   setWindowIcon(QIcon(":/cpp-app/assets/melearner-logo.png"));

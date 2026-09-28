@@ -1,8 +1,8 @@
 #include "paged_list_model.hpp"
 #include "library.hpp"
 #include "study_icons.hpp"
+#include "theme.hpp"
 #include <QApplication>
-#include <QIcon>
 #include <QPainter>
 #include <QSize>
 #include <QStyle>
@@ -15,18 +15,19 @@ struct ListItemText {
   QString detail;
 };
 
+/// Scale whichever size the font carries. The shadcn install sets a pixel size,
+/// so a point-size scale is silently ignored and every heading in the list
+/// renders at the body size.
+void scaleFont(QFont& font, double factor) {
+  if (font.pixelSize() > 0) font.setPixelSize(std::max(1, qRound(font.pixelSize() * factor)));
+  else font.setPointSizeF(std::max(1.0, font.pointSizeF() * factor));
+}
+
 ListItemText itemText(const QModelIndex& index) {
   const auto display = index.data(Qt::DisplayRole).toString();
   const auto separator = display.indexOf(QChar(u'\n'));
   if (separator < 0) return {display, {}};
   return {display.left(separator), display.mid(separator + 1)};
-}
-
-void drawNativeItemBackground(QPainter* painter, const QStyleOptionViewItem& option) {
-  auto background = option;
-  background.text.clear();
-  background.icon = QIcon();
-  QApplication::style()->drawControl(QStyle::CE_ItemViewItem, &background, painter, option.widget);
 }
 
 }  // namespace
@@ -52,17 +53,32 @@ void StudyItemDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opt
   const auto row = model ? model->row(index.row()) : std::optional<StudyRow>{};
   if (!row || !row->value.canConvert<melearner::library::Course>()) {
     const auto text = itemText(index);
-    drawNativeItemBackground(painter, option);
+    // The row paints its own fill rather than asking the style to draw one. The
+    // style would use the palette's Highlight, which the shadcn install sets to
+    // the primary colour, so a selected lesson row and a selected course row
+    // would not be the same colour.
     painter->save();
-    const auto palette = option.palette;
     const bool selected = option.state.testFlag(QStyle::State_Selected);
-    const auto foreground = palette.color(selected ? QPalette::HighlightedText : QPalette::Text);
-    const auto muted = palette.color(selected ? QPalette::HighlightedText : QPalette::PlaceholderText);
+    const bool hover = option.state.testFlag(QStyle::State_MouseOver);
+    const auto& theme = melearner::themeFor(option.widget);
+    painter->setRenderHint(QPainter::Antialiasing);
+    painter->setPen(Qt::NoPen);
+    painter->setBrush(selected ? melearner::roleColor(theme, shadcn::Role::Accent)
+                  : hover ? melearner::roleColor(theme, shadcn::Role::Muted)
+                  : melearner::roleColor(theme, shadcn::Role::Background));
+    const auto radius = theme.radius();
+    painter->drawRoundedRect(option.rect, radius, radius);
+    // Same rule as the course row: the selected row is the accent fill, so the
+    // muted detail text sits on the accent foreground rather than on the page.
+    const auto foreground = melearner::roleColor(theme,
+      selected ? shadcn::Role::AccentForeground : shadcn::Role::Foreground);
+    const auto muted = melearner::roleColor(theme,
+      selected ? shadcn::Role::AccentForeground : shadcn::Role::MutedForeground);
     auto titleFont = option.font;
     if (const auto fontData = index.data(Qt::FontRole); fontData.canConvert<QFont>())
       titleFont = fontData.value<QFont>();
     titleFont.setWeight(QFont::DemiBold);
-    titleFont.setPointSizeF(titleFont.pointSizeF() * (compact_ ? 1.02 : 1.06));
+    scaleFont(titleFont, compact_ ? 1.02 : 1.06);
     auto detailFont = option.font;
     detailFont.setWeight(QFont::Normal);
     const QFontMetrics titleMetrics(titleFont);
@@ -83,26 +99,40 @@ void StudyItemDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opt
     return;
   }
   const auto course = row->value.value<melearner::library::Course>();
-  // The view's transparent stylesheet base is not an opaque card fill.
-  const auto palette = option.palette;
+  // Colours come from the shadcn theme rather than the Qt palette, because the
+  // component library's install writes only a few palette roles. A row that read
+  // QPalette::Mid got the platform's mid grey, which on this theme is a dark
+  // line where a quiet track belongs.
+  const auto& theme = melearner::themeFor(option.widget);
   const bool selected = option.state.testFlag(QStyle::State_Selected);
   const bool hover = option.state.testFlag(QStyle::State_MouseOver);
+  const bool focused = option.state.testFlag(QStyle::State_HasFocus);
   const auto card = option.rect.adjusted(1, 3, -1, -3);
   painter->save(); painter->setRenderHint(QPainter::Antialiasing);
-  painter->setBrush(palette.color(selected || hover ? QPalette::AlternateBase : QPalette::Base));
-  painter->setPen(palette.color(option.state.testFlag(QStyle::State_HasFocus) ? QPalette::Highlight : QPalette::Mid));
-  painter->drawRoundedRect(card, 10, 10);
+  // A selected row is the accent fill, a hovered row the accent at half weight,
+  // and a resting row the page. This is the shadcn item state order.
+  painter->setBrush(selected ? melearner::roleColor(theme, shadcn::Role::Accent)
+                : hover ? melearner::roleColor(theme, shadcn::Role::Muted)
+                : melearner::roleColor(theme, shadcn::Role::Background));
+  painter->setPen(QPen(focused ? melearner::roleColor(theme, shadcn::Role::Ring)
+                               : melearner::roleColor(theme, shadcn::Role::Border), 1));
+  painter->drawRoundedRect(card, theme.radius(), theme.radius());
   const int inset = compact_ ? 14 : 20;
   const int iconSize = compact_ ? 24 : 30;
-  const auto ink = palette.color(QPalette::Text);
-  const auto accent = palette.color(QPalette::Highlight);
-  melearner::studyIcon(melearner::StudyIcon::Courses, course.missing ? palette.color(QPalette::PlaceholderText) : accent)
+  const auto ink = melearner::roleColor(theme, selected ? shadcn::Role::AccentForeground
+                                                         : shadcn::Role::Foreground);
+  const auto muted = melearner::roleColor(theme, selected ? shadcn::Role::AccentForeground
+                                                          : shadcn::Role::MutedForeground);
+  const auto accent = melearner::roleColor(theme, shadcn::Role::Primary);
+  // A course whose folder is missing is drawn in the muted colour, because it
+  // is present in the Library but cannot be opened.
+  melearner::studyIcon(melearner::StudyIcon::Courses, course.missing ? muted : accent)
     .paint(painter, QRect(card.left() + inset, card.top() + inset, iconSize, iconSize));
   const int left = card.left() + inset + iconSize + 12;
   const int right = card.right() - inset - 22;
   const int available = std::max(0, right - left);
   auto heading = option.font;
-  heading.setPointSizeF(heading.pointSizeF() * (compact_ ? 1.05 : 1.18));
+  scaleFont(heading, compact_ ? 1.05 : 1.18);
   heading.setWeight(QFont::DemiBold);
   painter->setFont(heading); painter->setPen(ink);
   const QFontMetrics titleMetrics(heading);
@@ -111,7 +141,7 @@ void StudyItemDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opt
     Qt::AlignLeft | Qt::AlignVCenter, titleMetrics.elidedText(row->title, Qt::ElideRight, available));
   auto body = option.font;
   body.setWeight(QFont::Normal);
-  painter->setFont(body); painter->setPen(palette.color(QPalette::PlaceholderText));
+  painter->setFont(body); painter->setPen(muted);
   const QFontMetrics bodyMetrics(body);
   painter->drawText(QRect(left, titleTop + titleMetrics.lineSpacing() + 2, available, bodyMetrics.lineSpacing()),
     Qt::AlignLeft | Qt::AlignVCenter, bodyMetrics.elidedText(row->description, Qt::ElideRight, available));
@@ -120,9 +150,17 @@ void StudyItemDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opt
   if (!course.missing && course.lessonCount > 0) {
     const qreal ratio = std::min(1.0, static_cast<qreal>(course.completedLessons) / course.lessonCount);
     const QRectF track(left, card.bottom() - inset - 4, std::max(0, std::min(260, available)), 4);
-    painter->setPen(Qt::NoPen); painter->setBrush(palette.color(QPalette::Mid));
+    // The track is the muted fill and the fill is the primary colour, which is
+    // the same ramp the heatmap uses, so a course row and an activity cell agree.
+    painter->setPen(Qt::NoPen);
+    painter->setBrush(selected ? melearner::roleColor(theme, shadcn::Role::AccentForeground)
+                  : melearner::roleColor(theme, shadcn::Role::Muted));
     painter->drawRoundedRect(track, 2, 2);
-    if (ratio > 0) { painter->setBrush(accent); painter->drawRoundedRect(QRectF(track.topLeft(), QSizeF(track.width() * ratio, 4)), 2, 2); }
+    if (ratio > 0) {
+      painter->setBrush(selected ? melearner::roleColor(theme, shadcn::Role::AccentForeground)
+                    : accent);
+      painter->drawRoundedRect(QRectF(track.topLeft(), QSizeF(track.width() * ratio, 4)), 2, 2);
+    }
   }
   painter->restore();
 }

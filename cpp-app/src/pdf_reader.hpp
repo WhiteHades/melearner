@@ -14,6 +14,18 @@ struct TileKey {
   int x = 0;
   int y = 0;
   auto operator<=>(const TileKey&) const = default;
+  // Needed so a tile key can be a QSet member. The four fields are mixed one at
+  // a time, because this is an identity hash and not a value one.
+  friend size_t qHash(const TileKey& key, size_t seed) noexcept {
+    auto mix = [&seed](quint32 value) {
+      seed = qHash(seed, value);
+    };
+    mix(quint32(key.page));
+    mix(quint32(key.scale));
+    mix(quint32(key.x));
+    mix(quint32(key.y));
+    return seed;
+  }
 };
 struct Info { quint64 generation = 0; QVector<QSizeF> pages; };
 struct Tile { quint64 generation = 0; TileKey key; QImage image; };

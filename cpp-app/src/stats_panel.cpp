@@ -77,9 +77,16 @@ double heatmapValue(const library::ActivityDay& day) {
     return static_cast<double>(day.watchedSeconds);
 }
 
+/// Scale whichever size the font carries. The shadcn install sets a pixel size,
+/// so a point-size scale is silently ignored and every metric heading in this
+/// panel renders at the body size.
+void scaleFont(QFont& font, qreal factor) {
+    if (font.pixelSize() > 0) font.setPixelSize(std::max(1, qRound(font.pixelSize() * factor)));
+    else font.setPointSizeF(std::max(1.0, font.pointSizeF() * factor));
+}
 QFont headingFont(const QFont& base, qreal scale) {
     auto font = base;
-    font.setPointSizeF(base.pointSizeF() * scale);
+    scaleFont(font, scale);
     font.setWeight(QFont::DemiBold);
     return font;
 }
