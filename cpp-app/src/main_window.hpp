@@ -17,7 +17,6 @@ class QAction;
 class QLabel;
 class QStackedWidget;
 class PagedListModel;
-class QTextEdit;
 class PdfView;
 class QGridLayout;
 class QBoxLayout;
@@ -126,7 +125,7 @@ private:
   QGraphicsOpacityEffect* controlsOpacity_ = nullptr;
   QPropertyAnimation* controlsFade_ = nullptr;
   QLabel* documentStatus_;
-  QTextEdit* documentView_;
+  shadcn::Prose* documentView_;
   shadcn::Button* documentPrevious_;
   shadcn::Button* documentNext_;
   QBoxLayout* documentNavigation_ = nullptr;

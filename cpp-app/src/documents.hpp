@@ -59,6 +59,13 @@ struct Block {
     std::uint8_t level = 0;
 };
 
+/// A document's blocks as markup for a reader surface.
+///
+/// Every piece of document text is escaped. A lesson is content, and content is
+/// not markup until it has been escaped, so a block whose text contains a tag is
+/// shown as the text it is rather than being interpreted as one.
+[[nodiscard]] QString toHtml(const QVector<Block>& blocks);
+
 struct Document {
     QString path;
     Format format = Format::text;

@@ -51,9 +51,6 @@
 #include <QTimer>
 #include <QTextEdit>
 #include <QTextCursor>
-#include <QTextBlockFormat>
-#include <QTextListFormat>
-#include <QFontDatabase>
 #include <QVBoxLayout>
 #include <QUrl>
 #include <algorithm>
@@ -349,8 +346,11 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   documentStatus_ = new QLabel(tr("Choose an item from the Course outline.")); documentStatus_->setWordWrap(true);
   documentStatus_->setTextFormat(Qt::PlainText);
   documentLayout->addWidget(documentStatus_);
-  documentView_ = new QTextEdit; documentView_->setObjectName("documentText"); documentView_->setReadOnly(true);
-  documentView_->setAccessibleName(tr("Lesson document")); documentView_->setFrameShape(QFrame::NoFrame);
+  // A lesson is read, not typed into, and the surface is the page rather than a
+  // field. The library's prose surface is where its heading structure and its type
+  // scale come from.
+  documentView_ = new shadcn::Prose; documentView_->setObjectName("documentText");
+  documentView_->setAccessibleName(tr("Lesson document"));
   documentView_->setMaximumWidth(900); documentView_->hide(); documentLayout->addWidget(documentView_, 1);
   documentNavigation_ = new QHBoxLayout;
   documentPrevious_ = button(tr("Previous page"), "previousDocumentPage"); documentPrevious_->setEnabled(false);
@@ -584,30 +584,12 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
       if (documentOffsets_.isEmpty() || documentOffsets_.last() != page.offset) documentOffsets_.append(page.offset);
       documentPrevious_->setEnabled(documentOffsets_.size() > 1);
       documentNext_->setEnabled(documentNextOffset_ < page.totalBlocks);
-      documentView_->clear(); QTextCursor cursor(documentView_->document());
-      cursor.beginEditBlock(); bool first = true;
-      for (const auto& block : page.blocks) {
-        if (!first) cursor.insertBlock();
-        first = false;
-        QTextBlockFormat paragraph; paragraph.setBottomMargin(12); paragraph.setLineHeight(140, QTextBlockFormat::ProportionalHeight);
-        QTextCharFormat text;
-        if (block.kind == melearner::documents::BlockKind::heading) {
-          text.setFontWeight(QFont::DemiBold); text.setFontPointSize(font().pointSizeF() * (1.8 - std::min<int>(block.level, 6) * 0.1));
-          paragraph.setTopMargin(16);
-        } else if (block.kind == melearner::documents::BlockKind::code) {
-          text.setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
-        } else if (block.kind == melearner::documents::BlockKind::quote) {
-          paragraph.setLeftMargin(20);
-        } else if (block.kind == melearner::documents::BlockKind::list_item) {
-          paragraph.setLeftMargin(16);
-        }
-        cursor.setBlockFormat(paragraph); cursor.setCharFormat(text);
-        if (block.kind == melearner::documents::BlockKind::list_item) {
-          QTextListFormat format; format.setStyle(QTextListFormat::ListDisc); format.setIndent(1); cursor.createList(format);
-        }
-        cursor.insertText(block.text);
-      }
-      cursor.endEditBlock(); documentView_->moveCursor(QTextCursor::Start); documentView_->show();
+      // The lesson body is the library's prose surface, so the type scale, the block
+      // spacing and the colours are the theme's rather than thirty lines of
+      // hand-built block formats here. The markup comes from the documents module,
+      // which is where a document becomes markup.
+      documentView_->setHtml(melearner::documents::toHtml(page.blocks));
+      documentView_->moveCursor(QTextCursor::Start); documentView_->show();
       documentStatus_->setText(page.warnings.isEmpty() ? QString() : page.warnings.first());
     });
   connect(externalOpen_, &QPushButton::clicked, this, [this] {

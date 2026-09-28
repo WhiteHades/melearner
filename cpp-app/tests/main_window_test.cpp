@@ -7,8 +7,7 @@
 #include <QAction>
 #include <QFile>
 #include <QLabel>
-#include <QListView>
-#include <QTreeView>
+#include <shadcn/rows.hpp>
 #include <QListWidget>
 #include <QPushButton>
 #include <QPointer>
@@ -196,6 +195,81 @@ private slots:
     QTest::mouseClick(window.findChild<QPushButton*>("backToLibrary"), Qt::LeftButton);
     tabs->setCurrentValue("stats"); QTRY_COMPARE(completion->text(), QString("100%"));
   }
+  /// A lesson body is the library's prose surface. This opens a real document,
+  /// checks the surface is the one the library owns rather than a stock text edit,
+  /// and captures it at the widths a reader actually uses.
+  void opensADocumentOnTheProseSurface() {
+    QTemporaryDir files; QVERIFY(files.isValid());
+    const auto root = files.path() + "/Courses";
+    QVERIFY(QDir().mkpath(root + "/Reading Course/Section"));
+    // A heading, prose, a list, a quote, code, and text that looks like markup. The
+    // last one is the case that matters: a lesson is content, and content that
+    // looks like a tag has to arrive as the text it is.
+    {
+      QFile file(root + "/Reading Course/Section/Notes.md");
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write("# Lesson one\n\nA paragraph of the lesson body.\n\n"
+                 "- First point\n- Second point\n\n"
+                 "> A quoted line.\n\n"
+                 "`signal -> process -> response`\n\n"
+                 "Text with <b>markup</b> and an ampersand & a < sign.\n");
+    }
+    MainWindow window(files.path() + "/library.sqlite3"); window.show();
+    QTRY_VERIFY(window.findChild<QPushButton*>("chooseRoot")->isEnabled()); window.chooseRoot(root);
+    auto* courses = window.findChild<shadcn::ListView*>("courses"); QVERIFY(courses);
+    QTRY_COMPARE(courses->model()->rowCount(), 1);
+    auto* resume = window.findChild<QPushButton*>("resumeLesson"); QVERIFY(resume);
+    QTRY_VERIFY(resume->isVisible()); QTest::mouseClick(resume, Qt::LeftButton);
+    auto* lessons = window.findChild<shadcn::TreeView*>("lessons"); QVERIFY(lessons);
+    QTRY_COMPARE(lessons->model()->rowCount(), 1);
+
+    // The surface is the library's. The prose surface is a text edit underneath, so
+    // the claim is not that there is no text edit: it is that every text edit in the
+    // window is the library's surface and none of them is a stock one the window
+    // configured by hand.
+    auto* prose = window.findChild<shadcn::Prose*>(); QVERIFY(prose);
+    const auto edits = window.findChildren<QTextEdit*>();
+    QVERIFY(!edits.isEmpty());
+    for (auto* edit : edits) {
+        QVERIFY2(qobject_cast<shadcn::Prose*>(edit) == prose,
+                 "the window holds a text edit that is not the library's prose surface");
+    }
+    QTRY_VERIFY(prose->isVisible());
+    QVERIFY2(prose->readerMode(), "the lesson body can be typed into");
+    // The document's structure reached the surface, which is what a table of
+    // contents or a progress indicator would be built from.
+    QVERIFY(!prose->headings().isEmpty());
+    QVERIFY(prose->headings().first().contains(QStringLiteral("Lesson one")));
+    // No caret. A lesson body takes focus so it can be scrolled, and a blinking
+    // caret in a thing nobody can type into is the clearest signal that a reader
+    // has been handed a form.
+    prose->setFocus();
+    QCoreApplication::processEvents();
+    QVERIFY2(prose->cursorWidth() == 0,
+             qPrintable(QStringLiteral("the lesson body shows a caret of width %1")
+                            .arg(prose->cursorWidth())));
+    QVERIFY2(!prose->isReadOnly() == false, "the lesson body can be typed into");
+    // A vertical scrollbar belongs on the trailing edge of the surface it scrolls.
+    // On the leading edge it reads as a gutter with a stray mark in it, and the
+    // reader has no reason to think the surface scrolls at all.
+    if (prose->verticalScrollBar()->isVisible()) {
+      const auto surface = prose->geometry();
+      const auto bar = prose->verticalScrollBar()->geometry();
+      QVERIFY2(bar.x() > surface.center().x(),
+               qPrintable(QStringLiteral("the lesson body's scrollbar is at x=%1 on a surface "
+                                         "spanning %2 to %3, so it is on the leading edge")
+                              .arg(bar.x()).arg(surface.x()).arg(surface.x() + surface.width())));
+    }
+
+    const auto captures = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
+    for (const int width : {768, 1280, 1920}) {
+      window.resize(width, 780); QTest::qWait(30); QCoreApplication::processEvents();
+      if (!captures.isEmpty()) {
+        QVERIFY(window.grab().save(captures + QString("/document-%1.png").arg(width)));
+      }
+    }
+  }
+
   void opensPdfWithinCourse() {
     QTemporaryDir files; QVERIFY(files.isValid());
     const auto root = files.path() + "/Courses";

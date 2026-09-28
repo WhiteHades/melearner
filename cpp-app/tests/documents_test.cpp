@@ -384,6 +384,76 @@ private slots:
             QVERIFY(result.succeeded() || (result.error && result.error->code == ErrorCode::cancelled));
         }
     }
+
+    /// A lesson is content, and content is not markup until it has been escaped.
+    /// Every block kind has to escape, not just the ones where a tag would look
+    /// wrong, because the surface this feeds renders whatever it is given.
+    void everyBlockEscapesItsText() {
+        using melearner::documents::Block;
+        using melearner::documents::BlockKind;
+        using melearner::documents::toHtml;
+        const auto escapes = [](BlockKind kind, const QString& text) {
+            Block block; block.kind = kind; block.text = text; block.level = 2;
+            return toHtml({block});
+        };
+        const auto attack = QStringLiteral("<img src=x onerror=\"boom\">");
+        const auto escaped = QStringLiteral("&lt;img src=x onerror=&quot;boom&quot;&gt;");
+        for (const auto kind : {BlockKind::paragraph, BlockKind::heading, BlockKind::list_item,
+                                BlockKind::code, BlockKind::quote, BlockKind::thematic_break}) {
+            const auto html = escapes(kind, attack);
+            QVERIFY2(!html.contains(QLatin1String("<img")),
+                     qPrintable(QStringLiteral("block kind %1 passed a tag through: %2")
+                                    .arg(int(kind)).arg(html)));
+            // A thematic break carries no text, so there is nothing to escape; every
+            // other kind has to show the text as text.
+            if (kind != BlockKind::thematic_break) {
+                QVERIFY2(html.contains(escaped),
+                         qPrintable(QStringLiteral("block kind %1 did not escape its text: %2")
+                                        .arg(int(kind)).arg(html)));
+            }
+        }
+        // The reader sees the text back, which is the point: escaping must not
+        // change what the lesson says.
+        QVERIFY(toHtml({Block{BlockKind::paragraph, QStringLiteral("A & B < C"), 0}})
+                    .contains(QStringLiteral("A &amp; B &lt; C")));
+    }
+
+    /// A heading level is a number from a file, and it becomes a tag name. A level
+    /// outside the six headings would produce markup the reader surface does not
+    /// style, so it is clamped rather than trusted.
+    void headingLevelsAreClampedToMarkup() {
+        using melearner::documents::Block;
+        using melearner::documents::BlockKind;
+        using melearner::documents::toHtml;
+        const auto level = [](int value) {
+            Block block; block.kind = BlockKind::heading; block.text = QStringLiteral("T"); block.level = value;
+            return toHtml({block});
+        };
+        QVERIFY(level(0).startsWith(QStringLiteral("<h1>")));
+        QVERIFY(level(1).startsWith(QStringLiteral("<h1>")));
+        QVERIFY(level(3).startsWith(QStringLiteral("<h3>")));
+        QVERIFY(level(6).startsWith(QStringLiteral("<h6>")));
+        // Beyond the last heading it stays a heading rather than becoming a tag the
+        // surface has no style for.
+        QVERIFY(level(7).startsWith(QStringLiteral("<h6>")));
+        QVERIFY(level(255).startsWith(QStringLiteral("<h6>")));
+        // A level that is not a number at all cannot become a tag name.
+        QVERIFY(!level(255).contains(QLatin1String("h255")));
+    }
+
+    /// A blank paragraph is dropped. A document with a blank line between every
+    /// block would otherwise show its paragraph spacing twice, and the reader
+    /// cannot tell which gap is the document's and which is the surface's.
+    void emptyParagraphsAreDropped() {
+        using melearner::documents::Block;
+        using melearner::documents::BlockKind;
+        using melearner::documents::toHtml;
+        QVERIFY(toHtml({Block{BlockKind::paragraph, QString(), 0}}).isEmpty());
+        QVERIFY(toHtml({Block{BlockKind::paragraph, QStringLiteral("A"), 0},
+                        Block{BlockKind::paragraph, QString(), 0},
+                        Block{BlockKind::paragraph, QStringLiteral("B"), 0}})
+                    .count(QStringLiteral("<p>")) == 2);
+    }
 };
 
 QTEST_GUILESS_MAIN(DocumentsTest)

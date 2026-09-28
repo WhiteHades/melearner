@@ -1518,4 +1518,58 @@ ReadResult Documents::read(const OpenRequest& request) {
     return parseHtml(path.file, bytes);
 }
 
+QString toHtml(const QVector<Block>& blocks) {
+  QString html;
+  html.reserve(1024);
+  // Consecutive list items are gathered into one list. A bare list item is not a
+  // list item: the reader surface styles a list as a list, and an item outside one
+  // renders as an ordinary paragraph with its bullet nowhere in sight.
+  bool inList = false;
+  const auto closeList = [&] {
+    if (!inList) return;
+    html += QStringLiteral("</ul>");
+    inList = false;
+  };
+  for (const auto& block : blocks) {
+    const auto text = block.text.toHtmlEscaped();
+    switch (block.kind) {
+      case BlockKind::heading:
+        closeList();
+        // The level is clamped to the six headings the markup has, and to one, so a
+        // malformed document cannot produce a tag the reader surface will not style.
+        html += QStringLiteral("<h%1>%2</h%1>").arg(std::clamp<int>(block.level, 1, 6)).arg(text);
+        break;
+      case BlockKind::list_item:
+        if (!inList) { html += QStringLiteral("<ul>"); inList = true; }
+        html += QStringLiteral("<li>%1</li>").arg(text);
+        break;
+      case BlockKind::code:
+        closeList();
+        // The code block is marked as a block of its own. Without the surrounding
+        // break the reader surface runs the next block into the same paragraph and
+        // the code stops being distinguishable from the prose around it.
+        html += QStringLiteral("<p><pre><code>%1</code></pre></p>").arg(text);
+        break;
+      case BlockKind::quote:
+        closeList();
+        html += QStringLiteral("<blockquote>%1</blockquote>").arg(text);
+        break;
+      case BlockKind::thematic_break:
+        closeList();
+        html += QStringLiteral("<hr>");
+        break;
+      case BlockKind::paragraph:
+      default:
+        closeList();
+        // An empty paragraph is dropped rather than rendered as a gap. A document
+        // with blank lines between every block would otherwise double its own
+        // spacing, and the reader would see the paragraph spacing twice.
+        if (!text.isEmpty()) html += QStringLiteral("<p>%1</p>").arg(text);
+        break;
+    }
+  }
+  closeList();
+  return html;
+}
+
 }  // namespace melearner::documents
