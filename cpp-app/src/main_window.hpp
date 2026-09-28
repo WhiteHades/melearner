@@ -34,6 +34,10 @@ public:
   explicit MainWindow(const QString& databasePath, QWidget* parent = nullptr, bool softwareDecoding = false);
   ~MainWindow() override;
   void chooseRoot(const QString& path);
+  // Applies a root folder as soon as the Library is open. A root given on the
+  // command line arrives before the Library has finished opening, and a scan
+  // issued then is refused, so the request is held rather than dropped.
+  void chooseRootWhenOpen(const QString& path);
 protected:
   void resizeEvent(QResizeEvent* event) override;
   void closeEvent(QCloseEvent* event) override;
@@ -57,6 +61,7 @@ private:
   melearner::library::Library library_;
   melearner::documents::Documents documents_;
   QString rootPath_;
+  QString requestedRoot_;
   melearner::library::Settings settings_;
   quint64 libraryRevision_ = 0;
   shadcn::Tabs* libraryTabs_;

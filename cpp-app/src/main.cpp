@@ -5,6 +5,7 @@
 #include <QCoreApplication>
 #include <QCommandLineParser>
 #include <QDir>
+#include <QFileInfo>
 #include <QTextStream>
 #include <QStandardPaths>
 #include <QSurfaceFormat>
@@ -15,6 +16,12 @@ namespace {
 void configureCommandLineParser(QCommandLineParser& arguments) {
   arguments.setApplicationDescription("Study local courses with native video, documents, and progress tracking.");
   arguments.addOption({"software-decoding", "Disable hardware video decoding for troubleshooting or qualification."});
+  // A folder is accepted so the desktop entry can hand over a root the user
+  // chose. It is optional: without one the application opens on the library it
+  // already has, or asks for a root folder.
+  arguments.addPositionalArgument("folder",
+    QCoreApplication::translate("main", "Course root folder: the folder holding your Course folders."),
+    QCoreApplication::translate("main", "[folder]"));
   arguments.addHelpOption();
   arguments.addVersionOption();
 }
@@ -84,5 +91,20 @@ int main(int argc, char** argv) {
     window.raise(); window.activateWindow();
   });
   window.show();
+  // A folder handed over by the desktop entry becomes the course root. A file is
+  // refused rather than guessed at: a library is built from the folders under a
+  // root, and the folder holding a lesson file is a course or a section, never a
+  // root, so any ancestor this picked would be a guess.
+  const auto requested = arguments.positionalArguments();
+  if (!requested.isEmpty()) {
+    const auto given = QFileInfo(requested.first()).absoluteFilePath();
+    if (QFileInfo(given).isDir()) {
+      window.chooseRootWhenOpen(given);
+    } else {
+      return fail(QCoreApplication::translate("main",
+        "Expected a course root folder, but '%1' is a file. Choose the folder that "
+        "contains your Course folders.").arg(requested.first()));
+    }
+  }
   return application.exec();
 }

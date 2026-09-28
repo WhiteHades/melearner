@@ -1,9 +1,16 @@
 [Desktop Entry]
 Type=Application
 Name=melearner
+GenericName=Course Player
 Comment=Learn from your local courses
-Exec=melearner
+Exec=melearner %F
 Icon=io.github.whitehades.melearner
 Terminal=false
-Categories=Education;AudioVideo;
+Categories=Education;Player;
+Keywords=course;lesson;study;learn;video;document;pdf;local;
+# A library is built from the folders under a root, so the application is
+# registered for folders and not for the media inside them. Opening a single
+# lesson file is not something it can do without a library around it.
+MimeType=inode/directory;
+StartupNotify=true
 StartupWMClass=io.github.whitehades.melearner

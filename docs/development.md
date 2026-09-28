@@ -120,6 +120,30 @@ Markdown files that were decoded twice.
 
 ## Packaging
 
+Installing for the current user puts the application in the session's `PATH`,
+registers a desktop entry, and installs the icon into the hicolor theme at the
+sizes a shell asks for. The desktop database is refreshed so the entry appears
+without a logout.
+
+```bash
+bash scripts/install-cpp-linux.sh "$HOME/.local"
+```
+
+The icon set lives in `cpp-app/assets/icons/hicolor`. Below 32 pixels it carries
+only the play triangle, because the book's two shapes blur together at that size
+and the triangle is the part that still reads.
+
+A folder can be passed on the command line, and that is what the desktop entry
+hands over:
+
+```bash
+melearner ~/Courses
+```
+
+A file is refused rather than resolved. A library is built from the folders under
+a root, so the folder holding a lesson file is a course or a section and never a
+root, and any ancestor the application picked would be a guess.
+
 The Linux archive can be staged with:
 
 ```bash

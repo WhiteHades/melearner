@@ -522,6 +522,12 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     updateLayout();
     choose_->setEnabled(true); rescan_->setEnabled(!rootPath_.isEmpty());
     status_->setText(tr("Ready")); courseModel_->reset(); refreshResume();
+    // A root given on the command line was held until the Library opened.
+    if (!requestedRoot_.isEmpty()) {
+      const auto path = requestedRoot_;
+      requestedRoot_.clear();
+      chooseRoot(path);
+    }
   });
   connect(&library_, &lib::Library::settingsSaved, this, [this](auto id, const lib::Settings& settings) {
     mutationRequests_.remove(id);
@@ -1104,6 +1110,12 @@ void MainWindow::chooseRoot(const QString& path) {
   if (!id) { showError(tr("The Library is busy. Try scanning again shortly.")); return; }
   scanId_ = id; cancelScan_->setEnabled(true); cancelScan_->show();
   choose_->setEnabled(false); rescan_->setEnabled(false); status_->setText(tr("Scanning root folder…"));
+}
+void MainWindow::chooseRootWhenOpen(const QString& path) {
+  // A revision of zero means the Library has not reported itself open, which is
+  // the state a command line path arrives in.
+  if (libraryRevision_ == 0) { requestedRoot_ = path; return; }
+  chooseRoot(path);
 }
 void MainWindow::showLibrary() {
   if (course_ && lesson_) { rememberedCourse_ = course_->id; rememberedLesson_ = lesson_->id; }

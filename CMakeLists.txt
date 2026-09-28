@@ -60,9 +60,15 @@ endif()
 install(TARGETS melearner RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES packaging/linux/io.github.whitehades.melearner.desktop
   DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
-install(FILES cpp-app/assets/melearner-logo.png
-  DESTINATION ${CMAKE_INSTALL_DATADIR}/pixmaps
-  RENAME io.github.whitehades.melearner.png)
+# The icon goes into the hicolor theme at the sizes a desktop shell asks for.
+# Installing one oversized copy under share/pixmaps did not put it on any icon
+# search path, so the app grid showed nothing for it.
+foreach(icon_size 16 22 24 32 48 64 96 128 192 256 512)
+  install(FILES
+    "cpp-app/assets/icons/hicolor/${icon_size}x${icon_size}/apps/io.github.whitehades.melearner.png"
+    DESTINATION
+      "${CMAKE_INSTALL_DATADIR}/icons/hicolor/${icon_size}x${icon_size}/apps")
+endforeach()
 install(FILES cpp-app/assets/fonts/LICENSE
   DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/melearner/geist)
 
