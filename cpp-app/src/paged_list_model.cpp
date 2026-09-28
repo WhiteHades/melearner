@@ -6,6 +6,7 @@
 #include <QPainter>
 #include <QSize>
 #include <QStyle>
+#include <QTreeView>
 #include <algorithm>
 
 namespace {
@@ -61,15 +62,29 @@ void StudyItemDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opt
     const bool selected = option.state.testFlag(QStyle::State_Selected);
     const bool hover = option.state.testFlag(QStyle::State_MouseOver);
     const auto& theme = melearner::themeFor(option.widget);
+    // A section header is a different kind of row: it is a heading, so it is
+    // given the muted foreground and a semibold weight rather than the accent
+    // fill a selected lesson takes. A tree paints its section rows through the
+    // same delegate as the lessons, and a section is never the current lesson.
+    // Only a tree has section rows, and only a tree's top-level row is one. A
+    // list view reports an invalid parent for every row, so the view type is
+    // what decides, not the parent index.
+    const bool tree = qobject_cast<const QTreeView*>(option.widget) != nullptr;
+    const bool heading = tree && !index.parent().isValid();
     painter->setRenderHint(QPainter::Antialiasing);
     painter->setPen(Qt::NoPen);
-    painter->setBrush(selected ? melearner::roleColor(theme, shadcn::Role::Accent)
+    painter->setBrush(heading ? QColor(Qt::transparent)
+                  : selected ? melearner::roleColor(theme, shadcn::Role::Accent)
                   : hover ? melearner::roleColor(theme, shadcn::Role::Muted)
-                  : melearner::roleColor(theme, shadcn::Role::Background));
-    const auto radius = theme.radius();
-    painter->drawRoundedRect(option.rect, radius, radius);
+                  : QColor(Qt::transparent));
+    if (!heading) {
+      const auto radius = theme.radius();
+      painter->drawRoundedRect(option.rect, radius, radius);
+    }
     // Same rule as the course row: the selected row is the accent fill, so the
     // muted detail text sits on the accent foreground rather than on the page.
+    // A heading has no fill of its own, so it keeps the normal foreground and
+    // its detail line the muted one.
     const auto foreground = melearner::roleColor(theme,
       selected ? shadcn::Role::AccentForeground : shadcn::Role::Foreground);
     const auto muted = melearner::roleColor(theme,

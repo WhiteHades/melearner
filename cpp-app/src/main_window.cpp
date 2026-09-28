@@ -305,6 +305,24 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   lessons_->setTextElideMode(Qt::ElideRight); lessons_->setWordWrap(true);
   lessons_->setFrameShape(QFrame::NoFrame); lessons_->setIndentation(18);
   lessons_->setExpandsOnDoubleClick(false); lessons_->setAnimated(false);
+  // A tree view that keeps Qt's own row painting would take its selection
+  // colour from the palette, and the shadcn install writes only a few palette
+  // roles, so a selected lesson came out the platform's highlight rather than
+  // the theme's accent. The rows are painted by the delegate from the theme
+  // instead, which also matches how the course list is drawn.
+  {
+    const auto& theme = melearner::themeFor(lessons_);
+    auto palette = lessons_->palette();
+    palette.setColor(QPalette::Window, melearner::roleColor(theme, shadcn::Role::Sidebar));
+    palette.setColor(QPalette::Base, melearner::roleColor(theme, shadcn::Role::Sidebar));
+    palette.setColor(QPalette::Text, melearner::roleColor(theme, shadcn::Role::SidebarForeground));
+    palette.setColor(QPalette::Highlight, melearner::roleColor(theme, shadcn::Role::SidebarAccent));
+    palette.setColor(QPalette::HighlightedText,
+      melearner::roleColor(theme, shadcn::Role::SidebarAccentForeground));
+    palette.setColor(QPalette::PlaceholderText,
+      melearner::roleColor(theme, shadcn::Role::MutedForeground));
+    lessons_->setPalette(palette);
+  }
   connect(outlineModel_, &melearner::CourseOutlineModel::lessonRevealed, this, [this](const QModelIndex& index) {
     lessons_->expand(index.parent()); lessons_->setCurrentIndex(index); lessons_->scrollTo(index);
   });
