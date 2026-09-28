@@ -3,8 +3,9 @@
 #include "mpv_video_widget.hpp"
 #include <QDir>
 #include <QAccessible>
+#include <shadcn/navigation.hpp>
+#include <shadcn/widgets.hpp>
 #include <QMenu>
-#include <QSlider>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QLabel>
@@ -67,11 +68,15 @@ private slots:
       auto* controls = window.findChild<QWidget*>("playerControls"); QVERIFY(controls);
       auto* settings = window.findChild<QPushButton*>("playbackOptions"); QVERIFY(settings);
       auto* speed = window.findChild<QMenu*>("playbackSpeed"); QVERIFY(speed);
+      // The transport is built from shadcn components, so the menus are
+      // shadcn dropdown menus and the timeline is a shadcn slider.
+      QVERIFY(qobject_cast<shadcn::DropdownMenu*>(window.findChild<QMenu*>("videoSettings")));
       auto* audio = window.findChild<QMenu*>("audioTrack"); QVERIFY(audio);
       QTRY_VERIFY(!audio->actions().isEmpty());
       QCOMPARE(settings->menu()->objectName(), QString("videoSettings"));
       QVERIFY(controls->isAncestorOf(settings));
-      QVERIFY(controls->isAncestorOf(window.findChild<QSlider*>("playbackPosition")));
+      auto* timeline = window.findChild<shadcn::Slider*>("playbackPosition"); QVERIFY(timeline);
+      QVERIFY(controls->isAncestorOf(timeline));
       auto* accessibleVideo = QAccessible::queryAccessibleInterface(window.findChild<melearner::MpvVideoWidget*>());
       QVERIFY(accessibleVideo); QCOMPARE(accessibleVideo->role(), QAccessible::Animation);
       QVERIFY(accessibleVideo->imageInterface());
@@ -164,7 +169,7 @@ private slots:
         for (const int width : {560, 768, 1280}) {
           window.resize(width, 720); QCoreApplication::processEvents(); QVERIFY(window.width() <= width);
           QVERIFY(surface->rect().contains(controls->geometry()));
-          QTRY_COMPARE(window.findChild<QSlider*>("playbackPosition")->width(), controls->width() - 24);
+          QTRY_COMPARE(timeline->width(), controls->width() - 24);
           const auto captures = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
           if (!captures.isEmpty()) QVERIFY(window.grab().save(captures + QString("/player-%1-%2x.png").arg(width).arg(fontScale)));
         }
@@ -173,10 +178,21 @@ private slots:
         QVERIFY2(window.width() <= 560 && window.height() <= 400, "Controls exceed the minimum supported window size");
         auto* scroll = window.findChild<QScrollArea*>("lessonScroll");
         QTRY_COMPARE(scroll->horizontalScrollBar()->maximum(), 0);
+        // A button is measured against the space its own size hint asks for, not
+        // against its text plus a guessed inset. A shadcn button sizes itself
+        // from its own metrics, so the hint is the answer and a fixed inset here
+        // would be a second, wrong rule. What matters is that the label fits
+        // inside the button, so the width is compared with the label and a
+        // little breathing room, and the hint is compared with the same.
         for (const auto* control : window.findChildren<QPushButton*>()) {
-          if (control->isVisible() && !control->text().isEmpty())
-            QVERIFY2(control->width() >= control->fontMetrics().horizontalAdvance(control->text()) + 12,
-              qPrintable(QString("Clipped button: %1").arg(control->text())));
+          if (!control->isVisible() || control->text().isEmpty()) continue;
+          const auto label = control->fontMetrics().horizontalAdvance(control->text());
+          QVERIFY2(control->sizeHint().width() >= label,
+            qPrintable(QString("Clipped button: %1 needs %2, hint is %3")
+                         .arg(control->text()).arg(label).arg(control->sizeHint().width())));
+          QVERIFY2(control->width() >= label,
+            qPrintable(QString("Narrow button: %1 needs %2, has %3")
+                         .arg(control->text()).arg(label).arg(control->width())));
         }
         const auto* next = window.findChild<QPushButton*>("nextLesson");
         QVERIFY(surface->rect().contains(controls->geometry()));
@@ -187,12 +203,30 @@ private slots:
         const auto captureDirectory = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
         if (!captureDirectory.isEmpty()) QVERIFY(window.grab().save(captureDirectory + QString("/player-minimum-%1x.png").arg(fontScale)));
         window.resize(1280, 720);
+        // The two appearances are the neutral theme's own light and dark page
+        // colours, so the assertion names the theme rather than a remembered hex.
         auto* appearance = window.findChild<QPushButton*>("appearance")->menu();
-        const QStringList colors{"#faf7f2", "#18181b", "#f8f0e3"};
-        for (int theme : {1, 2, 0}) {
-          appearance->actions().at(theme)->trigger();
-          QTRY_COMPARE(QApplication::palette().color(QPalette::Window).name(), colors.at(theme));
-          if (!captureDirectory.isEmpty()) QVERIFY(window.grab().save(captureDirectory + QString("/player-theme-%1-%2x.png").arg(theme).arg(fontScale)));
+        // The menu opens with an "Appearance" label, so the two items are at
+        // one and two. They are found by their label rather than by position.
+        int light = -1;
+        int dark = -1;
+        for (int index = 0; index < appearance->actions().size(); ++index) {
+          const auto label = appearance->actions().at(index)->text();
+          if (label == "Light") light = index;
+          if (label == "Dark") dark = index;
+        }
+        QVERIFY(light >= 0); QVERIFY(dark >= 0);
+        for (int index : {dark, light}) {
+          appearance->actions().at(index)->trigger();
+          const auto mode = index == dark ? shadcn::ColorMode::Dark : shadcn::ColorMode::Light;
+          const auto page = shadcn::Theme::neutral(mode).color(shadcn::Role::Background);
+          const auto expected = QColor::fromRgbF(static_cast<float>(page.r),
+                                                 static_cast<float>(page.g),
+                                                 static_cast<float>(page.b));
+          QTRY_COMPARE(QApplication::palette().color(QPalette::Window).name(QColor::HexRgb),
+                      expected.name(QColor::HexRgb));
+          if (!captureDirectory.isEmpty())
+            QVERIFY(window.grab().save(captureDirectory + QString("/player-theme-%1-%2x.png").arg(index).arg(fontScale)));
         }
       } else {
         const auto restored = loaded.first().at(2).toLongLong();

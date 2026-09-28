@@ -171,6 +171,9 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   toolbar->addWidget(searchButton_, 1); toolbar->addStretch();
   auto* shortcuts = button(tr("Keyboard shortcuts"), "showShortcuts",
     shadcn::Variant::Ghost, shadcn::ButtonSize::Icon);
+  // An icon button shows no label. The name is the accessible name and the
+  // tooltip, and leaving the text set would paint it inside a 32 pixel button.
+  shortcuts->setText({});
   shortcuts->setToolTip(tr("Keyboard shortcuts (? or F1)")); toolbar->addWidget(shortcuts);
   connect(shortcuts, &QPushButton::clicked, this, [this] { showKeyboardPopup(false); });
   rescan_ = button(tr("Rescan"), "rescanRoot"); rescan_->setParent(center); rescan_->hide(); rescan_->setEnabled(false);
@@ -1329,6 +1332,15 @@ void MainWindow::applyAppearance(const QString& appearance) {
     target->setIcon(melearner::studyIcon(icon, onAccent
       ? melearner::roleColor(this, shadcn::Role::PrimaryForeground) : foreground));
     target->setIconSize(QSize(16, 16));
+    // An icon-only button carries no label. The accessible name and the tooltip
+    // carry it instead, and the text is cleared so it is not painted into a
+    // 32 pixel button.
+    if (target->buttonSize() == shadcn::ButtonSize::Icon ||
+        target->buttonSize() == shadcn::ButtonSize::IconSm ||
+        target->buttonSize() == shadcn::ButtonSize::IconLg) {
+      const auto label = target->text();
+      if (!label.isEmpty()) { target->setText({}); target->setToolTip(label); }
+    }
   }
   for (auto* widget : findChildren<QWidget*>()) {
     if (auto* label = qobject_cast<QLabel*>(widget)) {

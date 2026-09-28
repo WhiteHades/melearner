@@ -559,9 +559,18 @@ private:
         case CommandKind::pause:
             issueFlagProperty(command.id, "pause", true);
             return;
-        case CommandKind::stop:
+        case CommandKind::stop: {
+            // A stop ends the current file, and mpv reports that as an end-file
+            // event. The event is asynchronous, so it can arrive after a load
+            // has already started, and it would then clear that load's pending
+            // restore and the load would never report itself. Counting the
+            // stops lets the next end-file event be matched to the file it
+            // actually ended rather than to whichever load is in flight.
+            ++pendingStops_;
+            deferredLoad_.reset();
             issueCommand(command.id, {QByteArrayLiteral("stop")});
             return;
+        }
         case CommandKind::seekAbsolute:
             issueCommand(command.id, {QByteArrayLiteral("seek"), QByteArray::number(
                                           static_cast<double>(command.integer) / 1000.0, 'f', 3),
@@ -722,6 +731,15 @@ private:
             const auto endedPath = currentPath_;
             const bool failed = end != nullptr && end->reason == MPV_END_FILE_REASON_ERROR;
             const bool naturalEnd = end != nullptr && end->reason == MPV_END_FILE_REASON_EOF;
+            // An end-file event caused by a stop ends the file that was playing
+            // when the stop was issued, not a load that has started since. The
+            // restore state is left alone in that case, so a load requested
+            // while a stop was in flight still reports itself.
+            if (pendingStops_ > 0 && !failed) {
+                --pendingStops_;
+                if (naturalEnd) emit owner_->playbackEnded(endedPath, false);
+                return;
+            }
             if (restore_.active) {
                 if (failed) {
                     restoreFailed(mpvError(end->error));
@@ -825,9 +843,14 @@ private:
     }
 
     void beginRestore() {
+        // mpv reports FILE_LOADED for any file it loads, including one that a
+        // seek or a lesson switch caused rather than a request. A report is only
+        // for a load this Player asked for and is still restoring, so a load with
+        // no pending restore is not announced: the announcement would carry the
+        // position generation rather than the request id a consumer matched
+        // against, and it would consume the one report the real load owes.
         if (!restore_.active) {
             suppressPositions_.store(false, std::memory_order_release);
-            emit owner_->fileLoaded(currentPath_, durationMs_, lastPositionMs_, positionGeneration_);
             return;
         }
         const auto id = nextInternalRequestId();
@@ -1035,6 +1058,10 @@ private:
     std::shared_ptr<ReservationState> reservations_ = std::make_shared<ReservationState>();
     std::optional<Command> deferredLoad_;
     bool loadCommandInFlight_ = false;
+    // End-file events still owed for stops that were issued. mpv reports a stop
+    // asynchronously, so the count is what tells a stop's event apart from the
+    // end of a file that played to its end.
+    int pendingStops_ = 0;
     bool started_ = false;
     bool stopping_ = false;
     bool shutdownNotified_ = false;
