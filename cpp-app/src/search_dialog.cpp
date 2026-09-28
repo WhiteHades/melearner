@@ -1,29 +1,55 @@
 #include "search_dialog.hpp"
 #include "paged_list_model.hpp"
+#include <shadcn/widgets.hpp>
 #include <QKeyEvent>
 #include <QLabel>
-#include <QLineEdit>
 #include <QListView>
 #include <QVBoxLayout>
 #include <limits>
 
 namespace lib = melearner::library;
+namespace {
 
-SearchDialog::SearchDialog(lib::Library& library, QWidget* parent) : QDialog(parent) {
-  setWindowTitle(tr("Search your Library")); resize(620, 480);
-  auto* layout = new QVBoxLayout(this);
-  query_ = new QLineEdit; query_->setObjectName("searchQuery");
+/// The dialog's one action, so the footer is built by the same helper the rest
+/// of the application uses rather than by a local stylesheet.
+shadcn::Button* button(const QString& text, const QString& name, shadcn::Variant variant) {
+  auto* result = new shadcn::Button(text);
+  result->setObjectName(name);
+  result->setAccessibleName(text);
+  result->setVariant(variant);
+  return result;
+}
+
+}  // namespace
+
+SearchDialog::SearchDialog(lib::Library& library, QWidget* parent) : shadcn::Dialog(parent) {
+  setTitle(tr("Search your Library"));
+  setDescription(tr("Courses, sections, and lessons in your root folder."));
+  setContentWidth(620);
+  query_ = &shadcn::make_child<shadcn::Input>(*this);
+  query_->setObjectName("searchQuery");
   query_->setPlaceholderText(tr("Search courses, sections, and lessons"));
-  query_->setAccessibleName(tr("Search your Library")); query_->setMinimumHeight(40);
-  query_->setMaxLength(512); query_->installEventFilter(this); layout->addWidget(query_);
+  query_->setAccessibleName(tr("Search your Library"));
+  query_->setMaxLength(512);
+  query_->installEventFilter(this);
+  content().addWidget(query_);
   model_ = new PagedListModel(100, this);
   results_ = new QListView; results_->setObjectName("searchResults");
   results_->setAccessibleName(tr("Search results")); results_->setModel(model_);
   results_->setItemDelegate(new StudyItemDelegate(results_));
   results_->setUniformItemSizes(true); results_->setTextElideMode(Qt::ElideRight);
-  results_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff); layout->addWidget(results_, 1);
-  status_ = new QLabel(tr("Type a name to search.")); status_->setWordWrap(true); layout->addWidget(status_);
+  results_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  results_->setFrameShape(QFrame::NoFrame);
+  content().addWidget(results_, 1);
+  status_ = new QLabel(tr("Type a name to search.")); status_->setWordWrap(true);
   status_->setTextFormat(Qt::PlainText);
+  status_->setObjectName("searchStatus");
+  status_->setAccessibleName(tr("Search status"));
+  content().addWidget(status_);
+  open_ = button(tr("Open"), "searchOpen", shadcn::Variant::Default);
+  connect(open_, &QPushButton::clicked, this, &SearchDialog::openSelected);
+  footer().addStretch();
+  footer().addWidget(open_);
   debounce_.setSingleShot(true); debounce_.setInterval(100);
   connect(query_, &QLineEdit::textChanged, this, [this] {
     ++generation_; requests_.clear(); submittedQuery_.clear(); model_->reset(); debounce_.start();
@@ -60,14 +86,20 @@ SearchDialog::SearchDialog(lib::Library& library, QWidget* parent) : QDialog(par
   });
   connect(results_, &QListView::activated, this, [this](const QModelIndex& index) {
     if (const auto row = model_->row(index.row())) {
-      emit selected(row->value.value<lib::SearchRow>()); accept();
+      emit selected(row->value.value<lib::SearchRow>());
+      accept();
     }
   });
-  connect(query_, &QLineEdit::returnPressed, this, [this] {
-    const auto index = results_->currentIndex().isValid() ? results_->currentIndex() : model_->index(0);
-    if (const auto row = model_->row(index.row())) { emit selected(row->value.value<lib::SearchRow>()); accept(); }
-  });
+  connect(query_, &QLineEdit::returnPressed, this, &SearchDialog::openSelected);
   query_->setFocus();
+}
+
+void SearchDialog::openSelected() {
+  const auto index = results_->currentIndex().isValid() ? results_->currentIndex() : model_->index(0);
+  if (const auto row = model_->row(index.row())) {
+    emit selected(row->value.value<lib::SearchRow>());
+    accept();
+  }
 }
 
 bool SearchDialog::eventFilter(QObject* object, QEvent* event) {
@@ -80,5 +112,5 @@ bool SearchDialog::eventFilter(QObject* object, QEvent* event) {
       return true;
     }
   }
-  return QDialog::eventFilter(object, event);
+  return shadcn::Dialog::eventFilter(object, event);
 }

@@ -1,15 +1,14 @@
 #pragma once
 #include "library.hpp"
-#include <QDialog>
+#include <shadcn/overlays.hpp>
 #include <QMap>
 #include <QTimer>
 
 class QLabel;
-class QLineEdit;
 class QListView;
 class PagedListModel;
 
-class SearchDialog final : public QDialog {
+class SearchDialog final : public shadcn::Dialog {
   Q_OBJECT
 public:
   explicit SearchDialog(melearner::library::Library& library, QWidget* parent = nullptr);
@@ -18,10 +17,15 @@ signals:
 protected:
   bool eventFilter(QObject* object, QEvent* event) override;
 private:
-  QLineEdit* query_;
+  // Results stay a model-backed list view rather than a shadcn Command list.
+  // Search pages through an arbitrarily large result set, and the component
+  // library's own rule for data views is to avoid one widget per row.
+  shadcn::Input* query_;
   QListView* results_;
   QLabel* status_;
+  shadcn::Button* open_ = nullptr;
   PagedListModel* model_;
+  void openSelected();
   QTimer debounce_;
   QString submittedQuery_;
   quint64 generation_ = 0;
