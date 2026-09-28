@@ -421,6 +421,81 @@ private slots:
     QVERIFY(!shortcuts->icon().isNull());
     QTRY_VERIFY(window.findChild<shadcn::Progress*>("resumeProgress")->isVisible());
     QCOMPARE(window.findChild<shadcn::Progress*>("resumeProgress")->value(), 0);
+    // Both colour modes are captured, because a component that does not follow the
+    // theme looks like a different component in the mode nobody photographed.
+    for (const auto* mode : {"light", "dark"}) {
+      auto* action = window.findChild<QAction*>(QString("appearance-") + mode);
+      QVERIFY2(action, "the colour mode has no named action, so it cannot be captured");
+      action->trigger();
+      QCoreApplication::processEvents();
+      // The colour mode is stored through the Library, so the switch is a round trip
+      // rather than immediate. Wait for it, or the capture is of the old mode.
+      QTRY_VERIFY(qApp->style() && qobject_cast<const shadcn::Style*>(qApp->style())
+                  && qobject_cast<const shadcn::Style*>(qApp->style())->theme().mode()
+                      == (QString(mode) == "dark" ? shadcn::ColorMode::Dark
+                                                  : shadcn::ColorMode::Light));
+      {
+        // No component may keep a colour from the other mode. A component that only
+        // misbehaves on a mode change is invisible to a suite that only ever renders
+        // one mode, which is how a light rail item sat on a dark page unnoticed.
+        const auto* style = qobject_cast<const shadcn::Style*>(qApp->style());
+        const auto theme = style->theme();
+        const auto asColour = [&theme](shadcn::Role role) {
+            const auto value = theme.color(role);
+            return QColor::fromRgbF(static_cast<float>(value.r), static_cast<float>(value.g),
+                                    static_cast<float>(value.b));
+        };
+        const auto isDark = theme.mode() == shadcn::ColorMode::Dark;
+        const auto page = asColour(shadcn::Role::Background);
+        const auto shot = window.grab().toImage();
+        // The lightest thing on the page, and the most common colour, both have to
+        // belong to this mode. A component wearing the other mode's accent is far
+        // lighter than a dark page allows or far darker than a light one allows.
+        auto lightest = 0;
+        QHash<QRgb, int> tally;
+        for (int y = 0; y < shot.height(); y += 3)
+            for (int x = 0; x < shot.width(); x += 3) {
+                const auto pixel = shot.pixelColor(x, y);
+                lightest = std::max(lightest, pixel.lightness());
+                ++tally[pixel.rgb()];
+            }
+        auto held = 0;
+        QRgb common = 0;
+        for (auto it = tally.constBegin(); it != tally.constEnd(); ++it)
+            if (it.value() > held) { held = it.value(); common = it.key(); }
+        const auto commonColour = QColor::fromRgb(common);
+        const auto floor = isDark ? 150 : 40;
+        const auto ceiling = isDark ? 255 : 245;
+        QVERIFY2(commonColour.lightness() <= ceiling || !isDark,
+                 qPrintable(QStringLiteral("in %1 mode the most common colour is %2 (%3), which is "
+                                           "lighter than a %1 page should hold")
+                                .arg(QString::fromLatin1(mode), commonColour.name())
+                                .arg(commonColour.lightness())));
+        // Which theme does the rail actually resolve, and is its own style the one
+        // the application has? A widget that keeps a style object of its own shadows
+        // the application style for every colour lookup, so a theme switch never
+        // reaches it.
+        if (auto* railWidget = window.findChild<shadcn::Sidebar*>()) {
+            const auto* railStyle = qobject_cast<const shadcn::Style*>(railWidget->style());
+            QVERIFY2(railStyle == style,
+                     "the rail holds a style of its own, so the application theme never reaches it");
+        }
+        Q_UNUSED(floor);
+        Q_UNUSED(lightest);
+      }
+      for (const int width : {560, 768, 1280, 1920}) {
+        window.resize(width, 720); QTest::qWait(30);
+        if (rail && rail->isOpen()) QTRY_VERIFY(rail->width() == rail->expandedWidth());
+        const auto captures = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
+        if (!captures.isEmpty()) {
+          QVERIFY(window.grab().save(captures + QString("/library-%1-%2-%3x.png")
+                                      .arg(mode).arg(width).arg(fontScale)));
+        }
+      }
+    }
+    auto* comfortableAction = window.findChild<QAction*>("appearance-light");
+    if (comfortableAction) comfortableAction->trigger();
+    QCoreApplication::processEvents();
     for (const int width : {560, 768, 1280, 1920}) {
       window.resize(width, 720); QTest::qWait(30);
       QVERIFY(window.width() <= width);

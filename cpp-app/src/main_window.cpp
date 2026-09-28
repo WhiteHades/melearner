@@ -228,6 +228,9 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   appearanceMenu->addLabel(tr("Appearance"));
   for (const auto& name : {QString("light"), QString("dark")}) {
     auto& item = appearanceMenu->addItem(name == "dark" ? tr("Dark") : tr("Light"));
+    // Named so the two colour modes are reachable from a test and from assistive
+    // technology, which is also the only way a dark mode capture can be made.
+    item.setObjectName("appearance-" + name);
     connect(&item, &QAction::triggered, this, [this, name] {
       auto changed = settings_; changed.appearance = name; trackMutation(library_.setSettings(changed));
     });
