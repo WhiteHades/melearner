@@ -96,6 +96,20 @@ SearchDialog::SearchDialog(lib::Library& library, QWidget* parent) : shadcn::Dia
   query_->setFocus();
 }
 
+void SearchDialog::setQuery(const QString& text) {
+  const auto trimmed = text.trimmed();
+  // Setting the text on the field is what runs the rest: it raises textChanged,
+  // which clears the stale results and starts the debounce, so the results that
+  // arrive belong to this query and not to the one before it.
+  if (query_->text() == trimmed) {
+    model_->reset();
+    return;
+  }
+  query_->setText(trimmed);
+  query_->setFocus();
+  query_->setCursorPosition(trimmed.size());
+}
+
 void SearchDialog::openSelected() {
   const auto index = results_->currentIndex().isValid() ? results_->currentIndex() : model_->index(0);
   if (const auto row = model_->row(index.row())) {

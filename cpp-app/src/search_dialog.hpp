@@ -12,6 +12,12 @@ class SearchDialog final : public shadcn::Dialog {
   Q_OBJECT
 public:
   explicit SearchDialog(melearner::library::Library& library, QWidget* parent = nullptr);
+  /// Starts with a query already typed, and shows its results.
+  ///
+  /// A caller that has a search field of its own needs the text to reach the search
+  /// rather than being thrown away: a reader who typed "systems" and got an empty
+  /// dialog has been asked to type it again.
+  void setQuery(const QString& text);
 signals:
   void selected(melearner::library::SearchRow row);
 protected:

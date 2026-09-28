@@ -207,7 +207,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   searchField_ = new shadcn::Input; searchField_->setObjectName("searchButton");
   searchField_->setAccessibleName(tr("Search your Library"));
   searchField_->setPlaceholderText(tr("Search your courses…"));
-  searchField_->setToolTip(tr("Search Library (Ctrl+K)"));
+  searchField_->setToolTip(tr("Search your Library (Enter, or Ctrl+K)"));
   searchField_->setMaximumWidth(460);
   searchField_->installEventFilter(this);
   connect(searchField_, &QLineEdit::returnPressed, this, &MainWindow::openSearch);
@@ -1376,6 +1376,13 @@ void MainWindow::openSearch() {
   const QPointer<QWidget> invoker = QApplication::focusWidget();
   auto* dialog = new SearchDialog(library_, this);
   dialog->setAttribute(Qt::WA_DeleteOnClose);
+  // What the reader typed in the window's field goes into the search, and the field
+  // is cleared so it shows its placeholder again rather than last query's text. A
+  // field that looks typeable and throws the text away is worse than a button.
+  if (searchField_) {
+    dialog->setQuery(searchField_->text());
+    searchField_->clear();
+  }
   connect(dialog, &SearchDialog::selected, this, [this](const lib::SearchRow& row) {
     searchResolveGeneration_ = routeGeneration_;
     searchResolveId_ = library_.resolveSearch(row.kind, row.id);

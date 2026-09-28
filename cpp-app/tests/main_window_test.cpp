@@ -281,6 +281,49 @@ private slots:
     }
   }
 
+  /// A field that looks typeable and throws the text away is worse than a button.
+  ///
+  /// This is the regression this catches: the window's search field was connected to
+  /// the search, but the search never read it, so a reader who typed a name and
+  /// pressed Enter got an empty dialog and had to type it again.
+  void typedSearchReachesTheSearch() {
+    QTemporaryDir files; QVERIFY(files.isValid());
+    const auto root = files.path() + "/Courses";
+    QVERIFY(QDir().mkpath(root + "/Finding Course/Section"));
+    {
+      QFile file(root + "/Finding Course/Section/One.md");
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write("A local lesson.\n");
+    }
+    MainWindow window(files.path() + "/library.sqlite3"); window.show();
+    QTRY_VERIFY(window.findChild<QPushButton*>("chooseRoot")->isEnabled()); window.chooseRoot(root);
+    auto* courses = window.findChild<shadcn::ListView*>("courses");
+    QTRY_COMPARE(courses->model()->rowCount(), 1);
+
+    auto* field = window.findChild<shadcn::Input*>("searchButton"); QVERIFY(field);
+    QVERIFY2(field->isEnabled(), "the search field cannot be typed into");
+
+    // The reader types a name and presses Enter.
+    field->setFocus();
+    QTest::keyClicks(field, QStringLiteral("Finding"));
+    QCOMPARE(field->text(), QString("Finding"));
+    QTest::keyClick(field, Qt::Key_Return);
+    QCoreApplication::processEvents();
+
+    auto* dialog = window.findChild<SearchDialog*>();
+    QVERIFY2(dialog, "the search did not open");
+    QTRY_VERIFY(dialog->isVisible());
+    // The text reached the search rather than being discarded on the way.
+    auto* inner = dialog->findChild<shadcn::Input*>("searchQuery"); QVERIFY(inner);
+    QCOMPARE(inner->text(), QString("Finding"));
+    // And the field gave the text away, so it shows its placeholder again instead of
+    // last query's text when the dialog closes.
+    QVERIFY(field->text().isEmpty());
+    // The results belong to the query, so the course is found.
+    auto* results = dialog->findChild<shadcn::ListView*>("searchResults"); QVERIFY(results);
+    QTRY_COMPARE(results->model()->rowCount(), 1);
+  }
+
   void opensPdfWithinCourse() {
     QTemporaryDir files; QVERIFY(files.isValid());
     const auto root = files.path() + "/Courses";
