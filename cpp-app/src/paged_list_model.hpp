@@ -14,15 +14,10 @@ struct StudyRow {
   QVariant value;
 };
 
-class StudyItemDelegate final : public QStyledItemDelegate {
-public:
-  using QStyledItemDelegate::QStyledItemDelegate;
-  QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const override;
-  void paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const override;
-  void setCompact(bool compact) { compact_ = compact; }
-private:
-  bool compact_ = false;
-};
+/// Redraws the icons a course row carries. The themed row view draws a leading
+/// pixmap as given, so the model owns the colour of its own icons and has to hear
+/// about a theme change to redraw them. Call this when the appearance changes.
+void refreshRowIcons();
 
 // Shared by the Course and Lesson views. Only four visible/recent pages stay resident.
 class PagedListModel final : public QAbstractListModel {
@@ -37,6 +32,10 @@ public:
   bool updateRow(const StudyRow& row);
   void failedPage(int offset);
   std::optional<StudyRow> row(int index) const;
+  /// Re-asks the loaded rows for their icons, without dropping the cached pages.
+  /// A theme change moves the colour of a row's icon, and re-reading the pages from
+  /// the database to redraw a glyph would be a poor trade for a colour switch.
+  void refreshRowIcons();
   int cachedRows() const;
 signals:
   void pageRequested(int offset);

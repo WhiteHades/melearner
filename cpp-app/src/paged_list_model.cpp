@@ -11,10 +11,20 @@
 
 namespace {
 
-struct ListItemText {
-  QString title;
-  QString detail;
+/// The side a row icon is rendered at. It matches the delegate's icon box, so the
+/// pixmap is not scaled on the way to the screen.
+constexpr int kRowIconSide = 30;
+
+struct RowIconSet {
+  QPixmap present;
+  QPixmap missing;
+  QPixmap chevron;
 };
+
+RowIconSet& rowIcons() {
+  static RowIconSet icons;
+  return icons;
+}
 
 /// Scale whichever size the font carries. The shadcn install sets a pixel size,
 /// so a point-size scale is silently ignored and every heading in the list
@@ -24,160 +34,25 @@ void scaleFont(QFont& font, double factor) {
   else font.setPointSizeF(std::max(1.0, font.pointSizeF() * factor));
 }
 
-ListItemText itemText(const QModelIndex& index) {
-  const auto display = index.data(Qt::DisplayRole).toString();
-  const auto separator = display.indexOf(QChar(u'\n'));
-  if (separator < 0) return {display, {}};
-  return {display.left(separator), display.mid(separator + 1)};
-}
-
 }  // namespace
 
-QSize StudyItemDelegate::sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const {
-  auto size = QStyledItemDelegate::sizeHint(option, index);
-  if (const auto* model = qobject_cast<const PagedListModel*>(index.model())) {
-    const auto row = model->row(index.row());
-    if (row && row->value.canConvert<melearner::library::Course>()) {
-      // Keep the course card dense at the default size while allowing every
-      // text line and the progress track to breathe at larger scales.
-      size.setHeight(std::max(compact_ ? 84 : 104,
-        option.fontMetrics.lineSpacing() * (compact_ ? 2 : 3) + 30));
-      return size;
-    }
-  }
-  size.setHeight(std::max(compact_ ? 52 : 64, option.fontMetrics.lineSpacing() * 2 + (compact_ ? 14 : 18)));
-  return size;
-}
-
-void StudyItemDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const {
-  const auto* model = qobject_cast<const PagedListModel*>(index.model());
-  const auto row = model ? model->row(index.row()) : std::optional<StudyRow>{};
-  if (!row || !row->value.canConvert<melearner::library::Course>()) {
-    const auto text = itemText(index);
-    // The row paints its own fill rather than asking the style to draw one. The
-    // style would use the palette's Highlight, which the shadcn install sets to
-    // the primary colour, so a selected lesson row and a selected course row
-    // would not be the same colour.
-    painter->save();
-    const bool selected = option.state.testFlag(QStyle::State_Selected);
-    const bool hover = option.state.testFlag(QStyle::State_MouseOver);
-    const auto& theme = melearner::themeFor(option.widget);
-    // A section header is a different kind of row: it is a heading, so it is
-    // given the muted foreground and a semibold weight rather than the accent
-    // fill a selected lesson takes. A tree paints its section rows through the
-    // same delegate as the lessons, and a section is never the current lesson.
-    // Only a tree has section rows, and only a tree's top-level row is one. A
-    // list view reports an invalid parent for every row, so the view type is
-    // what decides, not the parent index.
-    const bool tree = qobject_cast<const QTreeView*>(option.widget) != nullptr;
-    const bool heading = tree && !index.parent().isValid();
-    painter->setRenderHint(QPainter::Antialiasing);
-    painter->setPen(Qt::NoPen);
-    painter->setBrush(heading ? QColor(Qt::transparent)
-                  : selected ? melearner::roleColor(theme, shadcn::Role::Accent)
-                  : hover ? melearner::roleColor(theme, shadcn::Role::Muted)
-                  : QColor(Qt::transparent));
-    if (!heading) {
-      const auto radius = theme.radius();
-      painter->drawRoundedRect(option.rect, radius, radius);
-    }
-    // Same rule as the course row: the selected row is the accent fill, so the
-    // muted detail text sits on the accent foreground rather than on the page.
-    // A heading has no fill of its own, so it keeps the normal foreground and
-    // its detail line the muted one.
-    const auto foreground = melearner::roleColor(theme,
-      selected ? shadcn::Role::AccentForeground : shadcn::Role::Foreground);
-    const auto muted = melearner::roleColor(theme,
-      selected ? shadcn::Role::AccentForeground : shadcn::Role::MutedForeground);
-    auto titleFont = option.font;
-    if (const auto fontData = index.data(Qt::FontRole); fontData.canConvert<QFont>())
-      titleFont = fontData.value<QFont>();
-    titleFont.setWeight(QFont::DemiBold);
-    scaleFont(titleFont, compact_ ? 1.02 : 1.06);
-    auto detailFont = option.font;
-    detailFont.setWeight(QFont::Normal);
-    const QFontMetrics titleMetrics(titleFont);
-    const QFontMetrics detailMetrics(detailFont);
-    const int horizontalInset = compact_ ? 12 : 16;
-    const int titleTop = option.rect.top() + (compact_ ? 7 : 10);
-    const int available = std::max(0, option.rect.width() - 2 * horizontalInset);
-    painter->setFont(titleFont); painter->setPen(foreground);
-    painter->drawText(QRect(option.rect.left() + horizontalInset, titleTop, available, titleMetrics.lineSpacing()),
-      Qt::AlignLeft | Qt::AlignVCenter, titleMetrics.elidedText(text.title, Qt::ElideRight, available));
-    if (!text.detail.isEmpty()) {
-      painter->setFont(detailFont); painter->setPen(muted);
-      painter->drawText(QRect(option.rect.left() + horizontalInset,
-                              titleTop + titleMetrics.lineSpacing() + 1, available, detailMetrics.lineSpacing()),
-        Qt::AlignLeft | Qt::AlignVCenter, detailMetrics.elidedText(text.detail, Qt::ElideRight, available));
-    }
-    painter->restore();
-    return;
-  }
-  const auto course = row->value.value<melearner::library::Course>();
-  // Colours come from the shadcn theme rather than the Qt palette, because the
-  // component library's install writes only a few palette roles. A row that read
-  // QPalette::Mid got the platform's mid grey, which on this theme is a dark
-  // line where a quiet track belongs.
-  const auto& theme = melearner::themeFor(option.widget);
-  const bool selected = option.state.testFlag(QStyle::State_Selected);
-  const bool hover = option.state.testFlag(QStyle::State_MouseOver);
-  const bool focused = option.state.testFlag(QStyle::State_HasFocus);
-  const auto card = option.rect.adjusted(1, 3, -1, -3);
-  painter->save(); painter->setRenderHint(QPainter::Antialiasing);
-  // A selected row is the accent fill, a hovered row the accent at half weight,
-  // and a resting row the page. This is the shadcn item state order.
-  painter->setBrush(selected ? melearner::roleColor(theme, shadcn::Role::Accent)
-                : hover ? melearner::roleColor(theme, shadcn::Role::Muted)
-                : melearner::roleColor(theme, shadcn::Role::Background));
-  painter->setPen(QPen(focused ? melearner::roleColor(theme, shadcn::Role::Ring)
-                               : melearner::roleColor(theme, shadcn::Role::Border), 1));
-  painter->drawRoundedRect(card, theme.radius(), theme.radius());
-  const int inset = compact_ ? 14 : 20;
-  const int iconSize = compact_ ? 24 : 30;
-  const auto ink = melearner::roleColor(theme, selected ? shadcn::Role::AccentForeground
-                                                         : shadcn::Role::Foreground);
-  const auto muted = melearner::roleColor(theme, selected ? shadcn::Role::AccentForeground
-                                                          : shadcn::Role::MutedForeground);
-  const auto accent = melearner::roleColor(theme, shadcn::Role::Primary);
-  // A course whose folder is missing is drawn in the muted colour, because it
-  // is present in the Library but cannot be opened.
-  melearner::studyIcon(melearner::StudyIcon::Courses, course.missing ? muted : accent)
-    .paint(painter, QRect(card.left() + inset, card.top() + inset, iconSize, iconSize));
-  const int left = card.left() + inset + iconSize + 12;
-  const int right = card.right() - inset - 22;
-  const int available = std::max(0, right - left);
-  auto heading = option.font;
-  scaleFont(heading, compact_ ? 1.05 : 1.18);
-  heading.setWeight(QFont::DemiBold);
-  painter->setFont(heading); painter->setPen(ink);
-  const QFontMetrics titleMetrics(heading);
-  const int titleTop = card.top() + inset - 1;
-  painter->drawText(QRect(left, titleTop, available, titleMetrics.lineSpacing()),
-    Qt::AlignLeft | Qt::AlignVCenter, titleMetrics.elidedText(row->title, Qt::ElideRight, available));
-  auto body = option.font;
-  body.setWeight(QFont::Normal);
-  painter->setFont(body); painter->setPen(muted);
-  const QFontMetrics bodyMetrics(body);
-  painter->drawText(QRect(left, titleTop + titleMetrics.lineSpacing() + 2, available, bodyMetrics.lineSpacing()),
-    Qt::AlignLeft | Qt::AlignVCenter, bodyMetrics.elidedText(row->description, Qt::ElideRight, available));
-  melearner::studyIcon(melearner::StudyIcon::ChevronRight, ink)
-    .paint(painter, QRect(card.right() - inset - 18, card.center().y() - 9, 18, 18));
-  if (!course.missing && course.lessonCount > 0) {
-    const qreal ratio = std::min(1.0, static_cast<qreal>(course.completedLessons) / course.lessonCount);
-    const QRectF track(left, card.bottom() - inset - 4, std::max(0, std::min(260, available)), 4);
-    // The track is the muted fill and the fill is the primary colour, which is
-    // the same ramp the heatmap uses, so a course row and an activity cell agree.
-    painter->setPen(Qt::NoPen);
-    painter->setBrush(selected ? melearner::roleColor(theme, shadcn::Role::AccentForeground)
-                  : melearner::roleColor(theme, shadcn::Role::Muted));
-    painter->drawRoundedRect(track, 2, 2);
-    if (ratio > 0) {
-      painter->setBrush(selected ? melearner::roleColor(theme, shadcn::Role::AccentForeground)
-                    : accent);
-      painter->drawRoundedRect(QRectF(track.topLeft(), QSizeF(track.width() * ratio, 4)), 2, 2);
-    }
-  }
-  painter->restore();
+/// The icons a course row carries, rebuilt when the theme moves.
+///
+/// The themed row delegate draws a leading pixmap as given, so a caller supplies
+/// data rather than widgets. That makes the colour of a row's icon the model's to
+/// know, and the model has to hear about a theme change to redraw it. The
+/// alternative is a delegate that knows what a course icon is, which is the
+/// application leaking into the drawing.
+void refreshRowIcons() {
+  const auto& theme = melearner::themeFor(nullptr);
+  rowIcons().present = melearner::studyIcon(melearner::StudyIcon::Courses,
+    melearner::roleColor(theme, shadcn::Role::Primary)).pixmap(kRowIconSide);
+  // A course whose folder is missing is drawn in the muted colour, because it is
+  // in the Library and cannot be opened.
+  rowIcons().missing = melearner::studyIcon(melearner::StudyIcon::Courses,
+    melearner::roleColor(theme, shadcn::Role::MutedForeground)).pixmap(kRowIconSide);
+  rowIcons().chevron = melearner::studyIcon(melearner::StudyIcon::ChevronRight,
+    melearner::roleColor(theme, shadcn::Role::Foreground)).pixmap(kRowIconSide);
 }
 
 PagedListModel::PagedListModel(int pageSize, QObject* parent)
@@ -205,13 +80,41 @@ std::optional<StudyRow> PagedListModel::row(int index) const {
 QVariant PagedListModel::data(const QModelIndex& index, int role) const {
   if (!index.isValid() || index.row() >= total_) return {};
   if (role == Qt::SizeHintRole) return QSize(180, 68);
-  if (role != Qt::DisplayRole && role != Qt::AccessibleTextRole && role != Qt::ToolTipRole && role != Qt::UserRole) return {};
+  // The themed row delegate reads the description and the progress roles, so a row
+  // is described by data rather than by a newline the delegate has to split. A
+  // title containing a newline is no longer a row that silently gains a line.
+  if (role != Qt::DisplayRole && role != Qt::AccessibleTextRole && role != Qt::ToolTipRole
+      && role != Qt::UserRole && role != melearner::shadcnRowDescription
+      && role != melearner::shadcnRowProgress && role != melearner::shadcnRowLeading
+      && role != melearner::shadcnRowTrailing) return {};
   const auto item = row(index.row());
   if (!item) return role == Qt::UserRole ? QVariant() : QVariant(tr("Loading…"));
   if (role == Qt::UserRole) return item->id;
-  if (role == Qt::AccessibleTextRole) return item->title + ", " + item->description + (item->available ? "" : tr(", missing"));
-  if (role == Qt::ToolTipRole) return QString("<qt>%1<br>%2</qt>").arg(item->title.toHtmlEscaped(), item->description.toHtmlEscaped());
-  return item->title + '\n' + item->description;
+  const auto course = item->value.canConvert<melearner::library::Course>()
+    ? std::optional<melearner::library::Course>(item->value.value<melearner::library::Course>())
+    : std::nullopt;
+  if (role == Qt::AccessibleTextRole) {
+    return item->title + ", " + item->description + (item->available ? "" : tr(", missing"));
+  }
+  if (role == Qt::ToolTipRole) {
+    return QString("<qt>%1<br>%2</qt>").arg(item->title.toHtmlEscaped(), item->description.toHtmlEscaped());
+  }
+  if (role == melearner::shadcnRowDescription) return item->description;
+  if (role == melearner::shadcnRowProgress) {
+    if (!course || course->missing || course->lessonCount <= 0) return {};
+    return std::min(1.0, static_cast<double>(course->completedLessons) / course->lessonCount);
+  }
+  if (role == melearner::shadcnRowLeading) {
+    // A course whose folder is missing is drawn in the muted colour, because it is
+    // in the Library and cannot be opened.
+    if (!course) return {};
+    return course->missing ? rowIcons().missing : rowIcons().present;
+  }
+  if (role == melearner::shadcnRowTrailing) {
+    if (!course) return {};
+    return rowIcons().chevron;
+  }
+  return item->title;
 }
 Qt::ItemFlags PagedListModel::flags(const QModelIndex& index) const {
   return index.isValid() ? Qt::ItemIsEnabled | Qt::ItemIsSelectable : Qt::NoItemFlags;
@@ -253,6 +156,16 @@ bool PagedListModel::updateRow(const StudyRow& row) {
     }
   }
   return false;
+}
+void PagedListModel::refreshRowIcons() {
+  // Only the rows that are resident change, and only their icon roles. The
+  // viewport repaints what is on screen, which is what the reader can see.
+  for (auto page = pages_.begin(); page != pages_.end(); ++page) {
+    if (page->rows.isEmpty()) continue;
+    const auto changed = index(page.key());
+    emit dataChanged(changed, index(page.key() + page->rows.size() - 1),
+                     {melearner::shadcnRowLeading, melearner::shadcnRowTrailing});
+  }
 }
 int PagedListModel::cachedRows() const {
   int count = 0;

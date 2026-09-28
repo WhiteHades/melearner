@@ -1,4 +1,5 @@
 #include "course_outline_model.hpp"
+#include "theme.hpp"
 #include "library.hpp"
 
 #include <QDir>
@@ -90,7 +91,13 @@ void CourseOutlineModelTest::pagesStayBoundedAndChildCountsStayStable() {
     const auto firstSection = model.index(0, 0);
     QCOMPARE(model.rowCount(firstSection), 1025);
     QVERIFY(!model.index(0, 0).data(Qt::DecorationRole).isValid());
-    QVERIFY(model.index(0, 0).data(Qt::FontRole).value<QFont>().bold());
+    // A section labels the lessons under it, so it is a heading row. The themed row
+    // view gives a heading no fill, no ring and no selection; it used to be a bold
+    // font, which said the same thing less clearly and only if the delegate agreed.
+    QVERIFY(model.index(0, 0).data(melearner::shadcnRowHeading).toBool());
+    // Its completion is a track, not a line of text the reader has to parse.
+    QVERIFY(model.index(0, 0).data(melearner::shadcnRowDescription).toString().contains(
+        QStringLiteral("lessons complete")));
 
     for (const int row : {128, 256, 384, 512}) {
         const auto section = model.index(row, 0);
@@ -171,7 +178,11 @@ void CourseOutlineModelTest::revealUsesOffsetsAndIgnoresStaleResolution() {
     QVERIFY(library.saveProgress(secondLesson->id, 7'000, 10'000, true) != 0);
     QVERIFY(waitFor(progressSaved));
     QTRY_VERIFY_WITH_TIMEOUT(model.lesson(secondLessonIndex)->completed, 10'000);
-    QVERIFY(model.index(0, 0, firstSection).data(Qt::DisplayRole).toString().contains(QStringLiteral("Complete")));
+    // A completed lesson says so in its own description role, and its title is the
+    // lesson name alone.
+    const auto lesson = model.index(0, 0, firstSection);
+    QCOMPARE(lesson.data(Qt::DisplayRole).toString(), secondLesson->name);
+    QVERIFY(lesson.data(melearner::shadcnRowDescription).toString().contains(QStringLiteral("Complete")));
 }
 
 QTEST_GUILESS_MAIN(CourseOutlineModelTest)

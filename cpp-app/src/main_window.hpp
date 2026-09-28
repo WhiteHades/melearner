@@ -3,6 +3,7 @@
 #include "documents.hpp"
 #include <shadcn/controls.hpp>
 #include <shadcn/navigation.hpp>
+#include <shadcn/rows.hpp>
 #include <shadcn/widgets.hpp>
 #include <QMainWindow>
 #include <QHash>
@@ -14,8 +15,6 @@
 
 class QAction;
 class QLabel;
-class QListView;
-class QTreeView;
 class QStackedWidget;
 class PagedListModel;
 class QTextEdit;
@@ -107,8 +106,8 @@ private:
   shadcn::Button* cancelScan_ = nullptr;
   quint64 scanId_ = 0;
   shadcn::Button* complete_;
-  QListView* courses_;
-  QTreeView* lessons_;
+  shadcn::ListView* courses_;
+  shadcn::TreeView* lessons_;
   PagedListModel* courseModel_;
   melearner::CourseOutlineModel* outlineModel_;
   bool compactOutline_ = true;

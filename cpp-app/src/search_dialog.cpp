@@ -1,4 +1,6 @@
 #include "search_dialog.hpp"
+
+#include <shadcn/rows.hpp>
 #include "paged_list_model.hpp"
 #include <shadcn/widgets.hpp>
 #include <QKeyEvent>
@@ -34,12 +36,12 @@ SearchDialog::SearchDialog(lib::Library& library, QWidget* parent) : shadcn::Dia
   query_->installEventFilter(this);
   content().addWidget(query_);
   model_ = new PagedListModel(100, this);
-  results_ = new QListView; results_->setObjectName("searchResults");
+  // The same themed rows as the library, on the themed view. A search result is a
+  // course, a section or a lesson, so it carries a description and a track only
+  // when the row has one.
+  results_ = new shadcn::ListView; results_->setObjectName("searchResults");
   results_->setAccessibleName(tr("Search results")); results_->setModel(model_);
-  results_->setItemDelegate(new StudyItemDelegate(results_));
-  results_->setUniformItemSizes(true); results_->setTextElideMode(Qt::ElideRight);
-  results_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-  results_->setFrameShape(QFrame::NoFrame);
+  results_->showProgress();
   content().addWidget(results_, 1);
   status_ = new QLabel(tr("Type a name to search.")); status_->setWordWrap(true);
   status_->setTextFormat(Qt::PlainText);

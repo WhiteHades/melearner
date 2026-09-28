@@ -5,7 +5,7 @@
 #include <QTimer>
 
 class QLabel;
-class QListView;
+namespace shadcn { class ListView; }
 class PagedListModel;
 
 class SearchDialog final : public shadcn::Dialog {
@@ -21,7 +21,7 @@ private:
   // Search pages through an arbitrarily large result set, and the component
   // library's own rule for data views is to avoid one widget per row.
   shadcn::Input* query_;
-  QListView* results_;
+  shadcn::ListView* results_;
   QLabel* status_;
   shadcn::Button* open_ = nullptr;
   PagedListModel* model_;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <shadcn/core.hpp>
+#include <shadcn/rows.hpp>
 #include <shadcn/widgets.hpp>
 
 #include <QApplication>
@@ -137,5 +138,14 @@ inline void installAppearance(bool dark, int fontPixels = 0) {
 [[nodiscard]] inline QColor roleColor(const QWidget* widget, shadcn::Role role) {
     return roleColor(themeFor(widget), role);
 }
+
+/// The item data roles the themed row views read, named once here so a model and
+/// the view that paints it cannot drift onto different numbers.
+inline constexpr int shadcnRowDescription = static_cast<int>(shadcn::RowRole::Description);
+inline constexpr int shadcnRowLeading = static_cast<int>(shadcn::RowRole::Leading);
+inline constexpr int shadcnRowTrailing = static_cast<int>(shadcn::RowRole::Trailing);
+inline constexpr int shadcnRowTrailingText = static_cast<int>(shadcn::RowRole::TrailingText);
+inline constexpr int shadcnRowProgress = static_cast<int>(shadcn::RowRole::Progress);
+inline constexpr int shadcnRowHeading = static_cast<int>(shadcn::RowRole::Heading);
 
 }  // namespace melearner

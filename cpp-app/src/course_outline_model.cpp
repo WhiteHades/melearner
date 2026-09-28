@@ -1,6 +1,6 @@
 #include "course_outline_model.hpp"
+#include "theme.hpp"
 
-#include <QFont>
 #include <QSize>
 
 #include <algorithm>
@@ -198,16 +198,17 @@ QVariant CourseOutlineModel::data(const QModelIndex& modelIndex, int role) const
     if (!modelIndex.isValid() || modelIndex.model() != this || modelIndex.column() != 0) {
         return {};
     }
+    // The themed row delegate reads the description, the progress and the heading
+    // roles alongside the standard ones, so a row is described by data rather than
+    // by a newline the delegate has to split.
     const auto supportedRole = role == Qt::DisplayRole || role == Qt::AccessibleTextRole
         || role == Qt::AccessibleDescriptionRole || role == Qt::ToolTipRole || role == Qt::UserRole
-        || role == Qt::SizeHintRole || role == Qt::FontRole;
+        || role == Qt::SizeHintRole || role == Qt::FontRole || role == shadcnRowDescription
+        || role == shadcnRowProgress || role == shadcnRowHeading;
     if (!supportedRole) {
         return {};
     }
     if (isLessonId(modelIndex.internalId())) {
-        if (role == Qt::FontRole) {
-            return {};
-        }
         const auto item = loadedLesson(sectionRowForLessonId(modelIndex.internalId()), modelIndex.row());
         if (role == Qt::SizeHintRole) {
             return QSize(180, 68);
@@ -217,7 +218,13 @@ QVariant CourseOutlineModel::data(const QModelIndex& modelIndex, int role) const
         }
         const auto description = lessonDescription(*item);
         if (role == Qt::DisplayRole) {
-            return item->name + QChar(u'\n') + description;
+            // The title alone. The description has its own role, so a row is not a
+            // newline the delegate has to split, and a title containing a newline
+            // is no longer a row with two lines.
+            return item->name;
+        }
+        if (role == shadcnRowDescription) {
+            return description;
         }
         if (role == Qt::AccessibleTextRole || role == Qt::AccessibleDescriptionRole) {
             return item->name + QStringLiteral(", ") + item->sectionName + QStringLiteral(", ") + description;
@@ -233,10 +240,10 @@ QVariant CourseOutlineModel::data(const QModelIndex& modelIndex, int role) const
         return {};
     }
 
-    if (role == Qt::FontRole) {
-        QFont font;
-        font.setBold(true);
-        return font;
+    // A section labels the lessons under it, so it is a heading row: it takes no
+    // fill, no ring and no selection, and it carries its completion as a track.
+    if (role == shadcnRowHeading) {
+        return true;
     }
     if (role == Qt::SizeHintRole) {
         return QSize(180, 68);
@@ -247,7 +254,15 @@ QVariant CourseOutlineModel::data(const QModelIndex& modelIndex, int role) const
     }
     const auto description = completionText(*item);
     if (role == Qt::DisplayRole) {
-        return item->name + QChar(u'\n') + description;
+        return item->name;
+    }
+    if (role == shadcnRowDescription) {
+        return description;
+    }
+    if (role == shadcnRowProgress) {
+        return item->lessonCount > 0
+            ? QVariant(std::min(1.0, static_cast<double>(item->completedLessons) / item->lessonCount))
+            : QVariant{};
     }
     if (role == Qt::AccessibleTextRole || role == Qt::AccessibleDescriptionRole) {
         return item->name + QStringLiteral(", ") + description;

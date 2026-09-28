@@ -27,8 +27,7 @@
 #include <QLabel>
 #include <QKeyEvent>
 #include <QLineEdit>
-#include <QListView>
-#include <QTreeView>
+#include <shadcn/rows.hpp>
 #include <QMenu>
 #include <QListWidget>
 #include <QListWidgetItem>
@@ -132,14 +131,19 @@ shadcn::Button* button(const QString& text, const QString& name,
   result->setButtonSize(size);
   return result;
 }
-QListView* list(const QString& name, PagedListModel* model) {
-  auto* view = new QListView;
-  view->setObjectName(name); view->setAccessibleName(name == "courses" ? "Courses" : "Course lessons");
-  view->setModel(model); view->setUniformItemSizes(true);
-  view->setItemDelegate(new StudyItemDelegate(view));
-  view->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-  view->setTextElideMode(Qt::ElideRight); view->setWordWrap(false);
-  view->setSpacing(3); view->setFrameShape(QFrame::NoFrame);
+/// A course list on the themed row view.
+///
+/// The view draws the rows from theme roles, so there is no delegate here and no
+/// painting in this file. Every course row carries its progress, which the view
+/// has to reserve room for before the first row is measured, so it is told up
+/// front rather than asked to guess from the data.
+shadcn::ListView* list(const QString& name, PagedListModel* model) {
+  auto* view = new shadcn::ListView;
+  view->setObjectName(name);
+  view->setAccessibleName(name == "courses" ? "Courses" : "Course lessons");
+  view->setModel(model);
+  view->showProgress();
+  view->setCompactBelow(560);
   return view;
 }
 }
@@ -293,14 +297,14 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   auto* outlineTitle = new QLabel(tr("Course outline")); outlineTitle->setFont(headingFont(font(), 1.0, true));
   outlineTitle->setMargin(4); outlineLayout->addWidget(outlineTitle);
   outlineModel_ = new melearner::CourseOutlineModel(library_, this);
-  lessons_ = new QTreeView; lessons_->setObjectName("lessons"); lessons_->setAccessibleName(tr("Course sections and lessons"));
-  lessons_->setModel(outlineModel_); lessons_->setHeaderHidden(true); lessons_->setUniformRowHeights(true);
-  auto* outlineDelegate = new StudyItemDelegate(lessons_); outlineDelegate->setCompact(true);
-  lessons_->setItemDelegate(outlineDelegate);
-  lessons_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-  lessons_->setTextElideMode(Qt::ElideRight); lessons_->setWordWrap(true);
-  lessons_->setFrameShape(QFrame::NoFrame); lessons_->setIndentation(18);
-  lessons_->setExpandsOnDoubleClick(false); lessons_->setAnimated(false);
+  // The outline is the same rows as the course list, on the tree view: a section
+  // is a heading that carries its own completion as a track, and a lesson is a row
+  // with a description. No delegate, and no painting in this file.
+  lessons_ = new shadcn::TreeView; lessons_->setObjectName("lessons");
+  lessons_->setAccessibleName(tr("Course sections and lessons"));
+  lessons_->setModel(outlineModel_); lessons_->showProgress();
+  lessons_->setCompact(true); lessons_->setAnimated(false);
+  lessons_->setExpandsOnDoubleClick(false);
   // A tree view that keeps Qt's own row painting would take its selection
   // colour from the palette, and the shadcn install writes only a few palette
   // roles, so a selected lesson came out the platform's highlight rather than
@@ -691,10 +695,10 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     if (id == scanId_) { scanId_ = 0; cancelScan_->hide(); }
     choose_->setEnabled(scanId_ == 0); rescan_->setEnabled(scanId_ == 0 && !rootPath_.isEmpty()); showError(error.message);
   });
-  connect(courses_, &QListView::activated, this, [this](const QModelIndex& index) {
+  connect(courses_, &shadcn::ListView::activated, this, [this](const QModelIndex& index) {
     if (const auto row = courseModel_->row(index.row())) showCourse(row->value.value<lib::Course>());
   });
-  connect(lessons_, &QTreeView::activated, this, [this](const QModelIndex& index) {
+  connect(lessons_, &shadcn::TreeView::activated, this, [this](const QModelIndex& index) {
     if (const auto lesson = outlineModel_->lesson(index)) showLesson(*lesson);
     else if (!index.parent().isValid()) lessons_->setExpanded(index, !lessons_->isExpanded(index));
   });
@@ -1314,11 +1318,19 @@ void MainWindow::showError(const QString& message) {
 void MainWindow::closeEvent(QCloseEvent* event) { savePosition(); QMainWindow::closeEvent(event); }
 void MainWindow::applyPresentation() {
   const bool compact = settings_.libraryPresentation == "compact";
-  static_cast<StudyItemDelegate*>(courses_->itemDelegate())->setCompact(compact);
+  // The presentation setting is a row density, and the view owns the density. The
+  // caller's preference is expressed as a height rather than a flag, so the two
+  // cannot disagree about what "compact" means.
+  courses_->setCompact(compact);
   courses_->setSpacing(compact ? 1 : 3); courses_->doItemsLayout();
   if (auto* action = findChild<QAction*>("presentation-" + settings_.libraryPresentation)) action->setChecked(true);
 }
 void MainWindow::applyAppearance(const QString& appearance) {
+  // A row's icons are the model's, because the themed row view draws a leading
+  // pixmap as given. A theme change therefore has to redraw them, and the rows
+  // have to be asked again.
+  refreshRowIcons();
+  courseModel_->refreshRowIcons();
   // The shadcn style owns the palette, the focus ring, the scrollbars and every
   // control, so switching colour mode is an install rather than a repaint. Only
   // the two neutral modes exist; any other stored value reads as light, which

@@ -6,10 +6,10 @@ include(GNUInstallDirs)
 # shadcn-cpp supplies every interface component. The snapshot is pinned so a
 # configure cannot silently pick up a different component set or theme, and the
 # application inherits the library's own neutral theme rather than a local copy.
-set(SHADCN_CPP_COMMIT "b05d506202ab462c6e1f9248607dcd4ce5275672"
+set(SHADCN_CPP_COMMIT "cd72cac893a6daaad8b34a2cb374c5ea6716513b"
     CACHE STRING "shadcn-cpp source pin")
 set(SHADCN_CPP_SHA256
-    "c917127df292a9eb0cd687a7fddd2cf5e7b8199cfbb2f1c159eeb68e11a76176"
+    "7c42025793b71aee5608bcd1ac07f3b1da412ac60cf6ddb9f53ac2e97de09281"
     CACHE STRING "SHA-256 of the pinned shadcn-cpp source archive")
 
 # Only the widget component library is used. The optional media target would add
