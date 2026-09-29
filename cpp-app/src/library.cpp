@@ -2035,7 +2035,12 @@ void rebuildSearch(sqlite3* db) {
 }
 
 void validateSettings(const Settings& settings) {
-    if (settings.appearance != QStringLiteral("light") && settings.appearance != QStringLiteral("dark")
+    // "dark" is the only colour mode the application has. "light" and "cozy" are
+    // still accepted on the way in, because a database written before the modes were
+    // removed holds one of them and refusing to save would fail a save the reader
+    // never asked about. The value is normalised to dark by the window on load, so
+    // nothing ever writes either of them back.
+    if (settings.appearance != QStringLiteral("dark") && settings.appearance != QStringLiteral("light")
         && settings.appearance != QStringLiteral("cozy")) {
         throw DbError(ErrorCode::invalid_request, QStringLiteral("appearance is invalid"));
     }
