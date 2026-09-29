@@ -324,6 +324,40 @@ private slots:
     QTRY_COMPARE(results->model()->rowCount(), 1);
   }
 
+  /// One click opens a course. The handler used to sit on `activated`, which is the
+  /// platform's idea of "chosen" and which some styles deliver on a double click,
+  /// so on those desktops a reader had to click twice for the same result. A list of
+  /// courses is browsed by clicking, so the click is the action.
+  void oneClickOpensACourse() {
+    QTemporaryDir files; QVERIFY(files.isValid());
+    const auto root = files.path() + "/Courses";
+    QVERIFY(QDir().mkpath(root + "/First Course/Section"));
+    QVERIFY(QDir().mkpath(root + "/Second Course/Section"));
+    for (const auto name : {"First Course", "Second Course"}) {
+      QFile file(root + "/" + name + "/Section/One.md");
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write("A local lesson.\n");
+    }
+    MainWindow window(files.path() + "/library.sqlite3"); window.show();
+    QTRY_VERIFY(window.findChild<QPushButton*>("chooseRoot")->isEnabled()); window.chooseRoot(root);
+    auto* courses = window.findChild<shadcn::ListView*>("courses"); QVERIFY(courses);
+    QTRY_COMPARE(courses->model()->rowCount(), 2);
+    auto* lessons = window.findChild<shadcn::TreeView*>("lessons"); QVERIFY(lessons);
+    QTRY_COMPARE(lessons->model()->rowCount(), 0);
+
+    // One press and one release, which is a single click and not a double one.
+    const auto row = courses->visualRect(courses->model()->index(0, 0));
+    QVERIFY(row.isValid());
+    // The press and the release are sent separately, with a gap longer than the
+    // double-click interval between them, so this is one slow click and cannot be
+    // read as the first half of a double click that something completed.
+    QTest::mousePress(courses->viewport(), Qt::LeftButton, Qt::NoModifier, row.center());
+    QTest::qWait(500);
+    QTest::mouseRelease(courses->viewport(), Qt::LeftButton, Qt::NoModifier, row.center());
+    QTRY_COMPARE(lessons->model()->rowCount(), 1);
+    QVERIFY(window.findChild<QPushButton*>("backToLibrary")->isVisible());
+  }
+
   void opensPdfWithinCourse() {
     QTemporaryDir files; QVERIFY(files.isValid());
     const auto root = files.path() + "/Courses";

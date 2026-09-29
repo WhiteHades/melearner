@@ -755,13 +755,26 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     if (id == scanId_) { scanId_ = 0; cancelScan_->hide(); }
     choose_->setEnabled(scanId_ == 0); rescan_->setEnabled(scanId_ == 0 && !rootPath_.isEmpty()); showError(error.message);
   });
-  connect(courses_, &shadcn::ListView::activated, this, [this](const QModelIndex& index) {
+  // A single click opens a course. The handler used to sit on `activated`, which is
+  // the platform's idea of "this row was chosen": some styles deliver it on a double
+  // click, so on those desktops a reader had to click twice for the same result. A
+  // list of courses is browsed by clicking, so the click is the action.
+  //
+  // The keyboard is connected separately, because `clicked` is the mouse alone and a
+  // reader who opens a course with Return must get the same course. On a style that
+  // delivers both for one press, the row opens twice, which is the same course and
+  // the same place, so the cost of covering every style is one redundant call.
+  const auto openCourse = [this](const QModelIndex& index) {
     if (const auto row = courseModel_->row(index.row())) showCourse(row->value.value<lib::Course>());
-  });
-  connect(lessons_, &shadcn::TreeView::activated, this, [this](const QModelIndex& index) {
+  };
+  const auto openLesson = [this](const QModelIndex& index) {
     if (const auto lesson = outlineModel_->lesson(index)) showLesson(*lesson);
     else if (!index.parent().isValid()) lessons_->setExpanded(index, !lessons_->isExpanded(index));
-  });
+  };
+  connect(courses_, &shadcn::ListView::clicked, this, openCourse);
+  connect(courses_, &shadcn::ListView::activated, this, openCourse);
+  connect(lessons_, &shadcn::TreeView::clicked, this, openLesson);
+  connect(lessons_, &shadcn::TreeView::activated, this, openLesson);
   connect(previous, &QPushButton::clicked, this, [this] { stepLesson(-1); });
   connect(next, &QPushButton::clicked, this, [this] { stepLesson(1); });
   connect(complete_, &QPushButton::clicked, this, [this] {
