@@ -242,7 +242,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     shadcn::Dialog about(this);
     about.setTitle(tr("About melearner"));
     about.setDescription(tr("Version %1").arg(QApplication::applicationVersion()));
-    auto* details = new QLabel(tr("Qt %1 · SQLite %2 · libmpv API %3.%4\n\nVideo decoder: %5\nSystem high contrast: %6\nReduced motion: %7")
+    auto* details = new shadcn::Label(tr("Qt %1 · SQLite %2 · libmpv API %3.%4\n\nVideo decoder: %5\nSystem high contrast: %6\nReduced motion: %7")
       .arg(QString::fromLatin1(qVersion()), QString::fromLatin1(sqlite3_libversion()))
       .arg(api >> 16).arg(api & 0xffff)
       .arg(decoder_.isEmpty() ? tr("Not playing") : decoder_ == "no" ? tr("Software") : decoder_)
@@ -332,7 +332,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   split_ = new shadcn::ResizablePanelGroup(Qt::Horizontal);
   outline_ = new QWidget; outline_->setMinimumWidth(240); outline_->setObjectName("courseOutline"); outline_->setAttribute(Qt::WA_StyledBackground);
   auto* outlineLayout = new QVBoxLayout(outline_); outlineLayout->setContentsMargins(12, 14, 12, 12);
-  auto* outlineTitle = new QLabel(tr("Course outline")); outlineTitle->setFont(headingFont(font(), 1.0, true));
+  auto* outlineTitle = new shadcn::Label(tr("Course outline")); outlineTitle->setFont(headingFont(font(), 1.0, true));
   outlineTitle->setMargin(4); outlineLayout->addWidget(outlineTitle);
   outlineModel_ = new melearner::CourseOutlineModel(library_, this);
   // The outline is the same rows as the course list, on the tree view: a section
@@ -384,7 +384,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   media_->addWidget(video_);
   auto* documentPane = new QWidget; auto* documentLayout = new QVBoxLayout(documentPane);
   documentLayout->setContentsMargins(0, 0, 0, 0);
-  documentStatus_ = new QLabel(tr("Choose an item from the Course outline.")); documentStatus_->setWordWrap(true);
+  documentStatus_ = new shadcn::Label(tr("Choose an item from the Course outline.")); documentStatus_->setWordWrap(true);
   documentStatus_->setTextFormat(Qt::PlainText);
   documentLayout->addWidget(documentStatus_);
   // A lesson is read, not typed into, and the surface is the page rather than a
@@ -406,7 +406,8 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   for (int percent : {25, 50, 75, 100, 125, 150, 200, 400})
     pdfZoom->addItem(QString::number(percent) + "%", percent / 100.0);
   pdfZoom->setCurrentIndex(3); pdfControls->addWidget(pdfZoom);
-  auto* pdfCount = new QLabel; pdfCount->setObjectName("pdfCount");
+  auto* pdfCount = new shadcn::Badge; pdfCount->setObjectName("pdfCount");
+  pdfCount->setVariant(shadcn::Variant::Secondary);
   // shadcn has no spin control, so the page field is a shadcn input that only
   // accepts digits and applies the page on commit rather than on every keystroke.
   auto* pdfPage = new shadcn::Input; pdfPage->setObjectName("pdfPage");
@@ -444,7 +445,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   seek_->setEnabled(false); controlsLayout->addWidget(seek_);
   playbackLayout_ = new QGridLayout; playbackLayout_->setHorizontalSpacing(8); playbackLayout_->setVerticalSpacing(4);
   play_ = button(tr("Play"), "playPause", shadcn::Variant::Ghost, shadcn::ButtonSize::Icon); play_->setEnabled(false);
-  time_ = new QLabel("0:00:00 / 0:00:00");
+  time_ = new shadcn::Label("0:00:00 / 0:00:00");
   auto* volume = new shadcn::Slider(0, 100); volume->setValues({100});
   volume->setFixedWidth(96);
   volume->setObjectName("volume");

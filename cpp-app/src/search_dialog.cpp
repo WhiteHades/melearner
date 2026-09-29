@@ -43,7 +43,7 @@ SearchDialog::SearchDialog(lib::Library& library, QWidget* parent) : shadcn::Dia
   results_->setAccessibleName(tr("Search results")); results_->setModel(model_);
   results_->showProgress();
   content().addWidget(results_, 1);
-  status_ = new QLabel(tr("Type a name to search.")); status_->setWordWrap(true);
+  status_ = new shadcn::Label(tr("Type a name to search.")); status_->setWordWrap(true);
   status_->setTextFormat(Qt::PlainText);
   status_->setObjectName("searchStatus");
   status_->setAccessibleName(tr("Search status"));

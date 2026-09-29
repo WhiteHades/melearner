@@ -90,8 +90,8 @@ QFont headingFont(const QFont& base, qreal scale) {
     return font;
 }
 
-QLabel* plainLabel(const QString& objectName, const QString& accessibleName) {
-    auto* label = new QLabel;
+shadcn::Label* plainLabel(const QString& objectName, const QString& accessibleName) {
+    auto* label = new shadcn::Label;
     auto font = QApplication::font();
     font.setWeight(QFont::Normal);
     label->setFont(font);
@@ -169,7 +169,7 @@ StatsPanel::StatsPanel(library::Library& library, QWidget* parent)
     root->setContentsMargins(0, 12, 0, 24);
     root->setSpacing(16);
 
-    auto* heading = new QLabel(tr("Learning stats"));
+    auto* heading = new shadcn::Label(tr("Learning stats"));
     heading->setObjectName(QStringLiteral("statsHeading"));
     heading->setAccessibleName(tr("Learning statistics"));
     heading->setFont(headingFont(heading->font(), 1.3));

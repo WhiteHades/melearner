@@ -28,7 +28,7 @@ private:
   // library's own rule for data views is to avoid one widget per row.
   shadcn::Input* query_;
   shadcn::ListView* results_;
-  QLabel* status_;
+  shadcn::Label* status_;
   shadcn::Button* open_ = nullptr;
   PagedListModel* model_;
   void openSelected();

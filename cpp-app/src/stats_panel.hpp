@@ -57,7 +57,7 @@ private:
     [[nodiscard]] QString activityDetailFor(const QDate& date) const;
 
     library::Library& library_;
-    QLabel* status_ = nullptr;
+    shadcn::Label* status_ = nullptr;
     QLabel* coursesValue_ = nullptr;
     QLabel* coursesDetail_ = nullptr;
     QLabel* completionValue_ = nullptr;

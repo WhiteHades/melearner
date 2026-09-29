@@ -94,7 +94,7 @@ private:
   shadcn::ResizablePanelGroup* split_;
   QWidget* outline_;
   shadcn::ScrollArea* content_;
-  QLabel* status_;
+  shadcn::Label* status_;
   QLabel* rootLabel_ = nullptr;
   QLabel* title_;
   QLabel* lessonTitle_;
@@ -125,7 +125,7 @@ private:
   QTimer* hideControls_ = nullptr;
   QGraphicsOpacityEffect* controlsOpacity_ = nullptr;
   QPropertyAnimation* controlsFade_ = nullptr;
-  QLabel* documentStatus_;
+  shadcn::Label* documentStatus_;
   shadcn::Prose* documentView_;
   shadcn::Button* documentPrevious_;
   shadcn::Button* documentNext_;
@@ -139,7 +139,7 @@ private:
   QList<qsizetype> documentOffsets_;
   shadcn::Button* play_;
   shadcn::Slider* seek_;
-  QLabel* time_;
+  shadcn::Label* time_;
   shadcn::DropdownMenu* audio_;
   shadcn::DropdownMenu* subtitles_;
   shadcn::DropdownMenu* chapters_;
