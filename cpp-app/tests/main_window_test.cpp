@@ -427,6 +427,15 @@ private slots:
     QVERIFY(QDir(files.path()).mkpath("Courses/A Course/02 Wrapup"));
     QFile summary(files.path() + "/Courses/A Course/02 Wrapup/Summary.txt");
     QVERIFY(summary.open(QIODevice::WriteOnly)); summary.write("Course summary."); summary.close();
+    // A video with a handout beside it, so the capture shows the two nested the way
+    // a real Course holds them. A capture of only documents cannot show nesting,
+    // because a document with no video of the same name stands on its own.
+    QVERIFY(QDir(files.path()).mkpath("Courses/A Course/03 Media"));
+    for (const auto& name : {"01 A talk.mp4", "01 A talk.pdf", "01 A talk slides.pdf", "02 Another.mp4"}) {
+      QFile media(files.path() + "/Courses/A Course/03 Media/" + name);
+      QVERIFY(media.open(QIODevice::WriteOnly));
+      media.write("Media fixture."); media.close();
+    }
     MainWindow window(files.path() + "/library.sqlite3");
     window.show();
     QCOMPARE(window.font().family(), QString("Geist"));
@@ -548,7 +557,10 @@ private slots:
     courses->setCurrentIndex(courses->model()->index(0, 0));
     QTest::keyClick(courses, Qt::Key_Return);
     auto* lessons = window.findChild<QTreeView*>("lessons");
-    QTRY_COMPARE(lessons->model()->rowCount(), 2);
+    // Three Sections: two of documents, and one holding a video with two files under
+    // it. The Media Section is the only one that shows nesting, because a document
+    // with no video of the same name stands on its own.
+    QTRY_COMPARE(lessons->model()->rowCount(), 3);
     const auto section = lessons->model()->index(0, 0);
     QTRY_COMPARE(lessons->model()->rowCount(section), 320);
     QTRY_VERIFY(lessons->isExpanded(section));
@@ -587,8 +599,43 @@ private slots:
         QTRY_VERIFY(lessons->width() >= 200);
       }
       const auto captureDirectory = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
-      if (!captureDirectory.isEmpty())
+      if (!captureDirectory.isEmpty()) {
+        // The Media Section is captured open, because nesting is a thing the reader
+        // can only see once a video is expanded. A capture of a closed outline
+        // cannot show a file under its video, and would not notice if the nesting
+        // had gone back to being flat.
+        const auto media = lessons->model()->index(2, 0);
+        if (media.isValid()) {
+          // Scrolled to it, or a capture of the top of a long outline shows the
+          // Section of documents and never the one that nests.
+          lessons->scrollTo(media);
+          lessons->setExpanded(media, true);
+          QTRY_VERIFY(lessons->model()->rowCount(media) > 0);
+          for (int row = 0; row < lessons->model()->rowCount(media); ++row) {
+            const auto video = lessons->model()->index(row, 0, media);
+            if (lessons->model()->hasChildren(video)) lessons->setExpanded(video, true);
+          }
+          QTest::qWait(120);
+          // Scrolled to the first video under the Section, which is what puts the
+          // files on screen. Scrolling to the Section lands with the Section header
+          // at the top and its rows below the fold of a short panel.
+          if (lessons->model()->rowCount(media) > 0) {
+            const auto firstVideo = lessons->model()->index(0, 0, media);
+            if (lessons->model()->hasChildren(firstVideo)) {
+              lessons->scrollTo(firstVideo, QAbstractItemView::PositionAtTop);
+              QTest::qWait(80);
+            }
+          }
+        }
         QVERIFY(window.grab().save(captureDirectory + QString("/outline-%1-%2x.png").arg(width).arg(fontScale)));
+        if (media.isValid()) {
+          lessons->setExpanded(media, false);
+          for (int row = 0; row < lessons->model()->rowCount(media); ++row) {
+            const auto video = lessons->model()->index(row, 0, media);
+            if (video.isValid()) lessons->setExpanded(video, false);
+          }
+        }
+      }
     }
     const auto farLesson = lessons->model()->index(300, 0, section);
     lessons->scrollTo(farLesson);
