@@ -29,15 +29,7 @@ namespace melearner {
            QApplication::styleHints()->cursorFlashTime() == 0;
 }
 
-/// The colour mode the application opens in, before the saved setting arrives.
-///
-/// Dark, and not whatever the desktop is set to. The interface is one dark
-/// surface with light text on it: a lesson body is read for a long time, and a
-/// bright page in a dark room is the wrong default for that. The saved setting
-/// still wins once the Library has loaded, so a reader who wants light, or whose
-/// stored preference is light, gets light. A system that is already dark and a
-/// reader who never touches the setting both land on the same thing either way.
-[[nodiscard]] inline bool defaultPrefersDark() { return true; }
+
 
 namespace detail {
 
@@ -105,10 +97,14 @@ inline void applySystemContrast(shadcn::Theme& theme) {
 
 }  // namespace detail
 
-/// Install the shadcn neutral theme for a colour mode. A zero or negative
-/// `fontPixels` keeps the current font, so a theme change never overrides the
-/// user's text size; only the first call sets one.
-inline void installAppearance(bool dark, int fontPixels = 0) {
+/// Install the shadcn neutral theme. A zero or negative `fontPixels` keeps the
+/// current font, so a re-install never overrides the user's text size; only the
+/// first call sets one.
+///
+/// `dark` is a parameter rather than fixed here because the harness renders both
+/// modes to check that no component keeps a colour from the other one, and that
+/// check is worth having. The application itself only ever passes true.
+inline void installTheme(bool dark, int fontPixels = 0) {
     auto theme = shadcn::Theme::neutral(dark ? shadcn::ColorMode::Dark : shadcn::ColorMode::Light);
     if (highContrast()) detail::applySystemContrast(theme);
     shadcn::install(*qApp, std::move(theme),

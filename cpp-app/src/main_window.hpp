@@ -175,6 +175,6 @@ private:
   void updateLayout();
   void showError(const QString& message);
   void notify(const QString& title, const QString& description = {});
-  void applyAppearance(const QString& appearance);
+  void applyAppearance();
   void applyPresentation();
 };

@@ -211,17 +211,6 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   settings->setAccessibleName(tr("Application settings"));
   settings->setToolTip(tr("Application settings"));
   auto* appearanceMenu = new shadcn::DropdownMenu(settings);
-  appearanceMenu->addLabel(tr("Appearance"));
-  for (const auto& name : {QString("light"), QString("dark")}) {
-    auto& item = appearanceMenu->addItem(name == "dark" ? tr("Dark") : tr("Light"));
-    // Named so the two colour modes are reachable from a test and from assistive
-    // technology, which is also the only way a dark mode capture can be made.
-    item.setObjectName("appearance-" + name);
-    connect(&item, &QAction::triggered, this, [this, name] {
-      auto changed = settings_; changed.appearance = name; trackMutation(library_.setSettings(changed));
-    });
-  }
-  appearanceMenu->addSeparatorLine();
   auto* presentation = &appearanceMenu->addSubmenu(tr("Library rows"));
   auto* presentationGroup = new QActionGroup(presentation);
   for (const auto& name : {QString("comfortable"), QString("compact")}) {
@@ -258,7 +247,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     about.open();
   });
   connect(QApplication::styleHints()->accessibility(), &QAccessibilityHints::contrastPreferenceChanged, this,
-    [this] { applyAppearance(settings_.appearance); });
+    [this] { applyAppearance(); });
   shell->addLayout(toolbar);
   // A control that acts on the whole application sits in the rail's footer, not in
   // the header of whatever page happens to be open. It is the same control on every
@@ -579,7 +568,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     if (id != startupId_) return;
     startupId_ = 0;
     observeRevision(result.revision);
-    settings_ = result.settings; applyAppearance(settings_.appearance); applyPresentation();
+    settings_ = result.settings; applyAppearance(); applyPresentation();
     rootPath_ = result.root.path; rootLabel_->setText(QFileInfo(rootPath_).fileName()); rootLabel_->setToolTip(tooltip(rootPath_));
     rootLabel_->setAccessibleDescription(rootPath_);
     updateLayout();
@@ -594,7 +583,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   });
   connect(&library_, &lib::Library::settingsSaved, this, [this](auto id, const lib::Settings& settings) {
     mutationRequests_.remove(id);
-    settings_ = settings; applyAppearance(settings.appearance); applyPresentation();
+    settings_ = settings; applyAppearance(); applyPresentation();
   });
   connect(&library_, &lib::Library::searchResolved, this, [this](auto id, const lib::SearchResolution& result) {
     if (id == stepResolveId_ && stepResolveId_) {
@@ -949,7 +938,10 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   installKeyboardFilters();
   startupId_ = library_.open();
   if (!startupId_) showError(tr("The Library could not start. Close and reopen melearner."));
-  applyAppearance("light");
+  // Dark from the first frame, before the Library answers and before anything is
+  // painted. A window that appears and then changes colour is a flash of the wrong
+  // surface, on every start, for a reader who is here to read.
+  applyAppearance();
 }
 
 MainWindow::~MainWindow() {
@@ -1390,17 +1382,33 @@ void MainWindow::applyPresentation() {
   courses_->setSpacing(compact ? 1 : 3); courses_->doItemsLayout();
   if (auto* action = findChild<QAction*>("presentation-" + settings_.libraryPresentation)) action->setChecked(true);
 }
-void MainWindow::applyAppearance(const QString& appearance) {
+void MainWindow::applyAppearance() {
   // A row's icons are the model's, because the themed row view draws a leading
   // pixmap as given. A theme change therefore has to redraw them, and the rows
   // have to be asked again.
   refreshRowIcons();
   courseModel_->refreshRowIcons();
   // The shadcn style owns the palette, the focus ring, the scrollbars and every
-  // control, so switching colour mode is an install rather than a repaint. Only
-  // the two neutral modes exist; any other stored value reads as light, which
-  // keeps an existing database working without a migration.
-  melearner::installAppearance(appearance == QLatin1String("dark"));
+  // control, so this is an install rather than a repaint.
+  //
+  // There is one colour mode. A reader spends a long time with a lesson body in
+  // front of them, and dark is the right surface for that: a bright page in a dark
+  // room is a light source pointed at the reader's face. A second mode was offered
+  // and taken by nobody, and it cost every screenshot a second capture, every theme
+  // check a second case, and every component two chances to wear the other mode's
+  // colours by accident.
+  //
+  // The stored setting is deliberately not read. An existing database holds "light"
+  // from when the setting existed, and honouring it would open the application on
+  // the surface that was just removed. Writing "dark" back keeps the row honest for
+  // anything that still reads it, without a schema migration.
+  if (settings_.appearance != QLatin1String("dark")) {
+    auto changed = settings_;
+    changed.appearance = QStringLiteral("dark");
+    settings_ = changed;
+    trackMutation(library_.setSettings(changed));
+  }
+  melearner::installTheme(true);
   // Icons take their colour from the theme role that matches where they sit, so
   // they follow a colour mode switch instead of holding a baked-in colour.
   using Icon = melearner::StudyIcon;
