@@ -361,6 +361,10 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
       melearner::roleColor(theme, shadcn::Role::MutedForeground));
     lessons_->setPalette(palette);
   }
+  // A revealed handout lives under its video, so the video opens on the way to it.
+  connect(outlineModel_, &melearner::CourseOutlineModel::videoExpanded, this, [this](const QModelIndex& video) {
+    if (video.isValid()) lessons_->setExpanded(video, true);
+  });
   connect(outlineModel_, &melearner::CourseOutlineModel::lessonRevealed, this, [this](const QModelIndex& index) {
     lessons_->expand(index.parent()); lessons_->setCurrentIndex(index); lessons_->scrollTo(index);
   });

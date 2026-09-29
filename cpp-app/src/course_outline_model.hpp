@@ -51,6 +51,8 @@ public:
 
 signals:
     void lessonRevealed(QModelIndex index);
+    /// Asks the view to open a video so the file revealed under it can be seen.
+    void videoExpanded(QModelIndex video);
     void errorOccurred(QString message);
 
 private slots:
@@ -117,7 +119,15 @@ private:
     mutable QMap<int, SectionCache> sectionPages_;
     mutable QMap<LessonPageKey, LessonCache> lessonPages_;
     QVector<QString> sectionIds_;
+    /// How many Lessons each Section holds, which is how far a Lesson row can be
+    /// counted. It is not how many rows the Section shows: a video and its files
+    /// share one row, so the two numbers differ.
     QVector<std::uint64_t> sectionLessonCounts_;
+    /// The rows each Section shows, which is fewer than its Lesson count when a
+    /// video and its files share a row. Held for every Section rather than read
+    /// from the page cache, because a row's children have to be answerable without
+    /// the page that describes them being loaded.
+    QVector<QVector<library::OutlineGroup>> sectionGroups_;
     QHash<library::RequestId, Pending> pending_;
     std::optional<RevealState> reveal_;
     std::uint64_t revealToken_ = 0;
@@ -142,6 +152,20 @@ private:
     [[nodiscard]] static quintptr sectionIdForRow(int row) noexcept;
     [[nodiscard]] static quintptr lessonIdForRow(int sectionRow, int lessonRow) noexcept;
     [[nodiscard]] static bool isLessonId(quintptr id) noexcept;
+    [[nodiscard]] static bool isFileId(quintptr id) noexcept;
+    [[nodiscard]] static quintptr fileIdForRow(int sectionRow, int groupRow) noexcept;
+    [[nodiscard]] static int fileGroupForId(quintptr id) noexcept;
+    /// The video and files a video row stands for, or nothing when that row is no
+    /// longer one. Every question about a video's children goes through here, so
+    /// they cannot disagree about which rows belong to it.
+    [[nodiscard]] std::optional<library::OutlineGroup> groupForIndex(const QModelIndex& index) const;
+    /// Which Lesson a row stands for. A row's own number is its place among its
+    /// siblings, which is not its place among the Section's Lessons once a video
+    /// and its files share a row, so the group supplies the order that finds it.
+    [[nodiscard]] std::optional<int> lessonOrderForIndex(const QModelIndex& index) const;
+    /// The row a Lesson is shown on, which is its video's row or the file's own row
+    /// under it. Nothing, for a Lesson in a Section whose rows are not loaded yet.
+    [[nodiscard]] std::optional<QModelIndex> indexForLesson(int sectionRow, int lessonRow) const;
     [[nodiscard]] static int sectionRowForLessonId(quintptr id) noexcept;
     [[nodiscard]] static int lessonRowForLessonId(quintptr id) noexcept;
     [[nodiscard]] static int pageOffset(int row, int pageSize) noexcept;

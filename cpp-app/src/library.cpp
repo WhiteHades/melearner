@@ -108,12 +108,19 @@ void checkSqlite(int result, sqlite3* db, QString operation) {
 class Statement final {
 public:
     Statement(sqlite3* db, QString sql) : db_(db) {
-        const auto utf8 = sql.toUtf8();
+        // The text is kept so a failure can name the statement that failed. A
+        // "near X: syntax error" from SQLite names a token and not the query, and a
+        // generated query is long enough that the token alone is not a starting
+        // point for finding the mistake.
+        text_ = std::move(sql);
+        const auto utf8 = text_.toUtf8();
         checkSqlite(
             sqlite3_prepare_v2(db_, utf8.constData(), utf8.size(), &statement_, nullptr),
             db_,
-            QStringLiteral("prepare SQL"));
+            QStringLiteral("prepare SQL: ") + text_);
     }
+
+    [[nodiscard]] const QString& text() const noexcept { return text_; }
 
     ~Statement() {
         sqlite3_finalize(statement_);
@@ -160,6 +167,7 @@ public:
 private:
     sqlite3* db_ = nullptr;
     sqlite3_stmt* statement_ = nullptr;
+    QString text_;
 };
 
 void exec(sqlite3* db, std::string_view sql) {
@@ -1102,6 +1110,92 @@ void bindScope(Statement& statement, const CourseScope& scope, int firstIndex = 
     return result;
 }
 
+/// Fills each Section's rows, filing every file under the video it belongs with.
+///
+/// The pairing is done in SQL rather than in the model because the model answers
+/// "how many rows does this Section show" from Section metadata alone, without
+/// loading any Lessons. A Section's rows cannot be counted from names that have to
+/// be read first, so the count has to arrive with the metadata.
+///
+/// A file belongs to a video of the same name, or of a name it starts with followed
+/// by a word boundary: "01 Intro" is the video, and "01 Intro handout" and "01 Intro
+/// slides" are its files. The boundary is what keeps "01 Introduction" from claiming
+/// "01 Intro handout" as its own, which is why a non-alphanumeric character has to
+/// follow. The longest matching name wins, so the nearest video is the one that
+/// claims a file. A file matching no video falls back to being its own head, and
+/// therefore a row of its own: a syllabus with no lecture is a document, not an
+/// orphan, and a Section is not required to contain a video to be readable.
+void readOutlineGroups(sqlite3* db, const QString& courseId, QVector<Section>& sections) {
+    if (sections.isEmpty()) {
+        return;
+    }
+    QStringList ids;
+    ids.reserve(sections.size());
+    QHash<QString, int> bySection;
+    bySection.reserve(sections.size());
+    for (int at = 0; at < sections.size(); ++at) {
+        ids.push_back(sections.at(at).id);
+        bySection.insert(sections.at(at).id, at);
+    }
+    // The placeholders are numbered rather than anonymous, so the Section ids are
+    // bound at 2 and upwards and the course at 1, and the two never collide.
+    QStringList placeholders;
+    placeholders.reserve(ids.size());
+    for (qsizetype at = 0; at < ids.size(); ++at) {
+        placeholders.push_back(QStringLiteral("?") + QString::number(at + 2));
+    }
+    Statement statement(
+        db,
+        QStringLiteral(
+            "WITH videos AS ("
+            "  SELECT section_id, name, order_index FROM lessons"
+            "  WHERE course_id = ?1 AND type = 'video' AND section_id IN (%1)"
+            "), marked AS ("
+            "  SELECT l.section_id AS sid, l.id AS lid, l.order_index AS oi,"
+            "    coalesce((SELECT v.order_index FROM videos v"
+            "      WHERE v.section_id = l.section_id"
+            "        AND (v.name = l.name OR (length(l.name) > length(v.name)"
+            "          AND substr(l.name, 1, length(v.name)) = v.name"
+            "          AND substr(l.name, length(v.name) + 1, 1) GLOB '[^0-9A-Za-z]'))"
+            "      ORDER BY length(v.name) DESC, v.order_index LIMIT 1), l.order_index) AS head"
+            "  FROM lessons l WHERE l.course_id = ?1 AND l.section_id IN (%1)"
+            ") "
+            "SELECT m.sid, min(CASE WHEN m.oi = m.head THEN m.lid END) AS head_id, m.head,"
+            "  group_concat(CASE WHEN m.oi <> m.head THEN m.oi END) AS file_orders "
+            "FROM marked m GROUP BY m.sid, m.head ORDER BY m.sid, m.head")
+            .arg(placeholders.join(QLatin1Char(','))));
+    statement.bind(1, courseId);
+    for (qsizetype at = 0; at < ids.size(); ++at) {
+        statement.bind(static_cast<int>(at) + 2, ids.at(at));
+    }
+    while (statement.step() == SQLITE_ROW) {
+        const auto section = bySection.constFind(columnText(statement.get(), 0));
+        if (section == bySection.constEnd()) {
+            continue;
+        }
+        OutlineGroup group{
+            .headId = columnText(statement.get(), 1),
+            .headOrder = static_cast<std::uint64_t>(columnInt(statement.get(), 2)),
+            .fileOrders = {},
+        };
+        const auto files = columnText(statement.get(), 3);
+        if (!files.isEmpty()) {
+            const auto parts = files.split(QLatin1Char(','));
+            group.fileOrders.reserve(parts.size());
+            for (const auto& part : parts) {
+                bool ok = false;
+                const auto order = part.toULongLong(&ok);
+                // A part that is not a number is a corrupt aggregate rather than a
+                // row, and dropping it loses one file rather than the whole outline.
+                if (ok) {
+                    group.fileOrders.push_back(order);
+                }
+            }
+        }
+        sections[*section].groups.push_back(std::move(group));
+    }
+}
+
 [[nodiscard]] SectionPage readSectionPage(
     sqlite3* db,
     QString courseId,
@@ -1147,6 +1241,10 @@ void bindScope(Statement& statement, const CourseScope& scope, int firstIndex = 
             .watchedSeconds = nonnegativeAggregate(statement.get(), 6, QStringLiteral("section watched time")),
         });
     }
+    // The page keeps its own copy of the Course id, because the one passed in was
+    // moved into it above and a moved-from QString binds as empty, which matches no
+    // Lesson and silently produces a page with no rows in it.
+    readOutlineGroups(db, result.courseId, result.rows);
     result.hasMore = offset < total && offset + static_cast<std::uint64_t>(result.rows.size()) < total;
     return result;
 }

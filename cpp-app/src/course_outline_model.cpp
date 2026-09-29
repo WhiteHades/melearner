@@ -12,9 +12,15 @@ namespace {
 
 constexpr int kIndexBits = std::numeric_limits<quintptr>::digits;
 constexpr int kIndexRowBits = kIndexBits / 2;
+/// Set on a row that is a Lesson, whether it is a video with files under it or a
+/// file under a video. Both are Lessons, and both open the same way.
 constexpr quintptr kLessonTag = quintptr{1} << (kIndexBits - 1);
+/// Set on a row that is a file under a video, which is what makes it a third level
+/// rather than a second. It sits below the Lesson tag, so a file is still a Lesson
+/// and every check for one still holds.
+constexpr quintptr kFileTag = quintptr{1} << (kIndexBits - 2);
 constexpr quintptr kLessonRowMask = (quintptr{1} << kIndexRowBits) - 1;
-constexpr quintptr kSectionRowMask = (kLessonTag - 1) >> kIndexRowBits;
+constexpr quintptr kSectionRowMask = (kFileTag - 1) >> kIndexRowBits;
 
 [[nodiscard]] QString completionText(const library::Section& section) {
     return QStringLiteral("%1 of %2 lessons complete")
@@ -54,7 +60,7 @@ void CourseOutlineModel::setCourse(QString courseId) {
     latestRevision_ = 0;
     clock_ = 0;
     sectionIds_.clear();
-    sectionLessonCounts_.clear();
+    sectionGroups_.clear();
     endResetModel();
     if (!courseId_.isEmpty()) {
         (void)requestSections(0);
@@ -65,7 +71,11 @@ std::optional<library::Lesson> CourseOutlineModel::lesson(const QModelIndex& ind
     if (!index.isValid() || index.model() != this || index.column() != 0 || !isLessonId(index.internalId())) {
         return std::nullopt;
     }
-    return loadedLesson(sectionRowForLessonId(index.internalId()), lessonRowForLessonId(index.internalId()));
+    const auto order = lessonOrderForIndex(index);
+    if (!order.has_value()) {
+        return std::nullopt;
+    }
+    return loadedLesson(sectionRowForLessonId(index.internalId()), *order);
 }
 
 void CourseOutlineModel::revealLesson(library::Lesson lesson) {
@@ -129,9 +139,13 @@ void CourseOutlineModel::updateProgress(const library::ProgressResult& progress)
                         emit dataChanged(sectionIndex, sectionIndex);
                     }
                 }
-                const auto row = page.key().offset + local;
-                const auto lessonIndex = index(row, 0, index(*sectionRow, 0));
-                emit dataChanged(lessonIndex, lessonIndex);
+                // The row that changed is the video if the Lesson is a video and the
+                // file under it if it is a file, because those are the two rows a
+                // reader can see it on.
+                if (const auto changed = indexForLesson(*sectionRow, page.key().offset + local);
+                    changed.has_value()) {
+                    emit dataChanged(*changed, *changed);
+                }
             }
             touchLessonPage(page);
             return;
@@ -149,17 +163,32 @@ QModelIndex CourseOutlineModel::index(int row, int column, const QModelIndex& pa
         }
         return createIndex(row, column, sectionIdForRow(row));
     }
-    if (parent.model() != this || parent.column() != 0 || isLessonId(parent.internalId())) {
+    if (parent.model() != this || parent.column() != 0) {
         return {};
     }
-    if (parent.row() < 0 || parent.row() >= sectionIds_.size()
+    if (isFileId(parent.internalId())) {
+        // A file is a leaf. It has nothing under it, and answering a row for one
+        // would let the view draw an expander that opens onto nothing.
+        return {};
+    }
+    if (isLessonId(parent.internalId())) {
+        // The children of a video are the files that belong with it.
+        const auto group = groupForIndex(parent);
+        if (!group.has_value() || row < 0 || row >= static_cast<int>(group->fileOrders.size())) {
+            return {};
+        }
+        // The file's own position is the row the view asked for, so the id carries
+        // only the two things the row cannot: which Section, and which video.
+        const auto id = fileIdForRow(sectionRowForLessonId(parent.internalId()), parent.row());
+        return id == 0 ? QModelIndex{} : createIndex(row, column, id);
+    }
+    if (parent.row() < 0 || parent.row() >= sectionGroups_.size()
         || sectionIds_.at(parent.row()).isEmpty()
-        || sectionLessonCounts_.at(parent.row()) > static_cast<std::uint64_t>(std::numeric_limits<int>::max())
-        || row >= static_cast<int>(sectionLessonCounts_.at(parent.row()))
-        || lessonIdForRow(parent.row(), row) == 0) {
+        || row >= static_cast<int>(sectionGroups_.at(parent.row()).size())) {
         return {};
     }
-    return createIndex(row, column, lessonIdForRow(parent.row(), row));
+    const auto id = lessonIdForRow(parent.row(), row);
+    return id == 0 ? QModelIndex{} : createIndex(row, column, id);
 }
 
 QModelIndex CourseOutlineModel::parent(const QModelIndex& child) const {
@@ -170,6 +199,16 @@ QModelIndex CourseOutlineModel::parent(const QModelIndex& child) const {
     if (sectionRow < 0 || sectionRow >= totalSections_) {
         return {};
     }
+    if (isFileId(child.internalId())) {
+        // The row above a file is the video it belongs with, which is the group it
+        // was filed under. The file's own id carries that group, not its own row,
+        // so the parent row comes from the id and not from the file's position.
+        const auto groupRow = fileGroupForId(child.internalId());
+        if (groupRow < 0) {
+            return {};
+        }
+        return index(groupRow, 0, index(sectionRow, 0));
+    }
     return index(sectionRow, 0);
 }
 
@@ -177,17 +216,20 @@ int CourseOutlineModel::rowCount(const QModelIndex& parent) const {
     if (!parent.isValid()) {
         return totalSections_;
     }
-    if (parent.model() != this || parent.column() != 0 || isLessonId(parent.internalId())) {
+    if (parent.model() != this || parent.column() != 0) {
         return 0;
     }
-    if (parent.row() < 0 || parent.row() >= sectionLessonCounts_.size()) {
+    if (isFileId(parent.internalId())) {
         return 0;
     }
-    const auto lessonCount = sectionLessonCounts_.at(parent.row());
-    if (lessonCount > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
+    if (isLessonId(parent.internalId())) {
+        const auto group = groupForIndex(parent);
+        return group.has_value() ? static_cast<int>(group->fileOrders.size()) : 0;
+    }
+    if (parent.row() < 0 || parent.row() >= sectionGroups_.size()) {
         return 0;
     }
-    return static_cast<int>(lessonCount);
+    return static_cast<int>(sectionGroups_.at(parent.row()).size());
 }
 
 int CourseOutlineModel::columnCount(const QModelIndex&) const {
@@ -209,7 +251,22 @@ QVariant CourseOutlineModel::data(const QModelIndex& modelIndex, int role) const
         return {};
     }
     if (isLessonId(modelIndex.internalId())) {
-        const auto item = loadedLesson(sectionRowForLessonId(modelIndex.internalId()), modelIndex.row());
+        // A file is looked up through the group it belongs with, because the file's
+        // own row is its position under the video and the Lesson rows are indexed
+        // by the video's order.
+        const auto sectionRow = sectionRowForLessonId(modelIndex.internalId());
+        const auto group = groupForIndex(modelIndex);
+        if (!group.has_value()) {
+            return role == Qt::UserRole ? QVariant{} : QVariant(tr("Loading…"));
+        }
+        // A video's row is its place among the Section's rows, which is not its
+        // place among the Section's Lessons: five Lessons under three videos are
+        // rows 0, 1 and 2. The group carries the order that finds the Lesson.
+        const auto order = lessonOrderForIndex(modelIndex);
+        if (!order.has_value()) {
+            return role == Qt::UserRole ? QVariant{} : QVariant(tr("Loading…"));
+        }
+        const auto item = loadedLesson(sectionRow, *order);
         if (role == Qt::SizeHintRole) {
             return QSize(180, 68);
         }
@@ -300,11 +357,18 @@ bool CourseOutlineModel::hasChildren(const QModelIndex& parent) const {
     if (!parent.isValid()) {
         return totalSections_ > 0;
     }
-    if (parent.model() != this || parent.column() != 0 || isLessonId(parent.internalId())) {
+    if (parent.model() != this || parent.column() != 0) {
         return false;
     }
-    return parent.row() >= 0 && parent.row() < sectionLessonCounts_.size()
-        && sectionLessonCounts_.at(parent.row()) > 0;
+    if (isFileId(parent.internalId())) {
+        return false;
+    }
+    if (isLessonId(parent.internalId())) {
+        const auto group = groupForIndex(parent);
+        return group.has_value() && !group->fileOrders.empty();
+    }
+    return parent.row() >= 0 && parent.row() < sectionGroups_.size()
+        && !sectionGroups_.at(parent.row()).empty();
 }
 
 bool CourseOutlineModel::canFetchMore(const QModelIndex& parent) const {
@@ -313,9 +377,6 @@ bool CourseOutlineModel::canFetchMore(const QModelIndex& parent) const {
     }
     if (!parent.isValid()) {
         return !sectionsKnown_ && !hasPending(PendingKind::sections, {}, 0);
-    }
-    if (parent.model() != this || parent.column() != 0 || isLessonId(parent.internalId())) {
-        return false;
     }
     return false;
 }
@@ -513,14 +574,23 @@ void CourseOutlineModel::maybeReveal() {
         emitError(tr("The requested Lesson is no longer available."));
         return;
     }
-    const auto revealed = index(lessonRow, 0, index(sectionRow, 0));
-    if (!revealed.isValid()) {
+    // A file is revealed on its own row, a video on the row that holds its files.
+    // The Section has to be expanded for a file to be reachable, so it is expanded
+    // on the way; otherwise a revealed handout is somewhere the reader cannot see.
+    const auto revealed = indexForLesson(sectionRow, lessonRow);
+    if (!revealed.has_value()) {
         reveal_.reset();
         emitError(tr("The requested Lesson could not be shown."));
         return;
     }
+    if (isFileId(revealed->internalId())) {
+        const auto video = revealed->parent();
+        if (video.isValid() && video.parent().isValid()) {
+            emit videoExpanded(video);
+        }
+    }
     reveal_.reset();
-    emit lessonRevealed(revealed);
+    emit lessonRevealed(*revealed);
 }
 
 void CourseOutlineModel::emitError(QString message) {
@@ -605,10 +675,13 @@ void CourseOutlineModel::sectionsReady(library::RequestId requestId, library::Se
         lessonPages_.clear();
         sectionIds_.fill(QString(), totalSections_);
         sectionLessonCounts_.fill(0, totalSections_);
+        sectionGroups_.clear();
+        sectionGroups_.resize(totalSections_);
         const auto rows = page.rows;
         for (int local = 0; local < rows.size() && offset + local < totalSections_; ++local) {
             sectionIds_[offset + local] = rows.at(local).id;
             sectionLessonCounts_[offset + local] = rows.at(local).lessonCount;
+            sectionGroups_[offset + local] = rows.at(local).groups;
         }
         cacheSectionPage(std::move(page));
         endResetModel();
@@ -616,25 +689,26 @@ void CourseOutlineModel::sectionsReady(library::RequestId requestId, library::Se
         if (sectionIds_.size() != totalSections_) {
             sectionIds_.resize(totalSections_);
             sectionLessonCounts_.resize(totalSections_);
+            sectionGroups_.resize(totalSections_);
         }
         for (int local = 0; local < page.rows.size() && offset + local < totalSections_; ++local) {
             const auto row = offset + local;
-            const auto oldCount = sectionLessonCounts_.at(row);
-            const auto newCount = page.rows.at(local).lessonCount;
+            const auto oldCount = static_cast<int>(sectionGroups_.at(row).size());
+            const auto newGroups = page.rows.at(local).groups;
+            const auto newCount = static_cast<int>(newGroups.size());
             sectionIds_[row] = page.rows.at(local).id;
+            sectionLessonCounts_[row] = page.rows.at(local).lessonCount;
             if (oldCount == newCount) {
+                sectionGroups_[row] = newGroups;
                 continue;
             }
-            const auto sectionIndex = index(row, 0);
-            if (oldCount < newCount) {
-                beginInsertRows(sectionIndex, static_cast<int>(oldCount), static_cast<int>(newCount - 1));
-                sectionLessonCounts_[row] = newCount;
-                endInsertRows();
-            } else {
-                beginRemoveRows(sectionIndex, static_cast<int>(newCount), static_cast<int>(oldCount - 1));
-                sectionLessonCounts_[row] = newCount;
-                endRemoveRows();
-            }
+            // A group carries its files with it, so a Section whose rows change
+            // shape is reset rather than inserted into. beginInsertRows would promise
+            // the rows around the change kept their meaning, and here a video that
+            // gains a file is a different row from the video that had none.
+            beginResetModel();
+            sectionGroups_[row] = std::move(newGroups);
+            endResetModel();
         }
         cacheSectionPage(std::move(page));
         if (offset < totalSections_) {
@@ -667,14 +741,47 @@ void CourseOutlineModel::lessonsReady(library::RequestId requestId, library::Les
     }
     latestRevision_ = std::max(latestRevision_, page.revision);
     const auto sectionRow = loadedSectionRow(page.sectionId);
+    const auto offset = static_cast<int>(pending.offset);
+    const auto count = static_cast<int>(page.rows.size());
     cacheLessonPage(std::move(page));
     if (sectionRow.has_value()) {
+        // A Section's rows are groups, not Lessons, so the rows this page fills in
+        // are the ones those Lessons are shown on: the video itself, and each file
+        // under it. Signalling the Lesson range instead would address rows that do
+        // not exist, and a bottom-right index past the end of its parent is a
+        // signal a view cannot act on.
         const auto section = index(*sectionRow, 0);
-        const auto offset = static_cast<int>(pending.offset);
-        const auto total = sectionLessonCounts_.value(*sectionRow, 0);
-        if (total > static_cast<std::uint64_t>(offset)) {
-            const auto last = std::min<std::uint64_t>(total, static_cast<std::uint64_t>(offset) + kLessonPageSize) - 1;
-            emit dataChanged(index(offset, 0, section), index(static_cast<int>(last), 0, section));
+        const auto& groups = sectionGroups_.at(*sectionRow);
+        int firstGroup = -1;
+        int lastGroup = -1;
+        for (int group = 0; group < groups.size(); ++group) {
+            const auto& outline = groups.at(group);
+            const auto inRange = [&](std::uint64_t order) {
+                return order >= static_cast<std::uint64_t>(offset)
+                    && order < static_cast<std::uint64_t>(offset + count);
+            };
+            const auto touched = inRange(outline.headOrder)
+                || std::any_of(outline.fileOrders.cbegin(), outline.fileOrders.cend(), inRange);
+            if (!touched) {
+                continue;
+            }
+            if (firstGroup < 0) {
+                firstGroup = group;
+            }
+            lastGroup = group;
+            // The files under this video are their own rows and their own parent,
+            // so each is signalled under the video it belongs with.
+            for (int file = 0; file < static_cast<int>(outline.fileOrders.size()); ++file) {
+                if (inRange(outline.fileOrders.at(file))) {
+                    const auto under = index(file, 0, index(group, 0, section));
+                    if (under.isValid()) {
+                        emit dataChanged(under, under);
+                    }
+                }
+            }
+        }
+        if (firstGroup >= 0) {
+            emit dataChanged(index(firstGroup, 0, section), index(lastGroup, 0, section));
         }
     }
     maybeReveal();
@@ -741,8 +848,88 @@ quintptr CourseOutlineModel::lessonIdForRow(int sectionRow, int lessonRow) noexc
     return kLessonTag | (sectionToken << kIndexRowBits) | lessonToken;
 }
 
+quintptr CourseOutlineModel::fileIdForRow(int sectionRow, int groupRow) noexcept {
+    // A file carries its video rather than its own position, because the row the
+    // view holds already is its position. A file that encoded its own row would be
+    // indistinguishable from a video at the same place in the same Section.
+    const auto sectionToken = static_cast<quintptr>(sectionRow) + 1;
+    const auto groupToken = static_cast<quintptr>(groupRow) + 1;
+    if (sectionToken > kSectionRowMask || groupToken > kLessonRowMask) {
+        return 0;
+    }
+    // Both tags, not just the file tag. A file is a Lesson as well as a file, and
+    // every check that asks "is this a Lesson" has to say yes for a file or the
+    // file cannot be found, opened, or walked back up from.
+    return kLessonTag | kFileTag | (sectionToken << kIndexRowBits) | groupToken;
+}
+
 bool CourseOutlineModel::isLessonId(quintptr id) noexcept {
     return (id & kLessonTag) != 0;
+}
+
+bool CourseOutlineModel::isFileId(quintptr id) noexcept {
+    return (id & kFileTag) != 0;
+}
+
+int CourseOutlineModel::fileGroupForId(quintptr id) noexcept {
+    if (!isFileId(id)) {
+        return -1;
+    }
+    const auto token = id & kLessonRowMask;
+    return token == 0 ? -1 : static_cast<int>(token - 1);
+}
+
+std::optional<QModelIndex> CourseOutlineModel::indexForLesson(int sectionRow, int lessonRow) const {
+    if (sectionRow < 0 || sectionRow >= sectionGroups_.size()) {
+        return std::nullopt;
+    }
+    const auto& groups = sectionGroups_.at(sectionRow);
+    const auto sectionIndex = index(sectionRow, 0);
+    for (int group = 0; group < groups.size(); ++group) {
+        const auto& outline = groups.at(group);
+        if (outline.headOrder == static_cast<std::uint64_t>(lessonRow)) {
+            return index(group, 0, sectionIndex);
+        }
+        for (int file = 0; file < static_cast<int>(outline.fileOrders.size()); ++file) {
+            if (outline.fileOrders.at(file) == static_cast<std::uint64_t>(lessonRow)) {
+                return index(file, 0, index(group, 0, sectionIndex));
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<int> CourseOutlineModel::lessonOrderForIndex(const QModelIndex& index) const {
+    const auto group = groupForIndex(index);
+    if (!group.has_value()) {
+        return std::nullopt;
+    }
+    if (!isFileId(index.internalId())) {
+        if (group->headOrder > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
+            return std::nullopt;
+        }
+        return static_cast<int>(group->headOrder);
+    }
+    // A file's row is its position under the video, and the group holds the Lesson
+    // order for each of those positions.
+    if (index.row() < 0 || index.row() >= static_cast<int>(group->fileOrders.size())) {
+        return std::nullopt;
+    }
+    const auto order = group->fileOrders.at(index.row());
+    if (order > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
+        return std::nullopt;
+    }
+    return static_cast<int>(order);
+}
+
+std::optional<library::OutlineGroup> CourseOutlineModel::groupForIndex(const QModelIndex& index) const {
+    const auto sectionRow = sectionRowForLessonId(index.internalId());
+    const auto groupRow = lessonRowForLessonId(index.internalId());
+    if (sectionRow < 0 || groupRow < 0 || sectionRow >= sectionGroups_.size()
+        || groupRow >= static_cast<int>(sectionGroups_.at(sectionRow).size())) {
+        return std::nullopt;
+    }
+    return sectionGroups_.at(sectionRow).at(groupRow);
 }
 
 int CourseOutlineModel::sectionRowForLessonId(quintptr id) noexcept {

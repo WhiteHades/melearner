@@ -87,6 +87,19 @@ struct CoursePage {
     bool hasMore = false;
 };
 
+/// A video and the files that belong with it, as one row in the Course outline.
+///
+/// A lecture and its handout share a name, because they are one file name with two
+/// extensions, so `name` is what pairs them and no extra column is needed to record
+/// the pairing. The head is the video; the files are everything else carrying the
+/// same name. A document with no video of the same name stands on its own, because
+/// a syllabus with no lecture is a document and not an orphan.
+struct OutlineGroup {
+    QString headId;
+    std::uint64_t headOrder = 0;
+    QVector<std::uint64_t> fileOrders;
+};
+
 struct Section {
     QString id;
     QString courseId;
@@ -95,6 +108,10 @@ struct Section {
     std::uint64_t lessonCount = 0;
     std::uint64_t completedLessons = 0;
     std::uint64_t watchedSeconds = 0;
+    /// The rows a Section shows, which is fewer than its Lesson count when a video
+    /// and its files share a row. The Lesson count stays the count of Lessons,
+    /// because that is what a completion percentage is a percentage of.
+    QVector<OutlineGroup> groups;
 };
 
 struct SectionPage {
