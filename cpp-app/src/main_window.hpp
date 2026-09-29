@@ -36,18 +36,8 @@ public:
   // command line arrives before the Library has finished opening, and a scan
   // issued then is refused, so the request is held rather than dropped.
   void chooseRootWhenOpen(const QString& path);
-  /// The narrowest window in which the rail and a full page both fit. Below it the
-  /// rail goes off-canvas, because a page that needs a horizontal scrollbar to show
-  /// a table is worse than a rail the reader has to ask for. It moves with the
-  /// rail's width and the reader's text size, so a caller asks the window rather
-  /// than repeating a number that would be wrong the moment either half changed.
-  [[nodiscard]] int railFitsBesideContent() const;
 protected:
   void resizeEvent(QResizeEvent* event) override;
-  /// Marks one of the rail's library items as the open page. The rail cannot own
-  /// the value, because the stack can be changed from anywhere, and two copies of
-  /// one value is where they stop agreeing.
-  void markNav(bool stats);
   void closeEvent(QCloseEvent* event) override;
   void keyPressEvent(QKeyEvent* event) override;
   bool eventFilter(QObject* watched, QEvent* event) override;
@@ -75,7 +65,6 @@ private:
   shadcn::Tabs* libraryStack_ = nullptr;
   // The rail's items for the library's two pages. They and the stack are two views
   // of one value, so a change from either side keeps the other in step.
-  QPushButton* libraryNav_ = nullptr;
   QPushButton* statsNav_ = nullptr;
   shadcn::ScrollArea* statsScroll_;
   melearner::StatsPanel* stats_;
@@ -117,11 +106,7 @@ private:
   shadcn::Button* cancelScan_ = nullptr;
   quint64 scanId_ = 0;
   shadcn::Button* complete_;
-  shadcn::SidebarProvider* sidebarProvider_ = nullptr;
-  shadcn::Sidebar* sidebar_ = nullptr;
-  shadcn::SidebarInset* inset_ = nullptr;
   shadcn::Input* searchField_ = nullptr;
-  bool railShownForWidth_ = true;
   shadcn::ListView* courses_;
   shadcn::TreeView* lessons_;
   PagedListModel* courseModel_;

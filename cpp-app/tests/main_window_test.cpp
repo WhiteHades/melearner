@@ -171,6 +171,7 @@ private slots:
     // The stats page is reached from the rail now, not from a row of tabs under the
     // header, so the test drives it the way a reader does.
     auto* statsNav = window.findChild<QPushButton*>("navStats"); QVERIFY(statsNav);
+    QVERIFY(statsNav->isCheckable());
     QTest::mouseClick(statsNav, Qt::LeftButton);
     auto* tabs = window.findChild<shadcn::Tabs*>("libraryStack"); QVERIFY(tabs);
     QCOMPARE(tabs->currentValue(), QString("stats"));
@@ -189,7 +190,6 @@ private slots:
       // photographs it part way across and every element in it looks truncated. A
       // capture that is going to be looked at has to wait for the width the rail is
       // going to keep.
-      if (rail && rail->isOpen()) QTRY_VERIFY(rail->width() == rail->expandedWidth());
       auto* scroll = window.findChild<QScrollArea*>("statsScroll");
       QTRY_COMPARE(scroll->horizontalScrollBar()->maximum(), 0);
       const auto captures = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
@@ -445,13 +445,11 @@ private slots:
     // The search is a field, not a button: a reader who can see a field types into
     // it, and a button that opens a dialog is a step they did not ask for.
     auto* searchButton = window.findChild<shadcn::Input*>("searchButton"); QVERIFY(searchButton);
-    // Settings acts on the whole application, so it lives in the rail's footer and is
-    // the same control on every page. The rail gives its width back below the width
-    // where it and a full page both fit.
+    // Settings acts on the whole application, so it is in the header beside the other
+    // controls that do. There is no rail: a column of navigation for two destinations
+    // is not minimal.
     auto* settings = window.findChild<QPushButton*>("appearance"); QVERIFY(settings);
-    auto* rail = window.findChild<shadcn::Sidebar*>();
-    auto* trigger = window.findChild<QPushButton*>("sidebarTrigger"); QVERIFY(trigger);
-    QVERIFY(rail);
+    QVERIFY(!window.findChild<shadcn::Sidebar*>());
     QVERIFY(!shortcuts->icon().isNull());
     QTRY_VERIFY(window.findChild<shadcn::Progress*>("resumeProgress")->isVisible());
     QCOMPARE(window.findChild<shadcn::Progress*>("resumeProgress")->value(), 0);
@@ -519,8 +517,7 @@ private slots:
       }
       for (const int width : {560, 768, 1280, 1920}) {
         window.resize(width, 720); QTest::qWait(30);
-        if (rail && rail->isOpen()) QTRY_VERIFY(rail->width() == rail->expandedWidth());
-        const auto captures = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
+          const auto captures = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
         if (!captures.isEmpty()) {
           QVERIFY(window.grab().save(captures + QString("/library-%1-%2-%3x.png")
                                       .arg(mode).arg(width).arg(fontScale)));
@@ -538,19 +535,7 @@ private slots:
       // there is not, so the page never has to scroll sideways to show a table.
       // The threshold is the rail's own width plus the room a page needs, so the
       // test asks the window rather than repeating a number that would be wrong the
-      // moment either half changed.
-      // The rail slides rather than jumps, so a check taken while it is on its way
-      // reads a width nobody will ever see. Wait for the slide to finish, which is
-      // when the rail has the width it is going to keep.
-      const auto roomy = width >= window.railFitsBesideContent();
-      QCOMPARE(rail->isOpen(), roomy);
-      if (roomy) {
-        const auto settled = rail->expandedWidth();
-        QTRY_VERIFY(rail->width() == settled);
-        QCOMPARE(rail->width(), settled);
-      }
-      QCOMPARE(settings->isVisible(), roomy);
-      QVERIFY(trigger->isVisible());
+      QCOMPARE(settings->isVisible(), true);
       QCOMPARE(courses->horizontalScrollBar()->maximum(), 0);
       const auto captures = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
       if (!captures.isEmpty()) QVERIFY(window.grab().save(captures + QString("/library-%1-%2x.png").arg(width).arg(fontScale)));
@@ -579,7 +564,6 @@ private slots:
       QVERIFY(lessons->isVisible());
       QVERIFY(lessons->width() >= 200);
       QVERIFY(shortcuts->isVisible()); QVERIFY(!searchButton->isVisible());
-      QVERIFY(trigger->isVisible());
       if (window.findChild<QScrollArea*>("lessonScroll")->isVisible()) {
         const auto* outline = window.findChild<QWidget*>("courseOutline");
         const auto* viewer = window.findChild<QScrollArea*>("lessonScroll");
@@ -590,7 +574,7 @@ private slots:
         // takes the page where there is not. Either way it fits inside the page: the
         // page is the window less the rail when the rail is beside it, and the whole
         // window when the rail is off-canvas.
-        const auto page = rail->isOpen() ? window.width() - rail->width() : window.width();
+        const auto page = window.width();
         // The outline never overflows the page, and the page is the window less the
         // rail when the rail is beside it and the whole window when the rail is
         // off-canvas. Whether the outline takes the page or sits beside the content
@@ -600,7 +584,7 @@ private slots:
         QVERIFY2(lessons->width() <= page,
                  qPrintable(QStringLiteral("the outline is %1 wide on a %2 pixel page")
                                 .arg(lessons->width()).arg(page)));
-        if (window.railFitsBesideContent() <= width) QTRY_VERIFY(lessons->width() >= 200);
+        QTRY_VERIFY(lessons->width() >= 200);
       }
       const auto captureDirectory = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
       if (!captureDirectory.isEmpty())

@@ -156,42 +156,20 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   QApplication::setFont(interfaceFont);
   setWindowTitle("melearner"); setMinimumSize(560, 400); resize(1200, 780);
   setWindowIcon(QIcon(":/cpp-app/assets/melearner-logo.png"));
-  // The window is a sidebar and an inset. Navigation belongs on the leading edge
-  // where a reader's eye starts and where it stays reachable at every width, and
-  // the page gets the rest. A toolbar across the top puts navigation somewhere the
-  // reader has to look back to on every page, and at a narrow width it is the first
-  // thing to be dropped, which takes navigation with it.
-  auto* center = new shadcn::SidebarProvider; center->setObjectName("appShell");
+  // No rail. The rail held two entries, and a permanent column of navigation for two
+  // destinations is not minimal: it is 232 pixels of the window spent on a switch that
+  // could be a control on the page it switches. The two pages are the library and the
+  // progress, and the progress is one click away from the library in the header, which
+  // is where the reader is already looking.
+  auto* center = new QWidget; center->setObjectName("appShell");
   setCentralWidget(center);
-  sidebar_ = new shadcn::Sidebar(center);
-  sidebar_->setExpandedWidth(232);
-  sidebar_->setCollapsible(shadcn::SidebarCollapsible::Offcanvas);
-  // The brand, at the top of the rail. It is the one thing that is on every page,
-  // which is what the sidebar header is for.
-  auto* brandRow = new QHBoxLayout; brandRow->setContentsMargins(0, 0, 0, 8);
-  brandRow->setSpacing(10);
-  auto* brand = new shadcn::Label({}, sidebar_); brand->setPixmap(windowIcon().pixmap(24, 24));
-  brand->setFixedSize(24, 24); brand->setObjectName("brand");
-  brand->setAccessibleName("melearner"); brandRow->addWidget(brand);
-  auto* brandName = new shadcn::Label(tr("melearner"), sidebar_);
-  brandName->setObjectName("brandName");
-  auto brandFont = brandName->font(); brandFont.setWeight(QFont::DemiBold);
-  brandName->setFont(brandFont); brandRow->addWidget(brandName);
-  brandRow->addStretch();
-  sidebar_->header().addLayout(brandRow);
-  inset_ = new shadcn::SidebarInset(center);
-  auto* shell = &inset_->content();
+  auto* shell = new QVBoxLayout(center);
   shell->setContentsMargins(16, 12, 16, 8); shell->setSpacing(10);
+
   // The header row carries where you are and the two controls that act on the whole
   // application. The search is a field rather than a button, because a reader types
   // into it and a button that opens a dialog is a step they did not ask for.
   auto* toolbar = new QHBoxLayout; toolbar->setSpacing(8);
-  auto* trigger = new shadcn::SidebarTrigger(inset_);
-  trigger->setObjectName("sidebarTrigger");
-  trigger->setAccessibleName(tr("Toggle navigation"));
-  trigger->setToolTip(tr("Toggle navigation (Ctrl+B)"));
-  connect(trigger, &QPushButton::clicked, this, [this, center] { center->toggleSidebar(); });
-  toolbar->addWidget(trigger);
   // The way back to the library only exists once the reader is inside a course, so
   // it appears in the header when there is somewhere to go back to and not before.
   back_ = button(tr("Courses"), "backToLibrary", shadcn::Variant::Ghost); back_->hide();
@@ -201,6 +179,13 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   title_->setMinimumWidth(0); title_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
   toolbar->addWidget(title_, 1);
   outlineToggle_ = button(tr("Lessons"), "toggleOutline", shadcn::Variant::Ghost); outlineToggle_->hide(); toolbar->addWidget(outlineToggle_);
+  // The one control the rail used to hold. It is a toggle rather than a pair of
+  // entries because there are two pages and one of them is where the reader starts.
+  statsNav_ = button(tr("Progress"), "navStats", shadcn::Variant::Outline);
+  statsNav_->setCheckable(true);
+  statsNav_->setToolTip(tr("Your progress across every course"));
+  statsNav_->setAccessibleName(tr("Your progress"));
+  toolbar->addWidget(statsNav_);
   // The search is a field, not a button. A reader who can see a field types into
   // it; a button that opens a dialog is a step they did not ask for, and a second
   // place to look for the same thing.
@@ -221,10 +206,11 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   connect(shortcuts, &QPushButton::clicked, this, [this] { showKeyboardPopup(false); });
   rescan_ = button(tr("Rescan"), "rescanRoot"); rescan_->setParent(center); rescan_->hide(); rescan_->setEnabled(false);
   choose_ = button(tr("Choose root folder"), "chooseRoot", shadcn::Variant::Default); choose_->setEnabled(false);
-  // The menu belongs to the control in the rail, so it is parented there rather
-  // than to a button that no longer exists. A control with no parent is a widget
-  // nothing can find and nothing can show.
-  auto* appearanceMenu = new shadcn::DropdownMenu(sidebar_);
+  auto* settings = button(tr("Settings"), "appearance",
+    shadcn::Variant::Ghost, shadcn::ButtonSize::Icon);
+  settings->setAccessibleName(tr("Application settings"));
+  settings->setToolTip(tr("Application settings"));
+  auto* appearanceMenu = new shadcn::DropdownMenu(settings);
   appearanceMenu->addLabel(tr("Appearance"));
   for (const auto& name : {QString("light"), QString("dark")}) {
     auto& item = appearanceMenu->addItem(name == "dark" ? tr("Dark") : tr("Light"));
@@ -277,19 +263,12 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   // A control that acts on the whole application sits in the rail's footer, not in
   // the header of whatever page happens to be open. It is the same control on every
   // page, and a page header is for things that act on the page.
-  auto& settingsMenuButton = sidebar_->addFooterMenuButton(tr("Settings"));
-  settingsMenuButton.setMenu(appearanceMenu);
-  settingsMenuButton.setAccessibleName(tr("Application settings"));
-  settingsMenuButton.setToolTip(tr("Application settings"));
-  settingsMenuButton.setObjectName("appearance");
+  // Settings acts on the whole application, so it sits in the header beside the other
+  // controls that do, rather than in a rail that no longer exists.
+  settings->setMenu(appearanceMenu);
+  toolbar->addWidget(settings);
   (void)&aboutItem;
   routes_ = new QStackedWidget; shell->addWidget(routes_, 1);
-  center->addSidebar(*sidebar_);
-  center->content().addWidget(inset_);
-  // The rail starts from the width the window has, so a window that opens narrow
-  // begins with the rail off-canvas rather than hidden until something resizes it.
-  railShownForWidth_ = width() >= railFitsBesideContent();
-  sidebar_->setOpen(railShownForWidth_);
   // The library's two pages are the rail's navigation, not a row of tabs under the
   // header. A reader's eye starts at the leading edge, and navigation that lives
   // there is where they look for it on every page rather than somewhere they have to
@@ -341,18 +320,15 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   // The rail's items and the stack are two views of one value. The rail drives the
   // stack, and the stack reports back, so a change from anywhere, including the
   // keyboard, keeps the rail's item in step with what is on screen.
-  libraryNav_ = &sidebar_->addMenuButton(tr("Courses"), true);
-  libraryNav_->setObjectName("navLibrary"); libraryNav_->setAccessibleName(tr("Your courses"));
-  statsNav_ = &sidebar_->addMenuButton(tr("Stats"));
-  statsNav_->setObjectName("navStats"); statsNav_->setAccessibleName(tr("Your progress"));
-  connect(libraryNav_, &QPushButton::clicked, this, [this] { libraryStack_->setCurrentValue("courses"); });
-  connect(statsNav_, &QPushButton::clicked, this, [this] { libraryStack_->setCurrentValue("stats"); });
+  connect(statsNav_, &QPushButton::clicked, this, [this] {
+    libraryStack_->setCurrentValue(statsNav_->isChecked() ? "stats" : "courses");
+  });
   connect(libraryStack_, &shadcn::Tabs::currentChanged, this, [this](const QString& value) {
-    markNav(value == QLatin1String("stats"));
+    const auto stats = value == QLatin1String("stats");
+    if (statsNav_->isChecked() != stats) statsNav_->setChecked(stats);
     observeRevision(libraryRevision_);
     updateLayout();
   });
-  markNav(false);
   split_ = new shadcn::ResizablePanelGroup(Qt::Horizontal);
   outline_ = new QWidget; outline_->setMinimumWidth(240); outline_->setObjectName("courseOutline"); outline_->setAttribute(Qt::WA_StyledBackground);
   auto* outlineLayout = new QVBoxLayout(outline_); outlineLayout->setContentsMargins(12, 14, 12, 12);
@@ -1298,17 +1274,6 @@ void MainWindow::resizeEvent(QResizeEvent* event) {
   // needs, and the reader gets a horizontal scrollbar on a page that is meant to
   // fit. Below the width where both fit, the rail goes off-canvas and the reader
   // brings it back with the trigger or the keyboard shortcut.
-  if (sidebar_) {
-    const auto roomy = width() >= railFitsBesideContent();
-    // The first decision is taken from the width the window actually has, and after
-    // that only a crossing of the threshold moves the rail. Following the reader's
-    // own toggling would fight them: open the window wide, collapse the rail by
-    // hand, and a two pixel resize would open it again.
-    if (roomy != railShownForWidth_) {
-      railShownForWidth_ = roomy;
-      sidebar_->setOpen(roomy);
-    }
-  }
   updateLayout();
 }
 void MainWindow::keyPressEvent(QKeyEvent* event) {
@@ -1411,22 +1376,6 @@ void MainWindow::showError(const QString& message) {
   status_->setText(message); status_->setToolTip(tooltip(message)); qWarning().noquote() << message;
 }
 void MainWindow::closeEvent(QCloseEvent* event) { savePosition(); QMainWindow::closeEvent(event); }
-void MainWindow::markNav(bool stats) {
-  if (!libraryNav_ || !statsNav_) return;
-  libraryNav_->setChecked(!stats);
-  statsNav_->setChecked(stats);
-}
-
-int MainWindow::railFitsBesideContent() const {
-  // The rail is a fixed width, and the page needs room for a wide table and a
-  // readable line of body text. The threshold is the sum, not a magic number: it
-  // changes with the rail's own width and with the reader's text size, and a fixed
-  // pixel figure would be wrong for one of them.
-  const auto rail = sidebar_ ? sidebar_->expandedWidth() : 232;
-  const auto page = qMax(520, fontMetrics().height() * 24);
-  return rail + page;
-}
-
 void MainWindow::applyPresentation() {
   const bool compact = settings_.libraryPresentation == "compact";
   // The presentation setting is a row density, and the view owns the density. The
