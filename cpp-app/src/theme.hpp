@@ -29,9 +29,15 @@ namespace melearner {
            QApplication::styleHints()->cursorFlashTime() == 0;
 }
 
-[[nodiscard]] inline bool systemPrefersDark() {
-    return QApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark;
-}
+/// The colour mode the application opens in, before the saved setting arrives.
+///
+/// Dark, and not whatever the desktop is set to. The interface is one dark
+/// surface with light text on it: a lesson body is read for a long time, and a
+/// bright page in a dark room is the wrong default for that. The saved setting
+/// still wins once the Library has loaded, so a reader who wants light, or whose
+/// stored preference is light, gets light. A system that is already dark and a
+/// reader who never touches the setting both land on the same thing either way.
+[[nodiscard]] inline bool defaultPrefersDark() { return true; }
 
 namespace detail {
 

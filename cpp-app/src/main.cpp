@@ -64,7 +64,7 @@ int main(int argc, char** argv) {
   // The shadcn style replaces the platform style, so it must own the theme and
   // the interface font before any widget is constructed. The colour mode starts
   // at the desktop preference and is corrected once the saved settings arrive.
-  melearner::installAppearance(melearner::systemPrefersDark(), 14);
+  melearner::installAppearance(melearner::defaultPrefersDark(), 14);
   QApplication::setApplicationDisplayName("melearner");
   QApplication::setDesktopFileName("io.github.whitehades.melearner");
   QCommandLineParser arguments;
