@@ -463,6 +463,11 @@ private slots:
     QCOMPARE(lessonTitle->palette().color(QPalette::WindowText),
              QApplication::palette().color(QPalette::WindowText));
     QCOMPARE(window.findChild<QLabel*>("appStatus")->foregroundRole(), QPalette::PlaceholderText);
+    auto* outlineRows = window.findChild<shadcn::TreeView*>("lessons"); QVERIFY(outlineRows);
+    for (const auto role : {QPalette::Base, QPalette::Text, QPalette::Highlight,
+                            QPalette::HighlightedText}) {
+      QCOMPARE(outlineRows->palette().color(role), QApplication::palette().color(role));
+    }
     // Settings acts on the whole application, so it is in the header beside the other
     // controls that do. There is no rail: a column of navigation for two destinations
     // is not minimal.
