@@ -46,8 +46,7 @@ every bundled ELF file to appear exactly once before packaging proceeds.
 The interface uses shadcn-cpp widgets, composed into melearner's own library,
 lesson, and player views. The dependency also supplies the theme and font, and
 is pinned in `cpp-app/cmake/shadcn.cmake`. The application currently installs
-the neutral dark theme only. The library's light theme is used in tests, not
-offered as an application setting.
+the neutral dark theme only. The core application tests use that same theme.
 
 `cpp-app/src/theme.hpp` is the bridge. It reads the installed theme for the
 widgets the application still paints itself, such as the list rows, and it
