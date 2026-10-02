@@ -18,6 +18,13 @@ enum class StudyIcon {
   Fullscreen,
   Check,
   Folder,
+  Volume,
+  Muted,
+  Subtitles,
+  Chapters,
+  Frame,
+  AddSubtitle,
+  Capture,
 };
 
 [[nodiscard]] QIcon studyIcon(StudyIcon icon, QColor color);

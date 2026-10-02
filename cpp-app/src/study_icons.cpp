@@ -163,6 +163,45 @@ void drawIcon(QPainter& painter, StudyIcon icon) {
     case StudyIcon::Fullscreen: drawFullscreen(painter); break;
     case StudyIcon::Check: drawCheck(painter); break;
     case StudyIcon::Folder: drawFolder(painter); break;
+    case StudyIcon::Volume:
+    case StudyIcon::Muted: {
+      QPainterPath speaker; speaker.moveTo(4, 9); speaker.lineTo(8, 9);
+      speaker.lineTo(12, 5); speaker.lineTo(12, 19); speaker.lineTo(8, 15);
+      speaker.lineTo(4, 15); speaker.closeSubpath(); painter.drawPath(speaker);
+      if (icon == StudyIcon::Volume) {
+        painter.drawArc(QRectF(9, 6, 12, 12), -60 * 16, 120 * 16);
+        painter.drawArc(QRectF(12, 9, 6, 6), -60 * 16, 120 * 16);
+      } else {
+        painter.drawLine(QPointF(16, 9), QPointF(21, 15));
+        painter.drawLine(QPointF(21, 9), QPointF(16, 15));
+      }
+      break;
+    }
+    case StudyIcon::Subtitles: {
+      painter.drawRoundedRect(QRectF(3, 5, 18, 14), 2, 2);
+      QPainterPath cc;
+      for (int x : {7, 13}) { cc.moveTo(x + 3, 9); cc.lineTo(x, 9); cc.lineTo(x, 15); cc.lineTo(x + 3, 15); }
+      painter.drawPath(cc); break;
+    }
+    case StudyIcon::Chapters:
+      for (int y : {6, 12, 18}) {
+        painter.drawLine(QPointF(4, y), QPointF(5, y));
+        painter.drawLine(QPointF(9, y), QPointF(20, y));
+      }
+      break;
+    case StudyIcon::Frame: drawPlay(painter); painter.drawLine(QPointF(21, 6), QPointF(21, 18)); break;
+    case StudyIcon::AddSubtitle: {
+      painter.drawRoundedRect(QRectF(3, 10, 18, 10), 2, 2);
+      painter.drawLine(QPointF(12, 4), QPointF(12, 15));
+      painter.drawLine(QPointF(8, 8), QPointF(12, 4));
+      painter.drawLine(QPointF(12, 4), QPointF(16, 8)); break;
+    }
+    case StudyIcon::Capture:
+      painter.drawRoundedRect(QRectF(3, 7, 18, 13), 2, 2);
+      painter.drawEllipse(QRectF(8, 10, 8, 8));
+      painter.drawLine(QPointF(8, 7), QPointF(9, 4));
+      painter.drawLine(QPointF(9, 4), QPointF(15, 4));
+      painter.drawLine(QPointF(15, 4), QPointF(16, 7)); break;
   }
 }
 
