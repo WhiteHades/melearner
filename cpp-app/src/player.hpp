@@ -37,6 +37,8 @@ public:
     using OpenGLProcAddress = void* (*)(void* context, const char* name);
     using RenderUpdateCallback = void (*)(void* context);
 
+    // Software skips hardware decoder and interop probes. Presentation still
+    // uses the caller's OpenGL context, which may itself use a software driver.
     enum class DecodeMode { Automatic, Software };
     explicit Player(QObject* parent = nullptr, DecodeMode decoding = DecodeMode::Automatic);
     ~Player() override;

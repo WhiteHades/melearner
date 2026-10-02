@@ -451,6 +451,9 @@ private:
             {"input-vo-keyboard", "no"},
             {"osc", "no"},
             {"hwdec", decoding_ == Player::DecodeMode::Software ? "no" : "auto"},
+            // libmpv otherwise probes every hardware interop backend even when
+            // decoding is forced to software, creating unused driver contexts.
+            {"gpu-hwdec-interop", decoding_ == Player::DecodeMode::Software ? "no" : "auto"},
             {"vo", "libmpv"},
             {"idle", "yes"},
             {"pause", "yes"},
