@@ -18,6 +18,8 @@ enum class Format : std::uint8_t {
     markdown,
     html,
     docx,
+    csv,
+    xlsx,
 };
 
 enum class BlockKind : std::uint8_t {
@@ -27,6 +29,7 @@ enum class BlockKind : std::uint8_t {
     code,
     quote,
     thematic_break,
+    table,
 };
 
 enum class ErrorCode : std::uint8_t {
@@ -57,6 +60,7 @@ struct Block {
     BlockKind kind = BlockKind::paragraph;
     QString text;
     std::uint8_t level = 0;
+    QVector<QString> cells;
 };
 
 /// A document's blocks as markup for a reader surface.

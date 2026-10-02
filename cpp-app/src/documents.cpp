@@ -6,6 +6,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QMetaObject>
 #include <QMetaType>
 #include <QXmlStreamReader>
@@ -46,6 +47,10 @@ constexpr qsizetype kMaxDepth = 128;
 constexpr zip_int64_t kMaxArchiveEntries = 4'096;
 constexpr zip_int64_t kMaxRelationships = 4'096;
 constexpr qsizetype kMaxWarnings = 512;
+constexpr qsizetype kMaxTableRows = 20'000;
+constexpr qsizetype kMaxTableCells = 200'000;
+constexpr qsizetype kMaxTableColumns = 512;
+constexpr qsizetype kMaxCellUtf8Bytes = 64 * 1024;
 
 [[nodiscard]] Error makeError(ErrorCode code, QString message, QString path = {}) {
     return Error{code, std::move(message), std::move(path)};
@@ -150,7 +155,7 @@ constexpr qsizetype kMaxWarnings = 512;
         return false;
     }
     document.normalizedBytes += utf8Size;
-    document.blocks.push_back(Block{kind, std::move(text), level});
+    document.blocks.push_back(Block{kind, std::move(text), level, {}});
     return true;
 }
 
@@ -250,6 +255,8 @@ enum class DetectedFormat : std::uint8_t {
     markdown,
     html,
     docx,
+    csv,
+    xlsx,
     pdf,
     unsupported,
 };
@@ -269,6 +276,12 @@ enum class DetectedFormat : std::uint8_t {
     }
     if (suffix == QStringLiteral("docx")) {
         return DetectedFormat::docx;
+    }
+    if (suffix == QStringLiteral("csv")) {
+        return DetectedFormat::csv;
+    }
+    if (suffix == QStringLiteral("xlsx")) {
+        return DetectedFormat::xlsx;
     }
     if (suffix == QStringLiteral("pdf")) {
         return DetectedFormat::pdf;
@@ -680,6 +693,94 @@ void htmlPushChildren(
     return readSuccess(std::move(document));
 }
 
+[[nodiscard]] bool appendTableRow(
+    Document& document, QVector<QString> cells, qsizetype& cellCount,
+    std::optional<Error>& error) {
+    if (document.blocks.size() >= kMaxTableRows || cells.size() > kMaxTableColumns ||
+        cellCount > kMaxTableCells - cells.size()) {
+        error = makeError(ErrorCode::too_complex,
+            QStringLiteral("table exceeds row, column, or cell limits"), document.path);
+        return false;
+    }
+    qsizetype rowBytes = 0;
+    for (const auto& cell : cells) {
+        const auto bytes = cell.toUtf8().size();
+        if (bytes > kMaxCellUtf8Bytes || rowBytes > kMaxNormalizedBytes - bytes) {
+            error = makeError(ErrorCode::oversized,
+                QStringLiteral("table cell or row exceeds text limits"), document.path);
+            return false;
+        }
+        rowBytes += bytes;
+    }
+    if (document.normalizedBytes > kMaxNormalizedBytes - rowBytes) {
+        error = makeError(ErrorCode::oversized,
+            QStringLiteral("normalized table exceeds 128 MiB"), document.path);
+        return false;
+    }
+    document.normalizedBytes += rowBytes;
+    cellCount += cells.size();
+    Block row;
+    row.kind = BlockKind::table;
+    row.cells = std::move(cells);
+    document.blocks.push_back(std::move(row));
+    return true;
+}
+
+[[nodiscard]] ReadResult parseCsv(const QString& path, const QByteArray& bytes) {
+    const auto decoded = decodeUtf8(bytes);
+    if (!decoded) return readFailure(makeError(ErrorCode::malformed_utf8,
+        QStringLiteral("CSV document is not valid UTF-8"), path));
+    Document document{path, Format::csv, {}, {}, 0};
+    qsizetype cellCount = 0;
+    QVector<QString> row;
+    QString cell;
+    bool quoted = false;
+    bool afterQuote = false;
+    std::optional<Error> error;
+    auto finishCell = [&]() -> bool {
+        row.push_back(std::move(cell)); cell.clear(); afterQuote = false;
+        if (row.size() > kMaxTableColumns) {
+            error = makeError(ErrorCode::too_complex, QStringLiteral("CSV exceeds 512 columns"), path);
+            return false;
+        }
+        return true;
+    };
+    auto finishRow = [&]() -> bool {
+        if (!finishCell() || !appendTableRow(document, std::move(row), cellCount, error)) return false;
+        row.clear(); return true;
+    };
+    for (qsizetype i = 0; i < decoded->size(); ++i) {
+        const QChar ch = decoded->at(i);
+        if (quoted) {
+            if (ch == QChar('"')) {
+                if (i + 1 < decoded->size() && decoded->at(i + 1) == QChar('"')) {
+                    cell.append(QChar('"')); ++i;
+                } else { quoted = false; afterQuote = true; }
+            } else cell.append(ch);
+        } else if (afterQuote && ch != QChar(',') && ch != QChar('\r') && ch != QChar('\n')) {
+            return readFailure(makeError(ErrorCode::malformed_document,
+                QStringLiteral("CSV has characters after a closing quote"), path));
+        } else if (ch == QChar('"')) {
+            if (!cell.isEmpty()) return readFailure(makeError(ErrorCode::malformed_document,
+                QStringLiteral("CSV quote is not at the start of a cell"), path));
+            quoted = true;
+        } else if (ch == QChar(',')) {
+            if (!finishCell()) return ReadResult{std::nullopt, std::move(error)};
+        } else if (ch == QChar('\r') || ch == QChar('\n')) {
+            if (ch == QChar('\r') && i + 1 < decoded->size() && decoded->at(i + 1) == QChar('\n')) ++i;
+            if (!finishRow()) return ReadResult{std::nullopt, std::move(error)};
+        } else cell.append(ch);
+        if (cell.size() > kMaxCellUtf8Bytes) return readFailure(makeError(
+            ErrorCode::oversized, QStringLiteral("CSV cell exceeds 64 KiB"), path));
+    }
+    if (quoted) return readFailure(makeError(ErrorCode::malformed_document,
+        QStringLiteral("CSV has an unterminated quoted cell"), path));
+    if (!cell.isEmpty() || !row.isEmpty() || afterQuote) {
+        if (!finishRow()) return ReadResult{std::nullopt, std::move(error)};
+    }
+    return readSuccess(std::move(document));
+}
+
 struct MarkdownFrame {
     BlockKind kind = BlockKind::paragraph;
     std::uint8_t level = 0;
@@ -1075,7 +1176,7 @@ struct ArchiveReadResult {
             QStringLiteral("DOCX archive exceeds the 128 MiB compressed limit"),
             path));
     }
-    const QByteArray archiveBytes = file.readAll();
+    const QByteArray archiveBytes = file.read(static_cast<qint64>(kMaxDocxCompressedBytes) + 1);
     if (archiveBytes.size() != archiveSize) {
         return readFailure(makeError(
             ErrorCode::unreadable_file,
@@ -1188,6 +1289,217 @@ struct ArchiveReadResult {
     return parseDocxXml(path, std::move(entry.bytes), std::move(warnings));
 }
 
+[[nodiscard]] ReadResult parseXlsx(const QString& path, QFile& file) {
+    constexpr std::uint64_t maxArchive = 128ULL * 1024 * 1024;
+    constexpr std::uint64_t maxExpanded = 256ULL * 1024 * 1024;
+    const auto size = file.size();
+    if (size < 0 || static_cast<std::uint64_t>(size) > maxArchive)
+        return readFailure(makeError(ErrorCode::oversized, QStringLiteral("XLSX archive exceeds 128 MiB"), path));
+    const QByteArray archiveBytes = file.read(static_cast<qint64>(maxArchive) + 1);
+    if (archiveBytes.size() != size)
+        return readFailure(makeError(ErrorCode::unreadable_file, QStringLiteral("XLSX archive could not be read completely"), path));
+    zip_error_t zerror; zip_error_init(&zerror);
+    auto* source = zip_source_buffer_create(archiveBytes.constData(), archiveBytes.size(), 0, &zerror);
+    if (!source) { zip_error_fini(&zerror); return readFailure(makeError(ErrorCode::archive_error, QStringLiteral("XLSX source could not be created"), path)); }
+    ZipHandle archive(zip_open_from_source(source, ZIP_RDONLY | ZIP_CHECKCONS, &zerror));
+    if (!archive.get()) {
+        zip_source_free(source);
+        zip_error_fini(&zerror);
+        return readFailure(makeError(ErrorCode::archive_error, QStringLiteral("XLSX archive is invalid"), path));
+    }
+    zip_error_fini(&zerror);
+    const auto count = zip_get_num_entries(archive.get(), 0);
+    if (count < 0 || count > 4096) return readFailure(makeError(ErrorCode::too_complex, QStringLiteral("XLSX archive has too many entries"), path));
+    std::uint64_t expanded = 0;
+    struct ArchiveEntry { zip_uint64_t index = 0; zip_uint64_t size = 0; };
+    struct WorkbookSheet { QString name; QString relationshipId; };
+    QHash<QString, ArchiveEntry> entries;
+    QByteArray sharedXml;
+    QByteArray workbookXml;
+    QByteArray relationshipsXml;
+    for (zip_uint64_t i = 0; i < static_cast<zip_uint64_t>(count); ++i) {
+        zip_stat_t stat{};
+        if (zip_stat_index(archive.get(), i, ZIP_FL_UNCHANGED, &stat) != 0 || !stat.name)
+            return readFailure(makeError(ErrorCode::archive_error, QStringLiteral("XLSX entry metadata is invalid"), path));
+        QString name = QString::fromUtf8(stat.name);
+        if (!safeArchiveName(name) || stat.size > maxExpanded - expanded)
+            return readFailure(makeError(ErrorCode::oversized, QStringLiteral("XLSX has unsafe paths or exceeds expanded size limit"), path));
+        expanded += stat.size;
+        entries.insert(name, ArchiveEntry{i, stat.size});
+        if (name != QStringLiteral("xl/sharedStrings.xml") &&
+            name != QStringLiteral("xl/workbook.xml") &&
+            name != QStringLiteral("xl/_rels/workbook.xml.rels")) continue;
+        if (stat.size > 32ULL * 1024 * 1024 || stat.size > static_cast<zip_uint64_t>(std::numeric_limits<int>::max()))
+            return readFailure(makeError(ErrorCode::oversized, QStringLiteral("XLSX worksheet XML exceeds 32 MiB"), path));
+        auto entry = readZipEntry(archive.get(), i, stat.size, path);
+        if (!entry.succeeded()) return ReadResult{std::nullopt, std::move(entry.error)};
+        if (name == QStringLiteral("xl/sharedStrings.xml")) sharedXml = std::move(entry.bytes);
+        else if (name == QStringLiteral("xl/workbook.xml")) workbookXml = std::move(entry.bytes);
+        else relationshipsXml = std::move(entry.bytes);
+    }
+    if (workbookXml.isEmpty() || relationshipsXml.isEmpty())
+        return readFailure(makeError(ErrorCode::malformed_document,
+            QStringLiteral("XLSX workbook metadata is missing"), path));
+    QHash<QString, QString> worksheetTargets;
+    {
+        QXmlStreamReader xml(relationshipsXml); xml.setEntityExpansionLimit(4096);
+        while (!xml.atEnd()) {
+            const auto token = xml.readNext();
+            if (token == QXmlStreamReader::DTD || token == QXmlStreamReader::EntityReference || token == QXmlStreamReader::Invalid)
+                return readFailure(makeError(ErrorCode::malformed_document, QStringLiteral("XLSX relationships XML is invalid"), path));
+            if (token != QXmlStreamReader::StartElement || xml.name() != QStringLiteral("Relationship")) continue;
+            QString id, target, type, targetMode;
+            for (const auto& attribute : xml.attributes()) {
+                const auto name = attribute.name();
+                if (name == QStringLiteral("Id")) id = attribute.value().toString();
+                else if (name == QStringLiteral("Target")) target = attribute.value().toString();
+                else if (name == QStringLiteral("Type")) type = attribute.value().toString();
+                else if (name == QStringLiteral("TargetMode")) targetMode = attribute.value().toString();
+            }
+            if (id.isEmpty() || target.isEmpty() || worksheetTargets.contains(id))
+                return readFailure(makeError(ErrorCode::malformed_document, QStringLiteral("XLSX has invalid relationships"), path));
+            if (targetMode == QStringLiteral("External")) {
+                worksheetTargets.insert(id, QStringLiteral("!external!") + type);
+                continue;
+            }
+            QString targetPath = target;
+            if (targetPath.startsWith(QChar('/'))) targetPath.remove(0, 1);
+            else targetPath.prepend(QStringLiteral("xl/"));
+            if (!safeArchiveName(targetPath)) return readFailure(makeError(
+                ErrorCode::malformed_document, QStringLiteral("XLSX relationship escapes the package"), path));
+            worksheetTargets.insert(id, type + QChar('\n') + targetPath);
+        }
+        if (xml.hasError()) return readFailure(makeError(ErrorCode::malformed_document, QStringLiteral("XLSX relationships XML is malformed"), path));
+    }
+    QVector<WorkbookSheet> sheets;
+    {
+        QXmlStreamReader xml(workbookXml); xml.setEntityExpansionLimit(4096);
+        while (!xml.atEnd()) {
+            const auto token = xml.readNext();
+            if (token == QXmlStreamReader::DTD || token == QXmlStreamReader::EntityReference || token == QXmlStreamReader::Invalid)
+                return readFailure(makeError(ErrorCode::malformed_document, QStringLiteral("XLSX workbook XML is invalid"), path));
+            if (token != QXmlStreamReader::StartElement || xml.name() != QStringLiteral("sheet")) continue;
+            QString name, state, relationshipId;
+            for (const auto& attribute : xml.attributes()) {
+                if (attribute.name() == QStringLiteral("name")) name = attribute.value().toString();
+                else if (attribute.name() == QStringLiteral("state")) state = attribute.value().toString();
+                else if (attribute.name() == QStringLiteral("id") &&
+                         attribute.namespaceUri().endsWith(QStringLiteral("/relationships")))
+                    relationshipId = attribute.value().toString();
+            }
+            if (name.isEmpty() || relationshipId.isEmpty()) return readFailure(makeError(
+                ErrorCode::malformed_document, QStringLiteral("XLSX sheet declaration is incomplete"), path));
+            if (state.isEmpty() || state == QStringLiteral("visible")) sheets.push_back({name, relationshipId});
+            if (sheets.size() > 32) return readFailure(makeError(ErrorCode::too_complex,
+                QStringLiteral("XLSX has more than 32 visible worksheets"), path));
+        }
+        if (xml.hasError()) return readFailure(makeError(ErrorCode::malformed_document, QStringLiteral("XLSX workbook XML is malformed"), path));
+    }
+    QVector<QPair<QString, ArchiveEntry>> visibleSheets;
+    for (const auto& sheet : sheets) {
+        const auto relationship = worksheetTargets.constFind(sheet.relationshipId);
+        if (relationship == worksheetTargets.cend()) return readFailure(makeError(
+            ErrorCode::malformed_document, QStringLiteral("XLSX worksheet relationship is missing"), path));
+        if (relationship->startsWith(QStringLiteral("!external!"))) return readFailure(makeError(
+            ErrorCode::malformed_document, QStringLiteral("XLSX worksheet cannot use an external relationship"), path));
+        const auto separator = relationship->indexOf(QChar('\n'));
+        if (separator < 0 || !relationship->left(separator).endsWith(QStringLiteral("/worksheet")))
+            return readFailure(makeError(ErrorCode::malformed_document,
+                QStringLiteral("XLSX sheet does not reference a worksheet part"), path));
+        const auto targetPath = relationship->mid(separator + 1);
+        const auto entry = entries.constFind(targetPath);
+        if (entry == entries.cend()) return readFailure(makeError(
+            ErrorCode::malformed_document, QStringLiteral("XLSX worksheet part is missing"), path));
+        if (entry->size > 32ULL * 1024 * 1024 || entry->size > static_cast<zip_uint64_t>(std::numeric_limits<int>::max()))
+            return readFailure(makeError(ErrorCode::oversized,
+                QStringLiteral("XLSX worksheet XML exceeds 32 MiB"), path));
+        visibleSheets.push_back({sheet.name, *entry});
+    }
+    QVector<QString> shared;
+    qsizetype sharedBytes = 0;
+    if (!sharedXml.isEmpty()) {
+        QXmlStreamReader xml(sharedXml); xml.setEntityExpansionLimit(4096);
+        QString current; bool inString = false;
+        while (!xml.atEnd()) {
+            const auto token = xml.readNext();
+            if (token == QXmlStreamReader::DTD || token == QXmlStreamReader::EntityReference || token == QXmlStreamReader::Invalid)
+                return readFailure(makeError(ErrorCode::malformed_document, QStringLiteral("XLSX shared strings contain invalid XML"), path));
+            if (token == QXmlStreamReader::StartElement && xml.name() == QStringLiteral("si")) { inString = true; current.clear(); }
+            else if (token == QXmlStreamReader::Characters && inString) {
+                current += xml.text();
+                if (current.size() > kMaxCellUtf8Bytes)
+                    return readFailure(makeError(ErrorCode::oversized, QStringLiteral("XLSX shared string exceeds 64 KiB"), path));
+            }
+            else if (token == QXmlStreamReader::EndElement && xml.name() == QStringLiteral("si")) {
+                const auto stringBytes = current.toUtf8().size();
+                if (shared.size() >= 200'000 || stringBytes > kMaxCellUtf8Bytes ||
+                    sharedBytes > kMaxNormalizedBytes - stringBytes)
+                    return readFailure(makeError(ErrorCode::too_complex, QStringLiteral("XLSX shared strings exceed limits"), path));
+                sharedBytes += stringBytes;
+                shared.push_back(std::move(current)); inString = false;
+            }
+        }
+        if (xml.hasError()) return readFailure(makeError(ErrorCode::malformed_document, QStringLiteral("XLSX shared strings XML is malformed"), path));
+    }
+    Document doc{path, Format::xlsx, {}, {}, 0}; qsizetype cells = 0;
+    for (const auto& [sheetName, entry] : visibleSheets) {
+        auto data = readZipEntry(archive.get(), entry.index, entry.size, path);
+        if (!data.succeeded()) return ReadResult{std::nullopt, std::move(data.error)};
+        std::optional<Error> headingError;
+        if (!appendBlock(doc, BlockKind::heading, sheetName, 2, headingError))
+            return ReadResult{std::nullopt, std::move(headingError)};
+        QXmlStreamReader xml(data.bytes); xml.setEntityExpansionLimit(4096);
+        QVector<QString> row; QString value; QString type; bool inCell = false; bool inValue = false;
+        qsizetype lastCol = -1;
+        while (!xml.atEnd()) {
+            const auto token = xml.readNext();
+            if (token == QXmlStreamReader::DTD || token == QXmlStreamReader::EntityReference || token == QXmlStreamReader::Invalid)
+                return readFailure(makeError(ErrorCode::malformed_document, QStringLiteral("XLSX worksheet contains invalid XML"), path));
+            if (token == QXmlStreamReader::StartElement) {
+                if (xml.name() == QStringLiteral("row")) { row.clear(); lastCol = -1; }
+                else if (xml.name() == QStringLiteral("c")) {
+                    inCell = true; value.clear(); type = xml.attributes().value(QStringLiteral("t")).toString();
+                    const QString ref = xml.attributes().value(QStringLiteral("r")).toString();
+                    qsizetype col = 0; qsizetype n = 0;
+                    while (n < ref.size() && ref.at(n).isLetter()) {
+                        const auto letter = ref.at(n).toUpper().unicode();
+                        if (letter < 'A' || letter > 'Z') return readFailure(makeError(
+                            ErrorCode::malformed_document, QStringLiteral("XLSX cell has an invalid column reference"), path));
+                        if (col > kMaxTableColumns) return readFailure(makeError(ErrorCode::too_complex,
+                            QStringLiteral("XLSX worksheet exceeds 512 columns"), path));
+                        col = col * 26 + letter - 'A' + 1;
+                        if (col > kMaxTableColumns) return readFailure(makeError(ErrorCode::too_complex,
+                            QStringLiteral("XLSX worksheet exceeds 512 columns"), path));
+                        ++n;
+                    }
+                    if (col <= 0) col = lastCol + 2;
+                    if (col > kMaxTableColumns) return readFailure(makeError(ErrorCode::too_complex, QStringLiteral("XLSX worksheet exceeds 512 columns"), path));
+                    while (row.size() < col) row.push_back({});
+                    lastCol = col - 1;
+                } else if (inCell && (xml.name() == QStringLiteral("v") || xml.name() == QStringLiteral("t"))) inValue = true;
+            } else if (token == QXmlStreamReader::Characters && inValue) {
+                value += xml.text();
+                if (value.size() > kMaxCellUtf8Bytes) return readFailure(makeError(
+                    ErrorCode::oversized, QStringLiteral("XLSX cell exceeds 64 KiB"), path));
+            }
+            else if (token == QXmlStreamReader::EndElement) {
+                if (inCell && (xml.name() == QStringLiteral("v") || xml.name() == QStringLiteral("t"))) inValue = false;
+                else if (xml.name() == QStringLiteral("c") && inCell) {
+                    if (type == QStringLiteral("s")) { bool ok = false; const auto idx = value.toInt(&ok); value = ok && idx >= 0 && idx < shared.size() ? shared.at(idx) : QString{}; }
+                    else if (type == QStringLiteral("b")) value = value == QStringLiteral("1") ? QStringLiteral("TRUE") : QStringLiteral("FALSE");
+                    row[lastCol] = std::move(value); inCell = false;
+                } else if (xml.name() == QStringLiteral("row") && !row.isEmpty()) {
+                    std::optional<Error> error;
+                    if (!appendTableRow(doc, std::move(row), cells, error))
+                        return ReadResult{std::nullopt, std::move(error)};
+                }
+            }
+        }
+        if (xml.hasError()) return readFailure(makeError(ErrorCode::malformed_document, QStringLiteral("XLSX worksheet XML is malformed"), path));
+    }
+    return readSuccess(std::move(doc));
+}
+
 [[nodiscard]] PageResult makePage(const Document& document, RequestId generation, qsizetype offset) {
     if (offset < 0 || offset > document.blocks.size()) {
         return pageFailure(makeError(
@@ -1204,22 +1516,54 @@ struct ArchiveReadResult {
         {},
         document.warnings};
     qsizetype pageBytes = 0;
+    qsizetype pageCells = 0;
+    bool tableMarkupCounted = false;
     for (qsizetype index = offset;
          index < document.blocks.size() && page.blocks.size() < Documents::kPageBlockLimit;
          ++index) {
         const auto& block = document.blocks.at(index);
-        const auto blockBytes = block.text.toUtf8().size();
+        qsizetype blockBytes = block.text.toUtf8().size();
+        qsizetype blockCells = 0;
+        if (block.kind == BlockKind::table) {
+            blockBytes += 9; // <tr></tr>
+            if (!tableMarkupCounted) blockBytes += 31; // <table><tbody> and closing tags
+            blockCells = block.cells.size();
+            for (const auto& cell : block.cells) {
+                const auto cellBytes = cell.toUtf8().size();
+                if (cellBytes > Documents::kPageByteLimit ||
+                    blockBytes > Documents::kPageByteLimit - cellBytes - 9) {
+                    return pageFailure(makeError(
+                        ErrorCode::oversized,
+                        QStringLiteral("one table row exceeds the 1 MiB page limit"),
+                        document.path));
+                }
+                blockBytes += cellBytes + 9; // <td></td>
+            }
+        }
         if (blockBytes > Documents::kPageByteLimit) {
             return pageFailure(makeError(
                 ErrorCode::oversized,
                 QStringLiteral("one normalized block exceeds the 1 MiB page limit"),
                 document.path));
         }
+        if (blockCells > 4096) {
+            return pageFailure(makeError(ErrorCode::too_complex,
+                QStringLiteral("one table row exceeds the 4096-cell page limit"), document.path));
+        }
+        if (pageCells > 4096 - blockCells) {
+            if (page.blocks.isEmpty()) return pageFailure(makeError(ErrorCode::too_complex,
+                QStringLiteral("one table row exceeds the 4096-cell page limit"), document.path));
+            break;
+        }
         if (pageBytes > Documents::kPageByteLimit - blockBytes) {
+            if (page.blocks.isEmpty()) return pageFailure(makeError(
+                ErrorCode::oversized, QStringLiteral("one normalized block exceeds the 1 MiB page limit"), document.path));
             break;
         }
         page.blocks.push_back(block);
         pageBytes += blockBytes;
+        pageCells += blockCells;
+        if (block.kind == BlockKind::table) tableMarkupCounted = true;
     }
     return pageSuccess(std::move(page));
 }
@@ -1492,18 +1836,15 @@ ReadResult Documents::read(const OpenRequest& request) {
             QStringLiteral("PDF rendering requires the PDFium module"),
             path.file));
     }
-    if (format == DetectedFormat::unsupported) {
-        return readFailure(makeError(
-            ErrorCode::unsupported_format,
-            QStringLiteral("document format is not supported by the native reader"),
-            path.file));
-    }
     auto opened = local_files::LocalFiles::openRead(path.root, path.file);
     if (!opened.has_value()) {
         return readFailure(fromLocalFileError(opened.error()));
     }
     if (format == DetectedFormat::docx) {
         return parseDocx(path.file, *opened.value());
+    }
+    if (format == DetectedFormat::xlsx) {
+        return parseXlsx(path.file, *opened.value());
     }
     QByteArray bytes;
     if (const auto error = readBoundedFile(*opened.value(), path.file, bytes); error.has_value()) {
@@ -1512,10 +1853,34 @@ ReadResult Documents::read(const OpenRequest& request) {
     if (format == DetectedFormat::text) {
         return parseText(path.file, Format::text, bytes);
     }
+    if (format == DetectedFormat::csv) {
+        return parseCsv(path.file, bytes);
+    }
     if (format == DetectedFormat::markdown) {
         return parseMarkdown(path.file, bytes);
     }
-    return parseHtml(path.file, bytes);
+    if (format == DetectedFormat::html) return parseHtml(path.file, bytes);
+    if (const auto text = decodeUtf8(bytes); text.has_value()) {
+        bool binary = false;
+        for (const QChar ch : *text) {
+            if (ch.isNull() || (ch.unicode() < 0x20 && ch != QChar('\n') && ch != QChar('\r') && ch != QChar('\t')))
+                { binary = true; break; }
+        }
+        if (!binary) return parseText(path.file, Format::text, bytes);
+    }
+    Document preview{path.file, Format::text, {}, {}, 0};
+    addWarning(preview, QStringLiteral("Unrecognized binary file; showing a bounded hexadecimal preview only."));
+    const auto count = std::min<qsizetype>(bytes.size(), 4096);
+    for (qsizetype offset = 0; offset < count; offset += 16) {
+        const auto length = std::min<qsizetype>(16, count - offset);
+        const auto line = bytes.mid(offset, length).toHex(' ');
+        std::optional<Error> error;
+        if (!appendBlock(preview, BlockKind::code,
+                QStringLiteral("%1  %2").arg(offset, 8, 16, QChar('0')).arg(QString::fromLatin1(line)), 0, error))
+            return ReadResult{std::nullopt, std::move(error)};
+    }
+    if (bytes.size() > count) addWarning(preview, QStringLiteral("Hex preview truncated after 4096 bytes."));
+    return readSuccess(std::move(preview));
 }
 
 QString toHtml(const QVector<Block>& blocks) {
@@ -1525,6 +1890,12 @@ QString toHtml(const QVector<Block>& blocks) {
   // list item: the reader surface styles a list as a list, and an item outside one
   // renders as an ordinary paragraph with its bullet nowhere in sight.
   bool inList = false;
+  bool inTable = false;
+  const auto closeTable = [&] {
+    if (!inTable) return;
+    html += QStringLiteral("</tbody></table>");
+    inTable = false;
+  };
   const auto closeList = [&] {
     if (!inList) return;
     html += QStringLiteral("</ul>");
@@ -1532,6 +1903,7 @@ QString toHtml(const QVector<Block>& blocks) {
   };
   for (const auto& block : blocks) {
     const auto text = block.text.toHtmlEscaped();
+    if (block.kind != BlockKind::table) closeTable();
     switch (block.kind) {
       case BlockKind::heading:
         closeList();
@@ -1548,7 +1920,7 @@ QString toHtml(const QVector<Block>& blocks) {
         // The code block is marked as a block of its own. Without the surrounding
         // break the reader surface runs the next block into the same paragraph and
         // the code stops being distinguishable from the prose around it.
-        html += QStringLiteral("<p><pre><code>%1</code></pre></p>").arg(text);
+        html += QStringLiteral("<pre><code>%1</code></pre>").arg(text);
         break;
       case BlockKind::quote:
         closeList();
@@ -1557,6 +1929,14 @@ QString toHtml(const QVector<Block>& blocks) {
       case BlockKind::thematic_break:
         closeList();
         html += QStringLiteral("<hr>");
+        break;
+      case BlockKind::table:
+        closeList();
+        if (!inTable) { html += QStringLiteral("<table><tbody>"); inTable = true; }
+        html += QStringLiteral("<tr>");
+        for (const auto& cell : block.cells)
+          html += QStringLiteral("<td>%1</td>").arg(cell.toHtmlEscaped());
+        html += QStringLiteral("</tr>");
         break;
       case BlockKind::paragraph:
       default:
@@ -1569,6 +1949,7 @@ QString toHtml(const QVector<Block>& blocks) {
     }
   }
   closeList();
+  closeTable();
   return html;
 }
 
