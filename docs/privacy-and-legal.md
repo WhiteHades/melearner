@@ -20,6 +20,10 @@ Course identity data, fingerprints, missing-folder state, progress, and lesson a
 
 melearner also writes `.melearner-course.json` into available course folders so later scans can match by marker ID before weaker fingerprint matching. These marker files stay on disk with the course folders, contain only the local course identity value, and are never sent anywhere by the app.
 
+A second launch activates the existing window for the same library. On Linux,
+activation uses a local kernel socket and verifies that both processes belong
+to the same user. It sends no course paths or executable commands.
+
 ## Legal Disclaimer
 
 melearner is a local media player and file organizer. It does not distribute, stream, download, host, or facilitate access to any content.
