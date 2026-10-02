@@ -52,11 +52,17 @@ private slots:
   void initTestCase() { Q_INIT_RESOURCE(assets); melearner::installTheme(true, 14); }
   void playsPausesAndRestoresPosition_data() {
     QTest::addColumn<int>("fontScale");
-    QTest::newRow("normal-text") << 1;
-    QTest::newRow("double-text") << 2;
+    QTest::addColumn<QString>("mediaFile");
+    QTest::addColumn<int>("audioTracks");
+    QTest::newRow("normal-text") << 1 << "Systems 日本語/01 H264 AAC.mp4" << 1;
+    QTest::newRow("double-text") << 2 << "Systems 日本語/01 H264 AAC.mp4" << 1;
+    QTest::newRow("hevc-main10") << 1 << "03 HEVC Main 10.mkv" << 0;
+    QTest::newRow("multiple-audio-tracks") << 1 << "02 Multi audio chapters.mkv" << 2;
   }
   void playsPausesAndRestoresPosition() {
     QFETCH(int, fontScale);
+    QFETCH(QString, mediaFile);
+    QFETCH(int, audioTracks);
     const auto originalFont = QApplication::font();
     const auto restoreFont = qScopeGuard([originalFont] { QApplication::setFont(originalFont); });
     auto scaledFont = originalFont;
@@ -67,7 +73,7 @@ private slots:
     QVERIFY(data.isValid());
     const auto root = data.path() + "/Courses";
     QVERIFY(QDir().mkpath(root + "/Video course/Section"));
-    QVERIFY(QFile::copy(QStringLiteral(MELEARNER_SOURCE_DIR) + "/fixtures/parity/media/Systems 日本語/01 H264 AAC.mp4",
+    QVERIFY(QFile::copy(QStringLiteral(MELEARNER_SOURCE_DIR) + "/fixtures/parity/media/" + mediaFile,
       root + "/Video course/Section/01 Video.mp4"));
     QVERIFY(QFile::copy(QStringLiteral(MELEARNER_SOURCE_DIR) + "/fixtures/parity/documents/blank-500-pages.pdf",
       root + "/Video course/Section/02 Reading.pdf"));
@@ -108,7 +114,7 @@ private slots:
       // shadcn dropdown menus and the timeline is a shadcn slider.
       QVERIFY(qobject_cast<shadcn::DropdownMenu*>(window.findChild<QMenu*>("videoSettings")));
       auto* audio = window.findChild<QMenu*>("audioTrack"); QVERIFY(audio);
-      QTRY_VERIFY(!audio->actions().isEmpty());
+      QTRY_COMPARE(audio->actions().size(), audioTracks);
       QCOMPARE(settings->menu()->objectName(), QString("videoSettings"));
       QVERIFY(controls->isAncestorOf(settings));
       auto* timeline = window.findChild<shadcn::Slider*>("playbackPosition"); QVERIFY(timeline);
@@ -296,7 +302,14 @@ private slots:
         QTRY_VERIFY(!rates.isEmpty()); QCOMPARE(rates.last().first().toDouble(), 1.5);
         const auto captureDirectory = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
         if (!captureDirectory.isEmpty()) QVERIFY(window.grab().save(captureDirectory + QString("/player-minimum-%1x.png").arg(fontScale)));
-        window.resize(1280, 720);
+        window.resize(std::max(1280, window.fontMetrics().height() * 40), 720);
+        auto* outlinePane = window.findChild<QWidget*>("courseOutline");
+        QVERIFY(outlinePane);
+        // Qt applies the split layout on the next event pass after a resize.
+        // Wait for the actual viewer geometry before capturing the wide page.
+        QTRY_VERIFY(outlinePane->isVisible() && scroll->isVisible());
+        QTRY_VERIFY(outlinePane->mapTo(&window, QPoint(outlinePane->width(), 0)).x() <=
+                    scroll->mapTo(&window, QPoint()).x());
         // The application stays in neutral dark across playback and menu use.
         auto* appearance = window.findChild<QPushButton*>("appearance")->menu();
         QVERIFY(appearance);
