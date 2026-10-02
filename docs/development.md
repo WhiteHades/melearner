@@ -38,6 +38,8 @@ It records each bundled executable, library and Qt plugin, its input SHA-256,
 its final SHA-256 after ELF relocation, and its size. The input hashes allow
 comparison with the original build or distribution package payloads. The
 inventory contains no workstation paths and does not replace license notices.
+The native Arch stage validator checks the final sizes and hashes and requires
+every bundled ELF file to appear exactly once before packaging proceeds.
 
 ## Interface
 

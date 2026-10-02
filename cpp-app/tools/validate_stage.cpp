@@ -1,3 +1,4 @@
+#include <QCryptographicHash>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
@@ -6,6 +7,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
+#include <QSet>
 #include <QStringList>
 
 #include <iostream>
@@ -35,6 +37,69 @@ bool beneath(const QString& root, const QString& candidate) {
     const auto cleanRoot = QDir::cleanPath(root);
     const auto cleanCandidate = QDir::cleanPath(candidate);
     return cleanCandidate == cleanRoot || cleanCandidate.startsWith(cleanRoot + QDir::separator());
+}
+
+bool sha256Text(const QString& value) {
+    if (value.size() != 64) return false;
+    for (const auto character : value) {
+        if (!((character >= QLatin1Char('0') && character <= QLatin1Char('9'))
+              || (character >= QLatin1Char('a') && character <= QLatin1Char('f')))) return false;
+    }
+    return true;
+}
+
+QSet<QString> validateInventory(const QString& stage, const QString& usrRoot) {
+    const auto inventoryInfo = requireFile(stage, QStringLiteral("usr/share/doc/melearner/runtime-binaries.json"), QStringLiteral("runtime binary inventory"));
+    QFile inventoryFile(inventoryInfo.filePath());
+    if (inventoryInfo.size() > 32 * 1024 * 1024 || !inventoryFile.open(QIODevice::ReadOnly)) {
+        fail(QStringLiteral("cannot read runtime binary inventory"));
+    }
+    QJsonParseError error;
+    const auto document = QJsonDocument::fromJson(inventoryFile.readAll(), &error);
+    if (error.error != QJsonParseError::NoError || !document.isObject()) fail(QStringLiteral("runtime binary inventory must be a JSON object"));
+    const auto inventory = document.object();
+    if (inventory.value(QStringLiteral("schemaVersion")).toDouble(-1) != 1
+        || inventory.value(QStringLiteral("version")).toString() != QStringLiteral("0.1.9")) {
+        fail(QStringLiteral("runtime binary inventory schema/version mismatch"));
+    }
+    const auto files = inventory.value(QStringLiteral("files"));
+    if (!files.isArray() || files.toArray().isEmpty()) fail(QStringLiteral("runtime binary inventory files must be a nonempty array"));
+    const QStringList sourceKinds{QStringLiteral("application-build"), QStringLiteral("mpv-build"), QStringLiteral("library-provider"), QStringLiteral("qt-plugin-provider")};
+    QSet<QString> paths;
+    for (const auto& value : files.toArray()) {
+        if (!value.isObject()) fail(QStringLiteral("runtime binary inventory entry must be an object"));
+        const auto entry = value.toObject();
+        const auto relative = entry.value(QStringLiteral("path")).toString();
+        if (!relative.startsWith(QStringLiteral("usr/")) || relative.contains(QLatin1Char('\\'))
+            || relative.contains(QChar::Null) || QDir::cleanPath(relative) != relative
+            || paths.contains(relative)) fail(QStringLiteral("unsafe or duplicate runtime inventory path: %1").arg(relative));
+        const auto info = requireFile(stage, relative, QStringLiteral("inventoried binary"));
+        if (!beneath(usrRoot, info.canonicalFilePath())
+            || info.canonicalFilePath() != QDir::cleanPath(info.absoluteFilePath())) {
+            fail(QStringLiteral("runtime inventory path is not a canonical file within usr: %1").arg(relative));
+        }
+        const auto sourceName = entry.value(QStringLiteral("sourceName")).toString();
+        if (sourceName.isEmpty() || sourceName == QStringLiteral(".") || sourceName == QStringLiteral("..")
+            || sourceName.contains(QLatin1Char('/')) || sourceName.contains(QLatin1Char('\\')) || sourceName.contains(QChar::Null)
+            || !sourceKinds.contains(entry.value(QStringLiteral("sourceKind")).toString())
+            || !sha256Text(entry.value(QStringLiteral("sourceSha256")).toString())
+            || !sha256Text(entry.value(QStringLiteral("sha256")).toString())) {
+            fail(QStringLiteral("invalid runtime inventory input identity: %1").arg(relative));
+        }
+        const auto size = entry.value(QStringLiteral("size"));
+        if (!size.isDouble() || size.toDouble(-1) != static_cast<double>(info.size())) {
+            fail(QStringLiteral("runtime inventory size mismatch: %1").arg(relative));
+        }
+        QFile binaryFile(info.filePath());
+        if (!binaryFile.open(QIODevice::ReadOnly) || binaryFile.read(4) != QByteArray("\x7f" "ELF", 4)
+            || !binaryFile.seek(0)) fail(QStringLiteral("runtime inventory file is not a readable ELF: %1").arg(relative));
+        QCryptographicHash hash(QCryptographicHash::Sha256);
+        if (!hash.addData(&binaryFile) || QString::fromLatin1(hash.result().toHex()) != entry.value(QStringLiteral("sha256")).toString()) {
+            fail(QStringLiteral("runtime inventory hash mismatch: %1").arg(relative));
+        }
+        paths.insert(relative);
+    }
+    return paths;
 }
 
 void validate(const QString& stage) {
@@ -89,6 +154,8 @@ void validate(const QString& stage) {
     if (metadata.value(QStringLiteral("version")).toString() != QStringLiteral("0.1.9")) fail(QStringLiteral("runtime-stage.json version must be 0.1.9"));
     if (metadata.value(QStringLiteral("architecture")).toString() != QStringLiteral("x86_64")) fail(QStringLiteral("runtime-stage.json architecture must be x86_64"));
     if (!metadata.value(QStringLiteral("releaseQualified")).isBool() || metadata.value(QStringLiteral("releaseQualified")).toBool()) fail(QStringLiteral("runtime-stage.json must keep releaseQualified false"));
+    if (metadata.value(QStringLiteral("binaryInventory")).toString() != QStringLiteral("runtime-binaries.json")) fail(QStringLiteral("runtime-stage.json must name runtime-binaries.json"));
+    auto inventoriedPaths = validateInventory(stage, usrRoot);
     const QStringList expectedLegal{QStringLiteral("LICENSE"), QStringLiteral("THIRD_PARTY_NOTICES"), QStringLiteral("melearner.spdx.json"), QStringLiteral("runtime-lock.json"), QStringLiteral("reference-profiles-v1.json")};
     QStringList actualLegal;
     if (metadata.value(QStringLiteral("legalInputs")).isArray()) {
@@ -124,6 +191,14 @@ void validate(const QString& stage) {
     while (iterator.hasNext()) {
         const auto entryPath = iterator.next();
         const QFileInfo info(entryPath);
+        if (info.isFile() && !info.isSymLink()) {
+            QFile file(entryPath);
+            if (!file.open(QIODevice::ReadOnly)) fail(QStringLiteral("cannot read staged file: %1").arg(entryPath));
+            if (file.read(4) == QByteArray("\x7f" "ELF", 4)) {
+                const auto relative = QDir(stage).relativeFilePath(entryPath);
+                if (!inventoriedPaths.remove(relative)) fail(QStringLiteral("staged ELF is absent from runtime inventory: %1").arg(relative));
+            }
+        }
         if (info.isSymLink()) {
             std::error_code error;
             const auto link = std::filesystem::read_symlink(std::filesystem::path(entryPath.toStdString()), error);
@@ -143,6 +218,7 @@ void validate(const QString& stage) {
             if (QStringList{QStringLiteral("js"), QStringLiteral("mjs"), QStringLiteral("cjs"), QStringLiteral("html"), QStringLiteral("htm")}.contains(suffix)) fail(QStringLiteral("browser application asset is staged: %1").arg(entryPath));
         }
     }
+    if (!inventoriedPaths.isEmpty()) fail(QStringLiteral("runtime inventory contains unvisited binaries"));
 
     const auto privateDir = path(stage, QStringLiteral("usr/lib/melearner"));
     const QFileInfo privateInfo(privateDir);
