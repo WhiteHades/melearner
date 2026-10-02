@@ -117,6 +117,7 @@ private:
   PagedListModel* courseModel_;
   melearner::CourseOutlineModel* outlineModel_;
   bool compactOutline_ = true;
+  bool compactLayout_ = false;
   bool keyboardNavigation_ = false;
   melearner::Player* player_;
   melearner::MpvVideoWidget* video_ = nullptr;
@@ -125,9 +126,15 @@ private:
   QWidget* playerControls_ = nullptr;
   QGridLayout* playbackLayout_;
   QList<QWidget*> playbackWidgets_;
-  bool compactControls_ = false;
   void updateControlsLayout();
   void revealPlayerControls();
+  void toggleVideoFullscreen();
+  void updateMediaLayout();
+  bool videoFullscreen_ = false;
+  Qt::WindowStates previousWindowState_;
+  QWidget* headerHost_ = nullptr;
+  QWidget* lessonHeader_ = nullptr;
+  QWidget* statusHost_ = nullptr;
   QTimer* hideControls_ = nullptr;
   QGraphicsOpacityEffect* controlsOpacity_ = nullptr;
   QPropertyAnimation* controlsFade_ = nullptr;

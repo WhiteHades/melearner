@@ -8,6 +8,7 @@
 #include "course_outline_model.hpp"
 #include "study_icons.hpp"
 #include "theme.hpp"
+#include "text_interaction.hpp"
 #include <shadcn/data.hpp>
 #include <shadcn/feedback.hpp>
 #include <QApplication>
@@ -29,6 +30,7 @@
 #include <QLineEdit>
 #include <shadcn/rows.hpp>
 #include <QMenu>
+#include <QMouseEvent>
 #include <QListWidget>
 #include <QListWidgetItem>
 #include <QPushButton>
@@ -51,6 +53,7 @@
 #include <QTextEdit>
 #include <QTextCursor>
 #include <QVBoxLayout>
+#include <QWidgetAction>
 #include <QUrl>
 #include <algorithm>
 #include <limits>
@@ -72,12 +75,23 @@ QFont headingFont(const QFont& base, double scale, bool bold = false) {
 }
 class ElidingLabel final : public QLabel {
 public:
-  explicit ElidingLabel(const QString& text = {}) : QLabel(text) { setTextFormat(Qt::PlainText); }
+  explicit ElidingLabel(const QString& text = {}) : QLabel(text) {
+    setTextFormat(Qt::PlainText);
+    setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
+  }
+};
+class PlayerPill final : public QWidget {
+public:
+  using QWidget::QWidget;
 protected:
+  void mousePressEvent(QMouseEvent* event) override { event->accept(); }
+  void mouseReleaseEvent(QMouseEvent* event) override { event->accept(); }
   void paintEvent(QPaintEvent*) override {
-    QPainter painter(this); painter.setPen(palette().color(foregroundRole()));
-    painter.drawText(contentsRect(), Qt::AlignLeft | Qt::AlignVCenter,
-      fontMetrics().elidedText(text(), Qt::ElideRight, contentsRect().width()));
+    QPainter painter(this); painter.setRenderHint(QPainter::Antialiasing);
+    painter.setPen(melearner::roleColor(this, shadcn::Role::Border));
+    painter.setBrush(melearner::roleColor(this, shadcn::Role::Popover));
+    const auto radius = std::min(28.0, height() / 2.0);
+    painter.drawRoundedRect(QRectF(rect()).adjusted(.5, .5, -.5, -.5), radius, radius);
   }
 };
 /// Fill a shadcn command list with the window's keyboard commands. The component
@@ -145,6 +159,7 @@ shadcn::ListView* list(const QString& name, PagedListModel* model) {
 MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwareDecoding)
     : QMainWindow(parent), library_(databasePath, this), player_(new melearner::Player(this,
         softwareDecoding ? melearner::Player::DecodeMode::Software : melearner::Player::DecodeMode::Automatic)) {
+  melearner::installTextInteraction(*qApp);
   // The font family and size are installed with the shadcn theme, so the window
   // only picks up the window icon and the size floor.
   auto interfaceFont = QApplication::font();
@@ -166,7 +181,8 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   // The header row carries where you are and the two controls that act on the whole
   // application. The search is a field rather than a button, because a reader types
   // into it and a button that opens a dialog is a step they did not ask for.
-  auto* toolbar = new QHBoxLayout; toolbar->setSpacing(8);
+  headerHost_ = new QWidget(center); headerHost_->setObjectName("headerHost");
+  auto* toolbar = new QHBoxLayout(headerHost_); toolbar->setContentsMargins(0, 0, 0, 0); toolbar->setSpacing(8);
   // The way back to the library only exists once the reader is inside a course, so
   // it appears in the header when there is somewhere to go back to and not before.
   back_ = button(tr("Courses"), "backToLibrary", shadcn::Variant::Ghost); back_->hide();
@@ -178,10 +194,10 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   outlineToggle_ = button(tr("Lessons"), "toggleOutline", shadcn::Variant::Ghost); outlineToggle_->hide(); toolbar->addWidget(outlineToggle_);
   // The one control the rail used to hold. It is a toggle rather than a pair of
   // entries because there are two pages and one of them is where the reader starts.
-  statsNav_ = button(tr("Progress"), "navStats", shadcn::Variant::Outline);
+  statsNav_ = button(tr("Stats"), "navStats", shadcn::Variant::Outline);
   statsNav_->setCheckable(true);
-  statsNav_->setToolTip(tr("Your progress across every course"));
-  statsNav_->setAccessibleName(tr("Your progress"));
+  statsNav_->setToolTip(tr("Learning statistics"));
+  statsNav_->setAccessibleName(tr("Stats"));
   // Keep the route title on its own row so navigation actions cannot elide it at
   // narrow widths or larger text sizes.
   auto* headerActions = new QWidget(center); headerActions->setObjectName("headerActions");
@@ -220,13 +236,13 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     about.setDescription(tr("Version %1 · A local only course reader.").arg(QApplication::applicationVersion()));
     auto* close = button(tr("Close"), "aboutClose", shadcn::Variant::Outline);
     connect(close, &QPushButton::clicked, &about, &QDialog::reject);
-    about.footer().addStretch();
-    about.footer().addWidget(close);
+    about.content().addWidget(close, 0, Qt::AlignRight);
+    about.content().setContentsMargins(16, 0, 16, 16);
     about.exec();
   });
   connect(QApplication::styleHints()->accessibility(), &QAccessibilityHints::contrastPreferenceChanged, this,
     [this] { applyAppearance(true); });
-  shell->addLayout(toolbar);
+  shell->addWidget(headerHost_);
   // Global actions share one stable header group on every page.
   settings->setMenu(appearanceMenu);
   actionsLayout->addWidget(settings);
@@ -312,7 +328,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     updateLayout();
   });
   split_ = new shadcn::ResizablePanelGroup(Qt::Horizontal);
-  outline_ = new QWidget; outline_->setMinimumWidth(220); outline_->setObjectName("courseOutline"); outline_->setAttribute(Qt::WA_StyledBackground);
+  outline_ = new QWidget; outline_->setMinimumWidth(180); outline_->setObjectName("courseOutline"); outline_->setAttribute(Qt::WA_StyledBackground);
   auto* outlineLayout = new QVBoxLayout(outline_); outlineLayout->setContentsMargins(0, 0, 0, 0); outlineLayout->setSpacing(12);
   auto* outlineTitle = new shadcn::Label(tr("Course outline")); outlineTitle->setFont(headingFont(font(), 1.0, true));
   outlineTitle->setMargin(0); outlineLayout->addWidget(outlineTitle);
@@ -340,7 +356,8 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   contentScroll->setObjectName("lessonScroll"); contentScroll->viewport()->installEventFilter(this);
   auto* contentBody = new QWidget; contentScroll->setWidget(contentBody); content_ = contentScroll; content_->setMinimumWidth(0);
   auto* contentLayout = new QVBoxLayout(contentBody); contentLayout->setContentsMargins(20, 0, 0, 0); contentLayout->setSpacing(16);
-  auto* lessonHeader = new QHBoxLayout;
+  lessonHeader_ = new QWidget; lessonHeader_->setObjectName("lessonHeader");
+  auto* lessonHeader = new QHBoxLayout(lessonHeader_); lessonHeader->setContentsMargins(0, 0, 0, 0);
   lessonTitle_ = new ElidingLabel(tr("Select a lesson")); lessonTitle_->setFont(headingFont(font(), 1.2, true));
   lessonTitle_->setObjectName("lessonTitle");
   lessonTitle_->setMinimumWidth(0); lessonTitle_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
@@ -348,7 +365,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   externalOpen_ = button(tr("Open in default app"), "openDocumentExternally"); externalOpen_->hide();
   externalOpen_->setVariant(shadcn::Variant::Ghost);
   lessonHeader->addWidget(externalOpen_);
-  contentLayout->addLayout(lessonHeader);
+  contentLayout->addWidget(lessonHeader_);
   lessonActions_ = new QWidget; lessonActions_->setObjectName("lessonActions");
   lessonNavigation_ = new QHBoxLayout(lessonActions_); lessonNavigation_->setContentsMargins(0, 0, 0, 0); lessonNavigation_->setSpacing(8);
   auto* previous = button(tr("Previous lesson"), "previousLesson", shadcn::Variant::Ghost);
@@ -357,7 +374,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   complete_ = button(tr("Mark complete"), "markComplete"); complete_->setEnabled(false); lessonNavigation_->addWidget(complete_);
   lessonNavigation_->addStretch();
   contentLayout->addWidget(lessonActions_);
-  media_ = new QStackedWidget; video_ = new melearner::MpvVideoWidget(player_, media_);
+  media_ = new QStackedWidget; media_->setObjectName("mediaFrame"); video_ = new melearner::MpvVideoWidget(player_, media_);
   video_->setObjectName("videoSurface"); video_->setFocusPolicy(Qt::StrongFocus);
   video_->setAccessibleName(tr("Video player"));
   video_->setAccessibleDescription(tr("Click to play or pause. Space then P plays or pauses. H and L seek ten seconds. Space then F toggles fullscreen."));
@@ -429,13 +446,10 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   connect(pdf_, &PdfView::errorOccurred, this, [this](const QString& message) {
     if (lesson_ && lesson_->path.endsWith(".pdf", Qt::CaseInsensitive)) showError(message);
   });
-  contentLayout->addWidget(media_, 1);
-  playerControls_ = new QWidget(video_); playerControls_->setObjectName("playerControls");
-  // Use the theme's opaque window surface so controls stay legible over any
-  // frame. StyledBackground alone paints nothing without a style rule.
-  playerControls_->setAutoFillBackground(true);
-  auto* controlsLayout = new QVBoxLayout(playerControls_); controlsLayout->setContentsMargins(12, 0, 12, 8);
-  controlsLayout->setSpacing(0); playerControls_->hide();
+  contentLayout->addWidget(media_, 1, Qt::AlignHCenter);
+  playerControls_ = new PlayerPill(video_); playerControls_->setObjectName("playerControls");
+  auto* controlsLayout = new QVBoxLayout(playerControls_); controlsLayout->setContentsMargins(16, 8, 16, 10);
+  controlsLayout->setSpacing(4); playerControls_->hide();
   seek_ = new shadcn::Slider(0, 10000); seek_->setAccessibleName(tr("Playback position"));
   seek_->setObjectName("playbackPosition");
   seek_->setEnabled(false); controlsLayout->addWidget(seek_);
@@ -443,50 +457,63 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   play_ = button(tr("Play"), "playPause", shadcn::Variant::Ghost, shadcn::ButtonSize::Icon); play_->setEnabled(false);
   time_ = new shadcn::Label("0:00:00 / 0:00:00");
   auto* volume = new shadcn::Slider(0, 100); volume->setValues({100});
-  volume->setFixedWidth(96);
+  volume->setOrientation(Qt::Vertical); volume->setFixedSize(40, 140);
   volume->setObjectName("volume");
   volume->setAccessibleName(tr("Volume")); volume->setToolTip(tr("Volume"));
   auto* fullscreen = button(tr("Fullscreen"), "fullscreen", shadcn::Variant::Ghost, shadcn::ButtonSize::Icon);
-  auto* playbackOptions = button(tr("Settings"), "playbackOptions", shadcn::Variant::Ghost, shadcn::ButtonSize::Icon);
-  playbackOptions->setAccessibleName(tr("Video settings"));
-  playbackWidgets_ = {play_, time_, volume, playbackOptions, fullscreen};
-  for (int index = 0; index < playbackWidgets_.size(); ++index) playbackLayout_->addWidget(playbackWidgets_[index], 0, index);
-  playbackLayout_->setColumnStretch(1, 1);
-  auto* playbackMenu = new shadcn::DropdownMenu(playbackOptions);
-  playbackMenu->setObjectName("videoSettings");
-  auto* rate = &playbackMenu->addSubmenu(tr("Speed")); rate->setObjectName("playbackSpeed");
+  auto* rateButton = button(tr("1×"), "playbackRate", shadcn::Variant::Ghost);
+  rateButton->setAccessibleName(tr("Playback speed")); rateButton->setToolTip(tr("Playback speed"));
+  auto* rate = new shadcn::DropdownMenu(rateButton); rate->setObjectName("playbackSpeed"); rateButton->setMenu(rate);
   auto* rateGroup = new QActionGroup(rate);
   for (double speed : {0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0}) {
     auto* action = rate->addAction(QString::number(speed) + "×");
     action->setData(speed); action->setCheckable(true); action->setChecked(speed == 1.0); rateGroup->addAction(action);
   }
-  // A shadcn menu can be attached as a submenu of another menu, so every level
-  // of the playback settings uses the same component.
-  audio_ = new shadcn::DropdownMenu(playbackMenu); audio_->setTitle(tr("Audio track"));
-  audio_->setObjectName("audioTrack"); playbackMenu->addMenu(audio_);
-  subtitles_ = new shadcn::DropdownMenu(playbackMenu); subtitles_->setTitle(tr("Subtitles"));
-  subtitles_->setObjectName("subtitleTrack"); playbackMenu->addMenu(subtitles_);
-  chapters_ = new shadcn::DropdownMenu(playbackMenu); chapters_->setTitle(tr("Chapters"));
-  chapters_->setObjectName("chapter"); playbackMenu->addMenu(chapters_);
+  auto* audioButton = button(tr("Audio"), "audioTrackButton", shadcn::Variant::Ghost);
+  auto* subtitleButton = button(tr("CC"), "subtitleTrackButton", shadcn::Variant::Ghost);
+  subtitleButton->setAccessibleName(tr("Subtitles")); subtitleButton->setToolTip(tr("Subtitles"));
+  auto* chapterButton = button(tr("Chapters"), "chapterButton", shadcn::Variant::Ghost);
+  audio_ = new shadcn::DropdownMenu(audioButton); audio_->setTitle(tr("Audio track"));
+  audio_->setObjectName("audioTrack"); audioButton->setMenu(audio_);
+  subtitles_ = new shadcn::DropdownMenu(subtitleButton); subtitles_->setTitle(tr("Subtitles"));
+  subtitles_->setObjectName("subtitleTrack"); subtitleButton->setMenu(subtitles_);
+  chapters_ = new shadcn::DropdownMenu(chapterButton); chapters_->setTitle(tr("Chapters"));
+  chapters_->setObjectName("chapter"); chapterButton->setMenu(chapters_);
   auto* audioGroup = new QActionGroup(audio_);
   auto* subtitleGroup = new QActionGroup(subtitles_);
   for (auto* menu : {audio_, subtitles_, chapters_}) menu->setEnabled(false);
-  playbackMenu->addSeparatorLine();
-  auto& mute = playbackMenu->addCheckboxItem(tr("Mute"));
-  auto& rewind = playbackMenu->addItem(tr("Back 10 seconds"));
-  auto& forward = playbackMenu->addItem(tr("Forward 10 seconds"));
-  auto& frame = playbackMenu->addItem(tr("Next frame"));
-  auto& addSubtitles = playbackMenu->addItem(tr("Add subtitles…"));
-  auto& screenshot = playbackMenu->addItem(tr("Save screenshot…"));
-  connect(&rewind, &QAction::triggered, this, [this] { if (playerLoaded_) (void)player_->seekRelative(-10000); });
-  connect(&forward, &QAction::triggered, this, [this] { if (playerLoaded_) (void)player_->seekRelative(10000); });
-  connect(&frame, &QAction::triggered, this, [this] { if (playerLoaded_) (void)player_->frameStep(); });
-  connect(&addSubtitles, &QAction::triggered, this, [this] {
+  auto* muteButton = button(tr("Mute"), "mute", shadcn::Variant::Ghost); muteButton->setCheckable(true);
+  auto* volumeButton = button(tr("Volume"), "volumeButton", shadcn::Variant::Ghost);
+  auto* volumeMenu = new shadcn::DropdownMenu(volumeButton); volumeMenu->setObjectName("volumeMenu");
+  auto* volumeAction = new QWidgetAction(volumeMenu); volumeAction->setDefaultWidget(volume); volumeMenu->addAction(volumeAction);
+  volumeButton->setMenu(volumeMenu);
+  auto* rewind = button(tr("−10s"), "rewind", shadcn::Variant::Ghost);
+  auto* forward = button(tr("+10s"), "forward", shadcn::Variant::Ghost);
+  auto* frame = button(tr("Frame"), "frameStep", shadcn::Variant::Ghost);
+  auto* addSubtitles = button(tr("Add CC"), "addSubtitle", shadcn::Variant::Ghost);
+  auto* screenshot = button(tr("Capture"), "screenshot", shadcn::Variant::Ghost);
+  rewind->setAccessibleName(tr("Back 10 seconds")); forward->setAccessibleName(tr("Forward 10 seconds"));
+  frame->setAccessibleName(tr("Next frame")); addSubtitles->setAccessibleName(tr("Add subtitles"));
+  screenshot->setAccessibleName(tr("Save screenshot"));
+  playbackWidgets_ = {rewind, play_, forward, time_, rateButton, volumeButton, muteButton, fullscreen,
+                     audioButton, subtitleButton, chapterButton, frame, addSubtitles, screenshot};
+  for (auto* widget : playbackWidgets_) {
+    if (auto* control = qobject_cast<shadcn::Button*>(widget)) {
+      if (control != play_ && control != fullscreen) control->setButtonSize(shadcn::ButtonSize::Sm);
+      control->setToolTip(control->accessibleName());
+    }
+  }
+  for (auto* control : {volumeButton, muteButton, audioButton, subtitleButton, chapterButton, frame, addSubtitles, screenshot})
+    control->setButtonSize(shadcn::ButtonSize::Icon);
+  connect(rewind, &QPushButton::clicked, this, [this] { if (playerLoaded_) (void)player_->seekRelative(-10000); });
+  connect(forward, &QPushButton::clicked, this, [this] { if (playerLoaded_) (void)player_->seekRelative(10000); });
+  connect(frame, &QPushButton::clicked, this, [this] { if (playerLoaded_) (void)player_->frameStep(); });
+  connect(addSubtitles, &QPushButton::clicked, this, [this] {
     if (!playerLoaded_) return;
     const auto path = QFileDialog::getOpenFileName(this, tr("Choose subtitles inside your root folder"), rootPath_, tr("Subtitles (*.srt *.vtt)"));
     if (!path.isEmpty() && !player_->addSubtitleFile(path)) showError(tr("Player is busy. Try adding subtitles again."));
   });
-  connect(&screenshot, &QAction::triggered, this, [this] {
+  connect(screenshot, &QPushButton::clicked, this, [this] {
     if (!playerLoaded_ || !lesson_) return;
     const auto suggested = QFileInfo(lesson_->path).absolutePath() + "/Screenshot-" + QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss") + ".png";
     QFileDialog dialog(this, tr("Save screenshot inside your root folder"), suggested, tr("PNG image (*.png)"));
@@ -496,7 +523,6 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     const auto id = player_->screenshot(path);
     if (id) screenshotRequests_.insert(id, path); else showError(tr("Player is busy. Try saving the screenshot again."));
   });
-  playbackOptions->setMenu(playbackMenu);
   controlsLayout->addLayout(playbackLayout_);
   controlsOpacity_ = new QGraphicsOpacityEffect(playerControls_); controlsOpacity_->setOpacity(1);
   playerControls_->setGraphicsEffect(controlsOpacity_);
@@ -507,8 +533,8 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   hideControls_->setSingleShot(true); hideControls_->setInterval(2500);
   connect(hideControls_, &QTimer::timeout, this, [this] {
     auto* focus = QApplication::focusWidget();
-    if (!playerLoaded_ || paused_ || !lesson_ || lesson_->type == "audio" ||
-        playerControls_->underMouse() || (focus && playerControls_->isAncestorOf(focus)) ||
+    if (!playerLoaded_ || !lesson_ || lesson_->type == "audio" ||
+        playerControls_->underMouse() || (keyboardNavigation_ && focus && playerControls_->isAncestorOf(focus)) ||
         QApplication::activePopupWidget() || QApplication::activeModalWidget()) {
       if (playerLoaded_ && !paused_) hideControls_->start();
       return;
@@ -518,14 +544,20 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     controlsFade_->setDuration(duration); controlsFade_->setStartValue(controlsOpacity_->opacity());
     controlsFade_->setEndValue(0.0); controlsFade_->start();
   });
+  for (auto* widget : playbackWidgets_) widget->setParent(playerControls_);
   for (auto* widget : playerControls_->findChildren<QWidget*>() + QList<QWidget*>{video_, playerControls_}) {
     widget->setMouseTracking(true); widget->installEventFilter(this);
   }
-  connect(playbackMenu, &QMenu::aboutToShow, this, &MainWindow::revealPlayerControls);
-  connect(playbackMenu, &QMenu::aboutToHide, this, [this] { hideControls_->start(); });
-  setTabOrder(video_, seek_); setTabOrder(seek_, play_); setTabOrder(play_, volume);
-  setTabOrder(volume, playbackOptions); setTabOrder(playbackOptions, fullscreen);
-  split_->addWidget(content_); split_->setStretchFactor(0, 0); split_->setStretchFactor(1, 1); split_->setSizes({260, 840});
+  for (auto* menu : {rate, volumeMenu, audio_, subtitles_, chapters_}) {
+    connect(menu, &QMenu::aboutToShow, this, &MainWindow::revealPlayerControls);
+    connect(menu, &QMenu::aboutToHide, this, [this] { hideControls_->start(); });
+  }
+  setTabOrder(video_, seek_);
+  QWidget* previousControl = seek_;
+  for (auto* control : playbackWidgets_) {
+    if (qobject_cast<QPushButton*>(control)) { setTabOrder(previousControl, control); previousControl = control; }
+  }
+  split_->addWidget(content_); split_->setStretchFactor(0, 0); split_->setStretchFactor(1, 1); split_->setSizes({220, 880});
   routes_->addWidget(split_);
   // Reserve status space only while work is running or needs attention.
   status_ = new shadcn::Label(tr("Opening Library…"), center);
@@ -534,7 +566,8 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   status_->setTextFormat(Qt::PlainText);
   status_->setObjectName("appStatus");
   status_->setMinimumWidth(0); status_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-  auto* statusRow = new QHBoxLayout; statusRow->setContentsMargins(0, 4, 0, 0); statusRow->setSpacing(12);
+  statusHost_ = new QWidget(center); statusHost_->setObjectName("statusHost");
+  auto* statusRow = new QHBoxLayout(statusHost_); statusRow->setContentsMargins(0, 4, 0, 0); statusRow->setSpacing(12);
   statusRow->addWidget(status_, 1);
   cancelScan_ = button(tr("Cancel scan"), "cancelScan"); cancelScan_->hide(); statusRow->addWidget(cancelScan_);
   rootLabel_ = new ElidingLabel; rootLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -545,7 +578,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   rootLabel_->setAccessibleName(tr("Root folder"));
   statusRow->addWidget(rootLabel_, 1, Qt::AlignRight);
   rootLabel_->hide();
-  shell->addLayout(statusRow);
+  shell->addWidget(statusHost_);
   connect(cancelScan_, &QPushButton::clicked, this, [this] {
     if (!scanId_) return;
     status_->setText(library_.cancelScan(scanId_) ? tr("Canceling scan…") : tr("Scan is committing. Please wait."));
@@ -774,23 +807,33 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     time_->setText(clockText(durationMs_ * values.first() / 10000.0) + " / " + clockText(durationMs_));
     (void)player_->seek(static_cast<qint64>(durationMs_ * values.first() / 10000.0));
   });
-  connect(&mute, &QAction::triggered, this, [this](bool checked) { (void)player_->setMuted(checked); });
-  connect(player_, &melearner::Player::mutedChanged, this, [&mute](bool value) {
-    if (mute.isChecked() != value) mute.setChecked(value);
+  connect(muteButton, &QPushButton::clicked, this, [this](bool checked) { (void)player_->setMuted(checked); });
+  connect(player_, &melearner::Player::mutedChanged, this, [this, muteButton](bool value) {
+    muted_ = value;
+    muteButton->setChecked(value);
+    muteButton->setAccessibleName(value ? tr("Unmute") : tr("Mute"));
+    muteButton->setToolTip(muteButton->accessibleName());
+    muteButton->setIcon(melearner::studyIcon(value ? melearner::StudyIcon::Muted : melearner::StudyIcon::Volume,
+        melearner::roleColor(this, shadcn::Role::Foreground)));
   });
   connect(volume, &shadcn::Slider::valuesChanged, this, [this](const QVector<double>& values) {
-    if (!values.isEmpty()) (void)player_->setVolume(values.first() / 100.0);
+    if (!values.isEmpty()) {
+      (void)player_->setVolume(values.first());
+      if (values.first() > 0) (void)player_->setMuted(false);
+    }
   });
   connect(player_, &melearner::Player::volumeChanged, volume, [volume](double value) {
     const QSignalBlocker blocker(volume);
-    const QVector<double> target{value * 100.0};
+    const QVector<double> target{value};
     if (volume->values() != target) volume->setValues(target);
   });
   connect(rate, &QMenu::triggered, this, [this](QAction* action) { (void)player_->setRate(action->data().toDouble()); });
-  connect(player_, &melearner::Player::rateChanged, rate, [rate](double value) {
+  connect(player_, &melearner::Player::rateChanged, rate, [this, rate, rateButton](double value) {
     for (auto* action : rate->actions()) action->setChecked(qFuzzyCompare(action->data().toDouble(), value));
+    rateButton->setText(QString::number(value) + "×");
+    updateControlsLayout();
   });
-  connect(fullscreen, &QPushButton::clicked, this, [this] { if (isFullScreen()) showNormal(); else showFullScreen(); });
+  connect(fullscreen, &QPushButton::clicked, this, &MainWindow::toggleVideoFullscreen);
   connect(audio_, &QMenu::triggered, this, [this](QAction* action) { (void)player_->selectAudioTrack(action->data().toInt()); });
   connect(subtitles_, &QMenu::triggered, this, [this](QAction* action) { (void)player_->selectSubtitleTrack(action->data().toInt()); });
   connect(chapters_, &QMenu::triggered, this, [this](QAction* action) { (void)player_->selectChapter(action->data().toInt()); });
@@ -910,7 +953,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   registerKeyboardCommand("seekForward", tr("Seek forward ten seconds"), tr("l"), tr("Player"),
     [this] { if (playerLoaded_) (void)player_->seekRelative(10000); });
   registerKeyboardCommand("fullscreen", tr("Toggle fullscreen"), tr("Space f"), tr("Player"),
-    [this] { if (isFullScreen()) showNormal(); else showFullScreen(); });
+    [this] { toggleVideoFullscreen(); });
   registerKeyboardCommand("mute", tr("Mute or unmute"), tr("Space m"), tr("Player"),
     [this] { if (playerLoaded_) (void)player_->setMuted(!muted_); });
   registerKeyboardCommand("frameBack", tr("Seek back one second"), tr("Space ,"), tr("Player"),
@@ -1098,7 +1141,7 @@ bool MainWindow::handleKeyboardEvent(QObject* watched, QKeyEvent* event) {
   if (keyPrefix_ != KeyPrefix::None && keyPrefixAge_.elapsed() > 2000) keyPrefix_ = KeyPrefix::None;
   if (key == Qt::Key_Escape && noModifiers) {
     keyPrefix_ = KeyPrefix::None;
-    if (isFullScreen()) showNormal();
+    if (videoFullscreen_) toggleVideoFullscreen();
     event->accept(); return true;
   }
   if (keyPrefix_ == KeyPrefix::Leader) {
@@ -1166,6 +1209,7 @@ void MainWindow::chooseRootWhenOpen(const QString& path) {
   chooseRoot(path);
 }
 void MainWindow::showLibrary() {
+  if (videoFullscreen_) toggleVideoFullscreen();
   if (course_ && lesson_) { rememberedCourse_ = course_->id; rememberedLesson_ = lesson_->id; }
   externalOpenId_ = 0;
   pdf_->clear();
@@ -1215,6 +1259,7 @@ void MainWindow::showCourse(const lib::Course& course, const QString& requestedL
   if (!entryRequestId_) showError(tr("Library is busy. Open the Course again to retry."));
 }
 void MainWindow::showLesson(const lib::Lesson& lesson) {
+  if (videoFullscreen_ && lesson.type != "video" && lesson.type != "audio") toggleVideoFullscreen();
   entryRequestId_ = 0;
   stepResolveId_ = 0; stepReadId_ = 0;
   externalOpenId_ = 0; externalOpen_->setVisible(lesson.type != "video" && lesson.type != "audio");
@@ -1232,7 +1277,8 @@ void MainWindow::showLesson(const lib::Lesson& lesson) {
   lessonTitle_->setToolTip(tooltip(lesson.name));
   complete_->setEnabled(true); complete_->setText(lesson.completed ? tr("Mark incomplete") : tr("Mark complete"));
   play_->setEnabled(false); seek_->setEnabled(false); time_->setText(clockText(positionMs_) + " / " + clockText(durationMs_));
-  compactOutline_ = false; updateLayout();
+  if (width() < std::max(768, fontMetrics().height() * 40)) compactOutline_ = false;
+  updateLayout();
   revealPlayerControls();
   if (lesson.type == "video" || lesson.type == "audio") {
     video_->setAccessibleName(lesson.type == "audio" ? tr("Audio: %1").arg(lesson.name) : tr("Video: %1").arg(lesson.name));
@@ -1284,14 +1330,18 @@ void MainWindow::keyPressEvent(QKeyEvent* event) {
   QMainWindow::keyPressEvent(event);
 }
 bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
-  if (event->type() == QEvent::MouseButtonPress) keyboardNavigation_ = false;
+  if (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseMove) keyboardNavigation_ = false;
   if (event->type() == QEvent::KeyPress && handleKeyboardEvent(watched, static_cast<QKeyEvent*>(event))) return true;
   if (event->type() == QEvent::Resize && playerControls_ &&
-      (watched == video_ || watched == content_->viewport())) updateControlsLayout();
+      (watched == video_ || watched == content_->viewport())) {
+    if (watched == content_->viewport()) updateMediaLayout();
+    updateControlsLayout();
+  }
   if (hideControls_ && (watched == video_ || watched == playerControls_ || playerControls_->isAncestorOf(qobject_cast<QWidget*>(watched)))) {
     if (event->type() == QEvent::MouseMove || event->type() == QEvent::MouseButtonPress ||
         event->type() == QEvent::FocusIn || event->type() == QEvent::KeyPress) revealPlayerControls();
     if (watched == video_ && event->type() == QEvent::MouseButtonPress) video_->setFocus(Qt::MouseFocusReason);
+    if (event->type() == QEvent::Leave) hideControls_->start(500);
   }
   return QMainWindow::eventFilter(watched, event);
 }
@@ -1322,48 +1372,97 @@ void MainWindow::updateControlsLayout() {
     needed += std::max(0, count - 1) * navigation->spacing();
     navigation->setDirection(needed > available ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight);
   }
-  int required = playbackLayout_->horizontalSpacing() * 4;
-  for (const auto* widget : playbackWidgets_) required += widget->sizeHint().width();
-  const bool compact = video_->width() - 24 < required;
-  if (compact != compactControls_) {
-    compactControls_ = compact;
-    for (auto* widget : playbackWidgets_) playbackLayout_->removeWidget(widget);
-    if (compact) {
-      playbackLayout_->addWidget(play_, 0, 0); playbackLayout_->addWidget(time_, 0, 1, 1, 2);
-      playbackLayout_->addWidget(playbackWidgets_[2], 1, 0);
-      playbackLayout_->addWidget(playbackWidgets_[3], 1, 1);
-      playbackLayout_->addWidget(playbackWidgets_[4], 1, 2);
-    } else {
-      for (int index = 0; index < playbackWidgets_.size(); ++index) playbackLayout_->addWidget(playbackWidgets_[index], 0, index);
-    }
+  const int controlsWidth = std::max(1, std::min(740, video_->width() - 32));
+  for (auto* widget : playbackWidgets_) playbackLayout_->removeWidget(widget);
+  // Small grid slots let rows wrap without sharing unrelated column widths.
+  // A conventional grid otherwise widens every row to its longest cell above.
+  constexpr int slotWidth = 4;
+  const int gridSlots = std::max(1, (controlsWidth - 32) / slotWidth);
+  playbackLayout_->setHorizontalSpacing(0);
+  for (int col = 0; col < std::max(gridSlots, playbackLayout_->columnCount()); ++col)
+    playbackLayout_->setColumnMinimumWidth(col, col < gridSlots ? slotWidth : 0);
+  int row = 0, column = 0;
+  for (auto* widget : playbackWidgets_) {
+    const int span = std::min(gridSlots, (widget->sizeHint().width() + 2 + slotWidth - 1) / slotWidth);
+    if (column > 0 && column + span > gridSlots) { ++row; column = 0; }
+    playbackLayout_->addWidget(widget, row, column, 1, span, Qt::AlignCenter);
+    column += span;
   }
+  playerControls_->setFixedWidth(controlsWidth);
+  playerControls_->layout()->activate();
   const int controlsHeight = playerControls_->sizeHint().height();
-  const int minimumHeight = std::max(180, controlsHeight + 40);
-  if (video_->minimumHeight() != minimumHeight) video_->setMinimumHeight(minimumHeight);
-  const QRect geometry(0, video_->height() - controlsHeight, video_->width(), controlsHeight);
+  if (lesson_ && (lesson_->type == "video" || lesson_->type == "audio") && !videoFullscreen_)
+    media_->setMinimumHeight(std::max(180, controlsHeight + 32));
+  const QRect geometry((video_->width() - controlsWidth) / 2,
+      std::max(8, video_->height() - controlsHeight - 16), controlsWidth, controlsHeight);
   if (playerControls_->geometry() != geometry) playerControls_->setGeometry(geometry);
+}
+void MainWindow::toggleVideoFullscreen() {
+  if (!lesson_ || (lesson_->type != "video" && lesson_->type != "audio")) return;
+  if (!videoFullscreen_) {
+    previousWindowState_ = windowState(); videoFullscreen_ = true;
+    setWindowState(previousWindowState_ | Qt::WindowFullScreen);
+  } else {
+    videoFullscreen_ = false; setWindowState(previousWindowState_);
+  }
+  updateLayout(); video_->setFocus(); revealPlayerControls();
+}
+void MainWindow::updateMediaLayout() {
+  if (!media_ || !content_) return;
+  const bool video = lesson_ && (lesson_->type == "video" || lesson_->type == "audio");
+  const int width = content_->viewport()->width() - (videoFullscreen_ || !outline_->isVisible() ? 0 : 20);
+  if (video && !videoFullscreen_) {
+    const int fittedWidth = std::max(1, std::min(1100, width));
+    media_->setFixedWidth(fittedWidth);
+    const int available = content_->viewport()->height() - lessonHeader_->sizeHint().height() - lessonActions_->sizeHint().height() - 32;
+    media_->setMaximumHeight(std::max(180, std::min(available, fittedWidth * 9 / 16)));
+  } else {
+    media_->setMinimumHeight(0);
+    media_->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+    media_->setFixedWidth(std::max(1, width));
+  }
 }
 void MainWindow::updateLayout() {
   if (!rescan_ || !choose_) return;
   const bool compact = width() < std::max(768, fontMetrics().height() * 40);
+  if (compact && !compactLayout_ && lesson_) compactOutline_ = false;
+  compactLayout_ = compact;
   title_->setFont(headingFont(font(), 1.3, true));
   lessonTitle_->setFont(headingFont(font(), 1.2, true));
+  for (const auto* name : {"previousLesson", "nextLesson"}) {
+    if (auto* control = findChild<shadcn::Button*>(name)) {
+      control->setButtonSize(compact ? shadcn::ButtonSize::Icon : shadcn::ButtonSize::Default);
+      control->setText(compact ? QString{} : control->accessibleName());
+      control->setToolTip(control->accessibleName());
+    }
+  }
   if (!course_) {
     const bool activity = libraryStack_->currentValue() == QLatin1String("stats");
-    title_->setText(activity ? tr("Your learning activity") : tr("Your learning path"));
+    title_->setText(activity ? tr("Stats") : tr("Your learning path"));
   }
   title_->show();
   statsNav_->setVisible(!course_);
   if (searchField_) searchField_->setVisible(!course_);
   if (rootLabel_) rootLabel_->hide();
   rescan_->hide(); choose_->setVisible(!course_ && rootPath_.isEmpty());
-  updateControlsLayout();
-  if (!course_) return;
-  outlineToggle_->setVisible(compact);
-  outlineToggle_->setText(compactOutline_ ? tr("Lesson") : tr("Lessons"));
+  headerHost_->setVisible(!videoFullscreen_);
+  lessonHeader_->setVisible(!videoFullscreen_);
+  lessonActions_->setVisible(!videoFullscreen_);
+  statusHost_->setVisible(!videoFullscreen_);
+  centralWidget()->layout()->setContentsMargins(videoFullscreen_ ? 0 : 24, videoFullscreen_ ? 0 : 20,
+      videoFullscreen_ ? 0 : 24, videoFullscreen_ ? 0 : 20);
+  centralWidget()->layout()->setSpacing(videoFullscreen_ ? 0 : 20);
+  auto* contentLayout = content_->widget()->layout();
+  contentLayout->setContentsMargins(videoFullscreen_ || !compactOutline_ ? 0 : 20, 0, 0, 0);
+  contentLayout->setSpacing(videoFullscreen_ ? 0 : 16);
+  if (!course_) { updateMediaLayout(); updateControlsLayout(); return; }
+  outlineToggle_->setVisible(!videoFullscreen_);
+  outlineToggle_->setText(compactOutline_ ? tr("Hide lessons") : tr("Lessons"));
   split_->setStretchFactor(0, compact ? 1 : 0);
   split_->setStretchFactor(1, 1);
-  outline_->setVisible(!compact || compactOutline_); content_->setVisible(!compact || !compactOutline_);
+  outline_->setVisible(!videoFullscreen_ && compactOutline_);
+  content_->setVisible(videoFullscreen_ || !compact || !compactOutline_);
+  updateMediaLayout(); updateControlsLayout();
 }
 void MainWindow::openSearch() {
   if (findChild<SearchDialog*>()) return;
@@ -1417,7 +1516,10 @@ void MainWindow::applyAppearance(bool resetTheme) {
     {"appearance", Icon::Settings}, {"backToLibrary", Icon::ChevronLeft},
     {"toggleOutline", Icon::Courses}, {"chooseRoot", Icon::Folder},
     {"previousLesson", Icon::ChevronLeft}, {"nextLesson", Icon::ChevronRight},
-    {"markComplete", Icon::Check}, {"playbackOptions", Icon::Settings},
+    {"markComplete", Icon::Check}, {"volumeButton", Icon::Volume}, {"mute", muted_ ? Icon::Muted : Icon::Volume},
+    {"audioTrackButton", Icon::Volume}, {"subtitleTrackButton", Icon::Subtitles},
+    {"chapterButton", Icon::Chapters}, {"frameStep", Icon::Frame},
+    {"addSubtitle", Icon::AddSubtitle}, {"screenshot", Icon::Capture},
     {"fullscreen", Icon::Fullscreen}, {"playPause", paused_ ? Icon::Play : Icon::Pause}
   };
   for (const auto& [name, icon] : icons) {
