@@ -76,7 +76,7 @@ if(BUILD_TESTING)
     target_link_libraries(${test}_test PRIVATE melearner_app Qt6::Test)
     add_test(NAME ${test} COMMAND ${test}_test)
     set_tests_properties(${test} PROPERTIES ENVIRONMENT
-      "QT_QPA_PLATFORM=offscreen;TMPDIR=${CMAKE_CURRENT_SOURCE_DIR}/.tmp/cpp-tests" TIMEOUT 60)
+      "QT_QPA_PLATFORM=offscreen;LC_ALL=C;TMPDIR=${CMAKE_CURRENT_SOURCE_DIR}/.tmp/cpp-tests" TIMEOUT 60)
   endforeach()
   # Run on a real Wayland/X11 display. Offscreen Qt cannot create the GL widget.
   foreach(test IN ITEMS playback_render main_playback)

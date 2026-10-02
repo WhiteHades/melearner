@@ -9,6 +9,7 @@
 #include <QTextStream>
 #include <QStandardPaths>
 #include <QSurfaceFormat>
+#include <clocale>
 #include <string_view>
 
 namespace {
@@ -59,11 +60,13 @@ int main(int argc, char** argv) {
   format.setDepthBufferSize(0); format.setStencilBufferSize(0);
   QSurfaceFormat::setDefaultFormat(format);
   QApplication application(argc, argv);
+  // libmpv requires C numeric parsing. setlocale is process-wide, so configure
+  // it after Qt initialization and before any application workers start.
+  std::setlocale(LC_NUMERIC, "C");
   configureApplicationIdentity();
   Q_INIT_RESOURCE(assets);
   // The shadcn style replaces the platform style, so it must own the theme and
-  // the interface font before any widget is constructed. The colour mode starts
-  // at the desktop preference and is corrected once the saved settings arrive.
+  // the interface font before any widget is constructed.
   melearner::installTheme(true, 14);
   QApplication::setApplicationDisplayName("melearner");
   QApplication::setDesktopFileName("io.github.whitehades.melearner");
