@@ -4,9 +4,10 @@ melearner uses C++23 and Qt Widgets. The application source is in `cpp-app/src`.
 
 ## Requirements
 
-Install a C++23 compiler, CMake 4.4 or newer, Ninja, pkg-config, Qt 6.11.2 or
-newer with Widgets, OpenGLWidgets, Network, Pdf and Test, SQLite, libmpv,
-libzip, and md4c. Arch Linux package commands are in [Install](install.md).
+Install C and C++23 compilers, CMake 4.4 or newer, Ninja, pkg-config, Qt 6.11.2 or
+newer with Widgets, OpenGLWidgets, Network, Pdf and Test, SQLite, libzip, and
+md4c. Linux also needs Meson 1.3 or newer, patch, and the media development
+libraries listed in the [Arch Linux installation commands](install.md).
 Windows instructions are in [Windows builds](windows-development.md).
 
 On Arch, `qt6-webengine` supplies Qt PDF. melearner links the native Qt PDF
@@ -16,7 +17,21 @@ on a worker thread into a bounded tile cache.
 The first configure downloads two SHA-256-pinned source archives. Lexbor 3.0.0
 supplies HTML parsing, and the pinned shadcn-cpp commit supplies every interface
 component, its theme and its font. Both licenses are included in the
-installation. The application itself is local only.
+installation. Linux builds also download mpv 0.41.0 and an upstream PipeWire
+startup patch, each verified by SHA-256. The application itself is local only.
+
+`cpp-app/cmake/mpv.cmake` builds the Linux player runtime and installs it under
+`lib/melearner`. The installed executable uses a relative runtime path to load
+that copy. PipeWire, PulseAudio, OpenGL, VAAPI and VDPAU support are required
+at build time; x86_64 also requires the NVDEC headers. The selected decoder
+still depends on the hardware, driver and media. Windows continues to use its
+native libmpv package.
+
+The mpv build retains GPL-enabled hardware paths. Its source archive, upstream
+patch, build recipe, copyright information and license texts are installed
+under `share/doc/melearner/sources/mpv` and `share/licenses/melearner/mpv`.
+Third-party libraries retain their own licenses. These files do not replace
+the complete dependency inventory required when publishing a binary package.
 
 ## Interface
 

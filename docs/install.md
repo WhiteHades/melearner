@@ -2,12 +2,16 @@
 
 ## Linux from source
 
-The application needs a C++23 compiler, CMake 4.4 or newer,
-Ninja, pkg-config, Qt 6.11.2 Widgets/OpenGLWidgets/Network/Pdf/Test, SQLite,
-libmpv, libzip, and md4c. On Arch Linux:
+The application needs C and C++23 compilers, CMake 4.4 or newer, Meson 1.3
+or newer, Ninja, patch, pkg-config, Qt 6.11.2 Widgets/OpenGLWidgets/Network/Pdf/Test,
+SQLite, libzip, md4c, and the media development libraries below. On Arch Linux:
 
 ```bash
-sudo pacman -S --needed base-devel cmake ninja pkgconf qt6-base qt6-webengine sqlite mpv libzip md4c
+sudo pacman -S --needed \
+  base-devel cmake meson ninja patch pkgconf qt6-base qt6-webengine sqlite libzip md4c \
+  ffmpeg libass libplacebo luajit alsa-lib libpipewire libpulse mesa libdrm libva libvdpau \
+  libx11 libxext libxpresent libxrandr libxss wayland wayland-protocols libxkbcommon \
+  ffnvcodec-headers
 ```
 
 Build, test, and install into `$HOME/.local`:
@@ -23,6 +27,12 @@ The installer accepts an absolute prefix when needed:
 ```bash
 bash scripts/install-cpp-linux.sh "$HOME/.local"
 ```
+
+The first build needs network access to download verified source archives.
+Linux builds include a pinned libmpv with an upstream PipeWire startup fix.
+It is installed privately beside melearner and does not replace the system player.
+The running application is local only. The interface uses shadcn-cpp's native
+dark theme and bundled Geist font.
 
 Launch with `$HOME/.local/bin/melearner`. The desktop entry is installed with
 the executable when the prefix supports it.
