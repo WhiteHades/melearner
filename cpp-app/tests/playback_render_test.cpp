@@ -31,6 +31,15 @@ bool hasIntactColorBar(const QImage& image) {
 class PlaybackRenderTest final : public QObject {
   Q_OBJECT
 private slots:
+  void clearsUnloadedSurfaceToBlack() {
+    melearner::MpvVideoWidget video(nullptr);
+    video.resize(640, 360);
+    video.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&video));
+    QImage frame;
+    QTRY_VERIFY(!(frame = video.grabFramebuffer()).isNull());
+    QCOMPARE(frame.pixelColor(frame.width() / 2, frame.height() / 2), QColor(Qt::black));
+  }
   void rendersSoftwareDecodedFrames_data() {
     QTest::addColumn<QString>("relativePath");
     QTest::addColumn<bool>("softwareDecoding");

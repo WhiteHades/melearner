@@ -163,7 +163,7 @@ void MpvVideoWidget::paintGL() {
     const auto pixelWidth = qMax(1, qRound(width() * pixelRatio));
     const auto pixelHeight = qMax(1, qRound(height() * pixelRatio));
     if (player_ == nullptr || !renderContextReady_) {
-        glClearColor(0.09F, 0.07F, 0.06F, 1.0F);
+        glClearColor(0.0F, 0.0F, 0.0F, 1.0F);
         glClear(GL_COLOR_BUFFER_BIT);
     } else if (!player_->renderFrame(defaultFramebufferObject(), pixelWidth, pixelHeight)) {
         emit renderError(QStringLiteral("render"), QStringLiteral("libmpv could not render the current frame."));
