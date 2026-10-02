@@ -33,6 +33,12 @@ under `share/doc/melearner/sources/mpv` and `share/licenses/melearner/mpv`.
 Third-party libraries retain their own licenses. These files do not replace
 the complete dependency inventory required when publishing a binary package.
 
+Linux package staging writes `runtime-binaries.json` alongside the notices.
+It records each bundled executable, library and Qt plugin, its input SHA-256,
+its final SHA-256 after ELF relocation, and its size. The input hashes allow
+comparison with the original build or distribution package payloads. The
+inventory contains no workstation paths and does not replace license notices.
+
 ## Interface
 
 The interface uses shadcn-cpp widgets, composed into melearner's own library,
