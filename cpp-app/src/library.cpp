@@ -1088,12 +1088,13 @@ void bindScope(Statement& statement, const CourseScope& scope, int firstIndex = 
     Statement statement(
         db,
         QStringLiteral(
+            "WITH course_page AS (SELECT id, name, path, missing_since, last_accessed FROM courses "
+            "ORDER BY name COLLATE MELEARNER_NATURAL, id LIMIT ?1 OFFSET ?2) "
             "SELECT c.id, c.name, c.path, c.missing_since, c.last_accessed, count(l.id) AS lesson_count, "
             "coalesce(sum(CASE WHEN l.completed = 1 THEN 1 ELSE 0 END), 0) AS completed_lessons, "
             "coalesce(sum(l.watched_time), 0) AS watched_seconds "
-            "FROM courses c LEFT JOIN lessons l ON l.course_id = c.id "
-            "GROUP BY c.id ORDER BY c.name COLLATE MELEARNER_NATURAL, c.id "
-            "LIMIT ?1 OFFSET ?2"));
+            "FROM course_page c LEFT JOIN lessons l ON l.course_id = c.id "
+            "GROUP BY c.id ORDER BY c.name COLLATE MELEARNER_NATURAL, c.id"));
     statement.bind(1, boundedLimit);
     statement.bind(2, offset);
     CoursePage result{
@@ -1626,13 +1627,10 @@ void readOutlineGroups(sqlite3* db, const QString& courseId, QVector<Section>& s
 }
 
 [[nodiscard]] Startup readStartup(sqlite3* db, std::uint64_t revision) {
-    const auto page = readCoursePage(db, 0, kMaxCoursePage, revision);
     return {
         .revision = revision,
         .root = loadRoot(db),
         .settings = loadSettings(db),
-        .courses = page.rows,
-        .hasMoreCourses = page.hasMore,
     };
 }
 
@@ -2107,6 +2105,27 @@ void rebuildSearch(sqlite3* db) {
             columnText(lessons.get(), 1),
             columnText(lessons.get(), 2),
             columnText(lessons.get(), 3));
+    }
+}
+
+[[nodiscard]] bool searchRowsMatch(sqlite3* db) {
+    // Scans ordered integer keys, not names or token payloads. The source tables
+    // and contentless FTS index must describe the same objects. A scan rebuilds
+    // terms whenever names change; opening a matching index need not rewrite it.
+    Statement indexed(db, QStringLiteral("SELECT rowid FROM library_search ORDER BY rowid"));
+    Statement source(db, QStringLiteral(
+        "SELECT (?1 << 56) | rowid AS search_id FROM courses "
+        "UNION ALL SELECT (?2 << 56) | rowid FROM sections "
+        "UNION ALL SELECT (?3 << 56) | rowid FROM lessons ORDER BY search_id"));
+    source.bind(1, static_cast<std::int64_t>(kSearchCourseKind));
+    source.bind(2, static_cast<std::int64_t>(kSearchSectionKind));
+    source.bind(3, static_cast<std::int64_t>(kSearchLessonKind));
+    for (;;) {
+        const auto expected = source.step();
+        const auto actual = indexed.step();
+        if (expected != actual) return false;
+        if (expected == SQLITE_DONE) return true;
+        if (columnInt(source.get(), 0) != columnInt(indexed.get(), 0)) return false;
     }
 }
 
@@ -2699,9 +2718,9 @@ private:
                 }
                 validateExactSchema(database_, ddl, databasePath_);
             }
-            // Reassign contentless FTS row IDs on every open so search metadata stays
-            // correlated with the current source rows without changing the schema.
-            {
+            // Repair older or stale key mappings once. Matching indexes are read
+            // without retokenising the entire library on each application launch.
+            if (!searchRowsMatch(database_)) {
                 Transaction transaction(database_);
                 rebuildSearch(database_);
                 transaction.commit();

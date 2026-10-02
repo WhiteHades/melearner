@@ -75,8 +75,6 @@ struct Startup {
     std::uint64_t revision = 0;
     Root root;
     Settings settings;
-    QVector<Course> courses;
-    bool hasMoreCourses = false;
 };
 
 struct CoursePage {
