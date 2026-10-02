@@ -50,7 +50,8 @@ public:
     [[nodiscard]] QStringList approvedRoots() const;
 
     // Starts the isolated libmpv worker. Initialization and all normal libmpv
-    // calls happen off the Qt GUI thread.
+    // calls happen off the Qt GUI thread. The application must set LC_NUMERIC
+    // to C at startup, before launching workers; Player never changes it.
     void start();
     // Call on this object's Qt thread so attached OpenGL widgets can release
     // their renderer synchronously before the worker and libmpv handle stop.

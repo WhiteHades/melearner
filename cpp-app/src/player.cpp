@@ -10,7 +10,6 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <clocale>
 #include <condition_variable>
 #include <cstring>
 #include <cstdint>
@@ -434,14 +433,6 @@ private:
     }
 
     [[nodiscard]] bool initializeMpv() {
-        // libmpv refuses to initialize unless the numeric locale is the C locale,
-        // because it parses and prints numbers as plain decimals. A user shell that
-        // exports a locale with a decimal comma otherwise leaves the Player
-        // permanently uninitialised and every lesson silently fails to play. The C
-        // library keeps this per thread, so setting it here affects only the worker
-        // and leaves the rest of the application on the user's locale.
-        std::setlocale(LC_NUMERIC, "C");
-
         auto* handle = mpv_create();
         if (handle == nullptr) {
             postFatalError("create", "libmpv returned no client handle.");
