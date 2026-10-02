@@ -93,4 +93,7 @@ if(BUILD_TESTING)
     cpp-app/tests/fixtures/parity_fixture.cpp
     cpp-app/tests/fixtures/parity_recipe_v1.cpp)
   target_link_libraries(library_load_test PRIVATE melearner_app Qt6::Test)
+  # Explicit media-backed rendering diagnostic, intentionally outside CTest.
+  add_executable(playback_load_test cpp-app/tests/playback_load_test.cpp)
+  target_link_libraries(playback_load_test PRIVATE melearner_app Qt6::Test)
 endif()
