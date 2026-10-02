@@ -185,10 +185,12 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   statsNav_->setCheckable(true);
   statsNav_->setToolTip(tr("Your progress across every course"));
   statsNav_->setAccessibleName(tr("Your progress"));
-  toolbar->addWidget(statsNav_);
-  // The search is a field, not a button. A reader who can see a field types into
-  // it; a button that opens a dialog is a step they did not ask for, and a second
-  // place to look for the same thing.
+  // Keep the route title on its own row so navigation actions cannot elide it at
+  // narrow widths or larger text sizes.
+  auto* headerActions = new QWidget(center); headerActions->setObjectName("headerActions");
+  auto* actionsLayout = new QHBoxLayout(headerActions); actionsLayout->setContentsMargins(0, 0, 0, 0);
+  actionsLayout->setSpacing(8);
+  // Search is a field, not a button, and belongs to the Library rather than a Course.
   searchField_ = new shadcn::Input; searchField_->setObjectName("searchButton");
   searchField_->setAccessibleName(tr("Search your Library"));
   searchField_->setPlaceholderText(tr("Search your courses…"));
@@ -196,13 +198,15 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   searchField_->setMaximumWidth(460);
   searchField_->installEventFilter(this);
   connect(searchField_, &QLineEdit::returnPressed, this, &MainWindow::openSearch);
-  toolbar->addWidget(searchField_);
+  actionsLayout->addWidget(searchField_);
+  actionsLayout->addStretch();
+  actionsLayout->addWidget(statsNav_);
   auto* shortcuts = button(tr("Keyboard shortcuts"), "showShortcuts",
     shadcn::Variant::Ghost, shadcn::ButtonSize::Icon);
   // An icon button shows no label. The name is the accessible name and the
   // tooltip, and leaving the text set would paint it inside a 32 pixel button.
   shortcuts->setText({});
-  shortcuts->setToolTip(tr("Keyboard shortcuts (? or F1)")); toolbar->addWidget(shortcuts);
+  shortcuts->setToolTip(tr("Keyboard shortcuts (? or F1)")); actionsLayout->addWidget(shortcuts);
   connect(shortcuts, &QPushButton::clicked, this, [this] { showKeyboardPopup(false); });
   rescan_ = button(tr("Rescan"), "rescanRoot"); rescan_->setParent(center); rescan_->hide(); rescan_->setEnabled(false);
   choose_ = button(tr("Choose root folder"), "chooseRoot", shadcn::Variant::Default); choose_->setEnabled(false);
@@ -249,13 +253,10 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   connect(QApplication::styleHints()->accessibility(), &QAccessibilityHints::contrastPreferenceChanged, this,
     [this] { applyAppearance(); });
   shell->addLayout(toolbar);
-  // A control that acts on the whole application sits in the rail's footer, not in
-  // the header of whatever page happens to be open. It is the same control on every
-  // page, and a page header is for things that act on the page.
-  // Settings acts on the whole application, so it sits in the header beside the other
-  // controls that do, rather than in a rail that no longer exists.
+  shell->addWidget(headerActions);
+  // Global actions share one stable header group on every page.
   settings->setMenu(appearanceMenu);
-  toolbar->addWidget(settings);
+  actionsLayout->addWidget(settings);
   (void)&aboutItem;
   routes_ = new QStackedWidget; shell->addWidget(routes_, 1);
   // The library's two pages are the rail's navigation, not a row of tabs under the
@@ -1331,14 +1332,13 @@ void MainWindow::updateControlsLayout() {
 void MainWindow::updateLayout() {
   if (!rescan_ || !choose_) return;
   const bool compact = width() < std::max(768, fontMetrics().height() * 40);
-  const bool compactHeader = compact;
   title_->setFont(headingFont(font(), course_ ? 1.1 : compact ? 1.5 : 1.8, true));
   if (!course_) {
     const bool activity = libraryStack_->currentValue() == QLatin1String("stats");
     title_->setText(activity ? tr("Your learning activity") : tr("Your learning path"));
   }
   static_cast<QBoxLayout*>(resumePanel_->layout())->setDirection(compact ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight);
-  title_->setVisible(!course_ || !compactHeader || fontMetrics().height() < 24);
+  title_->show();
   if (searchField_) searchField_->setVisible(!course_);
   if (rootLabel_) rootLabel_->setVisible(!course_ && height() >= 600);
   rescan_->hide(); choose_->setVisible(!course_ && rootPath_.isEmpty());
@@ -1452,4 +1452,3 @@ void MainWindow::notify(const QString& title, const QString& description) {
   if (auto* toasts = findChild<shadcn::Sonner*>("toasts")) toasts->showToast(title, description);
   else status_->setText(description.isEmpty() ? title : description);
 }
-

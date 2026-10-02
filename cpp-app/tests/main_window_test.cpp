@@ -454,6 +454,9 @@ private slots:
     // The search is a field, not a button: a reader who can see a field types into
     // it, and a button that opens a dialog is a step they did not ask for.
     auto* searchButton = window.findChild<shadcn::Input*>("searchButton"); QVERIFY(searchButton);
+    auto* headerActions = window.findChild<QWidget*>("headerActions"); QVERIFY(headerActions);
+    QCOMPARE(searchButton->parentWidget(), headerActions);
+    auto* routeTitle = window.findChild<QLabel*>("routeTitle"); QVERIFY(routeTitle);
     // Settings acts on the whole application, so it is in the header beside the other
     // controls that do. There is no rail: a column of navigation for two destinations
     // is not minimal.
@@ -561,9 +564,17 @@ private slots:
     }
     for (const int width : {560, 768, 1280, 1920}) {
       window.resize(width, 720); QTest::qWait(30);
+      QVERIFY(routeTitle->isVisible());
+      QVERIFY(headerActions->isVisible());
+      QVERIFY(searchButton->isVisible());
+      QVERIFY(routeTitle->width() > 0);
+      QVERIFY2(routeTitle->fontMetrics().horizontalAdvance(routeTitle->text()) <= routeTitle->contentsRect().width(),
+               qPrintable(QStringLiteral("Library title is clipped at %1px / %2x text: width %3, text %4")
+                              .arg(width).arg(fontScale).arg(routeTitle->contentsRect().width())
+                              .arg(routeTitle->text())));
       const auto captures = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
       if (!captures.isEmpty()) {
-        QVERIFY(window.grab().save(captures + QString("/library-%1x.png").arg(width).arg(fontScale)));
+        QVERIFY(window.grab().save(captures + QString("/library-%1-%2x.png").arg(width).arg(fontScale)));
       }
     }
     for (const int width : {560, 768, 1280, 1920}) {
@@ -599,6 +610,19 @@ private slots:
     for (const int width : {560, 768, 1280, 1920}) {
       window.resize(width, 720);
       QCoreApplication::processEvents();
+      auto* back = window.findChild<QPushButton*>("backToLibrary"); QVERIFY(back);
+      QVERIFY(back->isVisible());
+      QVERIFY(headerActions->isVisible());
+      QVERIFY(!searchButton->isVisible());
+      QVERIFY(routeTitle->isVisible());
+      QVERIFY(routeTitle->width() > 0);
+      QVERIFY2(back->fontMetrics().horizontalAdvance(back->text()) <= back->contentsRect().width(),
+               qPrintable(QStringLiteral("Course back label is clipped at %1px / %2x text: width %3")
+                              .arg(width).arg(fontScale).arg(back->contentsRect().width())));
+      QVERIFY2(routeTitle->fontMetrics().horizontalAdvance(routeTitle->text()) <= routeTitle->contentsRect().width(),
+               qPrintable(QStringLiteral("Course title is clipped at %1px / %2x text: width %3, text %4")
+                              .arg(width).arg(fontScale).arg(routeTitle->contentsRect().width())
+                              .arg(routeTitle->text())));
       // Below the width the app switches to its compact layout and the outline sits
       // beside the content rather than taking its place.
       if (!lessons->isVisible()) QTest::mouseClick(window.findChild<QPushButton*>("toggleOutline"), Qt::LeftButton);
