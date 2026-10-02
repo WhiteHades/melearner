@@ -33,11 +33,13 @@ namespace {
 class TextSelectionDialog final : public shadcn::Dialog {
  public:
   TextSelectionDialog(const QString& text, QWidget* parent) : shadcn::Dialog(parent) {
+    setObjectName(QStringLiteral("textSelection"));
     setTitle(tr("Select text"));
     setDescription(tr("Select and copy this text."));
     setContentWidth(560);
 
     auto* prose = new shadcn::Prose;
+    prose->setObjectName(QStringLiteral("selectedText"));
     prose->setPlainText(text);
     prose->setReaderMode(true);
     prose->setMinimumHeight(72);
@@ -124,7 +126,8 @@ void showSelectionDialog(QWidget* owner, const QString& text) {
   dialog->open();
 }
 
-void showCopyMenu(QWidget* owner, const QPoint& position, const QString& text) {
+void showCopyMenu(QWidget* owner, const QPoint& position, const QString& text,
+                  const QString& selectionText = {}) {
   if (!owner || text.isEmpty()) return;
   shadcn::DropdownMenu menu;
   auto* copy = menu.addAction(QObject::tr("Copy text"));
@@ -133,7 +136,7 @@ void showCopyMenu(QWidget* owner, const QPoint& position, const QString& text) {
   const auto chosen = menu.exec(position);
   if (!guardedOwner) return;
   if (chosen == copy) QApplication::clipboard()->setText(text);
-  else if (chosen == select) showSelectionDialog(owner, text);
+  else if (chosen == select) showSelectionDialog(owner, selectionText.isEmpty() ? text : selectionText);
 }
 
 class TextInteractionFilter final : public QObject {
@@ -191,7 +194,9 @@ class TextInteractionFilter final : public QObject {
       if (!index.isValid()) return false;
       const auto value = index.data(Qt::DisplayRole);
       if (!value.isValid() || value.toString().isEmpty()) return false;
-      showCopyMenu(widget, event->globalPos(), value.toString());
+      const auto details = view->model()->columnCount(index.parent()) == 1
+          ? index.data(Qt::AccessibleTextRole).toString() : QString{};
+      showCopyMenu(widget, event->globalPos(), value.toString(), details);
       return true;
     }
 
