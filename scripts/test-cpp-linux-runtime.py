@@ -163,6 +163,58 @@ int main(int argc, char **argv) {
                          cwd="/", env=self.env)
         self.assertEqual(result.stdout.strip(), "42")
 
+    def test_staging_requires_the_built_patched_mpv(self) -> None:
+        # Reject absent/ambiguous build identity, stale installed bytes, and a
+        # resolver that selected the host library instead of the private copy.
+        functions = re.findall(
+            r"(?ms)^function\(_require_patched_mpv_runtime .*?^endfunction\(\)\n", self.stage)
+        self.assertEqual(len(functions), 1)
+        build = self.root / "build"
+        runtime = self.root / "stage/usr/lib/melearner"
+        build.mkdir()
+        runtime.mkdir(parents=True)
+        built = build / "libmpv.so.2.5.0"
+        installed = runtime / built.name
+        host = self.root / "host/libmpv.so.2.5.0"
+        host.parent.mkdir()
+        built.write_bytes(b"patched runtime")
+        installed.write_bytes(built.read_bytes())
+        host.write_bytes(built.read_bytes())
+        cache = build / "CMakeCache.txt"
+        identity = f"MELEARNER_MPV_LIBRARY:INTERNAL={built}\n"
+        script = self.root / "require-mpv.cmake"
+        script.write_text(functions[0] + '\n_require_patched_mpv_runtime('
+                          '"${BUILD}" "${RUNTIME}" "${RESOLVED}")\n', encoding="utf-8")
+
+        def check(expected: str | None, resolved: Path = installed) -> None:
+            result = subprocess.run(
+                ["cmake", f"-DBUILD={build}", f"-DRUNTIME={runtime}",
+                 f"-DRESOLVED={resolved}", "-P", str(script)],
+                capture_output=True, text=True, timeout=20)
+            if expected is None:
+                self.assertEqual(result.returncode, 0, result.stderr)
+            else:
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(expected, result.stderr)
+
+        cache.write_text(identity, encoding="utf-8")
+        check(None)
+        check("resolved outside the private runtime", host)
+        installed.write_bytes(b"unpatched host runtime")
+        check("differs from the patched build")
+        installed.unlink()
+        check("missing installed patched libmpv")
+        installed.write_bytes(built.read_bytes())
+        built.unlink()
+        check("missing built patched libmpv")
+        built.write_bytes(b"patched runtime")
+        cache.write_text("", encoding="utf-8")
+        check("exactly one patched libmpv path")
+        cache.write_text(identity + identity, encoding="utf-8")
+        check("exactly one patched libmpv path")
+        cache.write_text("MELEARNER_MPV_LIBRARY:INTERNAL=relative/libmpv.so\n", encoding="utf-8")
+        check("patched libmpv path must be absolute")
+
     def test_browser_dependencies_are_rejected(self) -> None:
         for name in ("libQt6WebEngineCore.so.6", "libQt6WebEngineWidgets.so.6",
                      "libQt6WebEngineQuick.so.6", "libQt6Qml.so.6", "libQt6Quick.so.6",
