@@ -2,7 +2,8 @@
 .gitignore text eol=lf
 
 cpp-app/tests/*.cpp text eol=lf
-scripts/generate-media-corpus.sh text eol=lf
+cpp-app/schema/*.sql text eol=lf
+scripts/*.sh text eol=lf
 
 fixtures/parity/documents/** -text
 

@@ -50,6 +50,9 @@ git checkout main
 bash scripts/build-cpp-windows.sh
 ```
 
+The repository keeps shell scripts and the embedded SQLite schema in LF format
+on Windows too. Git's line-ending settings will not change those files.
+
 The entrypoint configures `build/cpp-windows` with the native UCRT64 compiler and Ninja, builds with CMake, then runs the `main_window_test` end-to-end test through CTest. CMake sets `QT_QPA_PLATFORM=offscreen` for that test. Increase or limit parallelism with `--jobs`, for example `bash scripts/build-cpp-windows.sh --jobs 8`. The `MELEARNER_BUILD_JOBS` environment variable accepts the same positive integer value.
 
 The executable is `build/cpp-windows/melearner.exe`. Check the unified version before opening the window:
