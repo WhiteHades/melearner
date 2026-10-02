@@ -57,19 +57,41 @@ ctest --preset linux-release --no-tests=error
 
 The regular CTest suites use Qt's offscreen platform. The two playback suites
 need an X11 display because the libmpv OpenGL surface cannot be created by the
-offscreen plugin. Run them under separate private X servers with `xvfb-run`:
+offscreen plugin. Run both under private Xvfb sessions with a null PulseAudio
+sink:
 
 ```bash
-for test in playback_render main_playback; do
-  xvfb-run -a -s '-screen 0 1920x1080x24' \
-    env QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 \
-    "./build/cpp-release/${test}_test"
-done
+bash scripts/test-cpp-playback.sh
+bash scripts/test-cpp-playback.sh --build-dir build/cpp-release
 ```
 
-Known limitation: on Wayland, keyboard activation of the video settings menu
-has failed in `main_playback_test`. The menu opens by mouse. This behavior has
-not been verified as fixed; the cause is still under investigation.
+The default build directory is `build/cpp-dev`; set `MELEARNER_BUILD_DIR` or
+pass `--build-dir` to select another. The runner requires `pulseaudio`, Xvfb,
+`xvfb-run`, `xauth`, Openbox, `dbus-daemon`, `pactl`, and `timeout`. It starts a
+separate Xvfb, private D-Bus, and PulseAudio null sink for each suite, redirects XDG and
+temporary data into a private `.tmp/cpp-playback` run directory, runs the test
+process with `LC_ALL=C`, and leaves `HOME` unchanged.
+Each command has a 60-second limit, configurable with
+`MELEARNER_PLAYBACK_TIMEOUT_SECONDS`; logs are retained under the run directory
+and the script prints their path. The private Unix sockets live under `.tmp`,
+so the checkout path must fit the platform's socket-path limit; the runner
+reports a clear error if it is too long.
+
+For an externally extracted PulseAudio package, set the server executable,
+module directory, and (if needed) server-only library search path:
+
+```bash
+PULSEAUDIO_BIN=/path/to/pulseaudio/usr/bin/pulseaudio \
+PULSEAUDIO_MODULE_DIR=/path/to/pulseaudio/usr/lib/pulseaudio/modules \
+PULSEAUDIO_LIBRARY_PATH=/path/to/pulseaudio/usr/lib/pulseaudio:/path/to/pulseaudio/usr/lib/pulseaudio/modules \
+bash scripts/test-cpp-playback.sh
+```
+
+An explicit command after `--` runs instead of the two default suites, using
+the same private X11/audio environment. This can be used to launch an existing
+nested Wayland check; the script does not provide or start a Wayland compositor.
+Nested Wayland popup checks need input delivered by the compositor. Synthetic
+pointer movement does not certify native compositor pointer input.
 
 Use the source installer for the complete local check and installation:
 
@@ -133,9 +155,8 @@ without a logout.
 bash scripts/install-cpp-linux.sh "$HOME/.local"
 ```
 
-The icon set lives in `cpp-app/assets/icons/hicolor`. Below 32 pixels it carries
-only the play triangle, because the book's two shapes blur together at that size
-and the triangle is the part that still reads.
+The icon set lives in `cpp-app/assets/icons/hicolor`. Every installed size uses
+the same monochrome book-and-play mark, rasterized at that size.
 
 A folder can be passed on the command line, and that is what the desktop entry
 hands over:
