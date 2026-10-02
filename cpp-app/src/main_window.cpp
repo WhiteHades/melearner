@@ -343,6 +343,9 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   connect(outlineModel_, &melearner::CourseOutlineModel::errorOccurred, this, &MainWindow::showError);
   outlineLayout->addWidget(lessons_, 1); split_->addPanel(*outline_);
   auto* contentScroll = new shadcn::ScrollArea; contentScroll->setWidgetResizable(true);
+  // The lesson canvas is sized to the viewport; its readers wrap and its titles
+  // elide, so a horizontal scrollbar can only cover the bottom navigation.
+  contentScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
   contentScroll->setObjectName("lessonScroll"); contentScroll->viewport()->installEventFilter(this);
   auto* contentBody = new QWidget; contentScroll->setWidget(contentBody); content_ = contentScroll; content_->setMinimumWidth(0);
   auto* contentLayout = new QVBoxLayout(contentBody); contentLayout->setContentsMargins(12, 0, 0, 0);

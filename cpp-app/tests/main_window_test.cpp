@@ -721,7 +721,13 @@ private slots:
     QTest::mouseClick(toggle, Qt::LeftButton);
     QVERIFY(document->isVisible());
     QCOMPARE(document->toPlainText(), QString("Another local lesson."));
-    QTRY_COMPARE(window.findChild<QScrollArea*>("lessonScroll")->horizontalScrollBar()->maximum(), 0);
+    auto* lessonScroll = window.findChild<QScrollArea*>("lessonScroll");
+    auto* horizontalBar = lessonScroll->horizontalScrollBar();
+    QTRY_COMPARE(horizontalBar->maximum(), 0);
+    QVERIFY2(!horizontalBar->isVisible(), "the document page shows a horizontal scrollbar despite having no horizontal range");
+    auto* nextLesson = window.findChild<QPushButton*>("nextLesson"); QVERIFY(nextLesson);
+    const auto nextLessonRect = QRect(nextLesson->mapTo(lessonScroll->viewport(), QPoint(0, 0)), nextLesson->size());
+    QVERIFY(lessonScroll->viewport()->rect().contains(nextLessonRect));
     const auto captures = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
     if (!captures.isEmpty())
       QVERIFY(window.grab().save(captures + QString("/document-560-%1x.png").arg(fontScale)));
