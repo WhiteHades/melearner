@@ -84,6 +84,10 @@ The playback test also requires the FFmpeg command-line tool. Its recovery
 check remuxes the checked-in clip into a longer temporary file without
 encoding new media, then checks error recovery, closing and resuming a lesson.
 
+The playback fixtures are small, project-authored H.264 and HEVC clips. To
+regenerate them, run `bash scripts/generate-media-corpus.sh` with FFmpeg 8.1.2.
+The script replaces the three fixture clips and prints their SHA-256 hashes.
+
 The window tests use the application's font and check normal and doubled text.
 To save their screenshots, create a destination and pass it to the test process:
 
