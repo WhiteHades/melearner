@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QObject>
+#include <QImage>
 #include <QString>
 #include <QStringList>
 #include <QVector>
@@ -40,6 +41,7 @@ public:
     // Software skips hardware decoder and interop probes. Presentation still
     // uses the caller's OpenGL context, which may itself use a software driver.
     enum class DecodeMode { Automatic, Software };
+    enum class RenderMode { OpenGL, Software };
     explicit Player(QObject* parent = nullptr, DecodeMode decoding = DecodeMode::Automatic);
     ~Player() override;
 
@@ -76,18 +78,23 @@ public:
     [[nodiscard]] RequestId frameStep();
     [[nodiscard]] RequestId screenshot(const QString& outputPath);
 
-    // Called only while the widget's QOpenGLContext is current. Render methods
-    // never take the command queue lock and never wait for the Player thread.
+    // Called only on the presentation widget's thread. OpenGL mode also needs
+    // that widget's QOpenGLContext current. These methods never take the command
+    // queue lock or wait for the Player thread.
     [[nodiscard]] bool createRenderContext(
         OpenGLProcAddress getProcAddress,
         void* getProcAddressContext,
         RenderUpdateCallback updateCallback,
-        void* updateCallbackContext);
+        void* updateCallbackContext,
+        RenderMode mode = RenderMode::OpenGL);
     void destroyRenderContext();
     [[nodiscard]] bool renderFrame(int framebufferObject, int width, int height,
                                    int internalFormat = 0, bool flipY = true);
+    // Software presentation writes opaque RGBX pixels into a reusable image.
+    // Use a 64-byte-aligned image and stride to avoid media-library copies.
+    [[nodiscard]] bool renderSoftwareFrame(QImage& image);
     // Service decoder work and consume pending frames without drawing when
-    // the presentation widget is hidden. The same GL context must be current.
+    // the presentation widget is hidden. OpenGL mode needs its context current.
     [[nodiscard]] bool processHiddenRenderUpdate();
     [[nodiscard]] bool hasRenderContext() const;
 

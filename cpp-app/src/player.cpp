@@ -250,9 +250,12 @@ public:
         Player::OpenGLProcAddress getProcAddress,
         void* getProcAddressContext,
         Player::RenderUpdateCallback updateCallback,
-        void* updateCallbackContext) {
+        void* updateCallbackContext,
+        Player::RenderMode mode) {
         auto* handle = handle_.load(std::memory_order_acquire);
-        if (handle == nullptr || !ready_.load(std::memory_order_acquire) || getProcAddress == nullptr) {
+        const bool software = mode == Player::RenderMode::Software;
+        if (handle == nullptr || !ready_.load(std::memory_order_acquire)
+            || (!software && getProcAddress == nullptr)) {
             return false;
         }
         if (renderContext_.load(std::memory_order_acquire) != nullptr) {
@@ -262,12 +265,13 @@ public:
         mpv_opengl_init_params glParams{};
         glParams.get_proc_address = getProcAddress;
         glParams.get_proc_address_ctx = getProcAddressContext;
-        const char* apiType = MPV_RENDER_API_TYPE_OPENGL;
+        const char* apiType = software ? MPV_RENDER_API_TYPE_SW : MPV_RENDER_API_TYPE_OPENGL;
         int advancedControl = 1;
         mpv_render_param params[] = {
             {MPV_RENDER_PARAM_API_TYPE, const_cast<char*>(apiType)},
-            {MPV_RENDER_PARAM_OPENGL_INIT_PARAMS, &glParams},
             {MPV_RENDER_PARAM_ADVANCED_CONTROL, &advancedControl},
+            {software ? MPV_RENDER_PARAM_INVALID : MPV_RENDER_PARAM_OPENGL_INIT_PARAMS,
+             software ? nullptr : &glParams},
             {MPV_RENDER_PARAM_INVALID, nullptr},
         };
         mpv_render_context* context = nullptr;
@@ -311,6 +315,34 @@ public:
         };
         (void)mpv_render_context_update(context);
         return mpv_render_context_render(context, params) >= 0;
+    }
+
+    [[nodiscard]] bool renderSoftwareFrame(QImage& image) {
+        auto* context = renderContext_.load(std::memory_order_acquire);
+        if (context == nullptr || image.isNull() || image.format() != QImage::Format_RGBX8888) {
+            return false;
+        }
+        int size[] = {image.width(), image.height()};
+        auto stride = static_cast<std::size_t>(image.bytesPerLine());
+        int blockForTargetTime = 0;
+        mpv_render_param params[] = {
+            {MPV_RENDER_PARAM_SW_SIZE, size},
+            {MPV_RENDER_PARAM_SW_FORMAT, const_cast<char*>("rgb0")},
+            {MPV_RENDER_PARAM_SW_STRIDE, &stride},
+            {MPV_RENDER_PARAM_SW_POINTER, image.bits()},
+            {MPV_RENDER_PARAM_BLOCK_FOR_TARGET_TIME, &blockForTargetTime},
+            {MPV_RENDER_PARAM_INVALID, nullptr},
+        };
+        (void)mpv_render_context_update(context);
+        if (mpv_render_context_render(context, params) < 0) {
+            return false;
+        }
+        // mpv leaves the X byte unspecified; Qt RGBX8888 requires it to be 255.
+        for (int y = 0; y < image.height(); ++y) {
+            auto* row = image.scanLine(y);
+            for (int x = 0; x < image.width(); ++x) row[x * 4 + 3] = 255;
+        }
+        return true;
     }
 
     [[nodiscard]] bool processHiddenRenderUpdate() {
@@ -1174,15 +1206,20 @@ Player::RequestId Player::screenshot(const QString& outputPath) {
 }
 
 bool Player::createRenderContext(OpenGLProcAddress getProcAddress, void* getProcAddressContext,
-                                 RenderUpdateCallback updateCallback, void* updateCallbackContext) {
+                                 RenderUpdateCallback updateCallback, void* updateCallbackContext,
+                                 RenderMode mode) {
     return impl_->createRenderContext(getProcAddress, getProcAddressContext, updateCallback,
-                                      updateCallbackContext);
+                                      updateCallbackContext, mode);
 }
 
 void Player::destroyRenderContext() { impl_->destroyRenderContext(); }
 
 bool Player::renderFrame(int framebufferObject, int width, int height, int internalFormat, bool flipY) {
     return impl_->renderFrame(framebufferObject, width, height, internalFormat, flipY);
+}
+
+bool Player::renderSoftwareFrame(QImage& image) {
+    return impl_->renderSoftwareFrame(image);
 }
 
 bool Player::processHiddenRenderUpdate() {
