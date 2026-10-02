@@ -535,6 +535,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   // The path is last and selectable, because it is the long one and the thing a
   // reader most often wants to copy.
   status_ = new shadcn::Label(tr("Opening Library…"), center);
+  status_->setForegroundRole(QPalette::PlaceholderText);
   status_->setWordWrap(true); status_->setAccessibleName(tr("Status"));
   status_->setTextFormat(Qt::PlainText);
   status_->setObjectName("appStatus");
@@ -543,6 +544,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   statusRow->addWidget(status_, 1);
   cancelScan_ = button(tr("Cancel scan"), "cancelScan"); cancelScan_->hide(); statusRow->addWidget(cancelScan_);
   rootLabel_ = new ElidingLabel; rootLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+  rootLabel_->setForegroundRole(QPalette::PlaceholderText);
   rootLabel_->setObjectName("rootPath");
   rootLabel_->setTextFormat(Qt::PlainText);
   rootLabel_->setMinimumWidth(0); rootLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
@@ -1437,13 +1439,6 @@ void MainWindow::applyAppearance() {
         target->buttonSize() == shadcn::ButtonSize::IconLg) {
       const auto label = target->text();
       if (!label.isEmpty()) { target->setText({}); target->setToolTip(label); }
-    }
-  }
-  for (auto* widget : findChildren<QWidget*>()) {
-    if (auto* label = qobject_cast<QLabel*>(widget)) {
-      auto muted = label->palette();
-      muted.setColor(QPalette::WindowText, melearner::roleColor(this, shadcn::Role::MutedForeground));
-      label->setPalette(muted);
     }
   }
   updateLayout();

@@ -457,6 +457,12 @@ private slots:
     auto* headerActions = window.findChild<QWidget*>("headerActions"); QVERIFY(headerActions);
     QCOMPARE(searchButton->parentWidget(), headerActions);
     auto* routeTitle = window.findChild<QLabel*>("routeTitle"); QVERIFY(routeTitle);
+    QCOMPARE(routeTitle->palette().color(QPalette::WindowText),
+             QApplication::palette().color(QPalette::WindowText));
+    auto* lessonTitle = window.findChild<QLabel*>("lessonTitle"); QVERIFY(lessonTitle);
+    QCOMPARE(lessonTitle->palette().color(QPalette::WindowText),
+             QApplication::palette().color(QPalette::WindowText));
+    QCOMPARE(window.findChild<QLabel*>("appStatus")->foregroundRole(), QPalette::PlaceholderText);
     // Settings acts on the whole application, so it is in the header beside the other
     // controls that do. There is no rail: a column of navigation for two destinations
     // is not minimal.
