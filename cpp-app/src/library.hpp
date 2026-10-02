@@ -30,7 +30,7 @@ struct Error {
 };
 
 struct Settings {
-    QString appearance = QStringLiteral("light");
+    QString appearance = QStringLiteral("dark");
     QString libraryPresentation = QStringLiteral("comfortable");
     std::uint64_t revision = 0;
 };
