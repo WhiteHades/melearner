@@ -11,8 +11,8 @@ usage() {
 usage: bash scripts/build-cpp-windows.sh [--build-dir <path>] [--jobs <count>] [--run-playback]
 
 Configure and build melearner in the MSYS2 UCRT64 shell, then run every test
-registered by CMake. The OpenGL playback binaries are build targets only and
-are launched separately with --run-playback.
+registered by CMake. The OpenGL playback E2E is a build target only and
+is launched separately with --run-playback.
 EOF
 }
 
@@ -87,7 +87,7 @@ ctest --test-dir "$build_dir" --output-on-failure --no-tests=error
 if [[ "$run_playback" == true ]]; then
   (
     cd "$build_dir"
-    for test in playback_render_test main_playback_test; do
+    for test in main_playback_test; do
       executable="./${test}.exe"
       [[ -x "$executable" ]] ||
         fail "Missing playback test executable: $build_dir/${test}.exe"
