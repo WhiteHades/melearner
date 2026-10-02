@@ -88,8 +88,10 @@ class WindowsBuildEntrypointTests(unittest.TestCase):
         self.mock = self.root / "command.py"
         self.mock.write_text(MOCK, encoding="utf-8")
         self.mock.chmod(0o755)
-        for tool in ("cmake", "ctest", "ninja", "gcc", "g++", "pkg-config"):
+        for tool in ("cmake", "ctest", "ninja", "gcc", "g++", "pkg-config", "ffmpeg"):
             (self.bin / tool).symlink_to(self.mock)
+        (self.bin / "python3").symlink_to(sys.executable)
+        (self.bin / "dirname").symlink_to(shutil.which("dirname"))
         self.log = self.root / "calls.jsonl"
         self.playback_log = self.root / "playback.log"
         self.build_dir = self.repo / "build/cpp-windows"
@@ -182,6 +184,18 @@ class WindowsBuildEntrypointTests(unittest.TestCase):
                 f"main_playback_test:windows:{self.build_dir}",
             ],
         )
+
+    def test_only_playback_requires_ffmpeg_before_configuring(self) -> None:
+        (self.bin / "ffmpeg").unlink()
+        # Exclude the host FFmpeg so the result depends on the simulated Windows
+        # toolchain, not this machine's installed media tools.
+        result = self.run_entrypoint(PATH=str(self.bin))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        result = self.run_entrypoint("--run-playback", PATH=str(self.bin))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("ffmpeg", result.stderr)
+        self.assertEqual(self.calls(), [])
+        self.assertFalse(self.playback_log.exists())
 
 
 if __name__ == "__main__":

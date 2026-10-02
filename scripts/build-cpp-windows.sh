@@ -60,6 +60,11 @@ for tool in cmake ctest ninja gcc g++ pkg-config; do
     fail "Missing UCRT64 build tool: $tool"
 done
 
+if [[ "$run_playback" == true ]]; then
+  command -v ffmpeg >/dev/null 2>&1 ||
+    fail "Missing playback test tool: ffmpeg. Install mingw-w64-ucrt-x86_64-ffmpeg in UCRT64."
+fi
+
 pkg-config --print-errors --exists mpv libzip md4c ||
   fail "Missing UCRT64 pkg-config dependencies: mpv, libzip, or md4c"
 
