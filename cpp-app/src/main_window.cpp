@@ -36,7 +36,6 @@
 #include <QPainter>
 #include <QPropertyAnimation>
 #include <QResizeEvent>
-#include <QShortcut>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSignalBlocker>
@@ -192,7 +191,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   searchField_ = new shadcn::Input; searchField_->setObjectName("searchButton");
   searchField_->setAccessibleName(tr("Search your Library"));
   searchField_->setPlaceholderText(tr("Search your courses…"));
-  searchField_->setToolTip(tr("Search your Library (Enter, or Ctrl+K)"));
+  searchField_->setToolTip(tr("Search your Library (/ outside a text field)"));
   searchField_->setMaximumWidth(460);
   searchField_->installEventFilter(this);
   connect(searchField_, &QLineEdit::returnPressed, this, &MainWindow::openSearch);
@@ -202,7 +201,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   // An icon button shows no label. The name is the accessible name and the
   // tooltip, and leaving the text set would paint it inside a 32 pixel button.
   shortcuts->setText({});
-  shortcuts->setToolTip(tr("Keyboard shortcuts (? or F1)")); actionsLayout->addWidget(shortcuts);
+  shortcuts->setToolTip(tr("Keyboard shortcuts (?)")); actionsLayout->addWidget(shortcuts);
   connect(shortcuts, &QPushButton::clicked, this, [this] { showKeyboardPopup(false); });
   rescan_ = button(tr("Rescan"), "rescanRoot"); rescan_->setParent(center); rescan_->hide(); rescan_->setEnabled(false);
   choose_ = button(tr("Choose root folder"), "chooseRoot", shadcn::Variant::Default); choose_->setEnabled(false);
@@ -313,17 +312,16 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     updateLayout();
   });
   split_ = new shadcn::ResizablePanelGroup(Qt::Horizontal);
-  outline_ = new QWidget; outline_->setMinimumWidth(240); outline_->setObjectName("courseOutline"); outline_->setAttribute(Qt::WA_StyledBackground);
-  auto* outlineLayout = new QVBoxLayout(outline_); outlineLayout->setContentsMargins(12, 14, 12, 12);
+  outline_ = new QWidget; outline_->setMinimumWidth(220); outline_->setObjectName("courseOutline"); outline_->setAttribute(Qt::WA_StyledBackground);
+  auto* outlineLayout = new QVBoxLayout(outline_); outlineLayout->setContentsMargins(0, 0, 0, 0); outlineLayout->setSpacing(12);
   auto* outlineTitle = new shadcn::Label(tr("Course outline")); outlineTitle->setFont(headingFont(font(), 1.0, true));
-  outlineTitle->setMargin(4); outlineLayout->addWidget(outlineTitle);
+  outlineTitle->setMargin(0); outlineLayout->addWidget(outlineTitle);
   outlineModel_ = new melearner::CourseOutlineModel(library_, this);
-  // The outline is the same rows as the course list, on the tree view: a section
-  // is a heading that carries its own completion as a track, and a lesson is a row
-  // with a description. No delegate, and no painting in this file.
+  // One-line rows keep navigation quiet. The shared delegate owns selection,
+  // disclosure and completion marks; counts appear once per section.
   lessons_ = new shadcn::TreeView; lessons_->setObjectName("lessons");
   lessons_->setAccessibleName(tr("Course sections and lessons"));
-  lessons_->setModel(outlineModel_); lessons_->showProgress();
+  lessons_->setModel(outlineModel_); lessons_->hideProgress();
   lessons_->setCompact(true); lessons_->setAnimated(false);
   lessons_->setExpandsOnDoubleClick(false);
   // A revealed handout lives under its video, so the video opens on the way to it.
@@ -356,13 +354,16 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   auto* previous = button(tr("Previous lesson"), "previousLesson", shadcn::Variant::Ghost);
   lessonNavigation_->addWidget(previous);
   auto* next = button(tr("Next lesson"), "nextLesson", shadcn::Variant::Ghost); lessonNavigation_->addWidget(next);
-  lessonNavigation_->addStretch();
   complete_ = button(tr("Mark complete"), "markComplete"); complete_->setEnabled(false); lessonNavigation_->addWidget(complete_);
+  lessonNavigation_->addStretch();
   contentLayout->addWidget(lessonActions_);
   media_ = new QStackedWidget; video_ = new melearner::MpvVideoWidget(player_, media_);
   video_->setObjectName("videoSurface"); video_->setFocusPolicy(Qt::StrongFocus);
   video_->setAccessibleName(tr("Video player"));
-  video_->setAccessibleDescription(tr("Space plays or pauses. Left and Right seek ten seconds. F toggles fullscreen."));
+  video_->setAccessibleDescription(tr("Click to play or pause. Space then P plays or pauses. H and L seek ten seconds. Space then F toggles fullscreen."));
+  connect(video_, &melearner::MpvVideoWidget::clicked, this, [this] {
+    if (playerLoaded_) play_->click();
+  });
   media_->addWidget(video_);
   auto* documentPane = new QWidget;
   auto* documentCanvas = new QWidget; documentCanvas->setMaximumWidth(960);
@@ -524,7 +525,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   connect(playbackMenu, &QMenu::aboutToHide, this, [this] { hideControls_->start(); });
   setTabOrder(video_, seek_); setTabOrder(seek_, play_); setTabOrder(play_, volume);
   setTabOrder(volume, playbackOptions); setTabOrder(playbackOptions, fullscreen);
-  split_->addWidget(content_); split_->setStretchFactor(0, 0); split_->setStretchFactor(1, 1); split_->setSizes({280, 820});
+  split_->addWidget(content_); split_->setStretchFactor(0, 0); split_->setStretchFactor(1, 1); split_->setSizes({260, 840});
   routes_->addWidget(split_);
   // Reserve status space only while work is running or needs attention.
   status_ = new shadcn::Label(tr("Opening Library…"), center);
@@ -870,16 +871,13 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   // Keep the command list as the single source for keyboard help.
   // Single-letter Vim motions are dispatched from keyPressEvent/eventFilter so
   // native editors never lose their text input semantics.
-  registerKeyboardCommand("library", tr("Return to Library"), tr("Esc"), tr("Navigation"),
+  registerKeyboardCommand("library", tr("Return to Library"), tr("Space b"), tr("Navigation"),
     [this] { if (course_) showLibrary(); });
-  registerKeyboardCommand("search", tr("Search library"), tr("Ctrl+K  /"), tr("Navigation"),
+  registerKeyboardCommand("search", tr("Search library"), tr("/"), tr("Navigation"),
     [this] { openSearch(); });
-  auto* helpCommand = registerKeyboardCommand("shortcuts", tr("Show keyboard shortcuts"), tr("?  F1"), tr("Help"),
+  registerKeyboardCommand("shortcuts", tr("Show keyboard shortcuts"), tr("?"), tr("Help"),
     [this] { showKeyboardPopup(false); });
-  auto* helpShortcut = new QShortcut(QKeySequence(Qt::Key_F1), this);
-  helpShortcut->setContext(Qt::ApplicationShortcut); helpShortcut->setAutoRepeat(false);
-  connect(helpShortcut, &QShortcut::activated, helpCommand, &QAction::trigger);
-  registerKeyboardCommand("commandPalette", tr("Open command palette"), tr(":  Ctrl+Space"), tr("Help"),
+  registerKeyboardCommand("commandPalette", tr("Open command palette"), tr(":"), tr("Help"),
     [this] { showKeyboardPopup(true); });
   registerKeyboardCommand("moveUp", tr("Move up"), tr("k"), tr("Vim navigation"),
     [this] { moveSelection(-1); });
@@ -897,34 +895,34 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     [this] { toggleOutlineBranch(false); });
   registerKeyboardCommand("expand", tr("Expand outline section"), tr("l"), tr("Course outline"),
     [this] { toggleOutlineBranch(true); });
-  registerKeyboardCommand("previousLesson", tr("Previous lesson"), tr("["), tr("Lesson"),
+  registerKeyboardCommand("previousLesson", tr("Previous lesson"), tr("K"), tr("Lesson"),
     [this] { stepLesson(-1); });
-  registerKeyboardCommand("nextLesson", tr("Next lesson"), tr("]"), tr("Lesson"),
+  registerKeyboardCommand("nextLesson", tr("Next lesson"), tr("J"), tr("Lesson"),
     [this] { stepLesson(1); });
-  registerKeyboardCommand("complete", tr("Mark lesson complete"), tr("c"), tr("Lesson"),
+  registerKeyboardCommand("complete", tr("Mark lesson complete"), tr("Space c"), tr("Lesson"),
     [this] { if (complete_ && complete_->isEnabled()) complete_->click(); });
-  registerKeyboardCommand("outline", tr("Toggle course outline"), tr("o"), tr("Lesson"),
+  registerKeyboardCommand("outline", tr("Toggle course outline"), tr("Space o"), tr("Lesson"),
     [this] { if (outlineToggle_ && outlineToggle_->isVisible()) outlineToggle_->click(); });
-  registerKeyboardCommand("playPause", tr("Play or pause"), tr("Space"), tr("Player"),
+  registerKeyboardCommand("playPause", tr("Play or pause"), tr("Space p"), tr("Player"),
     [this] { if (playerLoaded_ && play_) play_->click(); });
-  registerKeyboardCommand("seekBack", tr("Seek back ten seconds"), tr("h  Left"), tr("Player"),
+  registerKeyboardCommand("seekBack", tr("Seek back ten seconds"), tr("h"), tr("Player"),
     [this] { if (playerLoaded_) (void)player_->seekRelative(-10000); });
-  registerKeyboardCommand("seekForward", tr("Seek forward ten seconds"), tr("l  Right"), tr("Player"),
+  registerKeyboardCommand("seekForward", tr("Seek forward ten seconds"), tr("l"), tr("Player"),
     [this] { if (playerLoaded_) (void)player_->seekRelative(10000); });
-  registerKeyboardCommand("fullscreen", tr("Toggle fullscreen"), tr("f"), tr("Player"),
+  registerKeyboardCommand("fullscreen", tr("Toggle fullscreen"), tr("Space f"), tr("Player"),
     [this] { if (isFullScreen()) showNormal(); else showFullScreen(); });
-  registerKeyboardCommand("mute", tr("Mute or unmute"), tr("m"), tr("Player"),
+  registerKeyboardCommand("mute", tr("Mute or unmute"), tr("Space m"), tr("Player"),
     [this] { if (playerLoaded_) (void)player_->setMuted(!muted_); });
-  registerKeyboardCommand("frameBack", tr("Seek back one second"), tr(","), tr("Player"),
+  registerKeyboardCommand("frameBack", tr("Seek back one second"), tr("Space ,"), tr("Player"),
     [this] { if (playerLoaded_) (void)player_->seekRelative(-1000); });
-  registerKeyboardCommand("frameForward", tr("Advance one frame"), tr("."), tr("Player"),
+  registerKeyboardCommand("frameForward", tr("Advance one frame"), tr("Space ."), tr("Player"),
     [this] { if (playerLoaded_) (void)player_->frameStep(); });
   registerKeyboardCommand("chooseRoot", tr("Choose root folder"), {}, tr("Library"),
     [this] { if (choose_ && choose_->isEnabled()) choose_->click(); });
   registerKeyboardCommand("rescanRoot", tr("Rescan root folder"), {}, tr("Library"),
     [this] { if (rescan_ && rescan_->isEnabled()) rescan_->click(); });
 
-  connect(qApp, &QApplication::focusChanged, this, [this] { pendingG_ = false; });
+  connect(qApp, &QApplication::focusChanged, this, [this] { keyPrefix_ = KeyPrefix::None; });
   installKeyboardFilters();
   startupId_ = library_.open();
   if (!startupId_) showError(tr("The Library could not start. Close and reopen melearner."));
@@ -976,7 +974,7 @@ void MainWindow::showKeyboardPopup(bool commandPalette) {
   dialog->setTitle(commandPalette ? tr("Run a command") : tr("Keyboard shortcuts"));
   dialog->setDescription(commandPalette
       ? tr("Type to filter commands, then press Enter to run one.")
-      : tr("Type to filter, then press Enter to run a command."));
+      : tr("Space is the leader key. Press the next key within two seconds. Filter to find a shortcut."));
   dialog->setContentWidth(620);
   auto* command = new shadcn::Command(dialog);
   command->setObjectName("keyboardPopupCommand");
@@ -1084,14 +1082,10 @@ bool MainWindow::handleKeyboardEvent(QObject* watched, QKeyEvent* event) {
     if (courses_) courses_->revealItems(false);
   }
   if (!event || event->type() != QEvent::KeyPress || QApplication::activeModalWidget() || QApplication::activePopupWidget()) return false;
-  if (event->key() == Qt::Key_F1 && event->modifiers() == Qt::NoModifier && !event->isAutoRepeat()) {
-    keyboardCommand("shortcuts")->trigger(); event->accept(); return true;
-  }
   if (isTextInputFocused()) return false;
   const auto key = event->key(); const auto modifiers = event->modifiers();
   if (event->isAutoRepeat() && key != Qt::Key_J && key != Qt::Key_K && key != Qt::Key_H &&
-      key != Qt::Key_L && key != Qt::Key_Left && key != Qt::Key_Right &&
-      key != Qt::Key_D && key != Qt::Key_U && key != Qt::Key_PageDown && key != Qt::Key_PageUp) return false;
+      key != Qt::Key_L && key != Qt::Key_D && key != Qt::Key_U) return false;
   const auto noModifiers = modifiers == Qt::NoModifier;
   const auto noTextModifier = noModifiers || modifiers == Qt::ShiftModifier;
   const auto control = modifiers.testFlag(Qt::ControlModifier) && !modifiers.testFlag(Qt::AltModifier) && !modifiers.testFlag(Qt::MetaModifier);
@@ -1101,52 +1095,62 @@ bool MainWindow::handleKeyboardEvent(QObject* watched, QKeyEvent* event) {
     return root && ((focus && (focus == root || root->isAncestorOf(focus))) || watched == root ||
                     (watchedWidget && root->isAncestorOf(watchedWidget)));
   };
-  if (control && key == Qt::Key_K) { keyboardCommand("search")->trigger(); event->accept(); return true; }
-  if (control && key == Qt::Key_Space) { keyboardCommand("commandPalette")->trigger(); event->accept(); return true; }
-  if (noTextModifier && (key == Qt::Key_Question || (key == Qt::Key_Slash && modifiers == Qt::ShiftModifier) || key == Qt::Key_F1)) {
+  if (keyPrefix_ != KeyPrefix::None && keyPrefixAge_.elapsed() > 2000) keyPrefix_ = KeyPrefix::None;
+  if (key == Qt::Key_Escape && noModifiers) {
+    keyPrefix_ = KeyPrefix::None;
+    if (isFullScreen()) showNormal();
+    event->accept(); return true;
+  }
+  if (keyPrefix_ == KeyPrefix::Leader) {
+    keyPrefix_ = KeyPrefix::None;
+    QString command;
+    if (noModifiers) {
+      if (key == Qt::Key_B) command = "library";
+      else if (key == Qt::Key_C) command = "complete";
+      else if (key == Qt::Key_O) command = "outline";
+      else if (key == Qt::Key_P) command = "playPause";
+      else if (key == Qt::Key_F) command = "fullscreen";
+      else if (key == Qt::Key_M) command = "mute";
+      else if (key == Qt::Key_Comma) command = "frameBack";
+      else if (key == Qt::Key_Period) command = "frameForward";
+    }
+    if (!command.isEmpty()) keyboardCommand(command)->trigger();
+    event->accept(); return true;
+  }
+  if (noModifiers && key == Qt::Key_Space) {
+    // A focused native button still activates with Space. Vim's leader starts
+    // on the content/list canvas, not while activating an ordinary control.
+    if (qobject_cast<QAbstractButton*>(focus)) return false;
+    keyPrefix_ = KeyPrefix::Leader; keyPrefixAge_.start(); event->accept(); return true;
+  }
+  if (noTextModifier && (key == Qt::Key_Question || (key == Qt::Key_Slash && modifiers == Qt::ShiftModifier))) {
     keyboardCommand("shortcuts")->trigger(); event->accept(); return true;
   }
   if (noModifiers && key == Qt::Key_Slash) { keyboardCommand("search")->trigger(); event->accept(); return true; }
   if (noTextModifier && (key == Qt::Key_Colon || (key == Qt::Key_Semicolon && modifiers == Qt::ShiftModifier))) {
     keyboardCommand("commandPalette")->trigger(); event->accept(); return true;
   }
-  if (pendingG_) {
-    pendingG_ = false;
+  if (keyPrefix_ == KeyPrefix::Go) {
+    keyPrefix_ = KeyPrefix::None;
     if (noModifiers && key == Qt::Key_G) { keyboardCommand("first")->trigger(); event->accept(); return true; }
-  } else if (noModifiers && key == Qt::Key_G) { pendingG_ = true; event->accept(); return true; }
+  } else if (noModifiers && key == Qt::Key_G) { keyPrefix_ = KeyPrefix::Go; keyPrefixAge_.start(); event->accept(); return true; }
   if (control && key == Qt::Key_D) { keyboardCommand("pageDown")->trigger(); event->accept(); return true; }
   if (control && key == Qt::Key_U) { keyboardCommand("pageUp")->trigger(); event->accept(); return true; }
   const bool inVideo = inside(video_) || inside(playerControls_);
   const bool inOutline = inside(lessons_);
-  const bool inLibrary = inside(courses_);
   if (inVideo && playerLoaded_ && noModifiers) {
-    // Buttons and sliders keep native Space/arrow behavior while focused.
-    if (focus != video_ && (key == Qt::Key_Space || key == Qt::Key_Left || key == Qt::Key_Right)) return false;
     QString command;
-    if (key == Qt::Key_Space) command = "playPause";
-    else if (key == Qt::Key_Left || key == Qt::Key_H) command = "seekBack";
-    else if (key == Qt::Key_Right || key == Qt::Key_L) command = "seekForward";
-    else if (key == Qt::Key_F) command = "fullscreen";
-    else if (key == Qt::Key_M) command = "mute";
-    else if (key == Qt::Key_Comma) command = "frameBack";
-    else if (key == Qt::Key_Period) command = "frameForward";
+    if (key == Qt::Key_H) command = "seekBack";
+    else if (key == Qt::Key_L) command = "seekForward";
     if (!command.isEmpty()) { keyboardCommand(command)->trigger(); event->accept(); return true; }
-  }
-  if (noModifiers && key == Qt::Key_Escape) {
-    if (isFullScreen()) { showNormal(); event->accept(); return true; }
-    if (course_) { keyboardCommand("library")->trigger(); event->accept(); return true; }
   }
   if (noModifiers && key == Qt::Key_J) { keyboardCommand("moveDown")->trigger(); event->accept(); return true; }
   if (noModifiers && key == Qt::Key_K) { keyboardCommand("moveUp")->trigger(); event->accept(); return true; }
   if (modifiers == Qt::ShiftModifier && key == Qt::Key_G) { keyboardCommand("last")->trigger(); event->accept(); return true; }
   if (noModifiers && key == Qt::Key_H && inOutline) { keyboardCommand("collapse")->trigger(); event->accept(); return true; }
   if (noModifiers && key == Qt::Key_L && inOutline) { keyboardCommand("expand")->trigger(); event->accept(); return true; }
-  if (noModifiers && key == Qt::Key_BracketLeft && course_) { keyboardCommand("previousLesson")->trigger(); event->accept(); return true; }
-  if (noModifiers && key == Qt::Key_BracketRight && course_) { keyboardCommand("nextLesson")->trigger(); event->accept(); return true; }
-  if (noModifiers && key == Qt::Key_C && course_) { keyboardCommand("complete")->trigger(); event->accept(); return true; }
-  if (noModifiers && key == Qt::Key_O && course_) { keyboardCommand("outline")->trigger(); event->accept(); return true; }
-  if (noModifiers && key == Qt::Key_PageDown && (inLibrary || inOutline || inside(documentView_))) { keyboardCommand("pageDown")->trigger(); event->accept(); return true; }
-  if (noModifiers && key == Qt::Key_PageUp && (inLibrary || inOutline || inside(documentView_))) { keyboardCommand("pageUp")->trigger(); event->accept(); return true; }
+  if (modifiers == Qt::ShiftModifier && key == Qt::Key_K && course_) { keyboardCommand("previousLesson")->trigger(); event->accept(); return true; }
+  if (modifiers == Qt::ShiftModifier && key == Qt::Key_J && course_) { keyboardCommand("nextLesson")->trigger(); event->accept(); return true; }
   return false;
 }
 void MainWindow::chooseRoot(const QString& path) {
@@ -1342,7 +1346,8 @@ void MainWindow::updateControlsLayout() {
 void MainWindow::updateLayout() {
   if (!rescan_ || !choose_) return;
   const bool compact = width() < std::max(768, fontMetrics().height() * 40);
-  title_->setFont(headingFont(font(), 1.1, true));
+  title_->setFont(headingFont(font(), 1.3, true));
+  lessonTitle_->setFont(headingFont(font(), 1.2, true));
   if (!course_) {
     const bool activity = libraryStack_->currentValue() == QLatin1String("stats");
     title_->setText(activity ? tr("Your learning activity") : tr("Your learning path"));

@@ -10,6 +10,7 @@
 #include <QList>
 #include <QMap>
 #include <QSet>
+#include <QElapsedTimer>
 #include <functional>
 #include <optional>
 
@@ -55,7 +56,9 @@ private:
   void installKeyboardFilters();
   QList<QAction*> keyboardActions_;
   QHash<QString, QAction*> keyboardCommands_;
-  bool pendingG_ = false;
+  enum class KeyPrefix { None, Go, Leader };
+  KeyPrefix keyPrefix_ = KeyPrefix::None;
+  QElapsedTimer keyPrefixAge_;
   melearner::library::Library library_;
   melearner::documents::Documents documents_;
   QString rootPath_;
