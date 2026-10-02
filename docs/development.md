@@ -197,6 +197,29 @@ page each have a 200 ms response budget. The resume measurement includes three
 requests and reports the slowest. These are local diagnostics, not a substitute
 for testing the installed package on its supported hardware.
 
+For a longer rendering check, supply a local video at least 20 seconds long
+with visible content near its start:
+
+```bash
+bash scripts/test-cpp-playback.sh -- env \
+  MELEARNER_PLAYBACK_LOAD_FILE=/absolute/path/to/video.mp4 \
+  MELEARNER_PLAYBACK_LOAD_SOFTWARE=1 \
+  build/cpp-release/playback_load_test
+```
+
+`playback_load_test` opens a 1280×720 player, checks pause, resume and seeking,
+and runs four five-second playback samples with a fresh player each time.
+It reports the OpenGL renderer, decoder, first-frame time, UI timer gaps and
+Linux private resident memory before and after each teardown. Framebuffer
+readback happens before timer sampling. Omit `MELEARNER_PLAYBACK_LOAD_SOFTWARE`
+to test automatic decoding. Set `MELEARNER_PLAYBACK_LOAD_CYCLES` from 1 to 20
+for a different cycle count and increase the runner timeout when needed.
+
+The diagnostic checks playback progress and a nonblack initial frame, not
+frame-perfect decoding or every codec. Memory figures include retained driver
+and allocator memory; compare repeated samples and sanitizer reports before
+attributing growth to a leak. The input file is never modified.
+
 ## Architecture
 
 Qt owns the single application window, widgets, models, focus, keyboard input,

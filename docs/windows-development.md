@@ -61,10 +61,15 @@ The executable is `build/cpp-windows/melearner.exe`. Check the unified version b
 When a visible OpenGL playback run is acceptable, use:
 
 ```sh
+pacman -S --needed mingw-w64-ucrt-x86_64-ffmpeg
 bash scripts/build-cpp-windows.sh --run-playback
 ```
 
 After the registered CTest suite passes, that mode launches both `playback_render_test.exe` and `main_playback_test.exe` from the build directory with the normal Qt Windows platform. It is not headless, may take over the desktop, and is not required for the default build check.
+
+The recovery check uses the FFmpeg command-line tool to prepare temporary test
+media. With `--run-playback`, the script checks for that tool before configuring
+or building. The default build does not require it.
 
 The entrypoint control flow can be checked on a non-Windows machine without a compiler, Qt installation, or desktop by running:
 
