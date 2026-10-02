@@ -20,6 +20,7 @@ add_library(melearner_app STATIC
   cpp-app/src/single_instance.cpp
   cpp-app/src/main_window.cpp
   cpp-app/src/study_icons.cpp
+  cpp-app/src/text_interaction.cpp
   cpp-app/src/paged_list_model.cpp
   cpp-app/src/course_outline_model.cpp
   cpp-app/src/search_dialog.cpp

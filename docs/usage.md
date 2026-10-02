@@ -21,8 +21,9 @@ saved on your computer. Search is available in the library or with `/` outside a
 text field.
 
 The course outline stays to the left of the lesson. Previous lesson, Next lesson,
-and completion controls are beside the lesson heading. On a narrow window, use
-**Lessons** to switch between the outline and the reader.
+and completion controls are beside the lesson heading. Use **Lessons** or
+**Hide lessons** to toggle the outline at any window size. On narrow windows,
+the outline and reader share the same space.
 Section headings show compact completion counts. Lesson rows show titles and a
 check for completed lessons. Hover for the full title and file details.
 
@@ -47,7 +48,14 @@ appear above long text documents only when the document spans multiple pages.
 | `Space ,` / `Space .` | Seek back one second / advance one frame |
 | `K` / `J` | Previous / next lesson |
 
-Click the video to play or pause. Player settings stay inside the player.
+Click the video to play or pause. A centered floating control bar appears when
+you move the pointer over the video and hides after inactivity. Keyboard focus
+keeps it available. Speed, audio, subtitles, chapters, frame stepping and capture
+have direct controls. **Volume** opens a vertical slider; raising the volume
+unmutes playback. Fullscreen shows only the video and its controls. Escape exits.
+
+The ordinary player stays centered at a bounded size. Hide the outline for more
+room, or use fullscreen for an uninterrupted view.
 
 ## Keyboard-first navigation
 
@@ -62,7 +70,7 @@ read-only lesson view has focus; editable fields keep their native bindings.
 | `Ctrl+D` / `Ctrl+U` | Scroll down / up one page |
 | `h` / `l` | Collapse / expand the selected outline section |
 | `Space c` | Mark the current lesson complete or incomplete |
-| `Space o` | Toggle the course outline on narrow windows |
+| `Space o` | Toggle the course outline |
 | `Space b` | Return to the library |
 | `/` | Search the library |
 | `:` | Open the searchable command palette |
@@ -76,6 +84,19 @@ Focused buttons keep their usual Space activation.
 The shortcut popup is searchable by command name, key or context. It is
 the source of truth for the commands currently implemented; melearner does not
 embed a Vim or Neovim editor runtime.
+
+Informational labels and documents support text selection. Selected list and
+table entries can be copied with Ctrl+C. Right-click a control label or entry
+for **Copy text** or **Select text**, without changing its normal activation.
+
+## Stats
+
+**Stats** shows course availability, completion, recorded progress time and
+storage. The activity chart covers twelve weeks, grouping adjacent weeks when
+the window is narrow so dates remain readable. The media chart and tables use
+your scanned files and saved progress. Progress time is based on lesson position,
+not elapsed study sessions. Total duration includes only lessons with known
+durations. Right-click a chart to copy or select its underlying values.
 
 ## Playback Compatibility
 
