@@ -1,5 +1,6 @@
 #include "course_outline_model.hpp"
 #include "theme.hpp"
+#include "study_icons.hpp"
 
 #include <QSize>
 
@@ -254,7 +255,8 @@ QVariant CourseOutlineModel::data(const QModelIndex& modelIndex, int role) const
     const auto supportedRole = role == Qt::DisplayRole || role == Qt::AccessibleTextRole
         || role == Qt::AccessibleDescriptionRole || role == Qt::ToolTipRole || role == Qt::UserRole
         || role == Qt::SizeHintRole || role == Qt::FontRole || role == shadcnRowDescription
-        || role == shadcnRowProgress || role == shadcnRowHeading;
+        || role == shadcnRowProgress || role == shadcnRowHeading
+        || role == shadcnRowTrailing || role == shadcnRowTrailingText;
     if (!supportedRole) {
         return {};
     }
@@ -276,7 +278,7 @@ QVariant CourseOutlineModel::data(const QModelIndex& modelIndex, int role) const
         }
         const auto item = loadedLesson(sectionRow, *order);
         if (role == Qt::SizeHintRole) {
-            return QSize(180, 68);
+            return QSize(180, kOutlineRowHeight);
         }
         if (!item.has_value()) {
             return role == Qt::UserRole ? QVariant{} : QVariant(tr("Loading…"));
@@ -289,7 +291,11 @@ QVariant CourseOutlineModel::data(const QModelIndex& modelIndex, int role) const
             return item->name;
         }
         if (role == shadcnRowDescription) {
-            return description;
+            return {};
+        }
+        if (role == shadcnRowTrailing && item->completed) {
+            return studyIcon(StudyIcon::Check,
+                roleColor(nullptr, shadcn::Role::MutedForeground)).pixmap(16, 16);
         }
         if (role == Qt::AccessibleTextRole || role == Qt::AccessibleDescriptionRole) {
             return item->name + QStringLiteral(", ") + item->sectionName + QStringLiteral(", ") + description;
@@ -305,13 +311,13 @@ QVariant CourseOutlineModel::data(const QModelIndex& modelIndex, int role) const
         return {};
     }
 
-    // A section labels the lessons under it, so it is a heading row: it takes no
-    // fill, no ring and no selection, and it carries its completion as a track.
+    // Section counts share one quiet heading. Details stay in accessible text
+    // and tooltips rather than adding another line and rail to every row.
     if (role == shadcnRowHeading) {
         return true;
     }
     if (role == Qt::SizeHintRole) {
-        return QSize(180, 68);
+        return QSize(180, kOutlineRowHeight);
     }
     const auto item = loadedSection(modelIndex.row());
     if (!item.has_value()) {
@@ -322,7 +328,10 @@ QVariant CourseOutlineModel::data(const QModelIndex& modelIndex, int role) const
         return item->name;
     }
     if (role == shadcnRowDescription) {
-        return description;
+        return {};
+    }
+    if (role == shadcnRowTrailingText) {
+        return QStringLiteral("%1/%2").arg(item->completedLessons).arg(item->lessonCount);
     }
     if (role == shadcnRowProgress) {
         return item->lessonCount > 0
