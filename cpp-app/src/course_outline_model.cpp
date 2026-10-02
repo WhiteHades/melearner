@@ -61,6 +61,7 @@ void CourseOutlineModel::setCourse(QString courseId) {
     clock_ = 0;
     sectionIds_.clear();
     sectionGroups_.clear();
+    deferred_.clear();
     endResetModel();
     if (!courseId_.isEmpty()) {
         (void)requestSections(0);
@@ -93,6 +94,13 @@ void CourseOutlineModel::revealLesson(library::Lesson lesson) {
         .target = std::move(lesson),
         .resolution = std::nullopt,
     };
+    for (int index = deferred_.size() - 1; index >= 0; --index) {
+        const auto& demand = deferred_.at(index);
+        if (demand.kind == PendingKind::resolve
+            && (demand.generation != reveal_->generation || demand.revealToken != reveal_->token)) {
+            deferred_.removeAt(index);
+        }
+    }
     if (!requestResolve(reveal_->target)) {
         reveal_.reset();
     }
@@ -372,11 +380,20 @@ bool CourseOutlineModel::hasChildren(const QModelIndex& parent) const {
 }
 
 bool CourseOutlineModel::canFetchMore(const QModelIndex& parent) const {
-    if (courseId_.isEmpty() || pending_.size() >= kMaxPendingRequests) {
+    if (courseId_.isEmpty()) {
         return false;
     }
     if (!parent.isValid()) {
-        return !sectionsKnown_ && !hasPending(PendingKind::sections, {}, 0);
+        if (sectionsKnown_ || hasPending(PendingKind::sections, {}, 0)) {
+            return false;
+        }
+        for (const auto& demand : deferred_) {
+            if (demand.generation == generation_ && demand.kind == PendingKind::sections
+                && demand.offset == 0) {
+                return false;
+            }
+        }
+        return true;
     }
     return false;
 }
@@ -411,9 +428,12 @@ bool CourseOutlineModel::hasPending(PendingKind kind, const QString& sectionId, 
 
 bool CourseOutlineModel::requestSections(int offset) {
     if (courseId_.isEmpty() || !validPageOffset(offset, kSectionPageSize)
-        || sectionPages_.contains(offset) || hasPending(PendingKind::sections, {}, offset)
-        || pending_.size() >= kMaxPendingRequests) {
+        || sectionPages_.contains(offset) || hasPending(PendingKind::sections, {}, offset)) {
         return false;
+    }
+    if (pending_.size() >= kMaxPendingRequests) {
+        defer(Pending{PendingKind::sections, generation_, 0, {}, offset});
+        return true;
     }
     const auto requestId = library_.sections(courseId_, static_cast<std::uint64_t>(offset), kSectionPageSize);
     if (requestId == 0) {
@@ -433,9 +453,12 @@ bool CourseOutlineModel::requestSections(int offset) {
 bool CourseOutlineModel::requestLessons(const QString& sectionId, int offset) {
     if (courseId_.isEmpty() || sectionId.isEmpty() || !validPageOffset(offset, kLessonPageSize)
         || lessonPages_.contains({sectionId, offset})
-        || hasPending(PendingKind::lessons, sectionId, offset)
-        || pending_.size() >= kMaxPendingRequests) {
+        || hasPending(PendingKind::lessons, sectionId, offset)) {
         return false;
+    }
+    if (pending_.size() >= kMaxPendingRequests) {
+        defer(Pending{PendingKind::lessons, generation_, 0, sectionId, offset});
+        return true;
     }
     const auto requestId = library_.sectionLessons(
         courseId_, sectionId, static_cast<std::uint64_t>(offset), kLessonPageSize);
@@ -454,9 +477,12 @@ bool CourseOutlineModel::requestLessons(const QString& sectionId, int offset) {
 }
 
 bool CourseOutlineModel::requestResolve(const library::Lesson& lesson) {
-    if (pending_.size() >= kMaxPendingRequests) {
-        emitError(tr("The Course outline is busy. Try again shortly."));
+    if (!reveal_.has_value() || reveal_->generation != generation_) {
         return false;
+    }
+    if (pending_.size() >= kMaxPendingRequests) {
+        defer(Pending{PendingKind::resolve, generation_, reveal_->token, lesson.sectionId, 0});
+        return true;
     }
     const auto requestId = library_.resolveLesson(courseId_, lesson.sectionId, lesson.id);
     if (requestId == 0) {
@@ -467,6 +493,116 @@ bool CourseOutlineModel::requestResolve(const library::Lesson& lesson) {
         requestId,
         Pending{PendingKind::resolve, generation_, reveal_->token, lesson.sectionId, 0});
     return true;
+}
+
+void CourseOutlineModel::defer(Pending demand) {
+    for (int index = deferred_.size() - 1; index >= 0; --index) {
+        const auto& queued = deferred_.at(index);
+        if (queued.kind == PendingKind::resolve
+            && (!reveal_.has_value() || queued.generation != reveal_->generation
+                || queued.revealToken != reveal_->token)) {
+            deferred_.removeAt(index);
+        }
+    }
+    for (auto& queued : deferred_) {
+        if (queued.generation == demand.generation && queued.kind == demand.kind
+            && queued.sectionId == demand.sectionId && queued.offset == demand.offset) {
+            // A newer reveal for the same Section supersedes the old target while
+            // keeping this demand's position and deduplication key.
+            if (demand.kind == PendingKind::resolve) {
+                queued.revealToken = demand.revealToken;
+            }
+            return;
+        }
+    }
+    if (deferred_.size() >= kMaxDeferredRequests) {
+        int discard = -1;
+        for (int index = 0; index < deferred_.size(); ++index) {
+            const auto& queued = deferred_.at(index);
+            const bool currentReveal = queued.kind == PendingKind::resolve && reveal_.has_value()
+                && queued.generation == reveal_->generation && queued.revealToken == reveal_->token;
+            if (!currentReveal) {
+                discard = index;
+                break;
+            }
+        }
+        if (discard < 0) {
+            return;
+        }
+        deferred_.removeAt(discard);
+    }
+    deferred_.append(std::move(demand));
+}
+
+void CourseOutlineModel::scheduleDeferredPump() {
+    if (deferredPumpQueued_ || deferred_.isEmpty()) {
+        return;
+    }
+    deferredPumpQueued_ = true;
+    QMetaObject::invokeMethod(this, [this] {
+        deferredPumpQueued_ = false;
+        pumpDeferred();
+    }, Qt::QueuedConnection);
+}
+
+void CourseOutlineModel::pumpDeferred() {
+    while (!deferred_.isEmpty() && pending_.size() < kMaxPendingRequests) {
+        int next = -1;
+        for (int index = 0; index < deferred_.size();) {
+            const auto demand = deferred_.at(index);
+            if (demand.generation != generation_ || courseId_.isEmpty()
+                || (demand.kind == PendingKind::resolve
+                    && (!reveal_.has_value() || reveal_->generation != generation_
+                        || reveal_->token != demand.revealToken))) {
+                deferred_.removeAt(index);
+                continue;
+            }
+            if (demand.kind == PendingKind::resolve) {
+                // An older resolve for the same section may still be in flight.
+                // Keep the current reveal queued until that result frees its slot.
+                if (!hasPending(PendingKind::resolve, demand.sectionId, 0)) {
+                    next = index;
+                    break;
+                }
+            }
+            ++index;
+        }
+        if (next < 0) {
+            for (int index = 0; index < deferred_.size(); ++index) {
+                if (deferred_.at(index).kind != PendingKind::resolve) {
+                    next = index;
+                    break;
+                }
+            }
+        }
+        if (next < 0) {
+            return;
+        }
+        const auto demand = deferred_.takeAt(next);
+        if (demand.kind == PendingKind::resolve) {
+            if (!requestResolve(reveal_->target)) {
+                // A Library-global busy result already reports a recoverable error.
+                // Leave the rest queued for the next completion; never spin here.
+                break;
+            }
+        } else if (demand.kind == PendingKind::sections) {
+            if (sectionPages_.contains(demand.offset)
+                || hasPending(PendingKind::sections, {}, demand.offset)) {
+                continue;
+            }
+            if (!requestSections(demand.offset)) {
+                break;
+            }
+        } else {
+            if (lessonPages_.contains({demand.sectionId, demand.offset})
+                || hasPending(PendingKind::lessons, demand.sectionId, demand.offset)) {
+                continue;
+            }
+            if (!requestLessons(demand.sectionId, demand.offset)) {
+                break;
+            }
+        }
+    }
 }
 
 std::optional<library::Section> CourseOutlineModel::loadedSection(int row) const {
@@ -650,6 +786,7 @@ void CourseOutlineModel::sectionsReady(library::RequestId requestId, library::Se
     }
     const auto pending = pendingIterator.value();
     pending_.erase(pendingIterator);
+    scheduleDeferredPump();
     if (pending.kind != PendingKind::sections || !current(pending) || page.courseId != courseId_
         || page.offset != static_cast<std::uint64_t>(pending.offset)
         || !validPageOffset(static_cast<int>(page.offset), kSectionPageSize)
@@ -728,6 +865,7 @@ void CourseOutlineModel::lessonsReady(library::RequestId requestId, library::Les
     }
     const auto pending = pendingIterator.value();
     pending_.erase(pendingIterator);
+    scheduleDeferredPump();
     if (pending.kind != PendingKind::lessons || !current(pending) || page.courseId != courseId_
         || page.sectionId != pending.sectionId
         || page.offset != static_cast<std::uint64_t>(pending.offset)
@@ -794,6 +932,7 @@ void CourseOutlineModel::resolved(library::RequestId requestId, library::SearchR
     }
     const auto pending = pendingIterator.value();
     pending_.erase(pendingIterator);
+    scheduleDeferredPump();
     if (pending.kind != PendingKind::resolve || !current(pending)
         || !reveal_.has_value() || reveal_->generation != generation_
         || reveal_->token != pending.revealToken) {
@@ -815,6 +954,7 @@ void CourseOutlineModel::failed(library::RequestId requestId, library::Error err
     }
     const auto pending = pendingIterator.value();
     pending_.erase(pendingIterator);
+    scheduleDeferredPump();
     if (!current(pending)) {
         return;
     }

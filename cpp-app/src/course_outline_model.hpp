@@ -67,6 +67,7 @@ private:
     static constexpr int kLessonPageSize = 256;
     static constexpr int kMaxCachedPages = 4;
     static constexpr int kMaxPendingRequests = 8;
+    static constexpr int kMaxDeferredRequests = 128;
 
     enum class PendingKind : std::uint8_t {
         sections,
@@ -129,6 +130,8 @@ private:
     /// the page that describes them being loaded.
     QVector<QVector<library::OutlineGroup>> sectionGroups_;
     QHash<library::RequestId, Pending> pending_;
+    QVector<Pending> deferred_;
+    bool deferredPumpQueued_ = false;
     std::optional<RevealState> reveal_;
     std::uint64_t revealToken_ = 0;
 
@@ -138,6 +141,9 @@ private:
     [[nodiscard]] bool requestSections(int offset);
     [[nodiscard]] bool requestLessons(const QString& sectionId, int offset);
     [[nodiscard]] bool requestResolve(const library::Lesson& lesson);
+    void defer(Pending demand);
+    void scheduleDeferredPump();
+    void pumpDeferred();
     [[nodiscard]] std::optional<library::Section> loadedSection(int row) const;
     [[nodiscard]] std::optional<library::Lesson> loadedLesson(int sectionRow, int lessonRow) const;
     [[nodiscard]] std::optional<int> loadedSectionRow(const QString& sectionId) const;
