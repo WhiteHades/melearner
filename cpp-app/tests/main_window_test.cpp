@@ -226,13 +226,17 @@ private slots:
     shortcuts->reject();
     QTRY_VERIFY(shortcuts.isNull());
 
+    window.activateWindow();
     courses->setFocus();
+    QTRY_VERIFY(courses->hasFocus());
     courses->setCurrentIndex(courses->model()->index(1, 0));
     QTest::keyClick(courses, Qt::Key_G);
     input.setFocus();
     QTest::keyClick(&input, Qt::Key_X);
     QCOMPARE(input.text(), QString("jx"));
+    window.activateWindow();
     courses->setFocus();
+    QTRY_VERIFY(courses->hasFocus());
     QTest::keyClick(courses, Qt::Key_G);
     QCOMPARE(courses->currentIndex().row(), 1);
     QTest::keyClick(courses, Qt::Key_G);

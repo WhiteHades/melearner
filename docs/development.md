@@ -91,6 +91,8 @@ To save their screenshots, create a destination and pass it to the test process:
 mkdir -p .tmp/ui-captures
 bash scripts/test-cpp-playback.sh -- env MELEARNER_TEST_SCREENSHOTS="$PWD/.tmp/ui-captures" \
   build/cpp-release/main_window_test
+bash scripts/test-cpp-playback.sh -- env MELEARNER_TEST_SCREENSHOTS="$PWD/.tmp/ui-captures" \
+  build/cpp-release/main_playback_test
 ```
 
 Inspect the images as well as the test result; geometry checks alone do not
