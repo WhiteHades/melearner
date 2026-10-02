@@ -6,6 +6,8 @@
 #include <QElapsedTimer>
 #include <QGraphicsOpacityEffect>
 #include <QImage>
+#include <QOpenGLContext>
+#include <QOpenGLFunctions>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QVBoxLayout>
@@ -202,6 +204,12 @@ private slots:
     QVERIFY2(fatal.isEmpty(), fatal.isEmpty() ? "" : qPrintable(fatal.first().at(1).toString()));
     QVERIFY2(renderErrors.isEmpty(), renderErrors.isEmpty() ? "" : qPrintable(renderErrors.first().at(1).toString()));
     QCOMPARE(rendered.count(), 1);
+    video.makeCurrent();
+    QVERIFY(QOpenGLContext::currentContext() == video.context());
+    auto* gl = video.context()->functions();
+    qInfo("OpenGL: %s; %s", reinterpret_cast<const char*>(gl->glGetString(GL_RENDERER)),
+          reinterpret_cast<const char*>(gl->glGetString(GL_VERSION)));
+    video.doneCurrent();
     QVERIFY(player.setVolume(0));
     QElapsedTimer firstFrame; firstFrame.start();
     QVERIFY(player.loadFile(QDir(root).filePath(relativePath)));

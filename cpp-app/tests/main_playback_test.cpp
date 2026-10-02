@@ -6,6 +6,8 @@
 #include <shadcn/navigation.hpp>
 #include <shadcn/widgets.hpp>
 #include <QMenu>
+#include <QOpenGLContext>
+#include <QOpenGLFunctions>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QImage>
@@ -84,6 +86,13 @@ private slots:
       auto* lessons = window.findChild<QTreeView*>("lessons");
       QTRY_COMPARE_WITH_TIMEOUT(lessons->model()->rowCount(), 1, 5000);
       QTRY_COMPARE_WITH_TIMEOUT(loaded.count(), 1, 10000);
+      auto* rendererWidget = window.findChild<melearner::MpvVideoWidget*>(); QVERIFY(rendererWidget);
+      rendererWidget->makeCurrent();
+      QVERIFY(QOpenGLContext::currentContext() == rendererWidget->context());
+      auto* gl = rendererWidget->context()->functions();
+      qInfo("OpenGL: %s; %s", reinterpret_cast<const char*>(gl->glGetString(GL_RENDERER)),
+            reinterpret_cast<const char*>(gl->glGetString(GL_VERSION)));
+      rendererWidget->doneCurrent();
       QVERIFY(player->setVolume(0));
       auto* play = window.findChild<QPushButton*>("playPause");
       QTRY_VERIFY2(play->isEnabled(), qPrintable(window.findChild<QLabel*>("appStatus")->text()));
