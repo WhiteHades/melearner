@@ -1,5 +1,6 @@
 #include "mpv_video_widget.hpp"
 #include "player.hpp"
+#include <QApplication>
 #include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
@@ -10,15 +11,17 @@
 #include <QVBoxLayout>
 #include <QWidget>
 #include <QtTest>
+#include <memory>
 
 namespace {
 // The generated corpus has a solid yellow bar here. Nonblank/changing-frame
-// checks alone do not detect the black grid caused by corrupted GL state.
+// checks alone do not detect corrupted or nearly black frames. This region
+// stays yellow throughout the corpus, above its moving diagonal.
 bool hasIntactColorBar(const QImage& image) {
   if (image.isNull()) return false;
   int yellow = 0;
   int total = 0;
-  for (int y = image.height() * 55 / 100; y < image.height() * 65 / 100; ++y)
+  for (int y = image.height() * 3 / 100; y < image.height() * 7 / 100; ++y)
     for (int x = image.width() * 38 / 100; x < image.width() * 43 / 100; ++x) {
       const auto pixel = image.pixel(x, y);
       yellow += qRed(pixel) > 180 && qGreen(pixel) > 180 && qBlue(pixel) < 100;
@@ -31,6 +34,48 @@ bool hasIntactColorBar(const QImage& image) {
 class PlaybackRenderTest final : public QObject {
   Q_OBJECT
 private slots:
+  void playsWhileHidden_data() {
+    QTest::addColumn<bool>("minimize");
+    QTest::newRow("hidden-widget") << false;
+    QTest::newRow("minimized-window") << true;
+  }
+  void playsWhileHidden() {
+    QFETCH(bool, minimize);
+    const auto root = QDir(QStringLiteral(MELEARNER_SOURCE_DIR) + "/fixtures/parity/media").canonicalPath();
+    melearner::Player player(nullptr, melearner::Player::DecodeMode::Software);
+    player.setApprovedRoots({root});
+    QWidget shell;
+    auto* layout = new QVBoxLayout(&shell);
+    layout->setContentsMargins(0, 0, 0, 0);
+    auto* video = new melearner::MpvVideoWidget(&player, &shell);
+    layout->addWidget(video);
+    shell.resize(640, 360); shell.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&shell));
+    player.start();
+    QTRY_VERIFY_WITH_TIMEOUT(player.isReady() && video->isRenderContextReady(), 10000);
+    if (minimize) {
+      shell.showMinimized();
+      QTRY_VERIFY(shell.isMinimized());
+    } else {
+      video->hide();
+      QVERIFY(!video->isVisible());
+    }
+    QSignalSpy loaded(&player, &melearner::Player::fileLoaded);
+    QSignalSpy positions(&player, &melearner::Player::positionChanged);
+    QSignalSpy fatal(&player, &melearner::Player::fatalError);
+    QVERIFY(player.setRate(0.25));
+    QVERIFY(player.loadFile(root + "/Systems 日本語/01 H264 AAC.mp4"));
+    QTRY_COMPARE_WITH_TIMEOUT(loaded.count(), 1, 5000);
+    QVERIFY(player.play());
+    // Readback would itself paint the hidden widget and conceal a stalled
+    // render callback. Only observe the playback clock until revealing it.
+    QTRY_VERIFY_WITH_TIMEOUT(!positions.isEmpty() && positions.last().first().toLongLong() >= 600, 5000);
+    QVERIFY(player.pause());
+    if (minimize) shell.showNormal(); else video->show();
+    QVERIFY(QTest::qWaitForWindowExposed(&shell));
+    QTRY_VERIFY_WITH_TIMEOUT(hasIntactColorBar(video->grabFramebuffer()), 5000);
+    QVERIFY(fatal.isEmpty());
+  }
   void clearsUnloadedSurfaceToBlack() {
     melearner::MpvVideoWidget video(nullptr);
     video.resize(640, 360);
@@ -39,6 +84,59 @@ private slots:
     QImage frame;
     QTRY_VERIFY(!(frame = video.grabFramebuffer()).isNull());
     QCOMPARE(frame.pixelColor(frame.width() / 2, frame.height() / 2), QColor(Qt::black));
+  }
+  void repeatedlyLoadsAndClosesInEitherOrder() {
+    const auto root = QDir(QStringLiteral(MELEARNER_SOURCE_DIR) + "/fixtures/parity/media").canonicalPath();
+    QVERIFY2(!root.isEmpty(), "Checked-in media corpus missing");
+    const auto videoPath = root + "/Systems 日本語/01 H264 AAC.mp4";
+    const auto topLevelCount = QApplication::topLevelWidgets().size();
+    for (int cycle = 0; cycle < 4; ++cycle) {
+      auto player = std::make_unique<melearner::Player>(nullptr, melearner::Player::DecodeMode::Software);
+      player->setApprovedRoots({root});
+      auto shell = std::make_unique<QWidget>();
+      shell->resize(640, 360);
+      auto* layout = new QVBoxLayout(shell.get());
+      layout->setContentsMargins(0, 0, 0, 0);
+      auto* video = new melearner::MpvVideoWidget(player.get(), shell.get());
+      layout->addWidget(video);
+      QSignalSpy rendered(video, &melearner::MpvVideoWidget::renderContextReady);
+      QSignalSpy renderErrors(video, &melearner::MpvVideoWidget::renderError);
+      QSignalSpy loaded(player.get(), &melearner::Player::fileLoaded);
+      QSignalSpy fatal(player.get(), &melearner::Player::fatalError);
+      shell->show();
+      QVERIFY(QTest::qWaitForWindowExposed(shell.get()));
+      player->start();
+      QTRY_VERIFY_WITH_TIMEOUT(player->isReady() && video->isRenderContextReady(), 10000);
+      QCOMPARE(rendered.count(), 1);
+      QVERIFY(player->loadFile(videoPath));
+      QTRY_COMPARE_WITH_TIMEOUT(loaded.count(), 1, 10000);
+      QImage frame;
+      const bool frameReady = QTest::qWaitFor([&] {
+        return hasIntactColorBar(frame = video->grabFramebuffer());
+      }, 10000);
+      const auto directory = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
+      if (!directory.isEmpty()) QVERIFY(frame.save(directory + QString("/cycle-%1.png").arg(cycle)));
+      QVERIFY2(frameReady, qPrintable(QString("No intact frame in cleanup cycle %1").arg(cycle)));
+      QVERIFY2(renderErrors.isEmpty(), renderErrors.isEmpty()
+          ? "" : qPrintable(renderErrors.first().at(1).toString()));
+      QVERIFY(fatal.isEmpty());
+
+      if (cycle % 2 == 0) {
+        // First release the widget and its GL renderer, then stop the player.
+        shell.reset();
+        QVERIFY(!player->hasRenderContext());
+        player->shutdown();
+      } else {
+        // Also exercise Player's synchronous aboutToShutdown detach while the
+        // widget and its GL context are still alive.
+        player->shutdown();
+        QVERIFY(!video->isRenderContextReady());
+        QVERIFY(!player->hasRenderContext());
+        shell.reset();
+      }
+      player.reset();
+      QCOMPARE(QApplication::topLevelWidgets().size(), topLevelCount);
+    }
   }
   void rendersSoftwareDecodedFrames_data() {
     QTest::addColumn<QString>("relativePath");
@@ -111,19 +209,16 @@ private slots:
     QVERIFY2(errors.isEmpty(), errors.isEmpty() ? "" : qPrintable(errors.first().at(2).toString()));
     QVERIFY2(fatal.isEmpty(), fatal.isEmpty() ? "" : qPrintable(fatal.first().at(1).toString()));
     QImage initial;
-    QTRY_VERIFY_WITH_TIMEOUT([&] {
-      initial = video.grabFramebuffer();
-      if (initial.isNull()) return false;
-      const auto small = initial.scaled(32, 18);
-      const auto first = small.pixel(0, 0);
-      for (int y = 0; y < small.height(); ++y)
-        for (int x = 0; x < small.width(); ++x)
-          if (small.pixel(x, y) != first) return true;
-      return false;
-    }(), 10000);
+    // fileLoaded can precede the first presentation. Dithered near-black pixels
+    // are not a decoded frame, so wait for the corpus's known solid color bar.
+    const bool firstFrameReady = QTest::qWaitFor([&] {
+      return hasIntactColorBar(initial = video.grabFramebuffer());
+    }, 10000);
     const auto directory = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
     if (!directory.isEmpty()) QVERIFY(initial.save(directory + '/' + QTest::currentDataTag() + "-initial.png"));
-    QVERIFY2(hasIntactColorBar(initial), "Decoded color bar is corrupted in the framebuffer");
+    QVERIFY2(firstFrameReady, qPrintable(QString("No intact decoded frame after %1 ms; framebuffer %2x%3, render errors %4, fatal errors %5")
+        .arg(firstFrame.elapsed()).arg(initial.width()).arg(initial.height())
+        .arg(renderErrors.count()).arg(fatal.count())));
     QCoreApplication::processEvents();
     const auto composite = shell.grab().toImage().copy(video.geometry());
     if (!directory.isEmpty()) QVERIFY(composite.save(directory + '/' + QTest::currentDataTag() + "-composite.png"));
@@ -149,7 +244,8 @@ private slots:
     const auto screenshotPath = output.path() + "/frame.png";
     qInfo() << "Screenshot requested at position:"
             << (positions.isEmpty() ? -1 : positions.last().first().toLongLong()) << "ms";
-    QVERIFY2(hasIntactColorBar(video.grabFramebuffer()), "Resize corrupted the decoded color bar");
+    QTRY_VERIFY2_WITH_TIMEOUT(hasIntactColorBar(video.grabFramebuffer()),
+                             "Resize corrupted the decoded color bar", 5000);
     QCoreApplication::processEvents();
     QVERIFY2(hasIntactColorBar(shell.grab().toImage().copy(video.geometry())),
              "Window compositing dimmed the decoded color bar after resize");

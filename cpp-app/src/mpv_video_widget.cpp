@@ -3,8 +3,10 @@
 #include "player.hpp"
 
 #include <QOpenGLContext>
+#include <QOpenGLFunctions>
 #include <QMetaObject>
 #include <QAccessibleWidget>
+#include <QWindow>
 
 #include <thread>
 
@@ -158,6 +160,9 @@ void MpvVideoWidget::initializeGL() {
 }
 
 void MpvVideoWidget::paintGL() {
+    // Qt enables blending while preparing QOpenGLWidget painting. libmpv
+    // requires its default (disabled), including for intermediate plane passes.
+    glDisable(GL_BLEND);
     renderDirty_.store(false, std::memory_order_release);
     const auto pixelRatio = devicePixelRatioF();
     const auto pixelWidth = qMax(1, qRound(width() * pixelRatio));
@@ -168,6 +173,7 @@ void MpvVideoWidget::paintGL() {
     } else if (!player_->renderFrame(defaultFramebufferObject(), pixelWidth, pixelHeight)) {
         emit renderError(QStringLiteral("render"), QStringLiteral("libmpv could not render the current frame."));
     }
+    context()->functions()->glBindFramebuffer(GL_FRAMEBUFFER, defaultFramebufferObject());
     if (hasFocus()) {
         drawFocusBorder(pixelWidth, pixelHeight, pixelRatio);
     }
@@ -265,7 +271,24 @@ void MpvVideoWidget::renderUpdateCallback(void* context) {
 void MpvVideoWidget::deliverRenderUpdate() {
     for (;;) {
         if (renderDirty_.exchange(false, std::memory_order_acq_rel)) {
-            update();
+            const auto* surface = window()->windowHandle();
+            if (isVisible() && !window()->isMinimized() && surface != nullptr && surface->isExposed()) {
+                update();
+            } else if (renderContextReady_ && player_ != nullptr && context() != nullptr) {
+                // Qt does not paint hidden or minimized widgets. Advanced
+                // libmpv rendering still needs callbacks serviced on the GL
+                // owner thread so decoder allocations and playback can run.
+                makeCurrent();
+                if (QOpenGLContext::currentContext() == context()) {
+                    glDisable(GL_BLEND);
+                    if (!player_->processHiddenRenderUpdate()) {
+                        emit renderError(QStringLiteral("render"),
+                                         QStringLiteral("libmpv could not process the hidden frame."));
+                    }
+                    context()->functions()->glBindFramebuffer(GL_FRAMEBUFFER, defaultFramebufferObject());
+                    doneCurrent();
+                }
+            }
         }
         updateQueued_.store(false, std::memory_order_release);
         if (!renderDirty_.load(std::memory_order_acquire)) {
