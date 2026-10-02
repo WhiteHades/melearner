@@ -169,7 +169,18 @@ bash scripts/test-cpp-linux-packaging.sh
 ```
 
 `library_load_test` is an explicit large-library diagnostic; it is not part of
-the normal CTest run because it materializes a 100,000-lesson fixture.
+the normal CTest run because it materializes a 100,000-lesson fixture. Run it
+against a release build:
+
+```bash
+bash scripts/test-cpp-playback.sh -- build/cpp-release/library_load_test
+```
+
+It reports scan time, event-loop responsiveness, private resident memory,
+startup and shutdown times. Course pages, search and the four-course resume
+page each have a 200 ms response budget. The resume measurement includes three
+requests and reports the slowest. These are local diagnostics, not a substitute
+for testing the installed package on its supported hardware.
 
 ## Architecture
 

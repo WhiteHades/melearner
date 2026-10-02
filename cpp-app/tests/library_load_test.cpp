@@ -46,6 +46,7 @@ private slots:
     QSignalSpy pages(&library, &lib::Library::coursesReady);
     QSignalSpy searches(&library, &lib::Library::searchReady);
     QSignalSpy stats(&library, &lib::Library::statsReady);
+    QSignalSpy resumes(&library, &lib::Library::resumeReady);
     QVERIFY(library.open()); QTRY_COMPARE(opened.size(), 1);
 
     QElapsedTimer elapsed; elapsed.start();
@@ -88,6 +89,24 @@ private slots:
     QCOMPARE(search.rows.size(), 100); QVERIFY(search.total > 100);
     qInfo("100-result search: %lld ms", searchMs);
     QVERIFY2(searchMs < 200, "Search budget exceeded");
+
+    qint64 slowestResume = 0;
+    for (int sample = 0; sample < 3; ++sample) {
+      elapsed.restart(); QVERIFY(library.resume(0, 4));
+      QVERIFY(!resumes.isEmpty() || resumes.wait(10'000));
+      slowestResume = std::max(slowestResume, elapsed.elapsed());
+      const auto resume = qvariant_cast<lib::ResumePage>(resumes.takeFirst().at(1));
+      QCOMPARE(resume.total, scan.courses);
+      QCOMPARE(resume.rows.size(), 4);
+      QVERIFY(resume.hasMore);
+      for (const auto& entry : resume.rows) {
+        QVERIFY(entry.hasLesson);
+        QVERIFY(!entry.lesson.path.isEmpty());
+        QCOMPARE(entry.lesson.courseId, entry.course.id);
+      }
+    }
+    qInfo("Slowest four-course resume page, three samples: %lld ms", slowestResume);
+    QVERIFY2(slowestResume < 200, "Resume page budget exceeded");
 
     QVERIFY(library.stats(scan.revision)); QVERIFY(!stats.isEmpty() || stats.wait(10'000));
     QCOMPARE(qvariant_cast<lib::LibraryStats>(stats.takeFirst().at(1)).lessons, scan.lessons);
