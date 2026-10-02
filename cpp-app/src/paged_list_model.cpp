@@ -2,11 +2,8 @@
 #include "library.hpp"
 #include "study_icons.hpp"
 #include "theme.hpp"
-#include <QApplication>
-#include <QPainter>
+#include <QPixmap>
 #include <QSize>
-#include <QStyle>
-#include <QTreeView>
 #include <algorithm>
 
 namespace {
@@ -24,14 +21,6 @@ struct RowIconSet {
 RowIconSet& rowIcons() {
   static RowIconSet icons;
   return icons;
-}
-
-/// Scale whichever size the font carries. The shadcn install sets a pixel size,
-/// so a point-size scale is silently ignored and every heading in the list
-/// renders at the body size.
-void scaleFont(QFont& font, double factor) {
-  if (font.pixelSize() > 0) font.setPixelSize(std::max(1, qRound(font.pixelSize() * factor)));
-  else font.setPointSizeF(std::max(1.0, font.pointSizeF() * factor));
 }
 
 }  // namespace

@@ -1,6 +1,5 @@
 #pragma once
 #include <QAbstractListModel>
-#include <QStyledItemDelegate>
 #include <QMap>
 #include <QSet>
 #include <optional>
