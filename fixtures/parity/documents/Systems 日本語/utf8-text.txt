@@ -1,3 +1,0 @@
-melearner deterministic UTF-8 fixture
-
-English, 日本語, Ελληνικά, and café.
