@@ -48,6 +48,27 @@ if ! pkg-config --print-errors --exists \
   fail "Missing native development libraries (including Qt Test and libmpv build dependencies). See docs/development.md."
 fi
 
+# Match mpv 0.41's Lua dependency candidates and version bounds. The bundled
+# runtime enables Lua, so absence of every supported provider must fail before
+# starting the longer configure/build pipeline.
+lua_provider_found=false
+for lua_candidate in \
+  "lua:5.1.0:5.3.0" \
+  "lua52:5.2.0:" "lua5.2:5.2.0:" "lua-5.2:5.2.0:" \
+  "luajit:2.0.0:" \
+  "lua51:5.1.0:" "lua5.1:5.1.0:" "lua-5.1:5.1.0:"; do
+  IFS=: read -r lua_module lua_minimum lua_exclusive_maximum <<<"$lua_candidate"
+  if pkg-config --atleast-version="$lua_minimum" "$lua_module" && \
+     { [[ -z "$lua_exclusive_maximum" ]] ||
+       ! pkg-config --atleast-version="$lua_exclusive_maximum" "$lua_module"; }; then
+    lua_provider_found=true
+    break
+  fi
+done
+if [[ "$lua_provider_found" != true ]]; then
+  fail "Missing Lua development dependency required by the bundled libmpv (supported: Lua 5.1/5.2 or LuaJIT). See docs/install.md."
+fi
+
 cmake --preset linux-release
 cmake --build --preset linux-release --parallel 4
 # An empty test discovery must never authorize installation.

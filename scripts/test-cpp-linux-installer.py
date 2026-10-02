@@ -26,6 +26,7 @@ MOCK = r'''
 import json
 import os
 from pathlib import Path
+import re
 import sys
 
 name = Path(sys.argv[0]).name
@@ -40,6 +41,26 @@ if name == "pkg-config":
     if missing and missing in args:
         print("Missing library: " + missing, file=sys.stderr)
         sys.exit(1)
+    lua_modules = {"lua", "lua52", "lua5.2", "lua-5.2", "luajit",
+                   "lua51", "lua5.1", "lua-5.1"}
+    requested_lua = lua_modules.intersection(args)
+    lua_provider = os.environ.get("MOCK_LUA_PROVIDER", "any")
+    if requested_lua and lua_provider != "any" and lua_provider not in requested_lua:
+        print("No suitable Lua provider: " + ", ".join(sorted(requested_lua)), file=sys.stderr)
+        sys.exit(1)
+    if requested_lua:
+        lua_module = next(iter(requested_lua))
+        default_version = "2.1.0" if lua_module == "luajit" else "5.2.0"
+        lua_version = os.environ.get("MOCK_LUA_VERSION", default_version)
+        minimum = next((arg.split("=", 1)[1] for arg in args
+                        if arg.startswith("--atleast-version=")), None)
+        if minimum:
+            def version_tuple(value):
+                parts = [int(part) for part in re.findall(r"\d+", value)]
+                return tuple((parts + [0, 0, 0])[:3])
+            if version_tuple(lua_version) < version_tuple(minimum):
+                print("Lua provider is older than " + minimum, file=sys.stderr)
+                sys.exit(1)
     sys.exit(0)
 phase = name
 if name == "cmake":
@@ -207,6 +228,38 @@ class InstallerTests(unittest.TestCase):
                 self.assert_not_installed(result)
                 self.assertIn(library, result.stderr)
                 self.assertFalse(any(c[0] == "cmake" for c in self.calls()))
+
+    def test_missing_lua_provider_rejected_before_configure(self):
+        result = self.run_installer(MOCK_LUA_PROVIDER="none")
+        self.assert_not_installed(result)
+        self.assertIn("Lua development dependency", result.stderr)
+        self.assertFalse(any(c[0] == "cmake" for c in self.calls()))
+
+    def test_luajit_and_lua52_are_accepted_as_mpvs_supported_providers(self):
+        for provider, version in (("luajit", "2.1.0"), ("lua52", "5.2.0")):
+            with self.subTest(provider=provider):
+                result = self.run_installer(MOCK_LUA_PROVIDER=provider, MOCK_LUA_VERSION=version)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_supported_generic_lua_versions_are_accepted(self):
+        for version in ("5.1.0", "5.2.0"):
+            with self.subTest(version=version):
+                result = self.run_installer(MOCK_LUA_PROVIDER="lua", MOCK_LUA_VERSION=version)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_unsupported_generic_lua_versions_are_rejected_before_configure(self):
+        for version in ("5.0.0", "5.3.0"):
+            with self.subTest(version=version):
+                result = self.run_installer(MOCK_LUA_PROVIDER="lua", MOCK_LUA_VERSION=version)
+                self.assert_not_installed(result)
+                self.assertIn("Lua development dependency", result.stderr)
+                self.assertFalse(any(c[0] == "cmake" for c in self.calls()))
+
+    def test_old_luajit_is_rejected_before_configure(self):
+        result = self.run_installer(MOCK_LUA_PROVIDER="luajit", MOCK_LUA_VERSION="1.2.0")
+        self.assert_not_installed(result)
+        self.assertIn("Lua development dependency", result.stderr)
+        self.assertFalse(any(c[0] == "cmake" for c in self.calls()))
 
     def test_pipeline_failure_never_reports_success(self):
         for phase in ("configure", "build", "test", "install"):
