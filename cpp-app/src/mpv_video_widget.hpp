@@ -3,6 +3,8 @@
 #include <QOpenGLWidget>
 #include <QMetaObject>
 #include <QPointer>
+#include <QImage>
+#include <QByteArray>
 
 #include <atomic>
 #include <memory>
@@ -46,6 +48,7 @@ private:
     void deliverRenderUpdate();
     static void renderUpdateCallback(void* context);
     void connectPlayer(Player* player);
+    bool renderSoftwareFrame(int width, int height);
 
     QPointer<Player> player_;
     std::unique_ptr<CallbackState> callbackState_;
@@ -54,6 +57,9 @@ private:
     std::atomic<bool> updateQueued_{false};
     bool renderContextReady_ = false;
     bool cleaningUp_ = false;
+    bool softwareRendering_ = false;
+    QByteArray softwarePixels_;
+    QImage softwareFrame_;
 };
 
 }  // namespace melearner

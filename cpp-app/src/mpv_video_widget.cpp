@@ -7,8 +7,10 @@
 #include <QMetaObject>
 #include <QAccessibleWidget>
 #include <QWindow>
+#include <QPainter>
 
 #include <thread>
+#include <new>
 
 namespace melearner {
 namespace {
@@ -142,6 +144,11 @@ Player* MpvVideoWidget::player() const { return player_; }
 bool MpvVideoWidget::isRenderContextReady() const { return renderContextReady_; }
 
 void MpvVideoWidget::initializeGL() {
+    const auto renderer = QByteArray(reinterpret_cast<const char*>(glGetString(GL_RENDERER))).toLower();
+    // Mesa's CPU OpenGL drivers can corrupt libmpv's shader output. Let mpv
+    // convert and scale on the CPU, then let Qt present the opaque image. The
+    // hardware OpenGL path remains unchanged.
+    softwareRendering_ = renderer.contains("llvmpipe") || renderer.contains("softpipe");
     if (context() != nullptr) {
         QObject::disconnect(contextDestroyConnection_);
         contextDestroyConnection_ = connect(context(), &QOpenGLContext::aboutToBeDestroyed, this, [this] {
@@ -170,6 +177,12 @@ void MpvVideoWidget::paintGL() {
     if (player_ == nullptr || !renderContextReady_) {
         glClearColor(0.0F, 0.0F, 0.0F, 1.0F);
         glClear(GL_COLOR_BUFFER_BIT);
+    } else if (softwareRendering_) {
+        if (!renderSoftwareFrame(pixelWidth, pixelHeight)) {
+            glClearColor(0.0F, 0.0F, 0.0F, 1.0F);
+            glClear(GL_COLOR_BUFFER_BIT);
+            emit renderError(QStringLiteral("render"), QStringLiteral("The software video frame could not be rendered."));
+        }
     } else if (!player_->renderFrame(defaultFramebufferObject(), pixelWidth, pixelHeight)) {
         emit renderError(QStringLiteral("render"), QStringLiteral("libmpv could not render the current frame."));
     }
@@ -177,6 +190,29 @@ void MpvVideoWidget::paintGL() {
     if (hasFocus()) {
         drawFocusBorder(pixelWidth, pixelHeight, pixelRatio);
     }
+}
+
+bool MpvVideoWidget::renderSoftwareFrame(int width, int height) {
+    if (softwareFrame_.size() != QSize(width, height)) {
+        if (width <= 0 || height <= 0 || width > 16384 || height > 16384) return false;
+        const auto stride = (static_cast<qsizetype>(width) * 4 + 63) & ~qsizetype(63);
+        const auto bytes = stride * height;
+        // An 8K presentation fits, but a corrupt/extreme window geometry must
+        // not cause an unbounded allocation on the GUI thread.
+        if (bytes > 128 * 1024 * 1024) return false;
+        softwareFrame_ = {};
+        try {
+            softwarePixels_.resize(bytes + 63);
+        } catch (const std::bad_alloc&) {
+            return false;
+        }
+        const auto aligned = (reinterpret_cast<quintptr>(softwarePixels_.data()) + 63) & ~quintptr(63);
+        softwareFrame_ = QImage(reinterpret_cast<uchar*>(aligned), width, height, stride, QImage::Format_RGBX8888);
+    }
+    if (!player_->renderSoftwareFrame(softwareFrame_)) return false;
+    QPainter painter(this);
+    painter.drawImage(rect(), softwareFrame_);
+    return true;
 }
 
 void MpvVideoWidget::resizeGL(int, int) { requestFrame(); }
@@ -189,9 +225,10 @@ void MpvVideoWidget::attachRenderContext() {
     }
     callbackState_->active.store(true, std::memory_order_release);
     if (!player_->createRenderContext(&resolveOpenGLProc, context(), &MpvVideoWidget::renderUpdateCallback,
-                                      callbackState_.get())) {
+                                      callbackState_.get(), softwareRendering_ ? Player::RenderMode::Software
+                                                                             : Player::RenderMode::OpenGL)) {
         emit renderError(QStringLiteral("renderer_init"),
-                         QStringLiteral("The OpenGL video renderer could not be initialized."));
+                         QStringLiteral("The video renderer could not be initialized."));
         return;
     }
     renderContextReady_ = true;
@@ -214,7 +251,7 @@ void MpvVideoWidget::detachRenderContext() {
     }
     const bool currentForRender = widgetContext != nullptr
         && QOpenGLContext::currentContext() == widgetContext;
-    if (player_ != nullptr && player_->hasRenderContext() && currentForRender) {
+    if (player_ != nullptr && player_->hasRenderContext() && (currentForRender || softwareRendering_)) {
         player_->destroyRenderContext();
     }
     while (callbackState_->inFlight.load(std::memory_order_acquire) != 0U) {
@@ -222,6 +259,8 @@ void MpvVideoWidget::detachRenderContext() {
     }
     renderDirty_.store(false, std::memory_order_release);
     updateQueued_.store(false, std::memory_order_release);
+    softwareFrame_ = {};
+    softwarePixels_.clear();
     if (renderContextReady_) {
         renderContextReady_ = false;
         emit renderContextLost();
