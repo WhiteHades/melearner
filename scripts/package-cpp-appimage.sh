@@ -137,6 +137,13 @@ if [[ "$project_version" != "$version" ]]; then
   exit 1
 fi
 
+cmake --build "$build_dir" --target melearner_stage_validator
+validator="$build_dir/melearner_stage_validator"
+if [[ ! -x "$validator" ]]; then
+  echo "CMake did not produce the native stage validator: $validator" >&2
+  exit 1
+fi
+
 expected_name="melearner_${version}_amd64.AppImage"
 if [[ "$(basename -- "$output")" != "$expected_name" ]]; then
   echo "output filename must be $expected_name" >&2
@@ -206,6 +213,8 @@ if [[ "$desktop_lower" =~ (tauri|native-app|node|zig|rust|webview|webengine|qml|
   echo "AppImage desktop launcher references an old or browser runtime" >&2
   exit 1
 fi
+
+"$validator" "$appdir" --appimage
 
 while IFS= read -r -d '' staged_path; do
   relative_path="${staged_path#"$appdir"/}"

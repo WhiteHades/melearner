@@ -102,7 +102,7 @@ QSet<QString> validateInventory(const QString& stage, const QString& usrRoot) {
     return paths;
 }
 
-void validate(const QString& stage) {
+void validate(const QString& stage, bool appImage) {
     const auto usr = path(stage, QStringLiteral("usr"));
     const QFileInfo usrInfo(usr);
     if (!usrInfo.isDir() || usrInfo.isSymLink()) {
@@ -122,7 +122,10 @@ void validate(const QString& stage) {
         }
     }
 
-    const auto desktop = requireFile(stage, QStringLiteral("usr/share/applications/io.github.whitehades.melearner.desktop"), QStringLiteral("Arch desktop launcher"));
+    const auto desktopPath = appImage
+        ? QStringLiteral("usr/share/applications/io.github.whitehades.melearner.appimage.desktop")
+        : QStringLiteral("usr/share/applications/io.github.whitehades.melearner.desktop");
+    const auto desktop = requireFile(stage, desktopPath, QStringLiteral("desktop launcher"));
     QFile desktopFile(desktop.filePath());
     if (!desktopFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
         fail(QStringLiteral("cannot read staged desktop launcher: %1").arg(desktop.filePath()));
@@ -133,8 +136,9 @@ void validate(const QString& stage) {
         const auto normalized = line.endsWith(QLatin1Char('\r')) ? line.left(line.size() - 1) : line;
         if (normalized.startsWith(QStringLiteral("Exec="))) execLines.append(normalized);
     }
-    if (execLines != QStringList{QStringLiteral("Exec=/usr/bin/melearner")}) {
-        fail(QStringLiteral("desktop launcher must contain exactly Exec=/usr/bin/melearner"));
+    const auto expectedExec = appImage ? QStringLiteral("Exec=melearner") : QStringLiteral("Exec=/usr/bin/melearner");
+    if (execLines != QStringList{expectedExec}) {
+        fail(QStringLiteral("desktop launcher must contain exactly %1").arg(expectedExec));
     }
     const auto desktopLower = desktopText.toLower();
     const QStringList oldRuntimeTokens{QStringLiteral("tauri"), QStringLiteral("native-app"), QStringLiteral("node"), QStringLiteral("zig"), QStringLiteral("rust"), QStringLiteral("webview"), QStringLiteral("webengine"), QStringLiteral("qml"), QStringLiteral("electron"), QStringLiteral("chromium")};
@@ -242,12 +246,13 @@ void validate(const QString& stage) {
 } // namespace
 
 int main(int argc, char** argv) {
-    if (argc != 2) {
-        std::cerr << "usage: validate_stage <stage-directory>\n";
+    const bool appImage = argc == 3 && QString::fromLocal8Bit(argv[2]) == QStringLiteral("--appimage");
+    if (argc != 2 && !appImage) {
+        std::cerr << "usage: validate_stage <stage-directory> [--appimage]\n";
         return 2;
     }
     const auto stageInfo = QFileInfo(QString::fromLocal8Bit(argv[1]));
     if (!stageInfo.isDir()) fail(QStringLiteral("stage path is not a directory: %1").arg(stageInfo.filePath()));
-    validate(stageInfo.absoluteFilePath());
+    validate(stageInfo.absoluteFilePath(), appImage);
     return 0;
 }
