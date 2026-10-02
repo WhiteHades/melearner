@@ -11,6 +11,7 @@
 #include <QLocale>
 #include <QResizeEvent>
 #include <QStandardItemModel>
+#include <QSizePolicy>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -63,19 +64,6 @@ QString titleCase(QString value) {
     return value;
 }
 
-QString activityText(const QDate& date, const library::ActivityDay& day) {
-    return QObject::tr("%1: %2 progress time, %3 lessons touched, %4 completions")
-        .arg(date.toString(Qt::ISODate), durationText(day.watchedSeconds),
-             countText(day.lessonsTouched), countText(day.completions));
-}
-
-/// The value a day contributes to the heatmap. Progress time is what the grid
-/// colours, because it is the one measure that rises with study rather than with
-/// the number of files a scan happened to find.
-double heatmapValue(const library::ActivityDay& day) {
-    return static_cast<double>(day.watchedSeconds);
-}
-
 /// Scale whichever size the font carries. The shadcn install sets a pixel size,
 /// so a point-size scale is silently ignored and every metric heading in this
 /// panel renders at the body size.
@@ -99,34 +87,52 @@ shadcn::Label* plainLabel(const QString& objectName, const QString& accessibleNa
     label->setTextFormat(Qt::PlainText);
     label->setAccessibleName(accessibleName);
     label->setWordWrap(true);
+    label->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
     return label;
 }
 
-/// A titled metric is a shadcn card: the card owns the fill, the border, the
-/// radius and the padding, so no local stylesheet describes it.
-shadcn::Card* metricBox(
+void makeCardTextSelectable(QWidget* card) {
+    for (auto* label : card->findChildren<QLabel*>()) {
+        label->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
+    }
+}
+
+/// Metrics share one summary surface and reflow without individual card chrome.
+QWidget* metricBox(
     const QString& title,
     const QString& valueName,
     const QString& detailName,
     QLabel** value,
     QLabel** detail) {
-    auto* card = new shadcn::Card;
-    card->setObjectName(QStringLiteral("statsMetric"));
-    card->setTitle(title);
+    auto* group = new QWidget;
+    group->setObjectName(QStringLiteral("statsMetric"));
+    group->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+    auto* layout = new QVBoxLayout(group);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(4);
+    auto* titleLabel = plainLabel(title, title);
+    titleLabel->setText(title);
+    titleLabel->setWordWrap(false);
+    titleLabel->setFont(headingFont(QApplication::font(), 0.9));
+    layout->addWidget(titleLabel);
     *value = plainLabel(valueName, title + QObject::tr(" value"));
-    (*value)->setFont(headingFont(QApplication::font(), 1.3));
+    (*value)->setFont(headingFont(QApplication::font(), 1.2));
     (*value)->setWordWrap(false);
-    card->content().addWidget(*value);
+    layout->addWidget(*value);
     *detail = plainLabel(detailName, title + QObject::tr(" detail"));
-    card->content().addWidget(*detail);
-    return card;
+    layout->addWidget(*detail);
+    return group;
 }
 
 /// A titled section, for the tables and the activity grid.
 shadcn::Card* sectionCard(const QString& title, const QString& objectName) {
     auto* card = new shadcn::Card;
     card->setObjectName(objectName);
+    // A QGridLayout otherwise stretches equally tall cards to consume spare
+    // viewport height, leaving a large empty band inside short data sections.
+    card->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
     card->setTitle(title);
+    makeCardTextSelectable(card);
     return card;
 }
 
@@ -165,15 +171,18 @@ StatsPanel::StatsPanel(library::Library& library, QWidget* parent)
     setObjectName(QStringLiteral("statsPanel"));
     setMinimumWidth(320);
 
-    auto* root = new QVBoxLayout(this);
-    root->setContentsMargins(0, 12, 0, 24);
-    root->setSpacing(16);
+    auto* page = new QHBoxLayout(this);
+    page->setContentsMargins(24, 20, 24, 24);
+    page->addStretch();
+    auto* canvas = new QWidget(this);
+    canvas->setObjectName(QStringLiteral("statsCanvas"));
+    canvas->setMaximumWidth(1440);
+    page->addWidget(canvas, 1, Qt::AlignTop);
+    page->addStretch();
 
-    auto* heading = new shadcn::Label(tr("Learning stats"));
-    heading->setObjectName(QStringLiteral("statsHeading"));
-    heading->setAccessibleName(tr("Learning statistics"));
-    heading->setFont(headingFont(heading->font(), 1.3));
-    root->addWidget(heading);
+    auto* root = new QVBoxLayout(canvas);
+    root->setContentsMargins(0, 0, 0, 0);
+    root->setSpacing(16);
 
     status_ = plainLabel(QStringLiteral("statsStatus"), tr("Statistics status"));
     status_->setText(tr("Choose a library root to load statistics."));
@@ -182,6 +191,10 @@ StatsPanel::StatsPanel(library::Library& library, QWidget* parent)
     auto* totals = new QGridLayout; totals_ = totals;
     totals->setHorizontalSpacing(12);
     totals->setVerticalSpacing(12);
+    auto* summary = new shadcn::Card;
+    summary->setObjectName(QStringLiteral("statsSummary"));
+    summary->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+    summary->content().addLayout(totals);
     totals->addWidget(metricBox(tr("Courses"), QStringLiteral("coursesValue"),
                                 QStringLiteral("coursesDetail"), &coursesValue_, &coursesDetail_),
                       0, 0);
@@ -196,14 +209,25 @@ StatsPanel::StatsPanel(library::Library& library, QWidget* parent)
                       1, 1);
     totals->setColumnStretch(0, 1);
     totals->setColumnStretch(1, 1);
-    root->addLayout(totals);
+    root->addWidget(summary);
 
     auto* breakdown = new QGridLayout; breakdown_ = breakdown;
     breakdown->setHorizontalSpacing(12);
     breakdown->setVerticalSpacing(12);
 
     auto* mediaBox = sectionCard(tr("Media mix"), QStringLiteral("mediaCard"));
-    media_ = new shadcn::Table;
+    auto* mediaContent = new QHBoxLayout; mediaContent_ = mediaContent;
+    mediaContent->setContentsMargins(0, 0, 0, 0);
+    mediaContent->setSpacing(12);
+    mediaChart_ = new shadcn::Chart(mediaBox);
+    mediaChart_->setObjectName(QStringLiteral("mediaChart"));
+    mediaChart_->setAccessibleName(tr("Lessons by media type"));
+    mediaChart_->setChartType(shadcn::ChartType::Bar);
+    mediaChart_->setLegendVisible(false);
+    mediaChart_->setFixedHeight(180);
+    mediaChart_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    mediaContent->addWidget(mediaChart_, 1);
+    media_ = new shadcn::Table(mediaBox);
     media_->setObjectName(QStringLiteral("mediaTable"));
     media_->setAccessibleName(tr("Media mix").append(tr(" table")));
     configureTable(media_);
@@ -211,7 +235,8 @@ StatsPanel::StatsPanel(library::Library& library, QWidget* parent)
     (void)mediaModel_;
     mediaModel_->setHorizontalHeaderLabels({tr("Type"), tr("Lessons"), tr("Completed"), tr("Progress")});
     media_->setModel(mediaModel_);
-    mediaBox->content().addWidget(media_);
+    mediaContent->addWidget(media_, 2);
+    mediaBox->content().addLayout(mediaContent);
     breakdown->addWidget(mediaBox, 0, 0);
 
     auto* coursesBox = sectionCard(tr("Top courses"), QStringLiteral("topCoursesCard"));
@@ -223,34 +248,31 @@ StatsPanel::StatsPanel(library::Library& library, QWidget* parent)
     topCoursesModel_ = new QStandardItemModel(0, 4, topCourses_);
     topCoursesModel_->setHorizontalHeaderLabels({tr("Course"), tr("Complete"), tr("Progress"), tr("Storage")});
     topCourses_->setModel(topCoursesModel_);
+    topCourses_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+    for (int column = 1; column < topCoursesModel_->columnCount(); ++column) {
+        topCourses_->horizontalHeader()->setSectionResizeMode(column, QHeaderView::ResizeToContents);
+    }
     coursesBox->content().addWidget(topCourses_);
+    makeCardTextSelectable(mediaBox);
+    makeCardTextSelectable(coursesBox);
     breakdown->addWidget(coursesBox, 0, 1);
     breakdown->setColumnStretch(0, 1);
     breakdown->setColumnStretch(1, 1);
-    root->addLayout(breakdown);
-
     auto* activityBox = sectionCard(tr("Activity · 12 weeks"), QStringLiteral("activityCard"));
-    auto* activityHint = plainLabel(QStringLiteral("activityHint"), tr("Activity description"));
-    activityHint->setText(tr("Each cell shows a relative activity level. Use the arrow keys to move between days."));
-    activityBox->content().addWidget(activityHint);
-    activity_ = new shadcn::Heatmap(activityBox);
-    activity_->setObjectName(QStringLiteral("activityGrid"));
-    activity_->setAccessibleName(tr("84-day learning activity"));
-    // The grid's own cell text stays a bare date and value. A prefix would make
-    // every arrow key press announce a whole sentence, and the panel already
-    // names the selected day in full in the line below the grid.
-    activity_->setAccessiblePrefix(QString());
-    activityBox->content().addWidget(activity_);
-    activityDetail_ = plainLabel(QStringLiteral("activityDetail"), tr("Selected activity"));
-    activityDetail_->setText(tr("Select a day to see its activity."));
-    activityBox->content().addWidget(activityDetail_);
-    // The heatmap is one focus stop, so a pointer click and a keyboard Return
-    // both have to reach the same place the table's cell selection used to.
-    connect(activity_, &shadcn::Heatmap::cellActivated, this,
-            [this](const QDate& date, double) { activityDetail_->setText(activityDetailFor(date)); });
-    connect(activity_, &shadcn::Heatmap::selectionChanged, this,
-            [this](const QDate& date, double) { activityDetail_->setText(activityDetailFor(date)); });
+    activityChart_ = new shadcn::Chart(activityBox);
+    activityChart_->setObjectName(QStringLiteral("activityChart"));
+    activityChart_->setAccessibleName(tr("Study time by week for the last twelve weeks"));
+    activityChart_->setAccessibleDescription(
+        tr("Chart of recorded lesson progress time, not elapsed session time."));
+    activityChart_->setChartType(shadcn::ChartType::Bar);
+    activityChart_->setLegendVisible(false);
+    activityChart_->setMinimumHeight(220);
+    activityChart_->setMaximumHeight(260);
+    activityChart_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    makeCardTextSelectable(activityBox);
+    activityBox->content().addWidget(activityChart_);
     root->addWidget(activityBox);
+    root->addLayout(breakdown);
     root->addStretch();
 
     connect(&library_, &library::Library::statsReady, this,
@@ -298,6 +320,7 @@ StatsPanel::StatsPanel(library::Library& library, QWidget* parent)
             });
 
     resetProjection(status_->text());
+    updateLayout();
 }
 
 void StatsPanel::setActive(bool active, std::uint64_t revision) {
@@ -339,9 +362,15 @@ void StatsPanel::resetProjection(const QString& status) {
     }
     mediaModel_->removeRows(0, mediaModel_->rowCount());
     topCoursesModel_->removeRows(0, topCoursesModel_->rowCount());
-    activityDays_.clear();
-    (void)activity_->setDays({});
-    activityDetail_->setText(tr("Select a day to see its activity."));
+    mediaChart_->setLabels({});
+    (void)mediaChart_->setSeries({});
+    mediaChart_->setProperty("melearnerCopyText", QString{});
+    activityChart_->setLabels({});
+    activityWeeks_.clear();
+    activityMinutes_.clear();
+    activityGrouping_ = 0;
+    (void)activityChart_->setSeries({});
+    activityChart_->setProperty("melearnerCopyText", QString{});
     setStatus(status);
 }
 
@@ -355,34 +384,54 @@ void StatsPanel::renderSnapshot(const library::LibraryStats& stats) {
     coursesDetail_->setText(stats.missingCourses == 0
                                  ? tr("All courses available")
                                  : tr("%1 missing").arg(countText(stats.missingCourses)));
-    completionValue_->setText(tr("%1%").arg(stats.completionPercent));
+    const auto completionLabel = stats.completedLessons > 0 && stats.completionPercent == 0
+                                     ? tr("<1%")
+                                     : tr("%1%").arg(stats.completionPercent);
+    completionValue_->setText(completionLabel);
     completionDetail_->setText(tr("Lessons complete: %1 of %2")
                                     .arg(countText(stats.completedLessons), countText(stats.lessons)));
     watchedValue_->setText(durationText(stats.watchedSeconds));
     watchedDetail_->setText(stats.totalSeconds == 0
                                 ? tr("Based on lesson position")
-                                : tr("of %1 total").arg(durationText(stats.totalSeconds)));
+                                : tr("of %1 known lesson duration").arg(durationText(stats.totalSeconds)));
     storageValue_->setText(bytesText(stats.bytes));
     storageDetail_->setText(tr("Sections: %1").arg(countText(stats.sections)));
     renderMedia(stats.mediaTypes);
     renderTopCourses(stats.topCourses);
     updateLayout();
-    setStatus(tr("Statistics updated."));
+    setStatus(requests_.isEmpty() ? QString{} : tr("Loading recent activity…"));
 }
 
 void StatsPanel::renderMedia(const QVector<library::MediaTypeStats>& rows) {
     mediaModel_->removeRows(0, mediaModel_->rowCount());
+    QStringList labels;
+    QList<double> lessonCounts;
+    QStringList copyLines{tr("Media type\tLessons")};
     for (const auto& item : rows) {
+        const auto type = titleCase(item.type);
+        const auto lessons = countText(item.lessons);
+        labels.append(type);
+        lessonCounts.append(static_cast<double>(item.lessons));
+        copyLines.append(type + QLatin1Char('\t') + lessons);
         const auto accessible = tr("%1: lessons: %2, completed: %3, progress time: %4")
-                                    .arg(titleCase(item.type), countText(item.lessons),
+                                    .arg(type, lessons,
                                          countText(item.completed), durationText(item.watchedSeconds));
-        const auto row = mediaModel_->rowCount();
-        mediaModel_->appendRow({tableItem(titleCase(item.type), accessible),
-                                tableItem(countText(item.lessons), accessible),
+        mediaModel_->appendRow({tableItem(type, accessible),
+                                tableItem(lessons, accessible),
                                 tableItem(countText(item.completed), accessible),
                                 tableItem(durationText(item.watchedSeconds), accessible)});
-        Q_UNUSED(row);
     }
+    mediaChart_->setLabels(std::move(labels));
+    if (rows.isEmpty()) {
+        (void)mediaChart_->setSeries({});
+        mediaChart_->setAccessibleDescription(tr("No media type data is available."));
+    } else {
+        const auto series = shadcn::ChartSeries{tr("Lessons"), std::move(lessonCounts),
+                                                shadcn::Role::Foreground};
+        (void)mediaChart_->setSeries({series});
+        mediaChart_->setAccessibleDescription(copyLines.join(QStringLiteral(". ")));
+    }
+    mediaChart_->setProperty("melearnerCopyText", copyLines.join(QLatin1Char('\n')));
 }
 
 void StatsPanel::renderTopCourses(const QVector<library::TopCourseStats>& rows) {
@@ -411,57 +460,54 @@ void StatsPanel::renderActivity(const library::ActivityDayPage& page) {
         return;
     }
     const auto first = through.addDays(-(kActivityDays - 1));
-    activityDays_.clear();
-    QList<shadcn::HeatmapDay> days;
-    std::uint64_t maximumWatched = 0;
+    QMap<QDate, library::ActivityDay> daysByDate;
     for (const auto& day : page.rows) {
         const auto date = QDate::fromString(day.date, Qt::ISODate);
-        if (!date.isValid() || date < first || date > through || activityDays_.contains(date)) {
+        if (!date.isValid() || date < first || date > through || daysByDate.contains(date)) {
             setStatus(tr("Activity dates are invalid."));
             return;
         }
-        activityDays_.insert(date, day);
-        maximumWatched = std::max(maximumWatched, day.watchedSeconds);
+        daysByDate.insert(date, day);
     }
 
-    // The grid is bucketed against the busiest day in the window, so the ramp
-    // always uses its whole range. A window with no activity at all would make
-    // every ratio divide by zero, so it is given a maximum of one and the grid
-    // then shows a single quiet level rather than nothing.
-    activity_->setMaximum(maximumWatched > 0 ? static_cast<double>(maximumWatched) : 1.0);
-    days.reserve(activityDays_.size());
-    for (auto it = activityDays_.constBegin(); it != activityDays_.constEnd(); ++it)
-        days.append({it.key(), heatmapValue(it.value())});
-    // A window shorter than the grid still needs a maximum, and a rejected value
-    // here would leave the previous grid on screen, so the result is checked.
-    if (!activity_->setDays(days)) {
-        setStatus(tr("Activity data is invalid."));
-        return;
+    // The current and previous eleven Monday-based weeks are always represented,
+    // including zero-activity weeks. This keeps the graph stable as the library
+    // has only a few recorded sessions, without inventing any activity values.
+    const auto lastWeek = through.addDays(-((through.dayOfWeek() - Qt::Monday + 7) % 7));
+    const auto firstWeek = lastWeek.addDays(-77);
+    QList<double> minutesByWeek;
+    QStringList weekLabels;
+    activityWeeks_.clear();
+    for (int week = 0; week < 12; ++week) {
+        activityWeeks_.append(firstWeek.addDays(week * 7));
+        minutesByWeek.append(0.0);
+        weekLabels.append(QLocale().toString(firstWeek.addDays(week * 7), QStringLiteral("MMM d")));
     }
-    // The most recent day is selected by the component, so its detail line is
-    // filled in rather than left showing the prompt.
-    const auto selected = activity_->selectedCell();
-    if (selected.x() >= 0 && selected.y() >= 0) {
-        const auto& text = activity_->cellText(selected);
-        if (!text.isEmpty()) {
-            const auto date = QDate::fromString(text.section(QLatin1Char(':'), 0, 0).trimmed(),
-                                                Qt::ISODate);
-            activityDetail_->setText(activityDetailFor(date));
+
+    QStringList copyLines{tr("Week\tRecorded progress minutes")};
+    for (auto it = daysByDate.cbegin(); it != daysByDate.cend(); ++it) {
+        if (it.key() < firstWeek) continue;
+        const auto week = firstWeek.daysTo(it.key()) / 7;
+        if (week >= 0 && week < minutesByWeek.size()) {
+            minutesByWeek[week] += static_cast<double>(it->watchedSeconds) / 60.0;
         }
     }
-    setStatus(tr("Activity updated."));
-}
 
-QString StatsPanel::activityDetailFor(const QDate& date) const {
-    const auto found = activityDays_.constFind(date);
-    if (found == activityDays_.cend()) {
-        return tr("Select a day to see its activity.");
+    for (int week = 0; week < minutesByWeek.size(); ++week) {
+        copyLines.append(weekLabels.at(week) + QLatin1Char('\t')
+                         + QString::number(minutesByWeek.at(week), 'f', 1));
     }
-    return activityText(date, *found);
+
+    activityMinutes_ = std::move(minutesByWeek);
+    activityGrouping_ = 0;
+    activityChart_->setProperty("melearnerCopyText", copyLines.join(QLatin1Char('\n')));
+    updateLayout();
+    setStatus(requests_.isEmpty() ? QString{} : tr("Loading statistics…"));
 }
 
 void StatsPanel::setStatus(QString message) {
     status_->setText(std::move(message));
+    status_->setVisible(!status_->text().isEmpty());
 }
 
 void StatsPanel::resizeEvent(QResizeEvent* event) { QWidget::resizeEvent(event); updateLayout(); }
@@ -472,9 +518,35 @@ void StatsPanel::changeEvent(QEvent* event) {
 }
 
 void StatsPanel::updateLayout() {
-    if (!breakdown_) return;
+    if (!breakdown_ || !mediaContent_) return;
     const bool narrow = width() < std::max(900, fontMetrics().height() * 55);
-    const bool singleMetricColumn = width() < std::max(520, fontMetrics().horizontalAdvance(tr("Progress time")) * 2 + 64);
+    if (!activityWeeks_.isEmpty()) {
+        int labelWidth = 1;
+        for (const auto& week : activityWeeks_)
+            labelWidth = std::max(labelWidth, activityChart_->fontMetrics().horizontalAdvance(
+                QLocale().toString(week, QStringLiteral("MMM d"))));
+        const int plotWidth = std::max(1, std::min(1440, width() - 48) - 32 - 56);
+        const int bins = std::max(1, plotWidth / (labelWidth + 12));
+        const int grouping = (activityWeeks_.size() + bins - 1) / bins;
+        if (grouping != activityGrouping_) {
+            activityGrouping_ = grouping;
+            QStringList labels;
+            QList<double> values;
+            for (int start = 0; start < activityWeeks_.size(); start += grouping) {
+                labels.append(QLocale().toString(activityWeeks_[start], QStringLiteral("MMM d")));
+                double minutes = 0;
+                for (int offset = 0; offset < grouping && start + offset < activityMinutes_.size(); ++offset)
+                    minutes += activityMinutes_[start + offset];
+                values.append(minutes);
+            }
+            activityChart_->setLabels(std::move(labels));
+            (void)activityChart_->setSeries({{tr("Progress minutes"), std::move(values), shadcn::Role::Foreground}});
+            activityChart_->setAccessibleDescription(
+                tr("Recorded lesson progress minutes in %1-week groups. Not elapsed session time.").arg(grouping));
+        }
+    }
+    mediaContent_->setDirection(narrow ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight);
+    const bool singleMetricColumn = width() < std::max(440, fontMetrics().horizontalAdvance(tr("Progress time")) * 2 + 64);
     const QList<QWidget*> metrics = {coursesValue_->parentWidget(), completionValue_->parentWidget(),
                                     watchedValue_->parentWidget(), storageValue_->parentWidget()};
     for (int index = 0; index < metrics.size(); ++index) {
@@ -495,9 +567,6 @@ void StatsPanel::updateLayout() {
             table->fontMetrics().horizontalAdvance(tr("Completed")) + 20);
         table->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     }
-    // The heatmap is sized by its own hint, which already accounts for the axis
-    // and the legend, so the panel only has to let it keep that height.
-    activity_->setMinimumHeight(activity_->sizeHint().height());
 }
 
 }  // namespace melearner
