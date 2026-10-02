@@ -197,6 +197,12 @@ private slots:
     auto* next = window.findChild<QPushButton*>("nextLesson");
     auto* actions = window.findChild<QWidget*>("lessonActions");
     QTRY_VERIFY(document->toPlainText().contains("Markdown lesson"));
+    QTRY_VERIFY(next->isEnabled());
+    QVERIFY(!next->accessibleDescription().isEmpty());
+    auto* previous = window.findChild<QPushButton*>("previousLesson");
+    QVERIFY(previous); QTRY_VERIFY(!previous->isEnabled());
+    QVERIFY(next->parentWidget() == previous->parentWidget());
+    QVERIFY(next->height() >= window.fontMetrics().height() * 2);
     auto* outline = window.findChild<shadcn::TreeView*>("lessons");
     QVERIFY(outline);
     const auto sectionIndex = outline->model()->index(0, 0);

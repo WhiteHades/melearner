@@ -127,12 +127,15 @@ private slots:
       auto* timeline = window.findChild<shadcn::Slider*>("playbackPosition"); QVERIFY(timeline);
       QVERIFY(controls->isAncestorOf(timeline));
       for (const auto* name : {"mute", "volumeButton", "playbackRate", "audioTrackButton",
-                               "subtitleTrackButton", "chapterButton", "rewind", "forward",
+                               "subtitleTrackButton", "chapterButton",
                                "frameStep", "addSubtitle", "screenshot", "fullscreen"}) {
         auto* directControl = window.findChild<QPushButton*>(name);
         QVERIFY2(directControl, name);
         QVERIFY2(controls->isAncestorOf(directControl), name);
       }
+      QVERIFY(!window.findChild<QPushButton*>("rewind"));
+      QVERIFY(!window.findChild<QPushButton*>("forward"));
+      QVERIFY(controls->isAncestorOf(window.findChild<shadcn::Switch*>("autoplay")));
       auto* volumeButton = window.findChild<QPushButton*>("volumeButton"); QVERIFY(volumeButton);
       auto* volumeMenu = window.findChild<QMenu*>("volumeMenu"); QVERIFY(volumeMenu);
       auto* volume = window.findChild<shadcn::Slider*>("volume"); QVERIFY(volume);
@@ -326,7 +329,7 @@ private slots:
         }
         const auto* next = window.findChild<QPushButton*>("nextLesson");
         QVERIFY(surface->rect().contains(controls->geometry()));
-        QVERIFY(next->mapTo(&window, QPoint(0, next->height())).y() <= surface->mapTo(&window, QPoint()).y());
+        QVERIFY(next->mapTo(&window, QPoint()).y() >= surface->mapTo(&window, QPoint(0, surface->height())).y());
         QSignalSpy rates(player, &melearner::Player::rateChanged);
         speed->actions().at(4)->trigger();
         QTRY_VERIFY(!rates.isEmpty()); QCOMPARE(rates.last().first().toDouble(), 1.5);
@@ -350,6 +353,14 @@ private slots:
         QTRY_VERIFY(outlinePane->isVisible() && scroll->isVisible());
         QTRY_VERIFY(outlinePane->mapTo(&window, QPoint(outlinePane->width(), 0)).x() <=
                     scroll->mapTo(&window, QPoint()).x());
+        window.resize(1920, 1080);
+        QTRY_VERIFY(window.findChild<QWidget*>("mediaFrame")->height() > 500);
+        QTRY_COMPARE(surface->height(), window.findChild<QWidget*>("mediaFrame")->height());
+        QTRY_VERIFY(surface->mapTo(scroll->widget(), QPoint()).y() <= 1);
+        QTRY_VERIFY(lessonTitle->mapTo(scroll->widget(), QPoint()).y() >= surface->height());
+        QTRY_VERIFY(surface->height() <= 620);
+        if (!captureDirectory.isEmpty()) QVERIFY(window.grab().save(captureDirectory + QString("/player-wide-%1x.png").arg(fontScale)));
+        window.resize(std::max(1280, window.fontMetrics().height() * 40), 720);
         if (fontScale == 1 && mediaFile == QStringLiteral("Systems 日本語/01 H264 AAC.mp4")) {
           auto* fullscreen = window.findChild<QPushButton*>("fullscreen"); QVERIFY(fullscreen);
           auto* header = window.findChild<QWidget*>("headerHost"); QVERIFY(header);
@@ -364,6 +375,8 @@ private slots:
           fullscreen->click(); QTRY_VERIFY(!window.isFullScreen());
           QTRY_VERIFY(header->isVisible() && outlinePane->isVisible());
           QTRY_VERIFY(lessonHeader->isVisible() && actions->isVisible());
+          QTRY_VERIFY(surface->height() <= window.height());
+          QTRY_VERIFY(!window.findChild<QLabel*>("appStatus")->isVisible());
         }
         // The application stays in neutral dark across playback and menu use.
         auto* appearance = window.findChild<QPushButton*>("appearance")->menu();
@@ -383,6 +396,68 @@ private slots:
       }
       window.close();
     }
+  }
+  void autoplayAndDoubleClickSeeking() {
+    QTemporaryDir data; QVERIFY(data.isValid());
+    const auto folder = data.path() + "/Courses/Video course/Section";
+    QVERIFY(QDir().mkpath(folder));
+    const auto clip = QStringLiteral(MELEARNER_SOURCE_DIR) + "/fixtures/parity/media/Systems 日本語/01 H264 AAC.mp4";
+    QProcess extend;
+    extend.start("ffmpeg", {"-hide_banner", "-loglevel", "error", "-stream_loop", "7", "-i", clip,
+      "-c", "copy", "-t", "16", folder + "/01 First.mp4"});
+    QVERIFY(extend.waitForFinished(10000)); QCOMPARE(extend.exitCode(), 0);
+    QVERIFY(QFile::copy(QStringLiteral(MELEARNER_SOURCE_DIR) + "/fixtures/parity/documents/blank-500-pages.pdf", folder + "/02 Reading.pdf"));
+    QVERIFY(QFile::copy(clip, folder + "/03 Next.mp4"));
+    MainWindow window(data.path() + "/library.sqlite3", nullptr, true); window.show(); window.activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(&window));
+    QTRY_VERIFY(window.findChild<QPushButton*>("chooseRoot")->isEnabled());
+    window.chooseRoot(data.path() + "/Courses");
+    auto* courses = window.findChild<QListView*>("courses");
+    QTRY_COMPARE_WITH_TIMEOUT(courses->model()->rowCount(), 1, 10000);
+    auto* player = window.findChild<melearner::Player*>();
+    QSignalSpy loaded(player, &melearner::Player::fileLoaded);
+    QSignalSpy positions(player, &melearner::Player::positionChanged);
+    QSignalSpy ended(player, &melearner::Player::playbackEnded);
+    courses->setCurrentIndex(courses->model()->index(0, 0)); QTest::keyClick(courses, Qt::Key_Return);
+    QTRY_COMPARE_WITH_TIMEOUT(loaded.size(), 1, 10000);
+    auto* play = window.findChild<QPushButton*>("playPause");
+    auto* autoplay = window.findChild<shadcn::Switch*>("autoplay");
+    autoplay->setChecked(false);
+    auto* surface = window.findChild<QWidget*>("videoSurface");
+    auto* time = window.findChild<QLabel*>("playbackTime"); const auto clockWidth = time->width();
+    QVERIFY(player->seek(7000)); QTRY_VERIFY(!positions.empty() && positions.last()[0].toLongLong() >= 6800);
+    QTest::mouseClick(surface, Qt::LeftButton, Qt::NoModifier, QPoint(surface->width() / 4, 20));
+    QTest::mouseDClick(surface, Qt::LeftButton, Qt::NoModifier, QPoint(surface->width() / 4, 20));
+    QTRY_VERIFY(positions.last()[0].toLongLong() < 2500);
+    QTest::qWait(QApplication::doubleClickInterval() + 30); QCOMPARE(play->text(), QString("Play"));
+    QTest::mouseDClick(surface, Qt::LeftButton, Qt::NoModifier, QPoint(surface->width() * 3 / 4, 20));
+    QTRY_VERIFY(positions.last()[0].toLongLong() >= 6800);
+    QCOMPARE(time->width(), clockWidth);
+    auto* next = window.findChild<QPushButton*>("nextLesson");
+    QTRY_COMPARE(next->accessibleDescription(), QString("02 Reading"));
+    autoplay->setChecked(true);
+    QVERIFY(player->seek(15000)); play->click();
+    QTRY_VERIFY_WITH_TIMEOUT(!ended.empty(), 5000);
+    auto* indicator = window.findChild<QWidget*>("autoplayIndicator");
+    QTRY_VERIFY_WITH_TIMEOUT(indicator->isVisible(), 5000);
+    const auto captures = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
+    if (!captures.isEmpty()) QVERIFY(window.grab().save(captures + "/autoplay-countdown.png"));
+    QTest::mouseClick(window.findChild<QPushButton*>("cancelAutoplay"), Qt::LeftButton);
+    QVERIFY(!indicator->isVisible());
+    QVERIFY(!window.findChild<QTimer*>("autoplayCountdown")->isActive());
+    QCOMPARE(loaded.size(), 1);
+    auto* lessons = window.findChild<QTreeView*>("lessons");
+    QTest::keyClick(lessons, Qt::Key_Return);
+    QTRY_COMPARE_WITH_TIMEOUT(loaded.size(), 2, 10000);
+    QTRY_COMPARE(play->text(), QString("Play"));
+    ended.clear(); QVERIFY(player->seek(15000)); play->click();
+    QTRY_VERIFY_WITH_TIMEOUT(!ended.empty(), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(indicator->isVisible(), 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(loaded.size(), 3, 8000);
+    QVERIFY(loaded.last()[0].toString().endsWith("03 Next.mp4"));
+    QTRY_COMPARE(play->text(), QString("Pause"));
+    QVERIFY(!indicator->isVisible());
+    autoplay->setChecked(false); window.close();
   }
   void malformedVideoRecoversAndResumes() {
     QTemporaryDir data; QVERIFY(data.isValid());
