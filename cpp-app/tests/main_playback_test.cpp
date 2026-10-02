@@ -229,14 +229,18 @@ private slots:
         QVERIFY2(window.width() <= 560 && window.height() <= 400, "Controls exceed the minimum supported window size");
         auto* scroll = window.findChild<QScrollArea*>("lessonScroll");
         QTRY_COMPARE(scroll->horizontalScrollBar()->maximum(), 0);
-        // A button is measured against the space its own size hint asks for, not
-        // against its text plus a guessed inset. A shadcn button sizes itself
-        // from its own metrics, so the hint is the answer and a fixed inset here
-        // would be a second, wrong rule. What matters is that the label fits
-        // inside the button, so the width is compared with the label and a
-        // little breathing room, and the hint is compared with the same.
+        // Icon buttons retain text for accessibility, but do not paint it.
+        // Check their accessible name and hit area instead of that hidden label.
         for (const auto* control : window.findChildren<QPushButton*>()) {
           if (!control->isVisible() || control->text().isEmpty()) continue;
+          if (const auto* button = qobject_cast<const shadcn::Button*>(control);
+              button && shadcn::button_metrics(button->buttonSize()).iconOnly && !button->icon().isNull()) {
+            auto* accessible = QAccessible::queryAccessibleInterface(const_cast<shadcn::Button*>(button));
+            QVERIFY(accessible);
+            QVERIFY(!accessible->text(QAccessible::Name).isEmpty());
+            QVERIFY(button->width() >= 24 && button->height() >= 24);
+            continue;
+          }
           const auto label = control->fontMetrics().horizontalAdvance(control->text());
           QVERIFY2(control->sizeHint().width() >= label,
             qPrintable(QString("Clipped button: %1 needs %2, hint is %3")

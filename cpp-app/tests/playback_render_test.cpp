@@ -100,7 +100,10 @@ private slots:
     shell.show();
     alignControls();
     player.start();
-    QTRY_VERIFY_WITH_TIMEOUT(rendered.count() == 1, 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(rendered.count() == 1 || !fatal.isEmpty() || !renderErrors.isEmpty(), 10000);
+    QVERIFY2(fatal.isEmpty(), fatal.isEmpty() ? "" : qPrintable(fatal.first().at(1).toString()));
+    QVERIFY2(renderErrors.isEmpty(), renderErrors.isEmpty() ? "" : qPrintable(renderErrors.first().at(1).toString()));
+    QCOMPARE(rendered.count(), 1);
     QVERIFY(player.setVolume(0));
     QElapsedTimer firstFrame; firstFrame.start();
     QVERIFY(player.loadFile(QDir(root).filePath(relativePath)));
