@@ -14,9 +14,8 @@ if [[ "$actual_version" != "$expected_version" ]]; then
 fi
 
 media_root="$PWD/fixtures/parity/media"
-work_root="$PWD/.tmp/generate-media-corpus"
-rm -rf "$work_root"
-mkdir -p "$media_root/Systems 日本語" "$work_root"
+mkdir -p "$PWD/.tmp" "$media_root/Systems 日本語"
+work_root="$(mktemp -d "$PWD/.tmp/generate-media-corpus.XXXXXX")"
 trap 'rm -rf "$work_root"' EXIT
 
 common=(
