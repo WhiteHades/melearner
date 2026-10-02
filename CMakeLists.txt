@@ -49,6 +49,10 @@ target_link_libraries(melearner PRIVATE melearner_app)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   set_target_properties(melearner PROPERTIES
     INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}/melearner")
+  add_executable(melearner_stage_validator cpp-app/tools/validate_stage.cpp)
+  target_link_libraries(melearner_stage_validator PRIVATE Qt6::Core)
+  target_compile_options(melearner_stage_validator PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic>)
 endif()
 target_compile_definitions(melearner PRIVATE MELEARNER_VERSION="${PROJECT_VERSION}")
 install(TARGETS melearner RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

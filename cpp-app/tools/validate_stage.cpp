@@ -1,0 +1,177 @@
+#include <QDir>
+#include <QDirIterator>
+#include <QFile>
+#include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonParseError>
+#include <QStringList>
+
+#include <iostream>
+#include <cstdlib>
+#include <filesystem>
+
+namespace {
+
+[[noreturn]] void fail(const QString& message) {
+    std::cerr << message.toStdString() << '\n';
+    std::exit(1);
+}
+
+QString path(const QString& root, const QString& relative) {
+    return QDir(root).filePath(relative);
+}
+
+QFileInfo requireFile(const QString& root, const QString& relative, const QString& label) {
+    const QFileInfo info(path(root, relative));
+    if (info.isSymLink() || !info.isFile() || info.size() < 1) {
+        fail(QStringLiteral("required staged file is missing or empty: %1 (%2)").arg(label, info.filePath()));
+    }
+    return info;
+}
+
+bool beneath(const QString& root, const QString& candidate) {
+    const auto cleanRoot = QDir::cleanPath(root);
+    const auto cleanCandidate = QDir::cleanPath(candidate);
+    return cleanCandidate == cleanRoot || cleanCandidate.startsWith(cleanRoot + QDir::separator());
+}
+
+void validate(const QString& stage) {
+    const auto usr = path(stage, QStringLiteral("usr"));
+    const QFileInfo usrInfo(usr);
+    if (!usrInfo.isDir() || usrInfo.isSymLink()) {
+        fail(QStringLiteral("C++ stage must contain a real usr directory: %1").arg(usr));
+    }
+    const auto usrRoot = usrInfo.canonicalFilePath();
+    const auto binary = requireFile(stage, QStringLiteral("usr/bin/melearner"), QStringLiteral("melearner executable"));
+    if (!binary.isExecutable()) {
+        fail(QStringLiteral("staged melearner is not executable: %1").arg(binary.filePath()));
+    }
+    const auto binPath = QFileInfo(binary.filePath()).absolutePath();
+    const auto binEntries = QDir(binPath).entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
+    for (const auto& candidate : binEntries) {
+        if (candidate.fileName() != QStringLiteral("melearner") && candidate.isFile()
+            && candidate.isExecutable()) {
+            fail(QStringLiteral("unexpected staged executable: %1").arg(candidate.filePath()));
+        }
+    }
+
+    const auto desktop = requireFile(stage, QStringLiteral("usr/share/applications/io.github.whitehades.melearner.desktop"), QStringLiteral("Arch desktop launcher"));
+    QFile desktopFile(desktop.filePath());
+    if (!desktopFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        fail(QStringLiteral("cannot read staged desktop launcher: %1").arg(desktop.filePath()));
+    }
+    const auto desktopText = QString::fromUtf8(desktopFile.readAll());
+    QStringList execLines;
+    for (const auto& line : desktopText.split(QLatin1Char('\n'))) {
+        const auto normalized = line.endsWith(QLatin1Char('\r')) ? line.left(line.size() - 1) : line;
+        if (normalized.startsWith(QStringLiteral("Exec="))) execLines.append(normalized);
+    }
+    if (execLines != QStringList{QStringLiteral("Exec=/usr/bin/melearner")}) {
+        fail(QStringLiteral("desktop launcher must contain exactly Exec=/usr/bin/melearner"));
+    }
+    const auto desktopLower = desktopText.toLower();
+    const QStringList oldRuntimeTokens{QStringLiteral("tauri"), QStringLiteral("native-app"), QStringLiteral("node"), QStringLiteral("zig"), QStringLiteral("rust"), QStringLiteral("webview"), QStringLiteral("webengine"), QStringLiteral("qml"), QStringLiteral("electron"), QStringLiteral("chromium")};
+    for (const auto& token : oldRuntimeTokens) {
+        if (desktopLower.contains(token)) fail(QStringLiteral("desktop launcher references an old or browser runtime"));
+    }
+
+    const auto metadataInfo = requireFile(stage, QStringLiteral("usr/share/doc/melearner/runtime-stage.json"), QStringLiteral("runtime stage metadata"));
+    QFile metadataFile(metadataInfo.filePath());
+    if (!metadataFile.open(QIODevice::ReadOnly)) fail(QStringLiteral("runtime-stage.json is not valid JSON: %1").arg(metadataFile.errorString()));
+    QJsonParseError metadataError;
+    const auto metadataDoc = QJsonDocument::fromJson(metadataFile.readAll(), &metadataError);
+    if (metadataError.error != QJsonParseError::NoError) fail(QStringLiteral("runtime-stage.json is not valid JSON: %1").arg(metadataError.errorString()));
+    if (!metadataDoc.isObject()) fail(QStringLiteral("runtime-stage.json must be a JSON object"));
+    const auto metadata = metadataDoc.object();
+    if (metadata.value(QStringLiteral("schemaVersion")).toDouble(-1) != 1 || !metadata.value(QStringLiteral("schemaVersion")).isDouble()) fail(QStringLiteral("runtime-stage.json schemaVersion must be 1"));
+    if (metadata.value(QStringLiteral("version")).toString() != QStringLiteral("0.1.9")) fail(QStringLiteral("runtime-stage.json version must be 0.1.9"));
+    if (metadata.value(QStringLiteral("architecture")).toString() != QStringLiteral("x86_64")) fail(QStringLiteral("runtime-stage.json architecture must be x86_64"));
+    if (!metadata.value(QStringLiteral("releaseQualified")).isBool() || metadata.value(QStringLiteral("releaseQualified")).toBool()) fail(QStringLiteral("runtime-stage.json must keep releaseQualified false"));
+    const QStringList expectedLegal{QStringLiteral("LICENSE"), QStringLiteral("THIRD_PARTY_NOTICES"), QStringLiteral("melearner.spdx.json"), QStringLiteral("runtime-lock.json"), QStringLiteral("reference-profiles-v1.json")};
+    QStringList actualLegal;
+    if (metadata.value(QStringLiteral("legalInputs")).isArray()) {
+        for (const auto& value : metadata.value(QStringLiteral("legalInputs")).toArray()) actualLegal.append(value.toString());
+    }
+    if (!metadata.value(QStringLiteral("legalInputs")).isArray() || actualLegal != expectedLegal) fail(QStringLiteral("runtime-stage.json legalInputs do not match the required legal inputs"));
+    for (const auto& key : {QStringLiteral("privateLibraries"), QStringLiteral("systemRuntimeBoundary"), QStringLiteral("qtPluginGroups")}) {
+        if (!metadata.value(key).isArray()) fail(QStringLiteral("runtime-stage.json %1 must be an array").arg(key));
+    }
+
+    const QList<QPair<QString, QString>> legalFiles{
+        {QStringLiteral("LICENSE"), QStringLiteral("usr/share/licenses/melearner/LICENSE")},
+        {QStringLiteral("THIRD_PARTY_NOTICES"), QStringLiteral("usr/share/doc/melearner/THIRD_PARTY_NOTICES")},
+        {QStringLiteral("melearner.spdx.json"), QStringLiteral("usr/share/doc/melearner/melearner.spdx.json")},
+        {QStringLiteral("runtime-lock.json"), QStringLiteral("usr/share/doc/melearner/runtime-lock.json")},
+        {QStringLiteral("reference-profiles-v1.json"), QStringLiteral("usr/share/doc/melearner/reference-profiles-v1.json")},
+    };
+    for (const auto& entry : legalFiles) {
+        const auto info = requireFile(stage, entry.second, entry.first);
+        if (entry.first.endsWith(QStringLiteral(".json"))) {
+            QFile jsonFile(info.filePath());
+            if (!jsonFile.open(QIODevice::ReadOnly)) fail(QStringLiteral("staged legal JSON is invalid (%1): %2").arg(entry.first, jsonFile.errorString()));
+            QJsonParseError error;
+            const auto document = QJsonDocument::fromJson(jsonFile.readAll(), &error);
+            if (error.error != QJsonParseError::NoError) fail(QStringLiteral("staged legal JSON is invalid (%1): %2").arg(entry.first, error.errorString()));
+            if (!document.isObject()) fail(QStringLiteral("staged legal JSON must be an object: %1").arg(entry.first));
+        }
+    }
+
+    const QStringList forbiddenParts{QStringLiteral("native-app"), QStringLiteral("src-tauri"), QStringLiteral("node_modules"), QStringLiteral("qml"), QStringLiteral("webengine"), QStringLiteral("webview"), QStringLiteral("electron"), QStringLiteral("chromium"), QStringLiteral("zig"), QStringLiteral("rust")};
+    const QStringList forbiddenFiles{QStringLiteral("node"), QStringLiteral("nodejs"), QStringLiteral("chromium"), QStringLiteral("chrome"), QStringLiteral("electron"), QStringLiteral("mpv"), QStringLiteral("ffmpeg"), QStringLiteral("ffprobe")};
+    QDirIterator iterator(usr, QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System, QDirIterator::Subdirectories);
+    while (iterator.hasNext()) {
+        const auto entryPath = iterator.next();
+        const QFileInfo info(entryPath);
+        if (info.isSymLink()) {
+            std::error_code error;
+            const auto link = std::filesystem::read_symlink(std::filesystem::path(entryPath.toStdString()), error);
+            if (error) fail(QStringLiteral("cannot read staged symlink: %1").arg(entryPath));
+            if (link.is_absolute()) fail(QStringLiteral("absolute staged symlink is not portable: %1").arg(entryPath));
+            const auto resolved = std::filesystem::weakly_canonical(std::filesystem::path(entryPath.toStdString()).parent_path() / link, error);
+            if (error || !beneath(usrRoot, QString::fromStdString(resolved.string()))) fail(QStringLiteral("staged symlink escapes usr/: %1").arg(entryPath));
+        }
+        QStringList relativeParts = QDir(usr).relativeFilePath(entryPath).split(QLatin1Char('/'), Qt::SkipEmptyParts);
+        for (auto& part : relativeParts) part = part.toLower();
+        for (const auto& forbidden : forbiddenParts) {
+            if (relativeParts.contains(forbidden)) fail(QStringLiteral("old or browser runtime asset is staged: %1").arg(entryPath));
+        }
+        if (info.isFile() && forbiddenFiles.contains(info.fileName().toLower())) fail(QStringLiteral("old or browser runtime executable is staged: %1").arg(entryPath));
+        if (relativeParts.size() >= 3 && relativeParts.mid(0, 3) == QStringList{QStringLiteral("share"), QStringLiteral("melearner"), QStringLiteral("resources")} && info.isFile()) {
+            const auto suffix = info.suffix().toLower();
+            if (QStringList{QStringLiteral("js"), QStringLiteral("mjs"), QStringLiteral("cjs"), QStringLiteral("html"), QStringLiteral("htm")}.contains(suffix)) fail(QStringLiteral("browser application asset is staged: %1").arg(entryPath));
+        }
+    }
+
+    const auto privateDir = path(stage, QStringLiteral("usr/lib/melearner"));
+    const QFileInfo privateInfo(privateDir);
+    if (!privateInfo.isDir() || privateInfo.isSymLink()) fail(QStringLiteral("private runtime directory is missing: %1").arg(privateDir));
+    const auto privateLibraries = metadata.value(QStringLiteral("privateLibraries")).toArray();
+    for (const auto& value : privateLibraries) {
+        const auto name = value.toString();
+        if (!value.isString() || name.contains(QLatin1Char('/')) || !QFileInfo::exists(path(privateDir, name))) fail(QStringLiteral("declared private runtime library is missing: %1").arg(value.toVariant().toString()));
+    }
+    const auto runtimeEntries = QDir(privateDir).entryInfoList(QDir::Files | QDir::System | QDir::Hidden);
+    bool hasMpv = false;
+    bool hasQtPdf = false;
+    for (const auto& entry : runtimeEntries) {
+        hasMpv |= entry.fileName().startsWith(QStringLiteral("libmpv.so"));
+        hasQtPdf |= entry.fileName().startsWith(QStringLiteral("libQt6Pdf.so"));
+    }
+    if (!hasMpv) fail(QStringLiteral("private runtime closure does not contain libmpv"));
+    if (!hasQtPdf) fail(QStringLiteral("private runtime closure does not contain Qt6Pdf"));
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
+    if (argc != 2) {
+        std::cerr << "usage: validate_stage <stage-directory>\n";
+        return 2;
+    }
+    const auto stageInfo = QFileInfo(QString::fromLocal8Bit(argv[1]));
+    if (!stageInfo.isDir()) fail(QStringLiteral("stage path is not a directory: %1").arg(stageInfo.filePath()));
+    validate(stageInfo.absoluteFilePath());
+    return 0;
+}
