@@ -20,7 +20,8 @@ INSTALLER = Path(__file__).with_name("install-cpp-linux.sh")
 BASH = shutil.which("bash")
 DIRNAME = shutil.which("dirname")
 CTEST = shutil.which("ctest")
-TOOLS = ("uname", "cmake", "ctest", "ninja", "c++", "pkg-config", "update-desktop-database")
+TOOLS = ("uname", "cmake", "ctest", "ninja", "c++", "cc", "meson", "patch",
+         "pkg-config", "update-desktop-database")
 MOCK = r'''
 import json
 import os
@@ -179,7 +180,7 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(self.calls(), [])
 
     def test_missing_build_tools_rejected_before_configure(self):
-        for tool in ("cmake", "ctest", "ninja", "c++", "pkg-config"):
+        for tool in ("cmake", "ctest", "ninja", "c++", "cc", "meson", "patch", "pkg-config"):
             with self.subTest(tool=tool):
                 path = self.bin / tool
                 path.unlink()
@@ -193,7 +194,14 @@ class InstallerTests(unittest.TestCase):
 
     def test_missing_libraries_including_qt_test_rejected_before_configure(self):
         for library in ("Qt6Widgets", "Qt6OpenGLWidgets", "Qt6Network", "Qt6Pdf", "Qt6Test",
-                        "sqlite3", "mpv", "libzip", "md4c"):
+                        "sqlite3", "libzip", "md4c", "libavcodec", "libavdevice",
+                        "libavfilter", "libavformat", "libavutil", "libswresample",
+                        "libswscale", "libass", "libplacebo", "alsa", "libpipewire-0.3",
+                        "libpulse", "egl", "gl", "libdrm", "gbm", "x11", "xext",
+                        "xpresent", "xrandr", "xscrnsaver", "wayland-client",
+                        "wayland-cursor", "wayland-egl", "wayland-protocols", "xkbcommon",
+                        "libva", "libva-drm", "libva-x11", "libva-wayland", "vdpau",
+                        "ffnvcodec"):
             with self.subTest(library=library):
                 result = self.run_installer(MOCK_MISSING_LIBRARY=library)
                 self.assert_not_installed(result)

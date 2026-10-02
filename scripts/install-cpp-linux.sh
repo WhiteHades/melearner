@@ -33,13 +33,19 @@ fi
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-for tool in cmake ctest ninja c++ pkg-config; do
+for tool in cmake ctest ninja c++ cc meson patch pkg-config; do
   if ! command -v "$tool" >/dev/null; then
     fail "Missing build tool: $tool. See docs/development.md for development prerequisites."
   fi
 done
-if ! pkg-config --print-errors --exists Qt6Widgets Qt6OpenGLWidgets Qt6Network Qt6Pdf Qt6Test sqlite3 mpv libzip md4c; then
-  fail "Missing native development libraries (including Qt Test). See docs/development.md."
+if ! pkg-config --print-errors --exists \
+  Qt6Widgets Qt6OpenGLWidgets Qt6Network Qt6Pdf Qt6Test sqlite3 libzip md4c \
+  libavcodec libavdevice libavfilter libavformat libavutil libswresample libswscale \
+  libass libplacebo alsa libpipewire-0.3 libpulse \
+  egl gl libdrm gbm x11 xext xpresent xrandr xscrnsaver \
+  wayland-client wayland-cursor wayland-egl wayland-protocols xkbcommon \
+  libva libva-drm libva-x11 libva-wayland vdpau ffnvcodec; then
+  fail "Missing native development libraries (including Qt Test and libmpv build dependencies). See docs/development.md."
 fi
 
 cmake --preset linux-release
