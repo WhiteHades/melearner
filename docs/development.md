@@ -20,11 +20,11 @@ installation. The application itself is local only.
 
 ## Interface
 
-Every control, the colour theme and the interface font come from shadcn-cpp,
-pinned to one reviewed commit in `cpp-app/cmake/shadcn.cmake`. The application
-holds no local stylesheet and no local palette: a colour mode change is an
-install of the theme, and the two modes are the neutral theme's light and dark
-values.
+The interface uses shadcn-cpp widgets, composed into melearner's own library,
+lesson, and player views. The dependency also supplies the theme and font, and
+is pinned in `cpp-app/cmake/shadcn.cmake`. The application currently installs
+the neutral dark theme only. The library's light theme is used in tests, not
+offered as an application setting.
 
 `cpp-app/src/theme.hpp` is the bridge. It reads the installed theme for the
 widgets the application still paints itself, such as the list rows, and it
@@ -56,43 +56,20 @@ ctest --preset linux-release --no-tests=error
 ```
 
 The regular CTest suites use Qt's offscreen platform. The two playback suites
-need a private X11 display because the libmpv OpenGL surface cannot be created
-by the offscreen plugin:
+need an X11 display because the libmpv OpenGL surface cannot be created by the
+offscreen plugin. Run them under separate private X servers with `xvfb-run`:
 
 ```bash
-Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp -noreset &
-DISPLAY=:99 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 \
-  ./build/cpp-release/playback_render_test
-DISPLAY=:99 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 \
-  ./build/cpp-release/main_playback_test
+for test in playback_render main_playback; do
+  xvfb-run -a -s '-screen 0 1920x1080x24' \
+    env QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1 \
+    "./build/cpp-release/${test}_test"
+done
 ```
 
-### Known gap: the video settings menu does not open from the keyboard on Wayland
-
-`main_playback_test` passes on a private X11 display and fails on a real Wayland
-session. The failure is in `playsPausesAndRestoresPosition`: the video player's
-settings button, focused and pressed with Space, does not open its menu.
-
-This is not a slow compositor. The test was given a full second of polling and the
-menu never appeared. A mouse click on the same button opens the menu immediately,
-so the menu itself is fine and the fault is in the keyboard path. The button is
-visible and enabled throughout, and the surrounding keyboard checks in the same test
-pass, so it is not a general loss of keyboard focus.
-
-Why it matters: a reader who does not use a pointer cannot reach the video settings
-at all. This is a keyboard accessibility defect, not a cosmetic one, and it is the
-reason the two playback suites are not part of CTest: they need a display, so this
-never ran in the default check and stayed hidden until the suites were run on the
-machine's own session.
-
-Unresolved. The cause has not been isolated: the same code opens the menu under X11
-and does not under Wayland, so the difference is in how the platform plugin delivers
-the activation to a button that owns a menu, or in the shadcn button's own key
-handling consuming Space before the button's menu logic sees it. It needs an
-investigation with the two paths compared, not a change made on a guess.
-
-The rest of the Wayland run is clean: `playback_render_test` passes 6 of 6 and
-`main_window_test` passes 13 of 13 on the real session with hardware GL.
+Known limitation: on Wayland, keyboard activation of the video settings menu
+has failed in `main_playback_test`. The menu opens by mouse. This behavior has
+not been verified as fixed; the cause is still under investigation.
 
 Use the source installer for the complete local check and installation:
 

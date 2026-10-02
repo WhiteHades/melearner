@@ -7,17 +7,10 @@ include(GNUInstallDirs)
 # configure cannot silently pick up a different component set or theme, and the
 # application inherits the library's own neutral theme rather than a local copy.
 #
-# The archive is fetched by branch name and its SHA-256 checked against the pin,
-# which is what makes the pin binding. Fetching by commit id instead reads better
-# and is not available: a commit pushed moments ago has no archive yet, and a
-# configure that names one fails for a reason that has nothing to do with the
-# build. So the name is fixed and the content is pinned, and a commit that is not
-# on the branch yet fails the hash rather than downloading something else.
-set(SHADCN_CPP_COMMIT "06eb8e1b17decef0db7e0eb9a76badf2359764ab"
-    CACHE STRING "shadcn-cpp source pin")
+# Fetch the immutable archive for the pinned commit; URL_HASH verifies its content.
+set(SHADCN_CPP_COMMIT "06eb8e1b17decef0db7e0eb9a76badf2359764ab")
 set(SHADCN_CPP_SHA256
-    "c24ab31eb3107b2f948431c0144596d3061b96a887395f3d73073e6dd2cf648a"
-    CACHE STRING "SHA-256 of the pinned shadcn-cpp source archive")
+    "849383bdcc51a61fb839d3021860935131d7a2633824d329bb2d29c9b9c99bf5")
 
 # Only the widget component library is used. The optional media target would add
 # a Qt Multimedia dependency that this application does not use, because it plays
@@ -30,7 +23,7 @@ set(SHADCN_SANITIZERS OFF CACHE BOOL "Enable the shadcn-cpp sanitizers" FORCE)
 
 FetchContent_Declare(
   shadcn_cpp
-  URL "https://github.com/WhiteHades/shadcn-cpp/archive/refs/heads/main.tar.gz"
+  URL "https://codeload.github.com/WhiteHades/shadcn-cpp/tar.gz/${SHADCN_CPP_COMMIT}"
   URL_HASH SHA256=${SHADCN_CPP_SHA256}
   EXCLUDE_FROM_ALL
 )
