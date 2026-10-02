@@ -107,11 +107,14 @@ private:
   quint64 scanId_ = 0;
   shadcn::Button* complete_;
   shadcn::Input* searchField_ = nullptr;
+  shadcn::Button* listMode_ = nullptr;
+  shadcn::Button* cardsMode_ = nullptr;
   shadcn::ListView* courses_;
   shadcn::TreeView* lessons_;
   PagedListModel* courseModel_;
   melearner::CourseOutlineModel* outlineModel_;
   bool compactOutline_ = true;
+  bool keyboardNavigation_ = false;
   melearner::Player* player_;
   melearner::MpvVideoWidget* video_ = nullptr;
   QStackedWidget* media_;
@@ -131,6 +134,8 @@ private:
   shadcn::Button* documentNext_;
   QBoxLayout* documentNavigation_ = nullptr;
   QBoxLayout* lessonNavigation_ = nullptr;
+  QWidget* documentTools_ = nullptr;
+  QWidget* lessonActions_ = nullptr;
   shadcn::Button* externalOpen_;
   quint64 externalOpenId_ = 0;
   quint64 documentRequestId_ = 0;
@@ -176,6 +181,6 @@ private:
   void updateLayout();
   void showError(const QString& message);
   void notify(const QString& title, const QString& description = {});
-  void applyAppearance();
+  void applyAppearance(bool resetTheme = false);
   void applyPresentation();
 };
