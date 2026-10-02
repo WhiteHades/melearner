@@ -68,9 +68,6 @@ foreach(icon_size 16 22 24 32 48 64 96 128 192 256 512)
     DESTINATION
       "${CMAKE_INSTALL_DATADIR}/icons/hicolor/${icon_size}x${icon_size}/apps")
 endforeach()
-install(FILES cpp-app/assets/fonts/LICENSE
-  DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/melearner/geist)
-
 if(BUILD_TESTING)
   find_package(Qt6 REQUIRED COMPONENTS Test)
   file(MAKE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.tmp/cpp-tests")
