@@ -58,13 +58,20 @@ automatically when the codec and driver support it; software decoding handles
 the fallback. Supported formats depend on the bundled media libraries and the
 available graphics drivers.
 
+When Qt reports `llvmpipe` or `softpipe` as the OpenGL renderer, melearner asks
+libmpv to render each frame into a CPU image, then Qt presents that image in
+the video widget. This fallback still requires a functioning Qt OpenGL
+context. It does not promise support for every software OpenGL driver.
+
 If a file cannot be opened, the status message reports the error. Select another
 lesson from the outline to continue using the library.
 
 For a blank video or a decoder problem, close melearner and launch it from a
 terminal with `melearner --software-decoding`. This skips hardware decoder probes
-but still uses OpenGL to display the video. It does not bypass a broken graphics
-driver or repair a damaged media file.
+and selects software decoding. Decode mode is separate from presentation: on
+`llvmpipe` or `softpipe`, the CPU-image presentation path is still used; other
+renderers use the OpenGL presentation path. The fallback does not bypass a
+broken Qt OpenGL context or repair a damaged media file.
 
 ## Progress
 

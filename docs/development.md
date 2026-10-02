@@ -190,13 +190,18 @@ search, progress, documents, PDF rendering, and embedded libmpv player.
 Tests use isolated temporary libraries. Application data paths are listed in
 [Privacy](privacy-and-legal.md).
 
-The Linux player is an in-window OpenGL surface. It uses libmpv in process and
-does not launch an external player or codec helper. Media files are opened from
-the selected course root after path validation. The transport is built from
-shadcn components, but the decode and the surface are not: the component
-library's optional media player takes a URL and owns its own transport, and this
-application needs to drive a path it has already validated, seek to a saved
-position, add a subtitle file and report progress.
+The Linux player uses libmpv in process and does not launch an external player
+or codec helper. Media files are opened from the selected course root after
+path validation. On `llvmpipe` or `softpipe`, libmpv uses its software render API
+to render into a CPU image, which Qt presents in the `QOpenGLWidget`. This path
+still needs a functioning Qt OpenGL context. Other OpenGL renderers keep the
+direct libmpv OpenGL presentation path. The `--software-decoding` option
+controls decoding separately: it skips hardware decoder probes, but does not
+select the software render API. The transport is built from shadcn components,
+but the decode and presentation are not: the component library's optional media
+player takes a URL and owns its own transport, and this application needs to
+drive a path it has already validated, seek to a saved position, add a subtitle
+file and report progress.
 
 ## Measured work
 
