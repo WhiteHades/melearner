@@ -32,8 +32,11 @@ if [[ ${MELEARNER_PLAYBACK_CHILD-} == 1 ]]; then
   export PULSE_COOKIE="$run_dir/config/pulse/cookie" PULSE_SERVER="unix:$run_dir/p"
   export DBUS_SESSION_BUS_ADDRESS="unix:path=$run_dir/b"
   export DBUS_SYSTEM_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS"
-  unset NOTIFY_SOCKET WAYLAND_DISPLAY PULSE_SCRIPT PULSE_DLPATH MELEARNER_TEST_SCREENSHOTS
+  unset NOTIFY_SOCKET WAYLAND_DISPLAY PULSE_SCRIPT PULSE_DLPATH MELEARNER_TEST_SCREENSHOTS QT_STYLE_OVERRIDE
   export QT_QPA_PLATFORM=xcb QT_OPENGL=software QT_QUICK_BACKEND=software
+  # Do not inherit the desktop's GTK plugin or force-load a proprietary GLX
+  # driver before main. The private display uses Mesa's software renderer.
+  export QT_QPA_PLATFORMTHEME=xdgdesktopportal __GLX_VENDOR_LIBRARY_NAME=mesa
   export LIBGL_ALWAYS_SOFTWARE=1 LP_NUM_THREADS=2
   head -c 256 /dev/urandom > "$PULSE_COOKIE"
 
