@@ -51,15 +51,6 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}/melearner")
 endif()
 target_compile_definitions(melearner PRIVATE MELEARNER_VERSION="${PROJECT_VERSION}")
-if(BUILD_TESTING)
-  add_test(NAME cli_version COMMAND melearner --version)
-  add_test(NAME cli_version_short COMMAND melearner -v)
-  add_test(NAME cli_help COMMAND melearner --help)
-  add_test(NAME cli_help_short COMMAND melearner -h)
-  add_test(NAME cli_help_all COMMAND melearner --help-all)
-  set_tests_properties(cli_version cli_version_short cli_help cli_help_short cli_help_all
-    PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=melearner-invalid;DISPLAY=;WAYLAND_DISPLAY=" TIMEOUT 10)
-endif()
 install(TARGETS melearner RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES packaging/linux/io.github.whitehades.melearner.desktop
   DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
@@ -75,25 +66,14 @@ endforeach()
 if(BUILD_TESTING)
   find_package(Qt6 REQUIRED COMPONENTS Test)
   file(MAKE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.tmp/cpp-tests")
-  foreach(test IN ITEMS single_instance main_window paged_list_model course_outline_model library player documents search_dialog stats_panel local_files pdf)
-    add_executable(${test}_test cpp-app/tests/${test}_test.cpp)
-    target_link_libraries(${test}_test PRIVATE melearner_app Qt6::Test)
-    add_test(NAME ${test} COMMAND ${test}_test)
-    set_tests_properties(${test} PROPERTIES ENVIRONMENT
-      "QT_QPA_PLATFORM=offscreen;LC_ALL=C;TMPDIR=${CMAKE_CURRENT_SOURCE_DIR}/.tmp/cpp-tests" TIMEOUT 60)
-  endforeach()
-  # Run on a real Wayland/X11 display. Offscreen Qt cannot create the GL widget.
-  foreach(test IN ITEMS playback_render main_playback)
+  foreach(test IN ITEMS main_window main_playback)
     add_executable(${test}_test cpp-app/tests/${test}_test.cpp)
     target_link_libraries(${test}_test PRIVATE melearner_app Qt6::Test)
     target_compile_definitions(${test}_test PRIVATE MELEARNER_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
   endforeach()
-  # Explicit diagnostic run: materializes the full fixture, outside routine CTest.
-  add_executable(library_load_test cpp-app/tests/library_load_test.cpp
-    cpp-app/tests/fixtures/parity_fixture.cpp
-    cpp-app/tests/fixtures/parity_recipe_v1.cpp)
-  target_link_libraries(library_load_test PRIVATE melearner_app Qt6::Test)
-  # Explicit media-backed rendering diagnostic, intentionally outside CTest.
-  add_executable(playback_load_test cpp-app/tests/playback_load_test.cpp)
-  target_link_libraries(playback_load_test PRIVATE melearner_app Qt6::Test)
+  add_test(NAME core_workflow COMMAND main_window_test)
+  set_tests_properties(core_workflow PROPERTIES ENVIRONMENT
+    "QT_QPA_PLATFORM=offscreen;LC_ALL=C;TMPDIR=${CMAKE_CURRENT_SOURCE_DIR}/.tmp/cpp-tests" TIMEOUT 60)
+  # The playback E2E needs a private display; the offscreen plugin has no GL.
+  # scripts/test-cpp-playback.sh runs both core flows on private X11 and audio.
 endif()

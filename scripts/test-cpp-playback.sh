@@ -132,7 +132,7 @@ usage() {
   cat <<'USAGE'
 Usage: scripts/test-cpp-playback.sh [--build-dir DIR] [-- COMMAND [ARG...]]
 
-Runs playback_render_test and main_playback_test from DIR. Supplying a command
+Runs main_window_test and main_playback_test from DIR. Supplying a command
 after -- runs only that command in the same private X11/audio environment.
 MELEARNER_PLAYBACK_TIMEOUT_SECONDS defaults to 60 seconds per command.
 USAGE
@@ -175,7 +175,7 @@ else
     exit 1
   }
   test_paths=()
-  for test_name in playback_render_test main_playback_test; do
+  for test_name in main_window_test main_playback_test; do
     test_path="$build_dir/$test_name"
     [[ -x "$test_path" ]] || { printf 'Missing playback test executable: %s\n' "$test_path" >&2; exit 1; }
     test_paths+=("$test_path")
@@ -220,7 +220,7 @@ for executable in Xvfb xvfb-run xauth openbox dbus-daemon pactl timeout; do
 done
 
 run_base="$repo_root/.tmp/cpp-playback"
-socket_label=playback_render_test
+socket_label=main_playback_test
 (( explicit_command )) && socket_label=custom
 socket_probe="$run_base/run.XXXXXX/$socket_label/p"
 if (( ${#socket_probe} > 107 )); then
@@ -256,7 +256,7 @@ if (( explicit_command )); then
   run_one custom "${command_args[@]}" || exit $?
 else
   for index in "${!test_paths[@]}"; do
-    test_name=playback_render_test
+    test_name=main_window_test
     (( index == 0 )) || test_name=main_playback_test
     run_one "$test_name" "${test_paths[$index]}" || exit $?
   done
