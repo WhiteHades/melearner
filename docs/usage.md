@@ -13,8 +13,25 @@ melearner groups files into courses, sections, and lessons based on the folder s
 
 - Video files
 - Audio files
-- Documents including text, markdown, HTML, PDF, and DOCX
+- Documents including text, Markdown, HTML, PDF, DOCX, CSV, and XLSX
 - Subtitle tracks next to playable lessons
+
+Choose **List** or **Cards** above the library to change its layout. The choice is
+saved on your computer. Search is available in the library or with `Ctrl+K`.
+
+The course outline stays to the left of the lesson. Previous lesson, Next lesson,
+and completion controls are beside the lesson heading. On a narrow window, use
+**Lessons** to switch between the outline and the reader.
+
+Markdown and HTML are read inside the app without running scripts or loading
+remote content. CSV and XLSX display cell values as tables. XLSX formatting,
+charts, and macros are not rendered, and formulas show their stored values.
+Other indexed files show readable text when possible, or a bounded hexadecimal
+preview for unrecognized binary content. **Open in default app** is available
+for document formats that need a dedicated application.
+
+PDF zoom and page controls sit directly above the PDF. Reading-page controls
+appear above long text documents only when the document spans multiple pages.
 
 ## Playback Shortcuts
 
