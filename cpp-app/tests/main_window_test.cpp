@@ -5,6 +5,8 @@
 
 #include <QDir>
 #include <QComboBox>
+#include <QClipboard>
+#include <QContextMenuEvent>
 #include <QDialog>
 #include <QFile>
 #include <QGraphicsOpacityEffect>
@@ -28,6 +30,8 @@
 #include <QTextEdit>
 #include <QTreeView>
 #include <shadcn/widgets.hpp>
+#include <shadcn/data.hpp>
+#include <shadcn/overlays.hpp>
 #include <QtTest>
 #include <zip.h>
 
@@ -79,6 +83,28 @@ private slots:
     window.chooseRoot(root);
     auto* courses = window.findChild<shadcn::ListView*>("courses");
     QTRY_COMPARE(courses->model()->rowCount(), 12);
+    const auto copyIndex = courses->model()->index(0, 0);
+    courses->setCurrentIndex(copyIndex);
+    courses->setFocus();
+    QApplication::clipboard()->clear();
+    QTest::keyClick(courses, Qt::Key_C, Qt::ControlModifier);
+    QTRY_COMPARE(QApplication::clipboard()->text(),
+                 copyIndex.data(Qt::DisplayRole).toString());
+    QTimer::singleShot(0, &window, [] {
+      if (auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget())) {
+        menu->setActiveAction(menu->actions().at(1));
+        QTest::keyClick(menu, Qt::Key_Return);
+      }
+    });
+    const auto rowCenter = courses->visualRect(copyIndex).center();
+    QContextMenuEvent selectRow(QContextMenuEvent::Mouse, rowCenter,
+                               courses->viewport()->mapToGlobal(rowCenter));
+    QApplication::sendEvent(courses->viewport(), &selectRow);
+    QPointer<QDialog> selection = window.findChild<QDialog*>("textSelection"); QVERIFY(selection);
+    QTRY_VERIFY(selection->isVisible());
+    auto* selectedText = selection->findChild<QTextEdit*>("selectedText"); QVERIFY(selectedText);
+    QCOMPARE(selectedText->toPlainText(), copyIndex.data(Qt::AccessibleTextRole).toString());
+    selection->reject(); QTRY_VERIFY(!selection || !selection->isVisible());
     const auto capture = [&window](const QString& name) {
       const auto path = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
       return path.isEmpty() || window.grab().save(path + "/" + name + ".png");
@@ -114,10 +140,55 @@ private slots:
     }
     QVERIFY(nativeTooltip);
     QToolTip::hideText();
+    auto* statsButton = window.findChild<QPushButton*>("navStats");
+    QCOMPARE(statsButton->text(), QString("Stats"));
+    QTest::mouseClick(statsButton, Qt::LeftButton);
+    auto* activityChart = window.findChild<shadcn::Chart*>("activityChart");
+    auto* mediaChart = window.findChild<shadcn::Chart*>("mediaChart");
+    QVERIFY(activityChart && mediaChart);
+    QTRY_VERIFY(!activityChart->property("melearnerCopyText").toString().isEmpty());
+    QTRY_VERIFY(!mediaChart->property("melearnerCopyText").toString().isEmpty());
+    QTRY_VERIFY(!window.findChild<QLabel*>("statsStatus")->isVisible());
+    QVERIFY(!window.findChild<QLabel*>("statsHeading"));
+    auto* mediaTable = window.findChild<shadcn::Table*>("mediaTable"); QVERIFY(mediaTable);
+    const auto countIndex = mediaTable->model()->index(0, 1);
+    const auto cellCenter = mediaTable->visualRect(countIndex).center();
+    QApplication::clipboard()->clear();
+    QTimer::singleShot(0, &window, [] {
+      if (auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget())) {
+        menu->setActiveAction(menu->actions().first());
+        QTest::keyClick(menu, Qt::Key_Return);
+      }
+    });
+    QContextMenuEvent copyCell(QContextMenuEvent::Mouse, cellCenter,
+                              mediaTable->viewport()->mapToGlobal(cellCenter));
+    QApplication::sendEvent(mediaTable->viewport(), &copyCell);
+    QCOMPARE(QApplication::clipboard()->text(), countIndex.data().toString());
+    QCoreApplication::processEvents();
+    QTest::qWait(300); // Capture the chart after its short entrance animation.
+    QVERIFY(capture("stats-wide"));
+    window.resize(560, 720); QCoreApplication::processEvents();
+    QVERIFY(window.findChild<QWidget*>("statsCanvas")->width() <= 512);
+    QVERIFY(capture("stats-narrow"));
+    window.resize(1440, 900);
+    QTest::mouseClick(statsButton, Qt::LeftButton);
     auto* settings = window.findChild<QPushButton*>("appearance");
     QVERIFY(settings && settings->menu());
     QCOMPARE(settings->menu()->actions().size(), 4); // Three choices plus a separator.
     for (auto* action : settings->menu()->actions()) QVERIFY(!action->menu());
+    bool plainAbout = false;
+    bool aboutCaptured = false;
+    QTimer::singleShot(200, &window, [&] {
+      auto* close = window.findChild<QPushButton*>("aboutClose");
+      auto* dialog = close ? qobject_cast<shadcn::Dialog*>(close->window()) : nullptr;
+      if (!dialog) return;
+      plainAbout = !dialog->findChild<QWidget*>("shadcnDialogFooter")->isVisible();
+      const auto path = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
+      aboutCaptured = path.isEmpty() || dialog->grab().save(path + "/about-plain.png");
+      dialog->reject();
+    });
+    settings->menu()->actions().last()->trigger();
+    QVERIFY(plainAbout); QVERIFY(aboutCaptured);
     const auto index = courses->model()->index(11, 0);
     QTRY_COMPARE(index.data().toString(), QString("Native Readers"));
     courses->setCurrentIndex(index);
@@ -132,13 +203,16 @@ private slots:
     QTRY_VERIFY(!sectionIndex.data(Qt::DisplayRole).toString().isEmpty());
     QCOMPARE(sectionIndex.data(melearner::shadcnRowDescription).toString(), QString());
     QVERIFY(!sectionIndex.data(melearner::shadcnRowTrailingText).toString().isEmpty());
+    QTRY_VERIFY(outline->currentIndex().isValid());
     const auto lessonIndex = outline->currentIndex();
-    QVERIFY(lessonIndex.isValid());
     QCOMPARE(lessonIndex.data(melearner::shadcnRowDescription).toString(), QString());
     QVERIFY(!lessonIndex.data(Qt::AccessibleDescriptionRole).toString().isEmpty());
     QCOMPARE(window.findChild<QWidget*>("courseOutline")->layout()->contentsMargins(), QMargins());
     QVERIFY(!window.findChild<QWidget*>("documentTools")->isVisible());
     QVERIFY(actions->mapTo(&window, QPoint()).y() < document->mapTo(&window, QPoint()).y());
+    auto* routeTitle = window.findChild<QLabel*>("routeTitle"); QVERIFY(routeTitle);
+    QVERIFY(routeTitle->textInteractionFlags().testFlag(Qt::TextSelectableByMouse));
+    QVERIFY(routeTitle->textInteractionFlags().testFlag(Qt::TextSelectableByKeyboard));
     QVERIFY(document->width() <= 900);
     QVERIFY(capture("reader-markdown"));
     const QStringList expected{"HTML lesson", "A, B", "Register", "v3.0 hex words"};
@@ -191,9 +265,8 @@ private slots:
       QTRY_COMPARE(document->toPlainText(), QString("Introduction text."));
       QVERIFY(document->isVisible());
 
-      // Search selected a real lesson and opened it in its course route. At a
-      // compact width, let the reader explicitly reveal the outline if it starts
-      // tucked away; at desktop width, the outline and document share the page.
+      // Search selected a real lesson and opened it in its course route. The
+      // course outline remains optional at both compact and desktop widths.
       auto* lessons = window.findChild<QTreeView*>("lessons");
       auto* toggle = window.findChild<QPushButton*>("toggleOutline");
       QVERIFY(lessons && toggle);
@@ -213,12 +286,20 @@ private slots:
           QTRY_VERIFY(viewer->mapTo(&window, QPoint()).x() < 50);
           QTRY_VERIFY(document->mapTo(&window, QPoint(document->width(), 0)).x() <= window.width());
         } else {
-          QTRY_VERIFY(lessons->isVisible());
-          QTRY_VERIFY(document->isVisible());
           const auto* outline = window.findChild<QWidget*>("courseOutline");
           const auto* viewer = window.findChild<QScrollArea*>("lessonScroll");
+          QTRY_VERIFY(toggle->isVisible());
+          if (!lessons->isVisible()) QTest::mouseClick(toggle, Qt::LeftButton);
+          QTRY_VERIFY(lessons->isVisible());
+          QTRY_VERIFY(document->isVisible());
           QTRY_VERIFY(outline->mapTo(&window, QPoint(outline->width(), 0)).x() <=
                       viewer->mapTo(&window, QPoint()).x());
+          QTest::mouseClick(toggle, Qt::LeftButton);
+          QTRY_VERIFY(!outline->isVisible());
+          QTRY_VERIFY(document->isVisible());
+          QTest::mouseClick(toggle, Qt::LeftButton);
+          QTRY_VERIFY(outline->isVisible());
+          QTRY_VERIFY(document->isVisible());
         }
         if (const auto captures = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS"); !captures.isEmpty())
           QVERIFY(window.grab().save(captures + QString("/course-%1.png").arg(width)));
