@@ -42,7 +42,6 @@ target_compile_options(melearner_app PRIVATE
 set_source_files_properties(cpp-app/schema/library-v1.sql PROPERTIES QT_RESOURCE_ALIAS "schema/library-v1.sql")
 qt_add_resources(melearner_app assets PREFIX / FILES
   cpp-app/assets/melearner-logo.png
-  cpp-app/assets/fonts/Geist.ttf
   cpp-app/schema/library-v1.sql)
 
 add_executable(melearner cpp-app/src/main.cpp)
