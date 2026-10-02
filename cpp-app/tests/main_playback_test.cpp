@@ -254,6 +254,12 @@ private slots:
           window.resize(width, 720); QCoreApplication::processEvents(); QVERIFY(window.width() <= width);
           QVERIFY(surface->rect().contains(controls->geometry()));
           QTRY_COMPARE(timeline->width(), controls->width() - 24);
+          // The controls must remain readable over bright footage. Sample a
+          // blank padding pixel in the actual composed window, not a widget
+          // palette or a standalone grab that could hide transparency.
+          const auto backdrop = controls->mapTo(&window, QPoint(4, controls->height() - 4));
+          QTRY_COMPARE(window.grab().toImage().pixelColor(backdrop).rgba(),
+                       controls->palette().color(QPalette::Window).rgba());
           const auto captures = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
           if (!captures.isEmpty()) QVERIFY(window.grab().save(captures + QString("/player-%1-%2x.png").arg(width).arg(fontScale)));
         }

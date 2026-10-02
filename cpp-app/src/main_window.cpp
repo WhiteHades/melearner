@@ -416,7 +416,9 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   });
   contentLayout->addWidget(media_, 1);
   playerControls_ = new QWidget(video_); playerControls_->setObjectName("playerControls");
-  playerControls_->setAttribute(Qt::WA_StyledBackground);
+  // Use the theme's opaque window surface so controls stay legible over any
+  // frame. StyledBackground alone paints nothing without a style rule.
+  playerControls_->setAutoFillBackground(true);
   auto* controlsLayout = new QVBoxLayout(playerControls_); controlsLayout->setContentsMargins(12, 0, 12, 8);
   controlsLayout->setSpacing(0); playerControls_->hide();
   seek_ = new shadcn::Slider(0, 10000); seek_->setAccessibleName(tr("Playback position"));
