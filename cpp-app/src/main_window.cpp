@@ -49,6 +49,8 @@
 #include <QStatusBar>
 #include <QStyle>
 #include <QStyleHints>
+#include <QSettings>
+#include <QFontDatabase>
 #include <QTimer>
 #include <QTextEdit>
 #include <QTextCursor>
@@ -94,6 +96,36 @@ protected:
     painter.drawRoundedRect(QRectF(rect()).adjusted(.5, .5, -.5, -.5), radius, radius);
   }
 };
+class LessonLink final : public shadcn::Button {
+public:
+  explicit LessonLink(const QString& direction, bool right) : shadcn::Button() {
+    setVariant(shadcn::Variant::Outline);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    auto* layout = new QVBoxLayout(this); layout->setContentsMargins(16, 12, 16, 12); layout->setSpacing(4);
+    auto* caption = new QLabel(direction, this);
+    name_ = new QLabel(this);
+    for (auto* label : {caption, name_}) {
+      label->setAttribute(Qt::WA_TransparentForMouseEvents);
+      label->setAlignment(right ? Qt::AlignRight : Qt::AlignLeft);
+      layout->addWidget(label);
+    }
+    auto bold = font(); bold.setWeight(QFont::DemiBold); name_->setFont(bold);
+    setAccessibleName(direction);
+  }
+  void setLesson(const QString& name) {
+    name_->setText(name_->fontMetrics().elidedText(name, Qt::ElideRight, std::max(1, width() - 32)));
+    setToolTip(name); setAccessibleDescription(name); updateGeometry();
+    setProperty("melearnerCopyText", accessibleName() + "\n" + name);
+  }
+  QSize sizeHint() const override { return {160, fontMetrics().height() * 2 + 28}; }
+  QSize minimumSizeHint() const override { return sizeHint(); }
+protected:
+  void resizeEvent(QResizeEvent* event) override {
+    shadcn::Button::resizeEvent(event); setLesson(accessibleDescription());
+  }
+private:
+  QLabel* name_;
+};
 /// Fill a shadcn command list with the window's keyboard commands. The component
 /// does the filtering and the arrow-key movement, so this only decides which
 /// actions are offered and how each one reads.
@@ -122,7 +154,7 @@ void populateKeyboardPopup(shadcn::Command& command, const QList<QAction*>& acti
 }
 QString clockText(qint64 milliseconds) {
   const auto seconds = std::max<qint64>(0, milliseconds / 1000);
-  return QString("%1:%2:%3").arg(seconds / 3600).arg(seconds / 60 % 60, 2, 10, QChar('0')).arg(seconds % 60, 2, 10, QChar('0'));
+  return QString("%1:%2:%3").arg(seconds / 3600, 3, 10, QChar(' ')).arg(seconds / 60 % 60, 2, 10, QChar('0')).arg(seconds % 60, 2, 10, QChar('0'));
 }
 
 /// Every action control in the window is a shadcn button, so the variants and
@@ -368,9 +400,11 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   contentLayout->addWidget(lessonHeader_);
   lessonActions_ = new QWidget; lessonActions_->setObjectName("lessonActions");
   lessonNavigation_ = new QHBoxLayout(lessonActions_); lessonNavigation_->setContentsMargins(0, 0, 0, 0); lessonNavigation_->setSpacing(8);
-  auto* previous = button(tr("Previous lesson"), "previousLesson", shadcn::Variant::Ghost);
-  lessonNavigation_->addWidget(previous);
-  auto* next = button(tr("Next lesson"), "nextLesson", shadcn::Variant::Ghost); lessonNavigation_->addWidget(next);
+  lessonLinks_ = new QWidget; lessonLinks_->setObjectName("lessonLinks");
+  lessonLinksLayout_ = new QHBoxLayout(lessonLinks_); lessonLinksLayout_->setContentsMargins(0, 0, 0, 0); lessonLinksLayout_->setSpacing(16);
+  auto* previous = new LessonLink(tr("Previous"), false); previous->setObjectName("previousLesson");
+  auto* next = new LessonLink(tr("Next"), true); next->setObjectName("nextLesson");
+  lessonLinksLayout_->addWidget(previous, 1); lessonLinksLayout_->addWidget(next, 1);
   complete_ = button(tr("Mark complete"), "markComplete"); complete_->setEnabled(false); lessonNavigation_->addWidget(complete_);
   lessonNavigation_->addStretch();
   contentLayout->addWidget(lessonActions_);
@@ -379,7 +413,12 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   video_->setAccessibleName(tr("Video player"));
   video_->setAccessibleDescription(tr("Click to play or pause. Space then P plays or pauses. H and L seek ten seconds. Space then F toggles fullscreen."));
   connect(video_, &melearner::MpvVideoWidget::clicked, this, [this] {
+    cancelAutoplay();
     if (playerLoaded_) play_->click();
+  });
+  connect(video_, &melearner::MpvVideoWidget::seekRequested, this, [this](qint64 delta) {
+    cancelAutoplay();
+    if (playerLoaded_) (void)player_->seekRelative(delta);
   });
   media_->addWidget(video_);
   auto* documentPane = new QWidget;
@@ -447,6 +486,9 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     if (lesson_ && lesson_->path.endsWith(".pdf", Qt::CaseInsensitive)) showError(message);
   });
   contentLayout->addWidget(media_, 1, Qt::AlignHCenter);
+  contentLayout->addWidget(lessonLinks_, 0, Qt::AlignHCenter);
+  lessonBottomSpace_ = new QWidget; contentLayout->addWidget(lessonBottomSpace_, 1);
+  lessonBottomSpace_->hide();
   playerControls_ = new PlayerPill(video_); playerControls_->setObjectName("playerControls");
   auto* controlsLayout = new QVBoxLayout(playerControls_); controlsLayout->setContentsMargins(16, 8, 16, 10);
   controlsLayout->setSpacing(4); playerControls_->hide();
@@ -456,6 +498,35 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   playbackLayout_ = new QGridLayout; playbackLayout_->setHorizontalSpacing(8); playbackLayout_->setVerticalSpacing(4);
   play_ = button(tr("Play"), "playPause", shadcn::Variant::Ghost, shadcn::ButtonSize::Icon); play_->setEnabled(false);
   time_ = new shadcn::Label("0:00:00 / 0:00:00");
+  time_->setObjectName("playbackTime");
+  auto clockFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+  clockFont.setPixelSize(fontMetrics().height() * 3 / 4); time_->setFont(clockFont);
+  time_->setFixedWidth(time_->fontMetrics().horizontalAdvance("000:00:00 / 000:00:00"));
+  autoplay_ = new shadcn::Switch; autoplay_->setObjectName("autoplay");
+  autoplay_->setAccessibleName(tr("Autoplay"));
+  autoplay_->setChecked(QSettings().value("playback/autoplay", false).toBool());
+  autoplay_->setToolTip(tr("Automatically play the next video"));
+  connect(autoplay_, &QCheckBox::toggled, this, [this](bool enabled) {
+    QSettings().setValue("playback/autoplay", enabled);
+    if (!enabled) cancelAutoplay();
+  });
+  autoplayIndicator_ = new PlayerPill(video_); autoplayIndicator_->setObjectName("autoplayIndicator");
+  auto* countdownLayout = new QVBoxLayout(autoplayIndicator_); countdownLayout->setContentsMargins(20, 16, 20, 16);
+  autoplayLabel_ = new QLabel(autoplayIndicator_); autoplayLabel_->setAlignment(Qt::AlignCenter);
+  countdownLayout->addWidget(autoplayLabel_);
+  auto* cancel = button(tr("Cancel"), "cancelAutoplay", shadcn::Variant::Outline);
+  countdownLayout->addWidget(cancel); autoplayIndicator_->hide();
+  connect(cancel, &QPushButton::clicked, this, &MainWindow::cancelAutoplay);
+  autoplayTimer_ = new QTimer(this); autoplayTimer_->setObjectName("autoplayCountdown"); autoplayTimer_->setInterval(1000);
+  connect(autoplayTimer_, &QTimer::timeout, this, [this] {
+    if (--autoplaySeconds_ > 0) {
+      autoplayLabel_->setText(tr("Next video in %1").arg(autoplaySeconds_)); return;
+    }
+    const auto next = autoplayNext_; cancelAutoplay();
+    if (!next || !autoplay_->isChecked()) return;
+    auto lesson = *next; lesson.lastPosition = 0;
+    showLesson(lesson); autoplayStartPath_ = lesson.path;
+  });
   auto* volume = new shadcn::Slider(0, 100); volume->setValues({100});
   volume->setOrientation(Qt::Vertical); volume->setFixedSize(40, 140);
   volume->setObjectName("volume");
@@ -487,15 +558,12 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   auto* volumeMenu = new shadcn::DropdownMenu(volumeButton); volumeMenu->setObjectName("volumeMenu");
   auto* volumeAction = new QWidgetAction(volumeMenu); volumeAction->setDefaultWidget(volume); volumeMenu->addAction(volumeAction);
   volumeButton->setMenu(volumeMenu);
-  auto* rewind = button(tr("−10s"), "rewind", shadcn::Variant::Ghost);
-  auto* forward = button(tr("+10s"), "forward", shadcn::Variant::Ghost);
   auto* frame = button(tr("Frame"), "frameStep", shadcn::Variant::Ghost);
   auto* addSubtitles = button(tr("Add CC"), "addSubtitle", shadcn::Variant::Ghost);
   auto* screenshot = button(tr("Capture"), "screenshot", shadcn::Variant::Ghost);
-  rewind->setAccessibleName(tr("Back 10 seconds")); forward->setAccessibleName(tr("Forward 10 seconds"));
   frame->setAccessibleName(tr("Next frame")); addSubtitles->setAccessibleName(tr("Add subtitles"));
   screenshot->setAccessibleName(tr("Save screenshot"));
-  playbackWidgets_ = {rewind, play_, forward, time_, rateButton, volumeButton, muteButton, fullscreen,
+  playbackWidgets_ = {play_, time_, rateButton, volumeButton, muteButton, autoplay_, fullscreen,
                      audioButton, subtitleButton, chapterButton, frame, addSubtitles, screenshot};
   for (auto* widget : playbackWidgets_) {
     if (auto* control = qobject_cast<shadcn::Button*>(widget)) {
@@ -505,8 +573,6 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   }
   for (auto* control : {volumeButton, muteButton, audioButton, subtitleButton, chapterButton, frame, addSubtitles, screenshot})
     control->setButtonSize(shadcn::ButtonSize::Icon);
-  connect(rewind, &QPushButton::clicked, this, [this] { if (playerLoaded_) (void)player_->seekRelative(-10000); });
-  connect(forward, &QPushButton::clicked, this, [this] { if (playerLoaded_) (void)player_->seekRelative(10000); });
   connect(frame, &QPushButton::clicked, this, [this] { if (playerLoaded_) (void)player_->frameStep(); });
   connect(addSubtitles, &QPushButton::clicked, this, [this] {
     if (!playerLoaded_) return;
@@ -617,6 +683,18 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     settings_ = settings; applyPresentation();
   });
   connect(&library_, &lib::Library::searchResolved, this, [this](auto id, const lib::SearchResolution& result) {
+    if (id == neighborResolveId_ && id) {
+      neighborResolveId_ = 0;
+      if (!lesson_ || result.lesson.id != lesson_->id) return;
+      neighborOffset_ = result.lessonOffset;
+      neighborReadId_ = library_.lessons(lesson_->courseId, result.lessonOffset > 0 ? result.lessonOffset - 1 : 0, 3);
+      if (!neighborReadId_) showError(tr("Library is busy. Select the lesson again to load its neighbors."));
+      if (autoplayWaiting_) {
+        autoplayReadId_ = library_.lessons(lesson_->courseId, result.lessonOffset + 1, 32);
+        if (!autoplayReadId_) showError(tr("Library is busy. Choose the next video to continue."));
+      }
+      return;
+    }
     if (id == stepResolveId_ && stepResolveId_) {
       stepResolveId_ = 0;
       if (!course_ || !lesson_ || result.course.id != course_->id || result.lesson.id != lesson_->id) return;
@@ -727,6 +805,34 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
       QTimer::singleShot(0, courses_, [this] { courses_->revealItems(!keyboardNavigation_); });
   });
   connect(&library_, &lib::Library::lessonsReady, this, [this](auto id, const lib::LessonPage& page) {
+    if (id == neighborReadId_ && id) {
+      neighborReadId_ = 0;
+      if (!course_ || page.courseId != course_->id || !neighborOffset_) return;
+      for (const auto* key : {"previousLesson", "nextLesson"}) {
+        auto* link = static_cast<LessonLink*>(findChild<shadcn::Button*>(key));
+        const bool previous = QString::fromLatin1(key) == "previousLesson";
+        const auto offset = previous ? *neighborOffset_ - (*neighborOffset_ > 0) : *neighborOffset_ + 1;
+        const auto local = offset - page.offset;
+        const bool exists = (!previous || *neighborOffset_ > 0) && local < static_cast<quint64>(page.rows.size());
+        link->setEnabled(exists); link->setLesson(exists ? page.rows[local].name : tr("No more lessons"));
+      }
+      return;
+    }
+    if (id == autoplayReadId_ && id) {
+      autoplayReadId_ = 0;
+      if (!course_ || page.courseId != course_->id || !autoplay_->isChecked()) return;
+      const auto found = std::find_if(page.rows.cbegin(), page.rows.cend(), [](const auto& item) { return item.type == "video"; });
+      if (found != page.rows.cend()) {
+        autoplayNext_ = *found; autoplaySeconds_ = 5;
+        autoplayLabel_->setText(tr("Next video in %1").arg(autoplaySeconds_));
+        autoplayIndicator_->setToolTip(found->name); autoplayIndicator_->show(); autoplayIndicator_->raise();
+        updateControlsLayout(); autoplayTimer_->start();
+      } else if (page.hasMore) {
+        autoplayReadId_ = library_.lessons(course_->id, page.offset + page.rows.size(), 32);
+        if (!autoplayReadId_) showError(tr("Library is busy. Choose the next video to continue."));
+      }
+      return;
+    }
     if (!stepReadId_ || id != stepReadId_) return;
     stepReadId_ = 0;
     if (course_ && page.courseId == course_->id && !page.rows.isEmpty()) showLesson(page.rows.first());
@@ -751,6 +857,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     if (!id) return;
     bool owned = mutationRequests_.remove(id) || id == startupId_ || id == scanId_;
     owned = owned || courseRequests_.contains(id) || id == stepResolveId_ || id == stepReadId_;
+    owned = owned || id == neighborResolveId_ || id == neighborReadId_ || id == autoplayReadId_;
     owned = owned || (id == entryRequestId_ && entryGeneration_ == routeGeneration_);
     owned = owned || (id == resumeRequestId_ && resumeGeneration_ == routeGeneration_);
     owned = owned || (id == searchResolveId_ && searchResolveGeneration_ == routeGeneration_);
@@ -759,6 +866,9 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     if (courseRequests_.contains(id)) courseModel_->failedPage(courseRequests_.take(id).offset);
     if (id == stepResolveId_) stepResolveId_ = 0;
     if (id == stepReadId_) stepReadId_ = 0;
+    if (id == neighborResolveId_) neighborResolveId_ = 0;
+    if (id == neighborReadId_) neighborReadId_ = 0;
+    if (id == autoplayReadId_) cancelAutoplay();
     if (id == scanId_) { scanId_ = 0; cancelScan_->hide(); }
     choose_->setEnabled(scanId_ == 0); rescan_->setEnabled(scanId_ == 0 && !rootPath_.isEmpty()); showError(error.message);
   });
@@ -797,9 +907,10 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     lesson_->lastPosition = result.lastPosition; lesson_->watchedTime = result.watchedTime;
     complete_->setText(result.completed ? tr("Mark incomplete") : tr("Mark complete"));
   });
-  connect(play_, &QPushButton::clicked, this, [this] { if (paused_) (void)player_->play(); else (void)player_->pause(); });
+  connect(play_, &QPushButton::clicked, this, [this] { cancelAutoplay(); if (paused_) (void)player_->play(); else (void)player_->pause(); });
   connect(seek_, &shadcn::Slider::valuesChanged, this, [this](const QVector<double>& values) {
     if (values.isEmpty() || !playerLoaded_ || durationMs_ <= 0) return;
+    cancelAutoplay();
     // A seek jumps the position, so the readouts have to be marked stale. The
     // next position update redraws them, and while paused that update may not
     // arrive, so the label is refreshed here too.
@@ -846,6 +957,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     playerLoaded_ = true; durationMs_ = duration; positionMs_ = position;
     shownPositionSeconds_ = -1; shownDurationSeconds_ = -1;
     play_->setEnabled(true); seek_->setEnabled(duration > 0); status_->clear(); status_->hide();
+    if (autoplayStartPath_ == path) { autoplayStartPath_.clear(); (void)player_->play(); }
   });
   connect(player_, &melearner::Player::positionChanged, this, [this](qint64 position, qint64 duration) {
     if (!playerLoaded_) return;
@@ -902,6 +1014,13 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     if (!failed) { positionMs_ = durationMs_; savePosition(true); }
     playerLoaded_ = false;
     revealPlayerControls();
+    if (!failed && lesson_->type == "video" && autoplay_->isChecked()) {
+      autoplayWaiting_ = true;
+      if (neighborOffset_) {
+        autoplayReadId_ = library_.lessons(course_->id, *neighborOffset_ + 1, 32);
+        if (!autoplayReadId_) showError(tr("Library is busy. Choose the next video to continue."));
+      }
+    }
   });
   connect(player_, &melearner::Player::commandFinished, this, [this](auto id) {
     if (screenshotRequests_.contains(id)) status_->setText(tr("Screenshot saved: %1").arg(screenshotRequests_.take(id)));
@@ -1197,6 +1316,7 @@ bool MainWindow::handleKeyboardEvent(QObject* watched, QKeyEvent* event) {
   return false;
 }
 void MainWindow::chooseRoot(const QString& path) {
+  cancelAutoplay();
   const auto id = library_.scan(path);
   if (!id) { showError(tr("The Library is busy. Try scanning again shortly.")); return; }
   scanId_ = id; cancelScan_->setEnabled(true); cancelScan_->show();
@@ -1209,6 +1329,7 @@ void MainWindow::chooseRootWhenOpen(const QString& path) {
   chooseRoot(path);
 }
 void MainWindow::showLibrary() {
+  cancelAutoplay(); neighborResolveId_ = 0; neighborReadId_ = 0;
   if (videoFullscreen_) toggleVideoFullscreen();
   if (course_ && lesson_) { rememberedCourse_ = course_->id; rememberedLesson_ = lesson_->id; }
   externalOpenId_ = 0;
@@ -1240,6 +1361,7 @@ void MainWindow::refreshResume() {
 }
 void MainWindow::showCourse(const lib::Course& course, const QString& requestedLesson) {
   if (course.missing) { showError(tr("Course folder missing: %1. Choose its root folder, then Rescan.").arg(course.path)); return; }
+  cancelAutoplay(); neighborResolveId_ = 0; neighborReadId_ = 0;
   externalOpenId_ = 0; externalOpen_->hide();
   pdf_->clear();
   savePosition(); playerLoaded_ = false; playerLoadRequested_ = false; documentRequestId_ = 0;
@@ -1252,13 +1374,15 @@ void MainWindow::showCourse(const lib::Course& course, const QString& requestedL
   media_->setCurrentIndex(1); documentView_->clear(); documentView_->hide();
   documentTools_->hide(); documentStatus_->setText(tr("Choose an item from the course outline.")); documentStatus_->show();
   documentPrevious_->setEnabled(false); documentNext_->setEnabled(false); complete_->setEnabled(false);
-  lessonTitle_->setText(tr("Select a lesson")); outlineModel_->setCourse(course.id); updateLayout(); lessons_->setFocus();
+  lessonTitle_->setText(tr("Select a lesson")); updateLayout(); lessons_->setFocus();
   entryGeneration_ = routeGeneration_;
   const auto target = requestedLesson.isEmpty() && rememberedCourse_ == course.id ? rememberedLesson_ : requestedLesson;
   entryRequestId_ = library_.enterCourse(course.id, target);
+  outlineModel_->setCourse(course.id);
   if (!entryRequestId_) showError(tr("Library is busy. Open the Course again to retry."));
 }
 void MainWindow::showLesson(const lib::Lesson& lesson) {
+  cancelAutoplay();
   if (videoFullscreen_ && lesson.type != "video" && lesson.type != "audio") toggleVideoFullscreen();
   entryRequestId_ = 0;
   stepResolveId_ = 0; stepReadId_ = 0;
@@ -1267,6 +1391,8 @@ void MainWindow::showLesson(const lib::Lesson& lesson) {
   savePosition(); playerLoaded_ = false; playerLoadRequested_ = false;
   if (player_->isReady()) (void)player_->stop();
   lesson_ = lesson;
+  refreshNeighbors();
+  content_->verticalScrollBar()->setValue(0);
   status_->clear(); status_->hide(); documentTools_->hide();
   outlineModel_->revealLesson(lesson);
   documentRequestId_ = 0; documentGeneration_ = 0; documentOffsets_.clear();
@@ -1311,10 +1437,25 @@ void MainWindow::savePosition(bool completed) {
   lastSaveMs_ = QDateTime::currentMSecsSinceEpoch();
 }
 void MainWindow::stepLesson(int delta) {
+  cancelAutoplay();
   if (!course_ || !lesson_ || stepResolveId_ || stepReadId_) return;
   stepDelta_ = delta;
   stepResolveId_ = library_.resolveLesson(course_->id, lesson_->sectionId, lesson_->id);
   if (!stepResolveId_) showError(tr("Library is busy. Try changing lessons again."));
+}
+void MainWindow::cancelAutoplay() {
+  if (autoplayTimer_) autoplayTimer_->stop();
+  if (autoplayIndicator_) autoplayIndicator_->hide();
+  autoplayReadId_ = 0; autoplayWaiting_ = false; autoplayNext_.reset(); autoplayStartPath_.clear();
+}
+void MainWindow::refreshNeighbors() {
+  neighborReadId_ = 0; neighborOffset_.reset();
+  for (const auto* name : {"previousLesson", "nextLesson"}) {
+    auto* link = static_cast<LessonLink*>(findChild<shadcn::Button*>(name));
+    link->setEnabled(false); link->setLesson(tr("Loading…"));
+  }
+  neighborResolveId_ = library_.resolveLesson(lesson_->courseId, lesson_->sectionId, lesson_->id);
+  if (!neighborResolveId_) showError(tr("Library is busy. Select the lesson again to load its neighbors."));
 }
 void MainWindow::resizeEvent(QResizeEvent* event) {
   QMainWindow::resizeEvent(event);
@@ -1362,7 +1503,7 @@ void MainWindow::updateControlsLayout() {
   if (playbackWidgets_.isEmpty() || !lessonNavigation_) return;
   const auto* scroll = qobject_cast<QScrollArea*>(content_);
   const int available = scroll->viewport()->width() - 12;
-  for (auto* navigation : {documentNavigation_, lessonNavigation_}) {
+  for (auto* navigation : {documentNavigation_, lessonNavigation_, lessonLinksLayout_}) {
     int needed = 0, count = 0;
     for (int index = 0; index < navigation->count(); ++index) {
       if (const auto* widget = navigation->itemAt(index)->widget()) {
@@ -1392,10 +1533,15 @@ void MainWindow::updateControlsLayout() {
   playerControls_->layout()->activate();
   const int controlsHeight = playerControls_->sizeHint().height();
   if (lesson_ && (lesson_->type == "video" || lesson_->type == "audio") && !videoFullscreen_)
-    media_->setMinimumHeight(std::max(180, controlsHeight + 32));
+    media_->setFixedHeight(std::max(preferredVideoHeight_, controlsHeight + 32));
   const QRect geometry((video_->width() - controlsWidth) / 2,
       std::max(8, video_->height() - controlsHeight - 16), controlsWidth, controlsHeight);
   if (playerControls_->geometry() != geometry) playerControls_->setGeometry(geometry);
+  if (autoplayIndicator_) {
+    autoplayIndicator_->adjustSize();
+    autoplayIndicator_->move((video_->width() - autoplayIndicator_->width()) / 2,
+      std::max(0, (video_->height() - autoplayIndicator_->height()) / 2));
+  }
 }
 void MainWindow::toggleVideoFullscreen() {
   if (!lesson_ || (lesson_->type != "video" && lesson_->type != "audio")) return;
@@ -1410,16 +1556,35 @@ void MainWindow::toggleVideoFullscreen() {
 void MainWindow::updateMediaLayout() {
   if (!media_ || !content_) return;
   const bool video = lesson_ && (lesson_->type == "video" || lesson_->type == "audio");
+  auto* layout = static_cast<QVBoxLayout*>(content_->widget()->layout());
+  if (layout->indexOf(media_) != (video ? 0 : 2)) {
+    layout->removeWidget(media_); layout->removeWidget(lessonHeader_); layout->removeWidget(lessonActions_);
+    if (video) {
+      layout->insertWidget(0, media_, 0, Qt::AlignHCenter);
+      layout->insertWidget(1, lessonHeader_, 0, Qt::AlignHCenter);
+      layout->insertWidget(2, lessonActions_, 0, Qt::AlignHCenter);
+    } else {
+      layout->insertWidget(0, lessonHeader_); layout->insertWidget(1, lessonActions_);
+      layout->insertWidget(2, media_, 1, Qt::AlignHCenter);
+    }
+  }
+  layout->setStretchFactor(media_, video && !videoFullscreen_ ? 0 : 1);
+  lessonBottomSpace_->setVisible(video && !videoFullscreen_);
+  lessonLinks_->setVisible(!videoFullscreen_);
   const int width = content_->viewport()->width() - (videoFullscreen_ || !outline_->isVisible() ? 0 : 20);
   if (video && !videoFullscreen_) {
     const int fittedWidth = std::max(1, std::min(1100, width));
+    const int available = content_->viewport()->height() - lessonHeader_->sizeHint().height()
+      - lessonActions_->sizeHint().height() - lessonLinks_->sizeHint().height() - 48;
+    preferredVideoHeight_ = std::max(180, std::min(available, fittedWidth * 9 / 16));
+    media_->setFixedHeight(preferredVideoHeight_);
     media_->setFixedWidth(fittedWidth);
-    const int available = content_->viewport()->height() - lessonHeader_->sizeHint().height() - lessonActions_->sizeHint().height() - 32;
-    media_->setMaximumHeight(std::max(180, std::min(available, fittedWidth * 9 / 16)));
+    for (auto* widget : {lessonHeader_, lessonActions_, lessonLinks_}) widget->setFixedWidth(fittedWidth);
   } else {
     media_->setMinimumHeight(0);
     media_->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
     media_->setFixedWidth(std::max(1, width));
+    for (auto* widget : {lessonHeader_, lessonActions_, lessonLinks_}) widget->setFixedWidth(std::max(1, width));
   }
 }
 void MainWindow::updateLayout() {
@@ -1429,13 +1594,6 @@ void MainWindow::updateLayout() {
   compactLayout_ = compact;
   title_->setFont(headingFont(font(), 1.3, true));
   lessonTitle_->setFont(headingFont(font(), 1.2, true));
-  for (const auto* name : {"previousLesson", "nextLesson"}) {
-    if (auto* control = findChild<shadcn::Button*>(name)) {
-      control->setButtonSize(compact ? shadcn::ButtonSize::Icon : shadcn::ButtonSize::Default);
-      control->setText(compact ? QString{} : control->accessibleName());
-      control->setToolTip(control->accessibleName());
-    }
-  }
   if (!course_) {
     const bool activity = libraryStack_->currentValue() == QLatin1String("stats");
     title_->setText(activity ? tr("Stats") : tr("Your learning path"));
@@ -1487,7 +1645,7 @@ void MainWindow::openSearch() {
 void MainWindow::showError(const QString& message) {
   status_->setText(message); status_->setToolTip(tooltip(message)); status_->show(); qWarning().noquote() << message;
 }
-void MainWindow::closeEvent(QCloseEvent* event) { savePosition(); QMainWindow::closeEvent(event); }
+void MainWindow::closeEvent(QCloseEvent* event) { cancelAutoplay(); savePosition(); QMainWindow::closeEvent(event); }
 void MainWindow::applyPresentation() {
   const bool list = settings_.libraryPresentation == "compact";
   courses_->setCompact(false);
@@ -1515,7 +1673,6 @@ void MainWindow::applyAppearance(bool resetTheme) {
     {"showShortcuts", Icon::Keyboard}, {"searchButton", Icon::Search},
     {"appearance", Icon::Settings}, {"backToLibrary", Icon::ChevronLeft},
     {"toggleOutline", Icon::Courses}, {"chooseRoot", Icon::Folder},
-    {"previousLesson", Icon::ChevronLeft}, {"nextLesson", Icon::ChevronRight},
     {"markComplete", Icon::Check}, {"volumeButton", Icon::Volume}, {"mute", muted_ ? Icon::Muted : Icon::Volume},
     {"audioTrackButton", Icon::Volume}, {"subtitleTrackButton", Icon::Subtitles},
     {"chapterButton", Icon::Chapters}, {"frameStep", Icon::Frame},
