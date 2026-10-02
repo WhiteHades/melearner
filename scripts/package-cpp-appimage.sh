@@ -171,7 +171,7 @@ cmake \
 
 appimage_desktop_name="io.github.whitehades.melearner.appimage.desktop"
 appimage_desktop_target="usr/share/applications/${appimage_desktop_name}"
-appimage_icon_target="usr/share/pixmaps/io.github.whitehades.melearner.png"
+appimage_icon_target="usr/share/icons/hicolor/512x512/apps/io.github.whitehades.melearner.png"
 install -Dm644 \
   "$repo_root/packaging/linux/${appimage_desktop_name}" \
   "$appdir/$appimage_desktop_target"

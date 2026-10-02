@@ -72,12 +72,12 @@ stage = Path(next(value.split("=", 1)[1] for value in args if value.startswith("
 legal = Path(next(value.split("=", 1)[1] for value in args if value.startswith("-DMELEARNER_LEGAL_ROOT=")))
 (stage / "usr/bin").mkdir(parents=True)
 (stage / "usr/share/applications").mkdir(parents=True)
-(stage / "usr/share/pixmaps").mkdir(parents=True)
+(stage / "usr/share/icons/hicolor/512x512/apps").mkdir(parents=True)
 (stage / "usr/share/doc/melearner").mkdir(parents=True)
 shutil.copy2("/usr/bin/true", stage / "usr/bin/melearner")
 (stage / "usr/bin/melearner").chmod(0o755)
 shutil.copy2(os.environ["APPIMAGE_GENERIC_DESKTOP"], stage / "usr/share/applications/io.github.whitehades.melearner.desktop")
-shutil.copy2(os.environ["APPIMAGE_ICON"], stage / "usr/share/pixmaps/io.github.whitehades.melearner.png")
+shutil.copy2(os.environ["APPIMAGE_ICON"], stage / "usr/share/icons/hicolor/512x512/apps/io.github.whitehades.melearner.png")
 (stage / "usr/share/doc/melearner/runtime-stage.json").write_text(json.dumps({
     "schemaVersion": 1,
     "version": "0.1.9",
@@ -179,7 +179,7 @@ output.chmod(0o755)
             "usr/share/applications/io.github.whitehades.melearner.appimage.desktop",
         )
         self.assertEqual(
-            plugin["icon"], "usr/share/pixmaps/io.github.whitehades.melearner.png"
+            plugin["icon"], "usr/share/icons/hicolor/512x512/apps/io.github.whitehades.melearner.png"
         )
         self.assertEqual(plugin["version"], "0.1.9")
         self.assertEqual(plugin["no_appstream"], "1")
