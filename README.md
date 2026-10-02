@@ -6,10 +6,10 @@
 
 Local only desktop learning from course files already on your machine.
 
-[![platform](https://img.shields.io/badge/platform-Linux-8f2d25?style=flat)](docs/install.md)
-[![stack](https://img.shields.io/badge/stack-C%2B%2B23%20%C2%B7%20Qt%206.11-8f2d25?style=flat)](docs/development.md)
-[![storage](https://img.shields.io/badge/storage-local%20SQLite-8f2d25?style=flat)](docs/privacy-and-legal.md)
-[![license](https://img.shields.io/badge/license-MIT-8f2d25?style=flat)](LICENSE)
+[![platform](https://img.shields.io/badge/platform-Linux-262626?style=flat)](docs/install.md)
+[![stack](https://img.shields.io/badge/stack-C%2B%2B23%20%C2%B7%20Qt%206.11-262626?style=flat)](docs/development.md)
+[![storage](https://img.shields.io/badge/storage-local%20SQLite-262626?style=flat)](docs/privacy-and-legal.md)
+[![source license](https://img.shields.io/badge/source%20license-MIT-262626?style=flat)](LICENSE)
 
 </div>
 
@@ -17,7 +17,8 @@ melearner scans a folder, groups local videos, audio, and documents into courses
 
 ## Install on Linux
 
-The supported source installer builds and tests the C++23/Qt application, then installs it into `$HOME/.local` by default:
+Install the [native build dependencies](docs/install.md#linux-from-source) first.
+The source installer builds and tests the application, then installs it into `$HOME/.local` by default:
 
 ```bash
 git clone https://github.com/WhiteHades/melearner
@@ -57,4 +58,6 @@ See [building from source](docs/development.md), [Windows builds](docs/windows-d
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+The application source is MIT licensed. See [LICENSE](LICENSE).
+Bundled dependencies retain their own licenses, including GPL-enabled libmpv.
+The Linux installation includes its source, patch and license texts.

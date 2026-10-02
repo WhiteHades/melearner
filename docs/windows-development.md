@@ -4,7 +4,12 @@ These commands build the C++23 and Qt application on Windows. Windows support is
 
 ## Toolchain
 
-Use the MSYS2 UCRT64 environment. MSYS2 recommends UCRT64 for new 64-bit builds, and Qt 6.11 supports Windows 10 and Windows 11 x86_64 with MinGW-w64. The project uses CMake, Ninja, Qt Widgets, Qt OpenGL Widgets, Qt Network, Qt PDF, SQLite, libmpv, libzip, md4c, and the hash-pinned Lexbor FetchContent archive.
+Use the MSYS2 UCRT64 environment. MSYS2 recommends UCRT64 for new 64-bit builds, and Qt 6.11 supports Windows 10 and Windows 11 x86_64 with MinGW-w64. The project uses CMake, Ninja, Qt Widgets, Qt OpenGL Widgets, Qt Network, Qt PDF, SQLite, libmpv, libzip, md4c, and hash-pinned Lexbor and shadcn-cpp source archives.
+
+Windows uses the UCRT64 libmpv package. The separate pinned Linux player build
+and its Meson, PipeWire and Linux graphics requirements do not apply on Windows.
+The same native shadcn-cpp components, dark theme and Geist font are built on both
+platforms. Windows runtime and packaging verification remain pending.
 
 References:
 
@@ -72,5 +77,5 @@ This regression uses disposable command stubs. It checks environment and job val
 ## Packaging
 
 - The Linux source installer and Linux packaging scripts do not create Windows packages.
-- The first configure downloads Lexbor 3.0.0 from its pinned URL and verifies its SHA-256 hash, so the first configure needs network access. Runtime behavior remains local only.
+- The first configure downloads Lexbor 3.0.0 and shadcn-cpp from pinned URLs and verifies their SHA-256 hashes, so the first configure needs network access. Runtime behavior remains local only.
 - Use Qt's `windeployqt` after a successful native build, then include the MinGW UCRT runtime, libmpv, Qt PDF, and their required DLLs with the application. A Windows packaging script is not yet provided.
