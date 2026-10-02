@@ -193,6 +193,13 @@ private slots:
       // going to keep.
       auto* scroll = window.findChild<QScrollArea*>("statsScroll");
       QTRY_COMPARE(scroll->horizontalScrollBar()->maximum(), 0);
+      for (const auto* name : {"coursesValue", "coursesDetail", "completionValue", "completionDetail",
+                               "watchedValue", "watchedDetail", "storageValue", "storageDetail"}) {
+        auto* metric = window.findChild<QLabel*>(name); QVERIFY(metric);
+        QTRY_VERIFY2(metric->height() >= metric->sizeHint().height(),
+                     qPrintable(QString("%1 clips its text at width %2, text scale %3: height %4, hint %5")
+                         .arg(name).arg(width).arg(fontScale).arg(metric->height()).arg(metric->sizeHint().height())));
+      }
       const auto captures = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
       if (!captures.isEmpty()) QVERIFY(window.grab().save(captures + QString("/stats-%1-%2x.png").arg(width).arg(fontScale)));
       scroll->verticalScrollBar()->setValue(scroll->verticalScrollBar()->maximum());

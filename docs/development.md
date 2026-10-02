@@ -84,6 +84,21 @@ The playback tests also require the FFmpeg command-line tool. The recovery
 test remuxes the checked-in clip into a longer temporary file without encoding
 new media, then checks error recovery, closing and resuming a lesson.
 
+The window tests use the application's font and check normal and doubled text.
+To save their screenshots, create a destination and pass it to the test process:
+
+```bash
+mkdir -p .tmp/ui-captures
+bash scripts/test-cpp-playback.sh -- env MELEARNER_TEST_SCREENSHOTS="$PWD/.tmp/ui-captures" \
+  build/cpp-release/main_window_test
+bash scripts/test-cpp-playback.sh -- env MELEARNER_TEST_SCREENSHOTS="$PWD/.tmp/ui-captures" \
+  build/cpp-release/main_playback_test
+```
+
+The stats check waits for resized metric labels to fit before capturing them.
+Inspect the images as well as the test result; geometry checks alone do not
+establish visual correctness.
+
 The default build directory is `build/cpp-dev`; set `MELEARNER_BUILD_DIR` or
 pass `--build-dir` to select another. The runner requires `pulseaudio`, Xvfb,
 `xvfb-run`, `xauth`, Openbox, `dbus-daemon`, `pactl`, and `timeout`. It starts a
