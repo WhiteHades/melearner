@@ -10,7 +10,7 @@ include(GNUInstallDirs)
 find_package(Qt6 6.11.2 REQUIRED COMPONENTS Widgets OpenGLWidgets Network Pdf)
 find_package(SQLite3 REQUIRED)
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(MPV REQUIRED IMPORTED_TARGET mpv)
+include(cpp-app/cmake/mpv.cmake)
 pkg_check_modules(LIBZIP REQUIRED IMPORTED_TARGET libzip)
 pkg_check_modules(MD4C REQUIRED IMPORTED_TARGET md4c)
 include(cpp-app/cmake/lexbor.cmake)
@@ -35,7 +35,7 @@ add_library(melearner_app STATIC
 target_include_directories(melearner_app PUBLIC cpp-app/src)
 target_link_libraries(melearner_app PUBLIC
   Qt6::Widgets Qt6::OpenGLWidgets Qt6::Network Qt6::Pdf SQLite3::SQLite3
-  PkgConfig::MPV PkgConfig::LIBZIP PkgConfig::MD4C melearner::lexbor
+  melearner::mpv PkgConfig::LIBZIP PkgConfig::MD4C melearner::lexbor
   shadcn::widgets)
 target_compile_options(melearner_app PRIVATE
   $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic>)
@@ -46,6 +46,10 @@ qt_add_resources(melearner_app assets PREFIX / FILES
 
 add_executable(melearner cpp-app/src/main.cpp)
 target_link_libraries(melearner PRIVATE melearner_app)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  set_target_properties(melearner PROPERTIES
+    INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}/melearner")
+endif()
 target_compile_definitions(melearner PRIVATE MELEARNER_VERSION="${PROJECT_VERSION}")
 if(BUILD_TESTING)
   add_test(NAME cli_version COMMAND melearner --version)
