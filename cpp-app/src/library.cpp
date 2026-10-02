@@ -1148,7 +1148,7 @@ void readOutlineGroups(sqlite3* db, const QString& courseId, QVector<Section>& s
     Statement statement(
         db,
         QStringLiteral(
-            "WITH videos AS ("
+            "WITH videos AS MATERIALIZED ("
             "  SELECT section_id, name, order_index FROM lessons"
             "  WHERE course_id = ?1 AND type = 'video' AND section_id IN (%1)"
             "), marked AS ("

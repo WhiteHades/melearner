@@ -20,8 +20,9 @@ Choose **List** or **Cards** above the library to change its layout. The choice 
 saved on your computer. Search is available in the library or with `/` outside a
 text field.
 
-The course outline stays to the left of the lesson. Previous lesson, Next lesson,
-and completion controls are beside the lesson heading. Use **Lessons** or
+The course outline stays to the left of the lesson. Video titles and completion
+controls sit below the player. Previous and next cards show adjacent lesson names.
+Use **Lessons** or
 **Hide lessons** to toggle the outline at any window size. On narrow windows,
 the outline and reader share the same space.
 Section headings show compact completion counts. Lesson rows show titles and a
@@ -53,6 +54,10 @@ you move the pointer over the video and hides after inactivity. Keyboard focus
 keeps it available. Speed, audio, subtitles, chapters, frame stepping and capture
 have direct controls. **Volume** opens a vertical slider; raising the volume
 unmutes playback. Fullscreen shows only the video and its controls. Escape exits.
+Double-click the left half to go back five seconds, or the right half to go forward
+five seconds. **Autoplay** is off by default. When enabled, the next video starts
+after a five-second countdown, skipping documents. **Cancel** stops that countdown.
+The autoplay choice is saved on your computer.
 
 The ordinary player stays centered at a bounded size. Hide the outline for more
 room, or use fullscreen for an uninterrupted view.
