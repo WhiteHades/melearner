@@ -7,9 +7,14 @@
 #include <QComboBox>
 #include <QDialog>
 #include <QFile>
+#include <QGraphicsOpacityEffect>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListView>
+#include <QListWidget>
+#include <QLayout>
+#include <QHelpEvent>
+#include <QToolTip>
 #include <QMenu>
 #include <QPainter>
 #include <QPdfWriter>
@@ -92,6 +97,23 @@ private slots:
     QTest::mouseClick(list, Qt::LeftButton);
     QTRY_COMPARE(courses->presentation(), shadcn::ListPresentation::List);
     QVERIFY(capture("library-list"));
+    const auto hoverPoint = courses->visualRect(courses->model()->index(0, 0)).center();
+    QHelpEvent tooltipEvent(QEvent::ToolTip, hoverPoint, courses->viewport()->mapToGlobal(hoverPoint));
+    QApplication::sendEvent(courses->viewport(), &tooltipEvent);
+    QTRY_VERIFY(QToolTip::isVisible());
+    bool nativeTooltip = false;
+    for (auto* popup : QApplication::topLevelWidgets()) {
+      if (popup->windowType() != Qt::ToolTip || !popup->isVisible()) continue;
+      nativeTooltip = true;
+      QCOMPARE(popup->palette().color(QPalette::Inactive, QPalette::ToolTipBase),
+               melearner::roleColor(shadcn::Role::Foreground));
+      QCOMPARE(popup->palette().color(QPalette::Inactive, QPalette::ToolTipText),
+               melearner::roleColor(shadcn::Role::Background));
+      const auto path = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
+      if (!path.isEmpty()) QVERIFY(popup->grab().save(path + "/native-tooltip.png"));
+    }
+    QVERIFY(nativeTooltip);
+    QToolTip::hideText();
     auto* settings = window.findChild<QPushButton*>("appearance");
     QVERIFY(settings && settings->menu());
     QCOMPARE(settings->menu()->actions().size(), 4); // Three choices plus a separator.
@@ -104,6 +126,17 @@ private slots:
     auto* next = window.findChild<QPushButton*>("nextLesson");
     auto* actions = window.findChild<QWidget*>("lessonActions");
     QTRY_VERIFY(document->toPlainText().contains("Markdown lesson"));
+    auto* outline = window.findChild<shadcn::TreeView*>("lessons");
+    QVERIFY(outline);
+    const auto sectionIndex = outline->model()->index(0, 0);
+    QTRY_VERIFY(!sectionIndex.data(Qt::DisplayRole).toString().isEmpty());
+    QCOMPARE(sectionIndex.data(melearner::shadcnRowDescription).toString(), QString());
+    QVERIFY(!sectionIndex.data(melearner::shadcnRowTrailingText).toString().isEmpty());
+    const auto lessonIndex = outline->currentIndex();
+    QVERIFY(lessonIndex.isValid());
+    QCOMPARE(lessonIndex.data(melearner::shadcnRowDescription).toString(), QString());
+    QVERIFY(!lessonIndex.data(Qt::AccessibleDescriptionRole).toString().isEmpty());
+    QCOMPARE(window.findChild<QWidget*>("courseOutline")->layout()->contentsMargins(), QMargins());
     QVERIFY(!window.findChild<QWidget*>("documentTools")->isVisible());
     QVERIFY(actions->mapTo(&window, QPoint()).y() < document->mapTo(&window, QPoint()).y());
     QVERIFY(document->width() <= 900);
@@ -143,7 +176,7 @@ private slots:
 
       // The library's search result is a real route: select it and read the file.
       window.activateWindow();
-      QTest::keyClick(&window, Qt::Key_K, Qt::ControlModifier);
+      QTest::keyClick(&window, Qt::Key_Slash);
       auto* search = window.findChild<SearchDialog*>();
       QTRY_VERIFY(search && search->isVisible());
       auto* query = search->findChild<QLineEdit*>("searchQuery");
@@ -232,7 +265,7 @@ private slots:
     // Resume chooses the unfinished lesson. Search back to the completed lesson
     // to prove its saved state survived closing and reopening the library.
     reopened.activateWindow();
-    QTest::keyClick(&reopened, Qt::Key_K, Qt::ControlModifier);
+    QTest::keyClick(&reopened, Qt::Key_Slash);
     auto* search = reopened.findChild<SearchDialog*>();
     QTRY_VERIFY(search && search->isVisible());
     auto* query = search->findChild<QLineEdit*>("searchQuery");
@@ -316,9 +349,23 @@ private slots:
     window.activateWindow();
     QVERIFY(QTest::qWaitForWindowActive(&window));
 
-    QTest::keyClick(&window, Qt::Key_F1);
+    courses->setFocus();
+    QTest::keyClick(courses, Qt::Key_Question, Qt::ShiftModifier);
     QPointer<QDialog> shortcuts = window.findChild<QDialog*>("shortcutHelp");
     QTRY_VERIFY(shortcuts && shortcuts->isVisible());
+    auto* shortcutList = shortcuts->findChild<QListWidget*>();
+    QVERIFY(shortcutList);
+    for (int row = 0; row < shortcutList->count(); ++row) {
+      const auto text = shortcutList->item(row)->text();
+      QVERIFY(!text.contains("F1") && !text.contains("Ctrl+K") && !text.contains("Ctrl+Space"));
+    }
+    const auto capturePath = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
+    if (!capturePath.isEmpty()) {
+      auto* openingEffect = shortcuts->findChild<QGraphicsOpacityEffect*>();
+      QVERIFY(openingEffect);
+      QTRY_COMPARE(openingEffect->opacity(), 1.0);
+      QVERIFY(shortcuts->grab().save(capturePath + "/vim-shortcuts.png"));
+    }
     shortcuts->reject();
     QTRY_VERIFY(shortcuts.isNull());
 
@@ -327,7 +374,7 @@ private slots:
     input.setFocus();
     QTest::keyClick(&input, Qt::Key_J);
     QCOMPARE(input.text(), QString("j"));
-    QTest::keyClick(&input, Qt::Key_F1);
+    QTest::mouseClick(window.findChild<QPushButton*>("showShortcuts"), Qt::LeftButton);
     shortcuts = window.findChild<QDialog*>("shortcutHelp");
     QTRY_VERIFY(shortcuts && shortcuts->isVisible());
     shortcuts->reject();
@@ -349,7 +396,7 @@ private slots:
     QTest::keyClick(courses, Qt::Key_G);
     QCOMPARE(courses->currentIndex().row(), 0);
 
-    QTest::keyClick(&window, Qt::Key_Space, Qt::ControlModifier);
+    QTest::keyClick(courses, Qt::Key_Colon, Qt::ShiftModifier);
     QPointer<QDialog> palette = window.findChild<QDialog*>("commandPalette");
     QTRY_VERIFY(palette && palette->isVisible());
     auto* paletteSearch = palette->findChild<QLineEdit*>("keyboardPopupCommand");
@@ -359,6 +406,14 @@ private slots:
     QTest::keyClick(paletteSearch, Qt::Key_Return);
     QTRY_VERIFY(palette.isNull() || !palette->isVisible());
     QCOMPARE(courses->currentIndex().row(), 1);
+    courses->setFocus();
+    QTest::keyClick(courses, Qt::Key_Return);
+    QTRY_VERIFY(window.findChild<QWidget*>("courseOutline")->isVisible());
+    auto* courseOutline = window.findChild<shadcn::TreeView*>("lessons");
+    courseOutline->setFocus();
+    QTest::keyClick(courseOutline, Qt::Key_Space);
+    QTest::keyClick(courseOutline, Qt::Key_B);
+    QTRY_VERIFY(courses->isVisible());
   }
 };
 

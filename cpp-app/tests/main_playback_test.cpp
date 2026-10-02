@@ -107,6 +107,14 @@ private slots:
       auto* play = window.findChild<QPushButton*>("playPause");
       QTRY_VERIFY2(play->isEnabled(), qPrintable(window.findChild<QLabel*>("appStatus")->text()));
       QCOMPARE(play->text(), QString("Play"));
+      if (mediaFile == QStringLiteral("Systems 日本語/01 H264 AAC.mp4")) {
+        auto* surface = window.findChild<QWidget*>("videoSurface"); QVERIFY(surface);
+        const auto videoCenter = surface->rect().center();
+        QTest::mouseClick(surface, Qt::LeftButton, Qt::NoModifier, videoCenter);
+        QTRY_COMPARE_WITH_TIMEOUT(play->text(), QString("Pause"), 5000);
+        QTest::mouseClick(surface, Qt::LeftButton, Qt::NoModifier, videoCenter);
+        QTRY_COMPARE_WITH_TIMEOUT(play->text(), QString("Play"), 5000);
+      }
       auto* controls = window.findChild<QWidget*>("playerControls"); QVERIFY(controls);
       auto* settings = window.findChild<QPushButton*>("playbackOptions"); QVERIFY(settings);
       auto* speed = window.findChild<QMenu*>("playbackSpeed"); QVERIFY(speed);
@@ -149,7 +157,7 @@ private slots:
           }
         };
         QCOMPARE(controls->parentWidget(), surface);
-        surface->setFocus(); QTest::keyClick(surface, Qt::Key_Space);
+        surface->setFocus(); QTest::keyClick(surface, Qt::Key_Space); QTest::keyClick(surface, Qt::Key_P);
         QTRY_VERIFY_WITH_TIMEOUT(!positions.isEmpty() && positions.last().at(0).toLongLong() >= 300, 5000);
         responsiveness.start(); heartbeat.start(10);
         QTest::qWait(600);
