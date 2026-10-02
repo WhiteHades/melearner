@@ -8,7 +8,7 @@
 #include <cmath>
 
 namespace pdf = melearner::pdf;
-PdfView::PdfView(QWidget* parent) : QAbstractScrollArea(parent) {
+PdfView::PdfView(QWidget* parent) : shadcn::ScrollArea(parent) {
   setObjectName("pdfPages"); setAccessibleName(tr("PDF pages"));
   setFocusPolicy(Qt::StrongFocus); setFrameShape(QFrame::NoFrame);
   connect(&reader_, &pdf::PdfReader::finished, this, [this](quint64 id, const pdf::Result& result) {
@@ -137,7 +137,7 @@ void PdfView::setZoom(double zoom) {
 void PdfView::jumpToPage(int page) {
   if (page >= 1 && page <= tops_.size()) verticalScrollBar()->setValue(tops_[page - 1]);
 }
-void PdfView::resizeEvent(QResizeEvent* event) { QAbstractScrollArea::resizeEvent(event); layoutPages(); }
+void PdfView::resizeEvent(QResizeEvent* event) { shadcn::ScrollArea::resizeEvent(event); layoutPages(); }
 void PdfView::paintEvent(QPaintEvent*) {
   QPainter painter(viewport()); painter.fillRect(viewport()->rect(), palette().window());
   if (!generation_) return;

@@ -1,10 +1,10 @@
 #pragma once
 #include "pdf_reader.hpp"
-#include <QAbstractScrollArea>
+#include <shadcn/navigation.hpp>
 #include <QMap>
 #include <QSet>
 
-class PdfView final : public QAbstractScrollArea {
+class PdfView final : public shadcn::ScrollArea {
   Q_OBJECT
 public:
   explicit PdfView(QWidget* parent = nullptr);
