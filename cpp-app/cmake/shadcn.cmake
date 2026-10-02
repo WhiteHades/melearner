@@ -34,13 +34,13 @@ if(NOT TARGET shadcn::widgets)
     "The pinned shadcn-cpp snapshot did not provide the required shadcn::widgets target")
 endif()
 
-# The component library is MIT licensed and adapts shadcn/ui, which is MIT
-# licensed too. Both notices belong in the installed package, and the bundled
-# Geist font carries its own OFL notice inside the library tree.
+# Install the notices for the component library, its adapted upstream code,
+# and its embedded Geist font with the application.
 set(MELEARNER_SHADCN_LICENSE_FILES
     "${shadcn_cpp_SOURCE_DIR}/LICENSE"
     "${shadcn_cpp_SOURCE_DIR}/LICENSES/shadcn-MIT.txt"
-    CACHE FILEPATH "shadcn-cpp licence files shipped with the native app")
+    "${shadcn_cpp_SOURCE_DIR}/LICENSES/ui-components-MIT.txt"
+    "${shadcn_cpp_SOURCE_DIR}/LICENSES/Geist-OFL.txt")
 
 foreach(shadcn_license IN LISTS MELEARNER_SHADCN_LICENSE_FILES)
   if(NOT EXISTS "${shadcn_license}")
