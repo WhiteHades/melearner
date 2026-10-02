@@ -50,7 +50,7 @@ git checkout main
 bash scripts/build-cpp-windows.sh
 ```
 
-The entrypoint configures `build/cpp-windows` with the native UCRT64 compiler and Ninja, builds with CMake, and runs every test registered by CMake. The registered Qt UI tests receive `QT_QPA_PLATFORM=offscreen` from CMake. The `playback_render_test` and `main_playback_test` binaries are build targets only, not CTest registrations, so the default command does not launch them or take over the desktop. Increase or limit parallelism with `--jobs`, for example `bash scripts/build-cpp-windows.sh --jobs 8`. The `MELEARNER_BUILD_JOBS` environment variable accepts the same positive integer value.
+The entrypoint configures `build/cpp-windows` with the native UCRT64 compiler and Ninja, builds with CMake, then runs the `main_window_test` end-to-end test through CTest. CMake sets `QT_QPA_PLATFORM=offscreen` for that test. Increase or limit parallelism with `--jobs`, for example `bash scripts/build-cpp-windows.sh --jobs 8`. The `MELEARNER_BUILD_JOBS` environment variable accepts the same positive integer value.
 
 The executable is `build/cpp-windows/melearner.exe`. Check the unified version before opening the window:
 
@@ -65,19 +65,11 @@ pacman -S --needed mingw-w64-ucrt-x86_64-ffmpeg
 bash scripts/build-cpp-windows.sh --run-playback
 ```
 
-After the registered CTest suite passes, that mode launches both `playback_render_test.exe` and `main_playback_test.exe` from the build directory with the normal Qt Windows platform. It is not headless, may take over the desktop, and is not required for the default build check.
+After the CTest check passes, that mode launches `main_playback_test.exe` from the build directory with the normal Qt Windows platform. It is not headless, may take over the desktop, and is not required for the default build check.
 
 The recovery check uses the FFmpeg command-line tool to prepare temporary test
 media. With `--run-playback`, the script checks for that tool before configuring
 or building. The default build does not require it.
-
-The entrypoint control flow can be checked on a non-Windows machine without a compiler, Qt installation, or desktop by running:
-
-```sh
-python3 scripts/test-cpp-windows-build.py
-```
-
-This regression uses disposable command stubs. It checks environment and job validation, build failure ordering, the default no-playback path, and the explicit playback target launch.
 
 ## Packaging
 

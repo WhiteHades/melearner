@@ -70,19 +70,19 @@ cmake --build --preset linux-release --parallel 4
 ctest --preset linux-release --no-tests=error
 ```
 
-The regular CTest suites use Qt's offscreen platform. The two playback suites
-need an X11 display because the libmpv OpenGL surface cannot be created by the
-offscreen plugin. Run both under private Xvfb sessions with a null PulseAudio
-sink:
+CTest runs the `main_window_test` end-to-end test with Qt's offscreen
+platform. The playback end-to-end test needs an X11 display because the
+libmpv OpenGL surface cannot be created by the offscreen plugin. Run both
+end-to-end tests under private Xvfb sessions with a null PulseAudio sink:
 
 ```bash
 bash scripts/test-cpp-playback.sh
 bash scripts/test-cpp-playback.sh --build-dir build/cpp-release
 ```
 
-The playback tests also require the FFmpeg command-line tool. The recovery
-test remuxes the checked-in clip into a longer temporary file without encoding
-new media, then checks error recovery, closing and resuming a lesson.
+The playback test also requires the FFmpeg command-line tool. Its recovery
+check remuxes the checked-in clip into a longer temporary file without
+encoding new media, then checks error recovery, closing and resuming a lesson.
 
 The window tests use the application's font and check normal and doubled text.
 To save their screenshots, create a destination and pass it to the test process:
@@ -91,16 +91,14 @@ To save their screenshots, create a destination and pass it to the test process:
 mkdir -p .tmp/ui-captures
 bash scripts/test-cpp-playback.sh -- env MELEARNER_TEST_SCREENSHOTS="$PWD/.tmp/ui-captures" \
   build/cpp-release/main_window_test
-bash scripts/test-cpp-playback.sh -- env MELEARNER_TEST_SCREENSHOTS="$PWD/.tmp/ui-captures" \
-  build/cpp-release/main_playback_test
 ```
 
-The stats check waits for resized metric labels to fit before capturing them.
 Inspect the images as well as the test result; geometry checks alone do not
 establish visual correctness.
 
 The default build directory is `build/cpp-dev`; set `MELEARNER_BUILD_DIR` or
-pass `--build-dir` to select another. The runner requires `pulseaudio`, Xvfb,
+pass `--build-dir` to select another. By default, the runner runs
+`main_window_test` and `main_playback_test`. It requires `pulseaudio`, Xvfb,
 `xvfb-run`, `xauth`, Openbox, `dbus-daemon`, `pactl`, and `timeout`. It starts a
 separate Xvfb, private D-Bus, and PulseAudio null sink for each suite, redirects XDG and
 temporary data into a private `.tmp/cpp-playback` run directory, runs the test
@@ -142,83 +140,17 @@ export MELEARNER_PLAYBACK_TIMEOUT_SECONDS=180
 export ASAN_OPTIONS=halt_on_error=1
 export UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1
 bash scripts/test-cpp-playback.sh -- ctest --preset linux-sanitize --no-tests=error
-bash scripts/test-cpp-playback.sh -- build/cpp-sanitize/playback_render_test \
-  clearsUnloadedSurfaceToBlack repeatedlyLoadsAndClosesInEitherOrder playsWhileHidden \
-  rendersSoftwareDecodedFrames:h264 rendersSoftwareDecodedFrames:hevc-main10 \
-  rendersSoftwareDecodedFrames:multi-audio
 bash scripts/test-cpp-playback.sh -- build/cpp-sanitize/main_playback_test
 ```
 
 The private runner keeps these checks off the desktop and audio devices.
 Leak detection stays enabled. Investigate reported allocations before adding
 suppressions; a passing run covers only the paths exercised by the tests.
-These playback commands select software decoding to separate application
-reports from hardware-driver allocations. The default playback suite also
-checks automatic hardware selection. Run it in the release build, then qualify
-each supported GPU and driver separately on a private display.
-
-To compare Mesa's software renderers, pass the driver to the test process:
-
-```bash
-bash scripts/test-cpp-playback.sh -- env GALLIUM_DRIVER=softpipe \
-  build/cpp-sanitize/playback_render_test playsWhileHidden
-```
-
-Record the driver with the result. A pass with `softpipe` does not qualify
-`llvmpipe` or a hardware driver.
-
 Use the source installer for the complete local check and installation:
 
 ```bash
 bash scripts/install-cpp-linux.sh "$HOME/.local"
 ```
-
-The deterministic fixture and packaging checks are separate from CTest:
-
-```bash
-cmake -DCPP_PARITY_FULL_MATERIALIZATION=ON -P scripts/test-cpp-parity-fixtures.cmake
-python3 scripts/test-cpp-linux-installer.py
-python3 scripts/test-cpp-linux-archive.py
-python3 scripts/test-cpp-linux-runtime.py
-bash scripts/test-cpp-linux-packaging.sh
-```
-
-`library_load_test` is an explicit large-library diagnostic; it is not part of
-the normal CTest run because it materializes a 100,000-lesson fixture. Run it
-against a release build:
-
-```bash
-bash scripts/test-cpp-playback.sh -- build/cpp-release/library_load_test
-```
-
-It reports scan time, event-loop responsiveness, private resident memory,
-startup and shutdown times. Course pages, search and the four-course resume
-page each have a 200 ms response budget. The resume measurement includes three
-requests and reports the slowest. These are local diagnostics, not a substitute
-for testing the installed package on its supported hardware.
-
-For a longer rendering check, supply a local video at least 20 seconds long
-with visible content near its start:
-
-```bash
-bash scripts/test-cpp-playback.sh -- env \
-  MELEARNER_PLAYBACK_LOAD_FILE=/absolute/path/to/video.mp4 \
-  MELEARNER_PLAYBACK_LOAD_SOFTWARE=1 \
-  build/cpp-release/playback_load_test
-```
-
-`playback_load_test` opens a 1280×720 player, checks pause, resume and seeking,
-and runs four five-second playback samples with a fresh player each time.
-It reports the OpenGL renderer, decoder, first-frame time, UI timer gaps and
-Linux private resident memory before and after each teardown. Framebuffer
-readback happens before timer sampling. Omit `MELEARNER_PLAYBACK_LOAD_SOFTWARE`
-to test automatic decoding. Set `MELEARNER_PLAYBACK_LOAD_CYCLES` from 1 to 20
-for a different cycle count and increase the runner timeout when needed.
-
-The diagnostic checks playback progress and a nonblack initial frame, not
-frame-perfect decoding or every codec. Memory figures include retained driver
-and allocator memory; compare repeated samples and sanitizer reports before
-attributing growth to a leak. The input file is never modified.
 
 ## Architecture
 
