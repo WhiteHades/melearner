@@ -155,6 +155,17 @@ private slots:
         QTest::qWait(600);
         qInfo("Steady playback GUI heartbeat: %d samples, longest gap %lld ms", ticks, worstGap);
         QVERIFY(ticks >= 20); QVERIFY2(worstGap < 150, "Playback stalled the GUI event loop");
+        QElapsedTimer pointerBatch;
+        pointerBatch.start();
+        for (int sample = 0; sample < 1000; ++sample) {
+          const QPoint point(10 + sample % 100, 10 + sample % 50);
+          QMouseEvent move(QEvent::MouseMove, QPointF(point),
+                           QPointF(surface->mapToGlobal(point)), Qt::NoButton,
+                           Qt::NoButton, Qt::NoModifier);
+          QApplication::sendEvent(surface, &move);
+        }
+        qInfo("Pointer motion batch: 1000 events in %lld us", pointerBatch.nsecsElapsed() / 1000);
+        QVERIFY(controls->isVisible());
         auto* hideControls = window.findChild<QTimer*>("hidePlayerControls"); QVERIFY(hideControls);
         phase = "pointer controls";
         movePointer(QPoint(10, 10));
@@ -296,7 +307,7 @@ private slots:
         }
         const auto* next = window.findChild<QPushButton*>("nextLesson");
         QVERIFY(surface->rect().contains(controls->geometry()));
-        QVERIFY(controls->mapTo(&window, QPoint(0, controls->height())).y() <= next->mapTo(&window, QPoint()).y());
+        QVERIFY(next->mapTo(&window, QPoint(0, next->height())).y() <= surface->mapTo(&window, QPoint()).y());
         QSignalSpy rates(player, &melearner::Player::rateChanged);
         speed->actions().at(4)->trigger();
         QTRY_VERIFY(!rates.isEmpty()); QCOMPARE(rates.last().first().toDouble(), 1.5);

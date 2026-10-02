@@ -10,6 +10,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListView>
+#include <QMenu>
 #include <QPainter>
 #include <QPdfWriter>
 #include <QProgressBar>
@@ -23,11 +24,100 @@
 #include <QTreeView>
 #include <shadcn/widgets.hpp>
 #include <QtTest>
+#include <zip.h>
 
 class MainWindowTest final : public QObject {
   Q_OBJECT
 private slots:
   void initTestCase() { Q_INIT_RESOURCE(assets); melearner::installTheme(true, 14); }
+
+  void nativeReadersAndLibraryPresentation() {
+    QTemporaryDir files;
+    QVERIFY(files.isValid());
+    const auto root = files.path() + "/Courses";
+    const auto section = root + "/Native Readers/Section";
+    QVERIFY(QDir().mkpath(section));
+    const QList<QPair<QString, QByteArray>> lessons{
+      {"01 Reading.md", "# Markdown lesson\n\nRead this in the app.\n\n- First idea\n- Second idea\n"},
+      {"02 Reading.html", "<html><body><h1>HTML lesson</h1><p>Read this here too.</p></body></html>"},
+      {"03 rom-cu.csv", "Address,Value\r\n0,\"A, B\"\r\n1,\"C\"\"D\"\r\n"},
+      {"05 output.hex.txt", "v3.0 hex words addressed\n0000: 01 02 03"}};
+    for (const auto& [name, bytes] : lessons) {
+      QFile lesson(section + "/" + name);
+      QVERIFY(lesson.open(QIODevice::WriteOnly));
+      QCOMPARE(lesson.write(bytes), qint64(bytes.size()));
+    }
+    const auto workbookPath = QFile::encodeName(section + "/04 rom-cu.xlsx");
+    auto* archive = zip_open(workbookPath.constData(), ZIP_CREATE | ZIP_TRUNCATE, nullptr);
+    QVERIFY(archive);
+    const QList<QPair<QByteArray, QByteArray>> entries{
+      {"xl/workbook.xml", "<workbook xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><sheets><sheet name=\"Registers\" sheetId=\"1\" r:id=\"rId1\"/></sheets></workbook>"},
+      {"xl/_rels/workbook.xml.rels", "<Relationships><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet1.xml\"/></Relationships>"},
+      {"xl/sharedStrings.xml", "<sst><si><t>Address</t></si><si><t>Value</t></si></sst>"},
+      {"xl/worksheets/sheet1.xml", "<worksheet><sheetData><row r=\"1\"><c r=\"A1\" t=\"s\"><v>0</v></c><c r=\"B1\" t=\"s\"><v>1</v></c></row><row r=\"2\"><c r=\"A2\"><v>42</v></c><c r=\"B2\" t=\"inlineStr\"><is><t>Register</t></is></c></row></sheetData></worksheet>"}};
+    for (const auto& [name, bytes] : entries) {
+      auto* source = zip_source_buffer(archive, bytes.constData(), bytes.size(), 0);
+      QVERIFY(source);
+      QVERIFY(zip_file_add(archive, name.constData(), source, ZIP_FL_OVERWRITE) >= 0);
+    }
+    QCOMPARE(zip_close(archive), 0);
+    for (int course = 1; course <= 11; ++course) {
+      const auto path = root + QString("/Course %1/Section").arg(course, 2, 10, QChar('0'));
+      QVERIFY(QDir().mkpath(path));
+      QFile lesson(path + "/Reading.txt");
+      QVERIFY(lesson.open(QIODevice::WriteOnly));
+      QVERIFY(lesson.write("A quiet place to learn.") > 0);
+    }
+    MainWindow window(files.path() + "/library.sqlite3");
+    window.resize(1440, 900); window.show();
+    QTRY_VERIFY(window.findChild<QPushButton*>("chooseRoot")->isEnabled());
+    window.chooseRoot(root);
+    auto* courses = window.findChild<shadcn::ListView*>("courses");
+    QTRY_COMPARE(courses->model()->rowCount(), 12);
+    const auto capture = [&window](const QString& name) {
+      const auto path = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
+      return path.isEmpty() || window.grab().save(path + "/" + name + ".png");
+    };
+    auto* list = window.findChild<QPushButton*>("listView");
+    auto* cards = window.findChild<QPushButton*>("cardsView");
+    QTest::mouseClick(cards, Qt::LeftButton);
+    QTRY_COMPARE(courses->presentation(), shadcn::ListPresentation::Cards);
+    QTest::qWait(300);
+    const auto rects = courses->visibleRowRects();
+    QVERIFY(rects.size() >= 3);
+    QVERIFY(rects[1].left() > rects[0].left());
+    QVERIFY(rects[0].right() < rects[1].left());
+    QVERIFY(window.findChild<QWidget*>("libraryCanvas")->width() <= 1120);
+    QVERIFY(capture("library-cards"));
+    QTest::mouseClick(list, Qt::LeftButton);
+    QTRY_COMPARE(courses->presentation(), shadcn::ListPresentation::List);
+    QVERIFY(capture("library-list"));
+    auto* settings = window.findChild<QPushButton*>("appearance");
+    QVERIFY(settings && settings->menu());
+    QCOMPARE(settings->menu()->actions().size(), 4); // Three choices plus a separator.
+    for (auto* action : settings->menu()->actions()) QVERIFY(!action->menu());
+    const auto index = courses->model()->index(11, 0);
+    QTRY_COMPARE(index.data().toString(), QString("Native Readers"));
+    courses->setCurrentIndex(index);
+    QTest::keyClick(courses, Qt::Key_Return);
+    auto* document = window.findChild<QTextEdit*>("documentText");
+    auto* next = window.findChild<QPushButton*>("nextLesson");
+    auto* actions = window.findChild<QWidget*>("lessonActions");
+    QTRY_VERIFY(document->toPlainText().contains("Markdown lesson"));
+    QVERIFY(!window.findChild<QWidget*>("documentTools")->isVisible());
+    QVERIFY(actions->mapTo(&window, QPoint()).y() < document->mapTo(&window, QPoint()).y());
+    QVERIFY(document->width() <= 900);
+    QVERIFY(capture("reader-markdown"));
+    const QStringList expected{"HTML lesson", "A, B", "Register", "v3.0 hex words"};
+    for (int item = 0; item < expected.size(); ++item) {
+      QTest::mouseClick(next, Qt::LeftButton);
+      QTRY_VERIFY(document->toPlainText().contains(expected[item]));
+      QVERIFY(capture(QString("reader-%1").arg(item)));
+    }
+    QTest::mouseClick(window.findChild<QPushButton*>("backToLibrary"), Qt::LeftButton);
+    QTRY_VERIFY(courses->isVisible());
+    QVERIFY(!window.findChild<QWidget*>("appStatus")->isVisible());
+  }
 
   void importSearchCompleteAndRestoreProgress() {
     QTemporaryDir files;
@@ -86,6 +176,9 @@ private slots:
           QTest::mouseClick(toggle, Qt::LeftButton);
           QTRY_VERIFY(document->isVisible());
           QVERIFY(!lessons->isVisible());
+          const auto* viewer = window.findChild<QScrollArea*>("lessonScroll");
+          QTRY_VERIFY(viewer->mapTo(&window, QPoint()).x() < 50);
+          QTRY_VERIFY(document->mapTo(&window, QPoint(document->width(), 0)).x() <= window.width());
         } else {
           QTRY_VERIFY(lessons->isVisible());
           QTRY_VERIFY(document->isVisible());
@@ -179,6 +272,10 @@ private slots:
     auto* pdf = window.findChild<PdfView*>();
     QVERIFY(pdf);
     QTRY_VERIFY(pdf->cachedTiles() > 0);
+    window.resize(1920, 1080);
+    QTRY_VERIFY(pdf->width() <= 1000);
+    if (const auto captures = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS"); !captures.isEmpty())
+      QVERIFY(window.grab().save(captures + "/reader-pdf.png"));
     auto* zoom = window.findChild<QComboBox*>("pdfZoom");
     QVERIFY(zoom);
     bool zoomInvalidatedTiles = false;
@@ -197,6 +294,7 @@ private slots:
     QTest::mouseClick(back, Qt::LeftButton);
     QTRY_VERIFY(courses->isVisible());
     QCOMPARE(pdf->cachedTiles(), 0);
+    QVERIFY(!window.findChild<QWidget*>("appStatus")->isVisible());
   }
 
   void keyboardPopupAndTextInputStayScoped() {
