@@ -40,9 +40,9 @@ namespace {
 
 namespace fs = std::filesystem;
 
-constexpr std::string_view kSchemaId = "melearner-cpp-library-v1";
+constexpr std::string_view kSchemaId = "melearner-cpp-library-v2";
 constexpr std::string_view kSchemaSha256 =
-    "1fe403f82f06b83aadee35204ef4076ccd5cd226950dcb1ec70aeb4059122256";
+    "b6ea1fefb61fe615f3d2f145790cfa8c87117780f68da7e43d97807db6998569";
 
 constexpr std::uint64_t kMaxAcceptedRequests = 128;
 constexpr std::uint64_t kMaxCoursePage = 128;
@@ -1239,6 +1239,7 @@ void readOutlineGroups(sqlite3* db, const QString& courseId, QVector<Section>& s
             .lessonCount = nonnegativeAggregate(statement.get(), 4, QStringLiteral("section lesson count")),
             .completedLessons = nonnegativeAggregate(statement.get(), 5, QStringLiteral("section completed Lesson count")),
             .watchedSeconds = nonnegativeAggregate(statement.get(), 6, QStringLiteral("section watched time")),
+            .groups = {},
         });
     }
     // The page keeps its own copy of the Course id, because the one passed in was
@@ -1665,6 +1666,75 @@ private:
     bool active_ = true;
 };
 
+void backupLibrary(sqlite3* database, const QString& databasePath) {
+    if (databasePath == QStringLiteral(":memory:")) return;
+    QTemporaryFile file(databasePath + QStringLiteral(".before-schema-2-XXXXXX"));
+    if (!file.open()) {
+        throw DbError(ErrorCode::filesystem, QStringLiteral("Cannot back up the Library before upgrading"), databasePath);
+    }
+    const auto destinationPath = file.fileName().toUtf8();
+    file.close();
+    sqlite3* destination = nullptr;
+    const auto opened = sqlite3_open_v2(destinationPath.constData(), &destination, SQLITE_OPEN_READWRITE, nullptr);
+    const std::unique_ptr<sqlite3, decltype(&sqlite3_close)> closeDestination(destination, sqlite3_close);
+    if (opened != SQLITE_OK) throwSqlite(destination, QStringLiteral("Cannot open Library backup"));
+    std::unique_ptr<sqlite3_backup, decltype(&sqlite3_backup_finish)> backup(
+        sqlite3_backup_init(destination, "main", database, "main"), sqlite3_backup_finish);
+    if (!backup) throwSqlite(destination, QStringLiteral("Cannot start Library backup"));
+    const auto copied = sqlite3_backup_step(backup.get(), -1);
+    const auto finished = sqlite3_backup_finish(backup.release());
+    if (copied != SQLITE_DONE || finished != SQLITE_OK) {
+        throwSqlite(destination, QStringLiteral("Cannot complete Library backup"));
+    }
+    file.setAutoRemove(false);
+}
+
+void upgradeLibrary(sqlite3* database, const QByteArray& ddl, const QString& databasePath) {
+    // This is a one-time data upgrade, not a second runtime schema. All other
+    // layouts are refused before any database changes.
+    {
+        Statement metadata(database, QStringLiteral("SELECT schema_id, ddl_sha256 FROM schema_info WHERE singleton = 1"));
+        if (metadata.step() != SQLITE_ROW
+            || columnText(metadata.get(), 0) != QStringLiteral("melearner-cpp-library-v1")
+            || columnText(metadata.get(), 1) != QStringLiteral("1fe403f82f06b83aadee35204ef4076ccd5cd226950dcb1ec70aeb4059122256")
+            || schemaCatalogFingerprint(database) != QByteArray("552ae90ab6a78d44261891f9ab0d2d87f125797427d1886e3c5ada6a9a849ca1")) {
+            throw DbError(ErrorCode::incompatible_schema, QStringLiteral("Library schema cannot be upgraded"), databasePath);
+        }
+    }
+    {
+        Statement integrity(database, QStringLiteral("PRAGMA integrity_check"));
+        if (integrity.step() != SQLITE_ROW || columnText(integrity.get(), 0) != QStringLiteral("ok")) {
+            throw DbError(ErrorCode::incompatible_schema, QStringLiteral("Library integrity check failed before upgrading"), databasePath);
+        }
+        Statement foreignKeys(database, QStringLiteral("PRAGMA foreign_key_check"));
+        if (foreignKeys.step() == SQLITE_ROW) {
+            throw DbError(ErrorCode::incompatible_schema, QStringLiteral("Library foreign keys are invalid"), databasePath);
+        }
+    }
+    const auto settingsStart = ddl.indexOf("CREATE TABLE settings (");
+    const auto settingsEnd = ddl.indexOf(");", settingsStart);
+    if (settingsStart < 0 || settingsEnd < 0) {
+        throw DbError(ErrorCode::database, QStringLiteral("Embedded Library settings schema is missing"));
+    }
+    backupLibrary(database, databasePath);
+    Transaction transaction(database);
+    exec(database, "DROP TABLE notes; ALTER TABLE settings RENAME TO settings_before_upgrade;");
+    const auto settingsDdl = ddl.mid(settingsStart, settingsEnd + 2 - settingsStart);
+    exec(database, std::string_view(settingsDdl.constData(), static_cast<std::size_t>(settingsDdl.size())));
+    exec(database,
+        "INSERT INTO settings(singleton,appearance,library_presentation,revision,updated_at) "
+        "SELECT singleton,'dark',library_presentation,revision,updated_at FROM settings_before_upgrade; "
+        "DROP TABLE settings_before_upgrade; PRAGMA user_version = 2;");
+    {
+        Statement metadata(database, QStringLiteral("UPDATE schema_info SET schema_id = ?1, ddl_sha256 = ?2 WHERE singleton = 1"));
+        metadata.bind(1, QString::fromUtf8(kSchemaId.data(), static_cast<int>(kSchemaId.size())));
+        metadata.bind(2, QString::fromUtf8(kSchemaSha256.data(), static_cast<int>(kSchemaSha256.size())));
+        (void)metadata.step();
+    }
+    validateExactSchema(database, ddl, databasePath);
+    transaction.commit();
+}
+
 [[nodiscard]] std::optional<QPair<Lesson, std::uint64_t>> readEntryLesson(
     sqlite3* db,
     const QString& courseId,
@@ -2041,13 +2111,7 @@ void rebuildSearch(sqlite3* db) {
 }
 
 void validateSettings(const Settings& settings) {
-    // "dark" is the only colour mode the application has. "light" and "cozy" are
-    // still accepted on the way in, because a database written before the modes were
-    // removed holds one of them and refusing to save would fail a save the reader
-    // never asked about. The value is normalised to dark by the window on load, so
-    // nothing ever writes either of them back.
-    if (settings.appearance != QStringLiteral("dark") && settings.appearance != QStringLiteral("light")
-        && settings.appearance != QStringLiteral("cozy")) {
+    if (settings.appearance != QStringLiteral("dark")) {
         throw DbError(ErrorCode::invalid_request, QStringLiteral("appearance is invalid"));
     }
     if (settings.libraryPresentation != QStringLiteral("comfortable")
@@ -2607,12 +2671,14 @@ private:
                     database_,
                     QStringLiteral(
                         "INSERT INTO settings(singleton, appearance, library_presentation, revision, updated_at) "
-                        "VALUES (1, 'light', 'comfortable', 0, ?1)"));
+                        "VALUES (1, 'dark', 'comfortable', 0, ?1)"));
                 settings.bind(1, nowMs());
                 (void)settings.step();
                 transaction.commit();
             } else {
-                if (schemaState.userVersion != 1) {
+                if (schemaState.userVersion == 1) {
+                    upgradeLibrary(database_, ddl, databasePath_);
+                } else if (schemaState.userVersion != 2) {
                     throw DbError(ErrorCode::incompatible_schema, QStringLiteral("Library schema version is not supported"), databasePath_);
                 }
                 Statement schemaInfo(

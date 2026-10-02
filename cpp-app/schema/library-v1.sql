@@ -1,4 +1,4 @@
-PRAGMA user_version = 1;
+PRAGMA user_version = 2;
 
 CREATE TABLE schema_info (
     singleton INTEGER NOT NULL PRIMARY KEY CHECK (singleton = 1),
@@ -14,7 +14,7 @@ CREATE TABLE library_root (
 
 CREATE TABLE settings (
     singleton INTEGER NOT NULL PRIMARY KEY CHECK (singleton = 1),
-    appearance TEXT NOT NULL CHECK (appearance IN ('light', 'dark', 'cozy')),
+    appearance TEXT NOT NULL CHECK (appearance = 'dark'),
     library_presentation TEXT NOT NULL CHECK (library_presentation IN ('comfortable', 'compact')),
     revision INTEGER NOT NULL CHECK (revision >= 0),
     updated_at INTEGER NOT NULL
@@ -62,15 +62,6 @@ CREATE TABLE lessons (
     UNIQUE (course_id, relative_path)
 );
 
-CREATE TABLE notes (
-    id TEXT NOT NULL PRIMARY KEY,
-    lesson_id TEXT NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,
-    timestamp REAL NOT NULL CHECK (timestamp >= 0),
-    text TEXT NOT NULL CHECK (length(text) > 0),
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-);
-
 CREATE TABLE lesson_subtitles (
     id TEXT NOT NULL PRIMARY KEY,
     lesson_id TEXT NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,
@@ -113,7 +104,6 @@ CREATE INDEX sections_course_order_idx ON sections(course_id, order_index);
 CREATE INDEX lessons_course_section_order_idx ON lessons(course_id, section_id, order_index);
 CREATE INDEX lessons_path_idx ON lessons(path);
 CREATE INDEX lessons_course_relative_idx ON lessons(course_id, relative_path);
-CREATE INDEX notes_lesson_created_idx ON notes(lesson_id, created_at);
 CREATE INDEX subtitles_lesson_order_idx ON lesson_subtitles(lesson_id, order_index);
 CREATE INDEX activity_date_idx ON lesson_activity(activity_date);
 CREATE INDEX activity_course_date_idx ON lesson_activity(course_id, activity_date);
