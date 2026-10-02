@@ -8,9 +8,12 @@
 #include <QAccessibleWidget>
 #include <QWindow>
 #include <QPainter>
+#include <QMouseEvent>
+#include <QApplication>
 
 #include <thread>
 #include <new>
+#include <utility>
 
 namespace melearner {
 namespace {
@@ -38,30 +41,6 @@ void* resolveOpenGLProc(void* context, const char* name) {
         return nullptr;
     }
     return reinterpret_cast<void*>(glContext->getProcAddress(name));
-}
-
-// Draw the focus border without introducing Qt's OpenGL paint-engine state
-// into libmpv rendering. Scissored clears need no shader or vertex buffers.
-void drawFocusBorder(int width, int height, qreal scale) {
-    const int thickness = qMax(1, qRound(2 * scale));
-    const auto rectangle = [width, height, thickness](int inset, GLfloat color) {
-        const int w = width - 2 * inset;
-        const int h = height - 2 * inset;
-        if (w <= 0 || h <= 0) return;
-        glClearColor(color, color, color, 1.0F);
-        glScissor(inset, inset, w, qMin(thickness, h));
-        glClear(GL_COLOR_BUFFER_BIT);
-        glScissor(inset, height - inset - qMin(thickness, h), w, qMin(thickness, h));
-        glClear(GL_COLOR_BUFFER_BIT);
-        glScissor(inset, inset, qMin(thickness, w), h);
-        glClear(GL_COLOR_BUFFER_BIT);
-        glScissor(width - inset - qMin(thickness, w), inset, qMin(thickness, w), h);
-        glClear(GL_COLOR_BUFFER_BIT);
-    };
-    glEnable(GL_SCISSOR_TEST);
-    rectangle(qMax(1, qRound(scale)), 0.0F);
-    rectangle(qMax(1, qRound(3 * scale)), 1.0F);
-    glDisable(GL_SCISSOR_TEST);
 }
 
 }  // namespace
@@ -186,10 +165,6 @@ void MpvVideoWidget::paintGL() {
     } else if (!player_->renderFrame(defaultFramebufferObject(), pixelWidth, pixelHeight)) {
         emit renderError(QStringLiteral("render"), QStringLiteral("libmpv could not render the current frame."));
     }
-    context()->functions()->glBindFramebuffer(GL_FRAMEBUFFER, defaultFramebufferObject());
-    if (hasFocus()) {
-        drawFocusBorder(pixelWidth, pixelHeight, pixelRatio);
-    }
 }
 
 bool MpvVideoWidget::renderSoftwareFrame(int width, int height) {
@@ -216,8 +191,25 @@ bool MpvVideoWidget::renderSoftwareFrame(int width, int height) {
 }
 
 void MpvVideoWidget::resizeGL(int, int) { requestFrame(); }
-void MpvVideoWidget::focusInEvent(QFocusEvent* event) { QOpenGLWidget::focusInEvent(event); update(); }
-void MpvVideoWidget::focusOutEvent(QFocusEvent* event) { QOpenGLWidget::focusOutEvent(event); update(); }
+void MpvVideoWidget::mousePressEvent(QMouseEvent* event) {
+    if (event->button() == Qt::LeftButton) {
+        clickOrigin_ = event->position();
+        setFocus(Qt::MouseFocusReason);
+        event->accept();
+        return;
+    }
+    QOpenGLWidget::mousePressEvent(event);
+}
+void MpvVideoWidget::mouseReleaseEvent(QMouseEvent* event) {
+    const auto origin = std::exchange(clickOrigin_, std::nullopt);
+    if (event->button() == Qt::LeftButton && origin && rect().contains(event->position().toPoint()) &&
+        (event->position() - *origin).manhattanLength() < QApplication::startDragDistance()) {
+        emit clicked();
+        event->accept();
+        return;
+    }
+    QOpenGLWidget::mouseReleaseEvent(event);
+}
 
 void MpvVideoWidget::attachRenderContext() {
     if (renderContextReady_ || player_ == nullptr || !player_->isReady() || context() == nullptr) {

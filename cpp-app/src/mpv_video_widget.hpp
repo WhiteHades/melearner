@@ -8,6 +8,7 @@
 
 #include <atomic>
 #include <memory>
+#include <optional>
 
 namespace melearner {
 
@@ -28,6 +29,7 @@ public:
     [[nodiscard]] bool isRenderContextReady() const;
 
 signals:
+    void clicked();
     void renderContextReady();
     void renderContextLost();
     void renderError(QString code, QString message);
@@ -36,8 +38,8 @@ protected:
     void initializeGL() override;
     void paintGL() override;
     void resizeGL(int width, int height) override;
-    void focusInEvent(QFocusEvent* event) override;
-    void focusOutEvent(QFocusEvent* event) override;
+    void mousePressEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
 
 private:
     struct CallbackState;
@@ -58,6 +60,7 @@ private:
     bool renderContextReady_ = false;
     bool cleaningUp_ = false;
     bool softwareRendering_ = false;
+    std::optional<QPointF> clickOrigin_;
     QByteArray softwarePixels_;
     QImage softwareFrame_;
 };
