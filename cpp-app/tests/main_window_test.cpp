@@ -726,8 +726,8 @@ private slots:
     QTRY_COMPARE(horizontalBar->maximum(), 0);
     QVERIFY2(!horizontalBar->isVisible(), "the document page shows a horizontal scrollbar despite having no horizontal range");
     auto* nextLesson = window.findChild<QPushButton*>("nextLesson"); QVERIFY(nextLesson);
-    const auto nextLessonRect = QRect(nextLesson->mapTo(lessonScroll->viewport(), QPoint(0, 0)), nextLesson->size());
-    QVERIFY(lessonScroll->viewport()->rect().contains(nextLessonRect));
+    QTRY_VERIFY(lessonScroll->viewport()->rect().contains(
+      QRect(nextLesson->mapTo(lessonScroll->viewport(), QPoint(0, 0)), nextLesson->size())));
     const auto captures = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
     if (!captures.isEmpty())
       QVERIFY(window.grab().save(captures + QString("/document-560-%1x.png").arg(fontScale)));
