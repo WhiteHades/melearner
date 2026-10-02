@@ -8,6 +8,7 @@
 #include <QMenu>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QImage>
 #include <QLabel>
 #include <QListView>
 #include <QTreeView>
@@ -22,6 +23,25 @@
 #include <QTimer>
 #include <QtTest>
 #include <algorithm>
+
+namespace {
+bool hasValidVideoFrame(const QImage& image) {
+  if (image.isNull()) return false;
+  // Sample the top of the fixture's yellow bar. The moving diagonal crosses
+  // its middle after seeking, and the widget can letterbox the 16:9 video.
+  const auto videoSize = QSize(320, 180).scaled(image.size(), Qt::KeepAspectRatio);
+  const QPoint offset((image.width() - videoSize.width()) / 2,
+                      (image.height() - videoSize.height()) / 2);
+  int yellow = 0, samples = 0;
+  for (int y = offset.y() + videoSize.height() * 3 / 100; y < offset.y() + videoSize.height() * 7 / 100; ++y)
+    for (int x = offset.x() + videoSize.width() * 38 / 100; x < offset.x() + videoSize.width() * 43 / 100; ++x) {
+      const auto pixel = image.pixelColor(x, y);
+      yellow += pixel.red() > 180 && pixel.green() > 180 && pixel.blue() < 100;
+      ++samples;
+    }
+  return samples > 0 && yellow * 10 >= samples * 9;
+}
+}
 
 class MainPlaybackTest final : public QObject {
   Q_OBJECT
@@ -274,6 +294,125 @@ private slots:
         const auto restored = loaded.first().at(2).toLongLong();
         QVERIFY2(qAbs(restored - saved) < 500, qPrintable(QString("Saved %1 ms, restored %2 ms").arg(saved).arg(restored)));
       }
+      window.close();
+    }
+  }
+  void malformedVideoRecoversAndResumes() {
+    QTemporaryDir data; QVERIFY(data.isValid());
+    const auto root = data.path() + "/Courses/Recovery course/Section";
+    QVERIFY(QDir().mkpath(root));
+    const auto media = QStringLiteral(MELEARNER_SOURCE_DIR) + "/fixtures/parity/media/";
+    const auto brokenPath = root + "/01 Broken.mp4";
+    const auto validPath = root + "/02 Valid.mp4";
+    QVERIFY(QFile::copy(media + "corrupt-media.bin", brokenPath));
+    // Keep the recovery flow away from EOF even on an instrumented software
+    // renderer. Remux the checked-in clip without introducing another codec.
+    QProcess extendVideo;
+    extendVideo.start(QStringLiteral("ffmpeg"), {"-hide_banner", "-loglevel", "error",
+      "-stream_loop", "7", "-i", media + "Systems 日本語/01 H264 AAC.mp4",
+      "-c", "copy", "-t", "16", validPath});
+    QVERIFY(extendVideo.waitForStarted());
+    QVERIFY(extendVideo.waitForFinished(10000));
+    QCOMPARE(extendVideo.exitStatus(), QProcess::NormalExit);
+    QVERIFY2(extendVideo.exitCode() == 0, extendVideo.readAllStandardError().constData());
+    const auto database = data.path() + "/library.sqlite3";
+    qint64 savedPosition = 0;
+    {
+      MainWindow window(database, nullptr, true); window.show(); window.activateWindow();
+      QVERIFY(QTest::qWaitForWindowActive(&window));
+      auto* player = window.findChild<melearner::Player*>(); QVERIFY(player);
+      QSignalSpy loaded(player, &melearner::Player::fileLoaded);
+      QSignalSpy failures(player, &melearner::Player::fatalError);
+      auto* choose = window.findChild<QPushButton*>("chooseRoot");
+      QTRY_VERIFY_WITH_TIMEOUT(choose->isEnabled(), 5000);
+      window.chooseRoot(data.path() + "/Courses");
+      auto* courses = window.findChild<QListView*>("courses");
+      QTRY_COMPARE_WITH_TIMEOUT(courses->model()->rowCount(), 1, 10000);
+      courses->setCurrentIndex(courses->model()->index(0, 0)); QTest::keyClick(courses, Qt::Key_Return);
+      auto* lessons = window.findChild<QTreeView*>("lessons"); QVERIFY(lessons);
+      QTRY_COMPARE_WITH_TIMEOUT(lessons->model()->rowCount(), 1, 5000);
+      const auto section = lessons->model()->index(0, 0);
+      QTRY_COMPARE_WITH_TIMEOUT(lessons->model()->rowCount(section), 2, 10000);
+      QModelIndex brokenIndex, validIndex;
+      // The paged model exposes the total before its visible rows arrive.
+      QTRY_VERIFY_WITH_TIMEOUT([&] {
+        for (int row = 0; row < lessons->model()->rowCount(section); ++row) {
+          const auto index = lessons->model()->index(row, 0, section);
+          const auto title = lessons->model()->data(index, Qt::DisplayRole).toString();
+          if (title.startsWith(QStringLiteral("01 Broken"))) brokenIndex = index;
+          if (title.startsWith(QStringLiteral("02 Valid"))) validIndex = index;
+        }
+        return brokenIndex.isValid() && validIndex.isValid();
+      }(), 10000);
+      loaded.clear();
+      lessons->setCurrentIndex(brokenIndex); QTest::keyClick(lessons, Qt::Key_Return);
+      auto* status = window.findChild<QLabel*>("appStatus"); QVERIFY(status);
+      QTRY_VERIFY2_WITH_TIMEOUT(!failures.isEmpty(),
+        qPrintable(QString("Status: %1; lesson: %2; player ready: %3; renderer ready: %4; loaded: %5")
+          .arg(status->text(), window.findChild<QLabel*>("lessonTitle")->text())
+          .arg(player->isReady()).arg(window.findChild<melearner::MpvVideoWidget*>()->isRenderContextReady())
+          .arg(loaded.count())), 10000);
+      QTRY_COMPARE(status->text(), failures.last().at(1).toString());
+      for (const auto& record : loaded)
+        QVERIFY(!record.at(0).toString().endsWith(QStringLiteral("/01 Broken.mp4")));
+      auto* play = window.findChild<QPushButton*>("playPause"); QVERIFY(play);
+      auto* seek = window.findChild<QWidget*>("playbackPosition"); QVERIFY(seek);
+      QVERIFY(!play->isEnabled()); QVERIFY(!seek->isEnabled());
+      QCOMPARE(window.findChild<QLabel*>("lessonTitle")->text(), QString("01 Broken"));
+
+      loaded.clear();
+      lessons->setCurrentIndex(validIndex); QTest::keyClick(lessons, Qt::Key_Return);
+      QTRY_COMPARE_WITH_TIMEOUT(loaded.count(), 1, 10000);
+      QVERIFY(loaded.first().at(0).toString().endsWith(QStringLiteral("/02 Valid.mp4")));
+      QTRY_VERIFY_WITH_TIMEOUT(play->isEnabled(), 5000);
+      auto* video = window.findChild<melearner::MpvVideoWidget*>(); QVERIFY(video);
+      QTRY_VERIFY_WITH_TIMEOUT(video->isRenderContextReady(), 10000);
+      QImage firstFrame;
+      const bool firstReady = QTest::qWaitFor([&] {
+        return hasValidVideoFrame(firstFrame = video->grabFramebuffer());
+      }, 10000);
+      const auto captures = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
+      if (!captures.isEmpty()) QVERIFY(firstFrame.save(captures + "/recovery-first-video.png"));
+      QVERIFY2(firstReady, "No intact frame after changing from a corrupt video to a valid video");
+      QSignalSpy positions(player, &melearner::Player::positionChanged);
+      QTest::mouseClick(play, Qt::LeftButton);
+      QTRY_COMPARE_WITH_TIMEOUT(play->text(), QString("Pause"), 5000);
+      QTRY_VERIFY_WITH_TIMEOUT(!positions.isEmpty() && positions.last().first().toLongLong() >= 600, 5000);
+      QTRY_VERIFY_WITH_TIMEOUT(video->grabFramebuffer() != firstFrame, 5000);
+      QTest::mouseClick(play, Qt::LeftButton);
+      QTRY_COMPARE_WITH_TIMEOUT(play->text(), QString("Play"), 5000);
+      savedPosition = positions.last().first().toLongLong();
+      window.close();
+    }
+    {
+      MainWindow window(database, nullptr, true); window.show(); window.activateWindow();
+      QVERIFY(QTest::qWaitForWindowActive(&window));
+      auto* resume = window.findChild<QPushButton*>("resumeLesson"); QVERIFY(resume);
+      QTRY_VERIFY_WITH_TIMEOUT(resume->isVisible() && resume->isEnabled(), 10000);
+      QCOMPARE(window.findChild<QLabel*>("resumeLessonTitle")->text(), QString("02 Valid"));
+      auto* player = window.findChild<melearner::Player*>(); QVERIFY(player);
+      QSignalSpy loaded(player, &melearner::Player::fileLoaded);
+      QSignalSpy positions(player, &melearner::Player::positionChanged);
+      QTest::mouseClick(resume, Qt::LeftButton);
+      QTRY_COMPARE_WITH_TIMEOUT(loaded.count(), 1, 10000);
+      const auto restored = loaded.first().at(2).toLongLong();
+      QVERIFY2(qAbs(restored - savedPosition) < 500,
+               qPrintable(QString("Saved %1 ms, resumed at %2 ms").arg(savedPosition).arg(restored)));
+      auto* play = window.findChild<QPushButton*>("playPause"); QVERIFY(play);
+      auto* video = window.findChild<melearner::MpvVideoWidget*>(); QVERIFY(video);
+      QImage restoredFrame;
+      const bool frameReady = QTest::qWaitFor([&] {
+        return hasValidVideoFrame(restoredFrame = video->grabFramebuffer());
+      }, 10000);
+      const auto captures = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
+      if (!captures.isEmpty()) QVERIFY(restoredFrame.save(captures + "/recovered-video.png"));
+      QVERIFY2(frameReady, "The resumed video has no intact decoded frame");
+      QTRY_VERIFY_WITH_TIMEOUT(play->isEnabled(), 5000);
+      QTest::mouseClick(play, Qt::LeftButton);
+      QTRY_COMPARE_WITH_TIMEOUT(play->text(), QString("Pause"), 5000);
+      QTRY_VERIFY_WITH_TIMEOUT(!positions.isEmpty() && positions.last().first().toLongLong() > restored + 100, 5000);
+      QTest::mouseClick(play, Qt::LeftButton);
+      QTRY_COMPARE_WITH_TIMEOUT(play->text(), QString("Play"), 5000);
       window.close();
     }
   }

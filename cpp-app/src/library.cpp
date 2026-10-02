@@ -1676,7 +1676,7 @@ private:
             "SELECT l.id, l.course_id, l.section_id, s.name AS section_name, "
             "l.name AS lesson_name, l.path, l.relative_path, "
             "l.type, l.duration, l.watched_time, l.last_position, l.file_size, l.order_index, "
-            "l.completed, ROW_NUMBER() OVER (ORDER BY s.order_index, "
+            "l.completed, l.updated_at, ROW_NUMBER() OVER (ORDER BY s.order_index, "
             "s.name COLLATE MELEARNER_NATURAL, s.id, l.order_index, "
             "l.name COLLATE MELEARNER_NATURAL, l.id) - 1 AS global_offset "
             "FROM lessons l JOIN sections s ON s.id = l.section_id AND s.course_id = l.course_id "
@@ -1685,7 +1685,10 @@ private:
             "watched_time, last_position, file_size, order_index, completed, global_offset "
             "FROM ordered_lessons "
             "ORDER BY CASE WHEN ?2 <> '' AND id = ?2 THEN 0 ELSE 1 END, "
-            "CASE WHEN completed = 0 THEN 0 ELSE 1 END, global_offset LIMIT 1"));
+            "CASE WHEN completed = 0 THEN 0 ELSE 1 END, "
+            "CASE WHEN completed = 0 AND last_position > 0 THEN 0 ELSE 1 END, "
+            "CASE WHEN completed = 0 AND last_position > 0 THEN updated_at ELSE 0 END DESC, "
+            "global_offset LIMIT 1"));
     statement.bind(1, courseId);
     statement.bind(2, requestedLessonId);
     if (statement.step() != SQLITE_ROW) {
@@ -1739,7 +1742,10 @@ private:
             "s.name COLLATE MELEARNER_NATURAL, s.id, l.order_index, "
             "l.name COLLATE MELEARNER_NATURAL, l.id) - 1 AS global_offset, "
             "ROW_NUMBER() OVER (PARTITION BY l.course_id ORDER BY "
-            "CASE WHEN l.completed = 0 THEN 0 ELSE 1 END, s.order_index, "
+            "CASE WHEN l.completed = 0 THEN 0 ELSE 1 END, "
+            "CASE WHEN l.completed = 0 AND l.last_position > 0 THEN 0 ELSE 1 END, "
+            "CASE WHEN l.completed = 0 AND l.last_position > 0 THEN l.updated_at ELSE 0 END DESC, "
+            "s.order_index, "
             "s.name COLLATE MELEARNER_NATURAL, s.id, l.order_index, "
             "l.name COLLATE MELEARNER_NATURAL, l.id) AS selection_rank "
             "FROM lessons l "
