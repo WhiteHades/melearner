@@ -8,9 +8,9 @@ include(GNUInstallDirs)
 # application inherits the library's own neutral theme rather than a local copy.
 #
 # Fetch the immutable archive for the pinned commit; URL_HASH verifies its content.
-set(SHADCN_CPP_COMMIT "79c00a750ef94b82b4559d0b379fca3299d4dcdd")
+set(SHADCN_CPP_COMMIT "5cc52a0edfc27a70c1d4e4b8e5586f21fba4860d")
 set(SHADCN_CPP_SHA256
-    "a7362ce22242fb14bdd34e6976041a60ccb03bdddc255f4925df0288633aaf21")
+    "a9e2555ee036ef42c02156dc04d5d2e837e53b9fad5f2c23523da8a0f4549992")
 
 # Only the widget component library is used. The optional media target would add
 # a Qt Multimedia dependency that this application does not use, because it plays

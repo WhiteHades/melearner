@@ -17,11 +17,14 @@ melearner groups files into courses, sections, and lessons based on the folder s
 - Subtitle tracks next to playable lessons
 
 Choose **List** or **Cards** above the library to change its layout. The choice is
-saved on your computer. Search is available in the library or with `Ctrl+K`.
+saved on your computer. Search is available in the library or with `/` outside a
+text field.
 
 The course outline stays to the left of the lesson. Previous lesson, Next lesson,
 and completion controls are beside the lesson heading. On a narrow window, use
 **Lessons** to switch between the outline and the reader.
+Section headings show compact completion counts. Lesson rows show titles and a
+check for completed lessons. Hover for the full title and file details.
 
 Markdown and HTML are read inside the app without running scripts or loading
 remote content. CSV and XLSX display cell values as tables. XLSX formatting,
@@ -37,13 +40,14 @@ appear above long text documents only when the document spans multiple pages.
 
 | Key | Action |
 | --- | --- |
-| `Space` | Play or pause when the player is focused |
-| `h` / `Left` | Seek back 10 seconds in the player; collapse the selected outline section elsewhere |
-| `l` / `Right` | Seek forward 10 seconds in the player; expand the selected outline section elsewhere |
-| `f` | Toggle fullscreen |
-| `m` | Mute or unmute |
-| `,` / `.` | Seek back one second / advance one frame |
-| `[` / `]` | Previous / next lesson |
+| `Space p` | Play or pause |
+| `h` / `l` | Seek back / forward 10 seconds when the player is focused |
+| `Space f` | Toggle fullscreen |
+| `Space m` | Mute or unmute |
+| `Space ,` / `Space .` | Seek back one second / advance one frame |
+| `K` / `J` | Previous / next lesson |
+
+Click the video to play or pause. Player settings stay inside the player.
 
 ## Keyboard-first navigation
 
@@ -56,14 +60,20 @@ read-only lesson view has focus; editable fields keep their native bindings.
 | `j` / `k` | Move down / up in the focused list or scroll a read-only lesson |
 | `gg` / `G` | Jump to the first / last focused item |
 | `Ctrl+D` / `Ctrl+U` | Scroll down / up one page |
-| `c` | Mark the current lesson complete or incomplete |
-| `o` | Toggle the course outline on narrow windows |
-| `Ctrl+K` / `/` | Search the library |
-| `:` / `Ctrl+Space` | Open the searchable command palette |
-| `?` / `F1` | Open the searchable shortcut list |
-| `Escape` | Close fullscreen or return to the Library |
+| `h` / `l` | Collapse / expand the selected outline section |
+| `Space c` | Mark the current lesson complete or incomplete |
+| `Space o` | Toggle the course outline on narrow windows |
+| `Space b` | Return to the library |
+| `/` | Search the library |
+| `:` | Open the searchable command palette |
+| `?` | Open the searchable shortcut list |
+| `Escape` | Cancel a key sequence, dismiss a popup, or leave fullscreen |
 
-The shortcut popup is intentionally searchable and grouped by context. It is
+Space is the leader key. Press the next key within two seconds, without holding
+Space. Start leader commands outside editable fields and ordinary buttons.
+Focused buttons keep their usual Space activation.
+
+The shortcut popup is searchable by command name, key or context. It is
 the source of truth for the commands currently implemented; melearner does not
 embed a Vim or Neovim editor runtime.
 
@@ -116,4 +126,4 @@ Marker files are local metadata only. They are not telemetry, sync, or remote id
 
 ## Search
 
-Use the search control or `Ctrl K` to search across courses and lessons.
+Use the search field or `/` to search across courses and lessons.
