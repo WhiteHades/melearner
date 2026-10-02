@@ -1,6 +1,7 @@
 #include "main_window.hpp"
 #include "player.hpp"
 #include "mpv_video_widget.hpp"
+#include "theme.hpp"
 #include <QDir>
 #include <QAccessible>
 #include <shadcn/navigation.hpp>
@@ -48,7 +49,7 @@ bool hasValidVideoFrame(const QImage& image) {
 class MainPlaybackTest final : public QObject {
   Q_OBJECT
 private slots:
-  void initTestCase() { Q_INIT_RESOURCE(assets); }
+  void initTestCase() { Q_INIT_RESOURCE(assets); melearner::installTheme(true, 14); }
   void playsPausesAndRestoresPosition_data() {
     QTest::addColumn<int>("fontScale");
     QTest::newRow("normal-text") << 1;
@@ -58,7 +59,10 @@ private slots:
     QFETCH(int, fontScale);
     const auto originalFont = QApplication::font();
     const auto restoreFont = qScopeGuard([originalFont] { QApplication::setFont(originalFont); });
-    auto scaledFont = originalFont; scaledFont.setPointSizeF(originalFont.pointSizeF() * fontScale); QApplication::setFont(scaledFont);
+    auto scaledFont = originalFont;
+    if (scaledFont.pixelSize() > 0) scaledFont.setPixelSize(originalFont.pixelSize() * fontScale);
+    else scaledFont.setPointSizeF(originalFont.pointSizeF() * fontScale);
+    QApplication::setFont(scaledFont);
     QTemporaryDir data;
     QVERIFY(data.isValid());
     const auto root = data.path() + "/Courses";

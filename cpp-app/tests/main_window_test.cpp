@@ -2,6 +2,7 @@
 #include "search_dialog.hpp"
 #include "pdf_view.hpp"
 #include "study_icons.hpp"
+#include "theme.hpp"
 #include <QDir>
 #include <QDialog>
 #include <QAction>
@@ -28,7 +29,7 @@
 class MainWindowTest final : public QObject {
   Q_OBJECT
 private slots:
-  void initTestCase() { Q_INIT_RESOURCE(assets); }
+  void initTestCase() { Q_INIT_RESOURCE(assets); melearner::installTheme(true, 14); }
   void iconsHaveTransparentBackgroundsAtEveryScale() {
     const auto icon = melearner::studyIcon(melearner::StudyIcon::Courses, QColor("#a72c23"));
     for (const auto mode : {QIcon::Normal, QIcon::Disabled}) {
