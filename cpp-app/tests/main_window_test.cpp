@@ -4,6 +4,7 @@
 #include "theme.hpp"
 
 #include <QDir>
+#include <QComboBox>
 #include <QDialog>
 #include <QFile>
 #include <QLabel>
@@ -177,6 +178,14 @@ private slots:
     QTest::keyClick(lessons, Qt::Key_Return);
     auto* pdf = window.findChild<PdfView*>();
     QVERIFY(pdf);
+    QTRY_VERIFY(pdf->cachedTiles() > 0);
+    auto* zoom = window.findChild<QComboBox*>("pdfZoom");
+    QVERIFY(zoom);
+    bool zoomInvalidatedTiles = false;
+    connect(zoom, &QComboBox::activated, &window, [&] { zoomInvalidatedTiles = pdf->cachedTiles() == 0; });
+    QTest::keyClick(zoom, Qt::Key_End);
+    QCOMPARE(pdf->zoomForTesting(), 64);
+    QVERIFY(zoomInvalidatedTiles);
     QTRY_VERIFY(pdf->cachedTiles() > 0);
     auto* page = window.findChild<QLineEdit*>("pdfPage");
     QVERIFY(page);

@@ -12,6 +12,9 @@ PdfView::PdfView(QWidget* parent) : QAbstractScrollArea(parent) {
   setObjectName("pdfPages"); setAccessibleName(tr("PDF pages"));
   setFocusPolicy(Qt::StrongFocus); setFrameShape(QFrame::NoFrame);
   connect(&reader_, &pdf::PdfReader::finished, this, [this](quint64 id, const pdf::Result& result) {
+    // Each reply frees a reader credit, including a superseded render. Retry
+    // visible tiles that could not be queued while the reader was full.
+    if (generation_) viewport()->update();
     if (const auto* info = std::get_if<pdf::Info>(&result)) {
       if (id != openId_) return;
       generation_ = info->generation; pages_ = info->pages; layoutPages();
@@ -95,7 +98,6 @@ void PdfView::layoutPages(int previousScaleOverride) {
     }
   }
   const int page = std::min(previousPage, static_cast<int>(pages_.size()) - 1);
-  const int previousRenderedScale = scale_;
   if (fit_) scale_ = std::clamp(qFloor((viewport()->width() - 24) * 16.0 / pages_[page].width()), 4, 64);
   tops_.clear(); int top = 12; int widest = 0;
   for (const auto& size : pages_) {
@@ -119,7 +121,7 @@ void PdfView::layoutPages(int previousScaleOverride) {
   // alone leaves every cached tile valid. Dropping them on every resize event
   // re-rendered every visible tile for each pixel of a window drag; the reader
   // only re-renders when the scale or the document actually changed.
-  if (scale_ != previousRenderedScale) {
+  if (scale_ != previousScale) {
     cache_.clear(); pending_.clear(); pendingKeys_.clear(); failedTiles_.clear();
     reader_.cancelTiles(generation_);
   }
