@@ -10,6 +10,7 @@
 #include <QPainter>
 #include <QMouseEvent>
 #include <QApplication>
+#include <QTimer>
 
 #include <thread>
 #include <new>
@@ -60,6 +61,9 @@ MpvVideoWidget::MpvVideoWidget(Player* player, QWidget* parent)
     setUpdateBehavior(QOpenGLWidget::NoPartialUpdate);
     setMinimumSize(320, 180);
     setAutoFillBackground(false);
+    singleClick_ = new QTimer(this);
+    singleClick_->setSingleShot(true);
+    connect(singleClick_, &QTimer::timeout, this, &MpvVideoWidget::clicked);
     setPlayer(player);
 }
 
@@ -93,6 +97,8 @@ void MpvVideoWidget::connectPlayer(Player* player) {
     if (player == nullptr) {
         return;
     }
+    connect(player, &Player::fileLoaded, singleClick_, &QTimer::stop);
+    connect(player, &Player::playbackEnded, singleClick_, &QTimer::stop);
     connect(player, &QObject::destroyed, this, [this] {
         player_ = nullptr;
         callbackState_->active.store(false, std::memory_order_release);
@@ -204,11 +210,21 @@ void MpvVideoWidget::mouseReleaseEvent(QMouseEvent* event) {
     const auto origin = std::exchange(clickOrigin_, std::nullopt);
     if (event->button() == Qt::LeftButton && origin && rect().contains(event->position().toPoint()) &&
         (event->position() - *origin).manhattanLength() < QApplication::startDragDistance()) {
-        emit clicked();
+        singleClick_->start(QApplication::doubleClickInterval());
         event->accept();
         return;
     }
     QOpenGLWidget::mouseReleaseEvent(event);
+}
+void MpvVideoWidget::mouseDoubleClickEvent(QMouseEvent* event) {
+    if (event->button() != Qt::LeftButton) {
+        QOpenGLWidget::mouseDoubleClickEvent(event);
+        return;
+    }
+    singleClick_->stop();
+    clickOrigin_.reset();
+    emit seekRequested(event->position().x() < width() / 2.0 ? -5000 : 5000);
+    event->accept();
 }
 
 void MpvVideoWidget::attachRenderContext() {

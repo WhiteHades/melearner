@@ -9,6 +9,7 @@
 #include <atomic>
 #include <memory>
 #include <optional>
+class QTimer;
 
 namespace melearner {
 
@@ -30,6 +31,7 @@ public:
 
 signals:
     void clicked();
+    void seekRequested(qint64 milliseconds);
     void renderContextReady();
     void renderContextLost();
     void renderError(QString code, QString message);
@@ -40,6 +42,7 @@ protected:
     void resizeGL(int width, int height) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
+    void mouseDoubleClickEvent(QMouseEvent* event) override;
 
 private:
     struct CallbackState;
@@ -61,6 +64,7 @@ private:
     bool cleaningUp_ = false;
     bool softwareRendering_ = false;
     std::optional<QPointF> clickOrigin_;
+    QTimer* singleClick_ = nullptr;
     QByteArray softwarePixels_;
     QImage softwareFrame_;
 };
