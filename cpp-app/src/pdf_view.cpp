@@ -18,7 +18,7 @@ PdfView::PdfView(QWidget* parent) : QAbstractScrollArea(parent) {
     if (const auto* info = std::get_if<pdf::Info>(&result)) {
       if (id != openId_) return;
       generation_ = info->generation; pages_ = info->pages; layoutPages();
-      emit statusChanged(tr("%1 pages").arg(pages_.size())); viewport()->update();
+      viewport()->update();
     } else if (const auto* tile = std::get_if<pdf::Tile>(&result)) {
       const auto pending = pending_.find(id);
       if (pending == pending_.end()) return;
@@ -49,7 +49,7 @@ PdfView::PdfView(QWidget* parent) : QAbstractScrollArea(parent) {
         return;
       }
       if (error->code != pdf::Error::stale && error->code != pdf::Error::cancelled) {
-        emit statusChanged(error->message);
+        emit errorOccurred(error->message);
         viewport()->update();
       }
     }
@@ -67,7 +67,7 @@ void PdfView::clear() {
 }
 void PdfView::open(const QString& root, const QString& path) {
   clear(); fit_ = true; openId_ = reader_.open(root, path);
-  emit statusChanged(openId_ ? tr("Opening PDF…") : tr("PDF reader is busy. Select the lesson again to retry."));
+  if (!openId_) emit errorOccurred(tr("PDF reader is busy. Select the lesson again to retry."));
 }
 int PdfView::currentPage() const {
   if (tops_.isEmpty()) return 0;

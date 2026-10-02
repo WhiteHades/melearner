@@ -18,7 +18,7 @@ public:
   // relayout at the same scale keeps every cached tile.
   int zoomForTesting() const { return scale_; }
 signals:
-  void statusChanged(QString message);
+  void errorOccurred(QString message);
   void pageChanged(int current, int total);
 protected:
   void paintEvent(QPaintEvent*) override;
