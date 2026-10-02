@@ -86,6 +86,9 @@ public:
     void destroyRenderContext();
     [[nodiscard]] bool renderFrame(int framebufferObject, int width, int height,
                                    int internalFormat = 0, bool flipY = true);
+    // Service decoder work and consume pending frames without drawing when
+    // the presentation widget is hidden. The same GL context must be current.
+    [[nodiscard]] bool processHiddenRenderUpdate();
     [[nodiscard]] bool hasRenderContext() const;
 
 signals:

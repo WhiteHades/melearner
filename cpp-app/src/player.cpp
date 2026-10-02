@@ -313,6 +313,25 @@ public:
         return mpv_render_context_render(context, params) >= 0;
     }
 
+    [[nodiscard]] bool processHiddenRenderUpdate() {
+        auto* context = renderContext_.load(std::memory_order_acquire);
+        if (context == nullptr) {
+            return false;
+        }
+        const auto updates = mpv_render_context_update(context);
+        if ((updates & MPV_RENDER_UPDATE_FRAME) == 0) {
+            return true;
+        }
+        int skipRendering = 1;
+        int blockForTargetTime = 0;
+        mpv_render_param params[] = {
+            {MPV_RENDER_PARAM_SKIP_RENDERING, &skipRendering},
+            {MPV_RENDER_PARAM_BLOCK_FOR_TARGET_TIME, &blockForTargetTime},
+            {MPV_RENDER_PARAM_INVALID, nullptr},
+        };
+        return mpv_render_context_render(context, params) >= 0;
+    }
+
     [[nodiscard]] bool hasRenderContext() const {
         return renderContext_.load(std::memory_order_acquire) != nullptr;
     }
@@ -1164,6 +1183,10 @@ void Player::destroyRenderContext() { impl_->destroyRenderContext(); }
 
 bool Player::renderFrame(int framebufferObject, int width, int height, int internalFormat, bool flipY) {
     return impl_->renderFrame(framebufferObject, width, height, internalFormat, flipY);
+}
+
+bool Player::processHiddenRenderUpdate() {
+    return impl_->processHiddenRenderUpdate();
 }
 
 bool Player::hasRenderContext() const { return impl_->hasRenderContext(); }
