@@ -80,12 +80,18 @@ bash scripts/test-cpp-playback.sh
 bash scripts/test-cpp-playback.sh --build-dir build/cpp-release
 ```
 
+The playback tests also require the FFmpeg command-line tool. The recovery
+test remuxes the checked-in clip into a longer temporary file without encoding
+new media, then checks error recovery, closing and resuming a lesson.
+
 The default build directory is `build/cpp-dev`; set `MELEARNER_BUILD_DIR` or
 pass `--build-dir` to select another. The runner requires `pulseaudio`, Xvfb,
 `xvfb-run`, `xauth`, Openbox, `dbus-daemon`, `pactl`, and `timeout`. It starts a
 separate Xvfb, private D-Bus, and PulseAudio null sink for each suite, redirects XDG and
 temporary data into a private `.tmp/cpp-playback` run directory, runs the test
-process with `LC_ALL=C`, and leaves `HOME` unchanged.
+process with `LC_ALL=C`, and leaves `HOME` unchanged. It selects Mesa software
+OpenGL and the Qt portal theme so desktop GTK styles and proprietary GLX
+overrides do not change the test environment.
 Each command has a 60-second limit, configurable with
 `MELEARNER_PLAYBACK_TIMEOUT_SECONDS`; logs are retained under the run directory
 and the script prints their path. The private Unix sockets live under `.tmp`,
@@ -107,6 +113,44 @@ the same private X11/audio environment. This can be used to launch an existing
 nested Wayland check; the script does not provide or start a Wayland compositor.
 Nested Wayland popup checks need input delivered by the compositor. Synthetic
 pointer movement does not certify native compositor pointer input.
+
+### Memory and undefined behavior checks
+
+The Linux sanitizer preset instruments the application, native components and
+Lexbor with AddressSanitizer and UndefinedBehaviorSanitizer. Qt, libmpv and the
+system media libraries remain uninstrumented. Use GCC or Clang:
+
+```bash
+cmake --preset linux-sanitize
+cmake --build --preset linux-sanitize --parallel 3
+export MELEARNER_PLAYBACK_TIMEOUT_SECONDS=180
+export ASAN_OPTIONS=halt_on_error=1
+export UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1
+bash scripts/test-cpp-playback.sh -- ctest --preset linux-sanitize --no-tests=error
+bash scripts/test-cpp-playback.sh -- build/cpp-sanitize/playback_render_test \
+  clearsUnloadedSurfaceToBlack repeatedlyLoadsAndClosesInEitherOrder playsWhileHidden \
+  rendersSoftwareDecodedFrames:h264 rendersSoftwareDecodedFrames:hevc-main10 \
+  rendersSoftwareDecodedFrames:multi-audio
+bash scripts/test-cpp-playback.sh -- build/cpp-sanitize/main_playback_test
+```
+
+The private runner keeps these checks off the desktop and audio devices.
+Leak detection stays enabled. Investigate reported allocations before adding
+suppressions; a passing run covers only the paths exercised by the tests.
+These playback commands select software decoding to separate application
+reports from hardware-driver allocations. The default playback suite also
+checks automatic hardware selection. Run it in the release build, then qualify
+each supported GPU and driver separately on a private display.
+
+To compare Mesa's software renderers, pass the driver to the test process:
+
+```bash
+bash scripts/test-cpp-playback.sh -- env GALLIUM_DRIVER=softpipe \
+  build/cpp-sanitize/playback_render_test playsWhileHidden
+```
+
+Record the driver with the result. A pass with `softpipe` does not qualify
+`llvmpipe` or a hardware driver.
 
 Use the source installer for the complete local check and installation:
 

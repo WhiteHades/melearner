@@ -52,13 +52,27 @@ embed a Vim or Neovim editor runtime.
 
 ## Playback Compatibility
 
-Playable lessons use the in-app native player for local files. The app should play the original file directly instead of preparing a converted playback copy first.
+Playable lessons use the in-app native player. It opens the original local file
+without creating a converted playback copy. Hardware decoding is selected
+automatically when the codec and driver support it; software decoding handles
+the fallback. Supported formats depend on the bundled media libraries and the
+available graphics drivers.
 
-If a file cannot be opened, melearner should report the local-file problem clearly and keep the rest of the library usable.
+If a file cannot be opened, the status message reports the error. Select another
+lesson from the outline to continue using the library.
+
+For a blank video or a decoder problem, close melearner and launch it from a
+terminal with `melearner --software-decoding`. This skips hardware decoder probes
+but still uses OpenGL to display the video. It does not bypass a broken graphics
+driver or repair a damaged media file.
 
 ## Progress
 
 Progress saves automatically to local SQLite. The app keeps the last position and completion state for each lesson.
+
+Continue learning prefers an unfinished lesson with saved progress. When no
+unfinished lesson has progress, it opens the first unfinished lesson in course
+order. A course with every lesson completed opens from the beginning.
 
 Course identity uses local database IDs and content fingerprints, not just absolute paths. If you rename or move a course folder and scan it again, melearner tries to reconnect the course and its lessons to the existing progress.
 
