@@ -615,11 +615,14 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   connect(&documents_, &melearner::documents::Documents::opened, this,
     [this](quint64 id, const melearner::documents::PageResult& result) {
       if (id != documentRequestId_ || !lesson_) return;
-      if (result.error) { documentStatus_->setText(result.error->message); documentView_->hide(); return; }
+      documentRequestId_ = 0;
+      if (result.error) { documentStatus_->setText(result.error->message); return; }
       if (!result.page || result.page->path != lesson_->path) return;
       const auto& page = *result.page;
       documentGeneration_ = page.generation; documentNextOffset_ = page.offset + page.blocks.size();
-      if (documentOffsets_.isEmpty() || documentOffsets_.last() != page.offset) documentOffsets_.append(page.offset);
+      const auto previous = documentOffsets_.indexOf(page.offset);
+      if (previous >= 0) documentOffsets_.resize(previous + 1);
+      else documentOffsets_.append(page.offset);
       documentPrevious_->setEnabled(documentOffsets_.size() > 1);
       documentNext_->setEnabled(documentNextOffset_ < page.totalBlocks);
       // The lesson body is the library's prose surface, so the type scale, the block
@@ -645,15 +648,11 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
         showError(tr("Your system could not open %1. Install an app for this document type.").arg(lesson_->name));
     });
   connect(documentNext_, &QPushButton::clicked, this, [this] {
-    if (!lesson_ || documentGeneration_ == 0) return;
-    const auto id = documents_.page(documentGeneration_, lesson_->path, documentNextOffset_);
-    if (id) documentRequestId_ = id; else showError(tr("Document reader is busy. Try again shortly."));
+    requestDocumentPage(documentNextOffset_);
   });
   connect(documentPrevious_, &QPushButton::clicked, this, [this] {
     if (!lesson_ || documentOffsets_.size() < 2) return;
-    const auto id = documents_.page(documentGeneration_, lesson_->path, documentOffsets_[documentOffsets_.size() - 2]);
-    if (id) { documentOffsets_.removeLast(); documentRequestId_ = id; }
-    else showError(tr("Document reader is busy. Try again shortly."));
+    requestDocumentPage(documentOffsets_[documentOffsets_.size() - 2]);
   });
   connect(&library_, &lib::Library::coursesReady, this, [this](auto id, const lib::CoursePage& page) {
     const auto found = courseRequests_.find(id); if (found == courseRequests_.end()) return;
@@ -1235,6 +1234,12 @@ void MainWindow::showLesson(const lib::Lesson& lesson) {
     if (!documentRequestId_) documentStatus_->setText(tr("Document reader is busy. Select the lesson again to retry."));
   }
 }
+void MainWindow::requestDocumentPage(qsizetype offset) {
+  if (!lesson_ || documentGeneration_ == 0 || documentRequestId_) return;
+  const auto id = documents_.page(documentGeneration_, lesson_->path, offset);
+  if (id) documentRequestId_ = id;
+  else showError(tr("Document reader is busy. Try again shortly."));
+}
 void MainWindow::loadSelectedMedia() {
   if (!lesson_ || (lesson_->type != "video" && lesson_->type != "audio") || !player_->isReady() ||
       !video_->isRenderContextReady() || playerLoadRequested_) return;
@@ -1377,26 +1382,8 @@ void MainWindow::applyAppearance() {
   // have to be asked again.
   refreshRowIcons();
   courseModel_->refreshRowIcons();
-  // The shadcn style owns the palette, the focus ring, the scrollbars and every
-  // control, so this is an install rather than a repaint.
-  //
-  // There is one colour mode. A reader spends a long time with a lesson body in
-  // front of them, and dark is the right surface for that: a bright page in a dark
-  // room is a light source pointed at the reader's face. A second mode was offered
-  // and taken by nobody, and it cost every screenshot a second capture, every theme
-  // check a second case, and every component two chances to wear the other mode's
-  // colours by accident.
-  //
-  // The stored setting is deliberately not read. An existing database holds "light"
-  // from when the setting existed, and honouring it would open the application on
-  // the surface that was just removed. Writing "dark" back keeps the row honest for
-  // anything that still reads it, without a schema migration.
-  if (settings_.appearance != QLatin1String("dark")) {
-    auto changed = settings_;
-    changed.appearance = QStringLiteral("dark");
-    settings_ = changed;
-    trackMutation(library_.setSettings(changed));
-  }
+  // The current schema stores only dark appearance. shadcn owns the palette,
+  // focus rings, scrollbars and controls.
   melearner::installTheme(true);
   // Icons take their colour from the theme role that matches where they sit, so
   // they follow a colour mode switch instead of holding a baked-in colour.

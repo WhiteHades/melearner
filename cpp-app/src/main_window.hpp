@@ -137,6 +137,7 @@ private:
   quint64 documentGeneration_ = 0;
   qsizetype documentNextOffset_ = 0;
   QList<qsizetype> documentOffsets_;
+  void requestDocumentPage(qsizetype offset);
   shadcn::Button* play_;
   shadcn::Slider* seek_;
   shadcn::Label* time_;
