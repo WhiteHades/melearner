@@ -1,0 +1,177 @@
+name: manual Windows C++ build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: manual-cpp-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Windows build and core workflow
+    runs-on: windows-2025
+    timeout-minutes: 180
+    env:
+      VCPKG_ROOT: C:\v
+      VCPKG_DEFAULT_BINARY_CACHE: C:\vcache\archives
+      VCPKG_MAX_CONCURRENCY: 2
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: install pinned CMake
+        shell: pwsh
+        run: |
+          Get-PSDrive -PSProvider FileSystem | Format-Table Name, Used, Free
+          $archive = Join-Path $env:RUNNER_TEMP 'cmake.zip'
+          $tools = Join-Path $env:RUNNER_TEMP 'melearner-tools'
+          Invoke-WebRequest 'https://github.com/Kitware/CMake/releases/download/v4.4.4/cmake-4.4.4-windows-x86_64.zip' -OutFile $archive
+          $hash = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
+          if ($hash -ne 'bace36e94b31c68ab6fa295f26dfa11219e0701cf7c94b0284a7d1cb13dac536') {
+            throw 'CMake archive SHA-256 mismatch'
+          }
+          Expand-Archive $archive -DestinationPath $tools
+          $bin = Join-Path $tools 'cmake-4.4.4-windows-x86_64\bin'
+          "$bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          "MELEARNER_CMAKE=$bin\cmake.exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "MELEARNER_CTEST=$bin\ctest.exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          & "$bin\cmake.exe" --version
+      - name: restore vcpkg binary archives
+        id: vcpkg-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: C:\vcache\archives
+          key: windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v1
+      - name: bootstrap pinned vcpkg and install dependencies
+        id: dependencies
+        shell: pwsh
+        run: |
+          git clone --filter=blob:none https://github.com/microsoft/vcpkg.git C:\v
+          git -C C:\v checkout 3cbc1db4d867ec83c89fba4c461321c11f78b5e3
+          $tripletDir = 'C:\vcache\triplets'
+          New-Item -ItemType Directory -Force $tripletDir | Out-Null
+          New-Item -ItemType Directory -Force $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+          @"
+          set(VCPKG_TARGET_ARCHITECTURE x64)
+          set(VCPKG_CRT_LINKAGE dynamic)
+          set(VCPKG_LIBRARY_LINKAGE dynamic)
+          set(VCPKG_BUILD_TYPE release)
+          "@ | Set-Content -Encoding ascii (Join-Path $tripletDir 'x64-windows-release.cmake')
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $vs = & $vswhere -latest -products '*' -property installationPath
+          if (-not $vs) { throw 'Visual Studio installation was not found' }
+          Import-Module (Join-Path $vs 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
+          Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
+          & C:\v\bootstrap-vcpkg.bat -disableMetrics
+          if ($LASTEXITCODE -ne 0) { throw 'vcpkg bootstrap failed' }
+          & C:\v\vcpkg.exe install qtbase qtwebengine qttools sqlite3 libzip md4c ffmpeg pkgconf `
+            --triplet x64-windows-release --overlay-triplets=$tripletDir
+          if ($LASTEXITCODE -ne 0) { throw 'vcpkg dependency installation failed' }
+      - name: measure binary archive cache size
+        if: success() && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        id: cache-budget
+        shell: pwsh
+        run: |
+          $bytes = (Get-ChildItem C:\vcache\archives -File -Recurse -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
+          if ($null -eq $bytes) { $bytes = 0 }
+          Write-Host "Compressed vcpkg archive cache size: $bytes bytes"
+          if ($bytes -le 4294967296) {
+            "cacheable=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          } else {
+            Write-Host 'Skipping cache save because compressed archives exceed 4 GiB.'
+            "cacheable=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          }
+      - name: save vcpkg binary archives
+        if: success() && steps.cache-budget.outputs.cacheable == 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: C:\vcache\archives
+          key: windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v1
+      - name: fetch and prepare the pinned mpv development SDK
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $vs = & $vswhere -latest -products '*' -property installationPath
+          if (-not $vs) { throw 'Visual Studio installation was not found' }
+          Import-Module (Join-Path $vs 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
+          Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
+          $sdkUrl = 'https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20261003/mpv-dev-x86_64-20261003-git-3186d369f9.7z'
+          $sdkArchive = 'C:\v\mpv-dev.7z'
+          $sdkRoot = 'C:\v\mpv-sdk'
+          Invoke-WebRequest -Uri $sdkUrl -OutFile $sdkArchive
+          $actualHash = (Get-FileHash -Algorithm SHA256 $sdkArchive).Hash.ToLowerInvariant()
+          $expectedHash = 'b8c2d656c1584d5f08196fcee5c2d0783d1f76021897c4e0b3cc30f94c79522e'
+          if ($actualHash -ne $expectedHash) { throw "mpv SDK SHA-256 mismatch: $actualHash" }
+          $sevenZip = Get-Command 7z.exe -ErrorAction Stop
+          & $sevenZip.Source x $sdkArchive "-o$sdkRoot" -y
+          if ($LASTEXITCODE -ne 0) { throw 'mpv SDK extraction failed' }
+          $header = Get-ChildItem $sdkRoot -Filter client.h -Recurse | Where-Object { $_.FullName -match '[\\/]include[\\/]mpv[\\/]client\.h$' } | Select-Object -First 1
+          $dll = Get-ChildItem $sdkRoot -Filter libmpv-2.dll -Recurse | Select-Object -First 1
+          if (-not $header -or -not $dll) { throw 'mpv SDK is missing include/mpv/client.h or libmpv-2.dll' }
+          $sdkDir = $header.Directory.Parent.Parent.FullName
+          $libDir = Join-Path $sdkDir 'lib'
+          New-Item -ItemType Directory -Force $libDir | Out-Null
+          $exports = & dumpbin /nologo /exports $dll.FullName
+          if ($LASTEXITCODE -ne 0) { throw 'dumpbin could not read mpv DLL exports' }
+          $names = foreach ($line in $exports) {
+            if ($line -match '^\s+\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]+\s+(\S+)') { $Matches[1] }
+          }
+          if (-not $names) { throw 'mpv DLL export list was empty' }
+          $defFile = Join-Path $libDir 'libmpv.def'
+          @('LIBRARY libmpv-2.dll', 'EXPORTS') + $names | Set-Content -Encoding ascii $defFile
+          $importLibrary = Join-Path $libDir 'mpv.lib'
+          & lib.exe /nologo "/def:$defFile" /machine:x64 "/out:$importLibrary"
+          if ($LASTEXITCODE -ne 0) { throw 'MSVC mpv import library generation failed' }
+          $pcDir = Join-Path $libDir 'pkgconfig'
+          New-Item -ItemType Directory -Force $pcDir | Out-Null
+          $prefix = $sdkDir.Replace('\', '/')
+          @"
+          prefix=$prefix
+          exec_prefix=`${prefix}
+          libdir=`${prefix}/lib
+          includedir=`${prefix}/include
+
+          Name: mpv
+          Description: libmpv Windows SDK
+          Version: 2.5.0
+          Libs: -L`${libdir} -lmpv
+          Cflags: -I`${includedir}
+          "@ | Set-Content -Encoding ascii (Join-Path $pcDir 'mpv.pc')
+          "MPV_SDK=$sdkDir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "MPV_DLL=$($dll.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: build and run the core workflow test
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $vs = & $vswhere -latest -products '*' -property installationPath
+          if (-not $vs) { throw 'Visual Studio installation was not found' }
+          Import-Module (Join-Path $vs 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
+          Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
+          $vcpkgInstalled = 'C:\v\installed\x64-windows-release'
+          $pkgconf = Join-Path $vcpkgInstalled 'tools\pkgconf\pkgconf.exe'
+          if (-not (Test-Path $pkgconf)) { throw "pkgconf not found at $pkgconf" }
+          $env:PKG_CONFIG_PATH = "$env:MPV_SDK\lib\pkgconfig;$vcpkgInstalled\lib\pkgconfig;$vcpkgInstalled\share\pkgconfig"
+          $env:Path = "$env:MPV_SDK\bin;$vcpkgInstalled\bin;$env:Path"
+          & $pkgconf --exists mpv libzip md4c md4c-html libavformat libavcodec libavutil libswscale
+          if ($LASTEXITCODE -ne 0) { throw 'pkgconf dependency validation failed' }
+          & $env:MELEARNER_CMAKE -S . -B build\manual-windows -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON `
+            -DCMAKE_TOOLCHAIN_FILE=C:\v\scripts\buildsystems\vcpkg.cmake `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-release `
+            -DVCPKG_OVERLAY_TRIPLETS=C:\vcache\triplets `
+            -DPKG_CONFIG_EXECUTABLE="$pkgconf"
+          if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed' }
+          & $env:MELEARNER_CMAKE --build build\manual-windows --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'CMake build failed' }
+          $testExe = (Resolve-Path 'build\manual-windows\main_window_test.exe').Path
+          $windeployqt = Get-ChildItem $vcpkgInstalled -Filter windeployqt.exe -Recurse | Select-Object -First 1
+          if (-not $windeployqt) { throw 'windeployqt.exe not found in the vcpkg Qt tools' }
+          & $windeployqt.FullName --release --compiler-runtime --webenginewidgets $testExe
+          if ($LASTEXITCODE -ne 0) { throw 'windeployqt failed for core workflow test' }
+          Copy-Item $env:MPV_DLL (Split-Path $testExe) -Force
+          $env:Path = "$(Split-Path $testExe);$env:Path"
+          & $env:MELEARNER_CTEST --test-dir build\manual-windows --output-on-failure -R '^core_workflow$'
+          if ($LASTEXITCODE -ne 0) { throw 'core workflow test failed' }

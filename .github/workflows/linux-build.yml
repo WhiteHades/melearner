@@ -1,0 +1,120 @@
+name: Linux build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Homebrew
+        run: |
+          brew_prefix=/home/linuxbrew/.linuxbrew
+          test -x "$brew_prefix/bin/brew"
+          echo "$brew_prefix/bin" >> "$GITHUB_PATH"
+          echo "$brew_prefix/sbin" >> "$GITHUB_PATH"
+          "$brew_prefix/bin/brew" --version
+
+      - name: Cache Homebrew downloads
+        id: homebrew-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/Homebrew/downloads
+          key: linux-homebrew-qtwebengine-6.11.2-b1da138e3f32273bbce7d1c9872b1014921beb16fab49e3c9bdd269f71db0a3f-v1
+
+      - name: Verify pinned Qt WebEngine bottle
+        run: |
+          brew info --json=v2 qtwebengine | jq --exit-status \
+            --arg version '6.11.2' \
+            --arg sha 'b1da138e3f32273bbce7d1c9872b1014921beb16fab49e3c9bdd269f71db0a3f' \
+            'any(.formulae[]; .versions.stable == $version and .bottle.stable.files.x86_64_linux.sha256 == $sha)'
+
+      - name: Install build dependencies
+        run: |
+          brew install --force-bottle \
+            qtwebengine gcc cmake meson ninja pkgconf \
+            libzip md4c ffmpeg libplacebo libass lua sqlite \
+            libva libvdpau libdrm pipewire pulseaudio alsa-lib wayland mesa \
+            libx11 libxrandr libxpresent libxfixes libxv libxext \
+            libxcomposite libxdamage libxrender libxkbcommon libxcb \
+            xorgproto libxcursor libxi libxshmfence libxscrnsaver
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libffmpeg-nvenc-dev
+
+      - name: Check Homebrew download cache size
+        id: downloads-size
+        run: |
+          size_bytes="$(du -sb "$HOME/.cache/Homebrew/downloads" | cut -f1)"
+          if (( size_bytes <= 2147483648 )); then
+            echo 'within_limit=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'within_limit=false' >> "$GITHUB_OUTPUT"
+          fi
+          if (( size_bytes > 2147483648 )); then
+            echo "Homebrew downloads exceed the 2 GiB cache budget; skipping cache save."
+          fi
+
+      - name: Save Homebrew downloads cache
+        if: steps.homebrew-cache.outputs.cache-hit != 'true' && steps.downloads-size.outputs.within_limit == 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/Homebrew/downloads
+          key: linux-homebrew-qtwebengine-6.11.2-b1da138e3f32273bbce7d1c9872b1014921beb16fab49e3c9bdd269f71db0a3f-v1
+
+      - name: Configure
+        run: |
+          gcc_prefix="$(brew --prefix gcc)"
+          gcc_major="$(brew info --json=v2 gcc | jq -r '.formulae[0].versions.stable | split(".")[0]')"
+          export CC="$gcc_prefix/bin/gcc-$gcc_major"
+          export CXX="$gcc_prefix/bin/g++-$gcc_major"
+          echo "CC=$CC" >> "$GITHUB_ENV"
+          echo "CXX=$CXX" >> "$GITHUB_ENV"
+          pkgconfig_paths=
+          for formula in \
+            ffmpeg libplacebo libass libzip md4c lua libva libvdpau libdrm \
+            pipewire pulseaudio alsa-lib wayland mesa libx11 libxrandr \
+            libxpresent libxfixes libxv libxext libxcomposite libxdamage \
+            libxrender libxkbcommon libxcb xorgproto libxcursor libxi \
+            libxshmfence libxscrnsaver; do
+            formula_prefix="$(brew --prefix "$formula")"
+            pkgconfig_paths="${pkgconfig_paths:+$pkgconfig_paths:}$formula_prefix/lib/pkgconfig:$formula_prefix/share/pkgconfig"
+          done
+          export PKG_CONFIG_PATH="$pkgconfig_paths:/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig"
+          echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH" >> "$GITHUB_ENV"
+          library_paths=
+          while IFS= read -r formula; do
+            formula_prefix="$(brew --prefix "$formula")"
+            for libdir in lib lib64; do
+              if [[ -d "$formula_prefix/$libdir" ]]; then
+                library_paths="${library_paths:+$library_paths:}$formula_prefix/$libdir"
+              fi
+            done
+          done < <(brew list --formula)
+          gcc_libdir="$gcc_prefix/lib/gcc/$gcc_major"
+          export LD_LIBRARY_PATH="$gcc_libdir:$library_paths${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH" >> "$GITHUB_ENV"
+          cmake -S . -B build/linux -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON \
+            -DCMAKE_C_COMPILER="$CC" \
+            -DCMAKE_CXX_COMPILER="$CXX" \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix);$(brew --prefix qtbase);$(brew --prefix qtwebengine);$(brew --prefix sqlite)"
+
+      - name: Build
+        run: cmake --build build/linux --parallel 3
+
+      - name: Run core workflow test
+        run: ctest --test-dir build/linux --output-on-failure -R '^core_workflow$'
