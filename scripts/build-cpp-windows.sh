@@ -13,6 +13,8 @@ usage: bash scripts/build-cpp-windows.sh [--build-dir <path>] [--jobs <count>] [
 Configure and build melearner in the MSYS2 UCRT64 shell, then run every test
 registered by CMake. The OpenGL playback E2E is a build target only and
 is launched separately with --run-playback.
+This legacy path is unqualified for the current WebEngine document viewer;
+see docs/windows-development.md for the native MSVC requirement.
 EOF
 }
 
@@ -59,6 +61,9 @@ for tool in cmake ctest ninja gcc g++ pkg-config; do
   command -v "$tool" >/dev/null 2>&1 ||
     fail "Missing UCRT64 build tool: $tool"
 done
+
+pkg-config --print-errors --exists Qt6WebEngineWidgets ||
+  fail "Qt WebEngine is required for documents. The current MSYS2 MinGW path cannot supply it; a native MSVC build is needed. See docs/windows-development.md."
 
 if [[ "$run_playback" == true ]]; then
   command -v ffmpeg >/dev/null 2>&1 ||
