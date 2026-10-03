@@ -8,6 +8,11 @@ on:
         type: boolean
         required: false
         default: false
+      package:
+        description: Build and retain a diagnostic Windows installer and its notices
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -392,3 +397,43 @@ jobs:
             Get-Content $stderr -ErrorAction SilentlyContinue
             $process.Dispose()
           }
+      - name: collect Windows runtime notices and build the installer
+        if: inputs.package
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $vs = & $vswhere -latest -products '*' -property installationPath
+          if (-not $vs) { throw 'Visual Studio installation was not found' }
+          Import-Module (Join-Path $vs 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
+          Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path -LiteralPath $iscc -PathType Leaf)) { throw 'Inno Setup 6 ISCC.exe is not installed on this runner' }
+          $env:Path = "$(Split-Path $iscc);$env:MELEARNER_QT_ROOT\bin;D:\v\mpv-sdk\bin;D:\v\installed\x64-windows-release\bin;$env:Path"
+          & pwsh -NoProfile -File scripts/collect-cpp-windows-notices.ps1 `
+            -BuildDir build/manual-windows -VcpkgRoot D:\v -MpvSdk D:\v\mpv-sdk `
+            -MpvArchive D:\v\mpv-dev.7z -QtRoot $env:MELEARNER_QT_ROOT `
+            -OutputDir .tmp/manual-ci/windows-legal
+          if ($LASTEXITCODE -ne 0) { throw 'Windows legal notices collection failed' }
+          $versionMatch = [regex]::Match((Get-Content CMakeLists.txt -Raw), 'project\(melearner VERSION ([0-9]+\.[0-9]+\.[0-9]+)')
+          if (-not $versionMatch.Success) { throw 'Could not determine the installer version' }
+          $installer = "dist/melearner-$($versionMatch.Groups[1].Value)-setup.exe"
+          & pwsh -NoProfile -File scripts/package-cpp-windows.ps1 `
+            -BuildDir build/manual-windows -QtRoot $env:MELEARNER_QT_ROOT `
+            -VcpkgBin D:\v\installed\x64-windows-release\bin -MpvBin D:\v\mpv-sdk\bin `
+            -LegalRoot .tmp/manual-ci/windows-legal -Version $versionMatch.Groups[1].Value -Output $installer
+          if ($LASTEXITCODE -ne 0) { throw 'Windows installer build failed' }
+          $installerPath = (Resolve-Path $installer).Path
+          $hash = (Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $(Split-Path $installerPath -Leaf)" | Set-Content -Encoding ascii "${installerPath}.sha256"
+      - name: upload diagnostic Windows installer and evidence
+        if: ${{ always() && inputs.package }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: melearner-windows-diagnostic-installer
+          path: |
+            dist/melearner-*-setup.exe
+            dist/melearner-*-setup.exe.sha256
+            .tmp/manual-ci/windows-legal
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 3
