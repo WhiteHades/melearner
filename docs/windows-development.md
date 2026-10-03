@@ -11,7 +11,10 @@ the current app. See [Qt WebEngine platform requirements](https://doc.qt.io/qt-6
 
 Prepare a native MSVC environment with a matching Qt kit and compatible builds
 of SQLite, libmpv, libzip, md4c and FFmpeg. CMake also consumes the pinned Lexbor
-and shadcn sources. The [manual Windows workflow](ci.md) installs a pinned native
+and shadcn sources. SQLite must include FTS5 because the library schema uses it
+for course and lesson search. The workflow explicitly installs `sqlite3[fts5]`;
+the default vcpkg SQLite build does not include that feature.
+The [manual Windows workflow](ci.md) installs a pinned native
 toolchain and builds the required libraries. It downloads the official Qt 6.11.2
 MSVC SDK, including PDF and WebEngine, with pinned SHA256 checks. Qt is not
 compiled from source. The SDK archives are cached separately before building the
