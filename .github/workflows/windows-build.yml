@@ -162,8 +162,9 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: D:\vcache\archives
-          key: windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v6
+          key: windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v7
           restore-keys: |
+            windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v6
             windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v6-partial-
             windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v5
             windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v5-partial-
@@ -195,7 +196,7 @@ jobs:
           Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
           & D:\v\bootstrap-vcpkg.bat -disableMetrics
           if ($LASTEXITCODE -ne 0) { throw 'vcpkg bootstrap failed' }
-          & D:\v\vcpkg.exe install 'sqlite3[fts5]' libzip md4c 'ffmpeg[core,avcodec,avformat,avfilter,swscale,swresample]' libass vulkan-loader pkgconf `
+          & D:\v\vcpkg.exe install 'sqlite3[fts5]' libzip md4c 'ffmpeg[core,avcodec,avformat,avfilter,swscale,swresample]' libass luajit vulkan-loader pkgconf `
             --triplet x64-windows-release --host-triplet x64-windows-release --overlay-triplets=$tripletDir `
             --clean-buildtrees-after-build --clean-packages-after-build
           if ($LASTEXITCODE -ne 0) { throw 'vcpkg dependency installation failed' }
@@ -218,7 +219,7 @@ jobs:
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: D:\vcache\archives
-          key: windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-${{ steps.dependencies.outcome == 'success' && 'v6' || format('v6-partial-{0}', github.run_id) }}
+          key: windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-${{ steps.dependencies.outcome == 'success' && 'v7' || format('v7-partial-{0}', github.run_id) }}
       - name: install pinned Meson build tools
         shell: pwsh
         run: |

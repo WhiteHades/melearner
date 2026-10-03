@@ -134,7 +134,9 @@ $buildOptions = @(
   '-Ddefault_library=shared', '-Dgpl=true', '-Dcplayer=false', '-Dlibmpv=true',
   '-Dtests=false', '-Dfuzzers=false', '-Dlibavdevice=disabled', '-Dlibarchive=disabled',
   '-Dlibbluray=disabled', '-Dcdda=disabled', '-Ddvbin=disabled', '-Ddvdnav=disabled',
-  '-Dvapoursynth=disabled', '-Dcplugins=disabled', '-Dlua=disabled', '-Djavascript=disabled',
+  # Keep the standard options that the app explicitly turns off at startup.
+  # Script loading, the OSC and online video hooks remain disabled by the app.
+  '-Dvapoursynth=disabled', '-Dcplugins=disabled', '-Dlua=enabled', '-Djavascript=disabled',
   '-Dwasapi=enabled', '-Dwin32-threads=enabled', '-Dplain-gl=enabled', '-Dgl=enabled',
   '-Dgl-win32=enabled', '-Dd3d-hwaccel=enabled', '-Dd3d9-hwaccel=enabled',
   '-Dwin32-smtc=enabled', '-Dmanpage-build=disabled', '-Dhtml-build=disabled', '-Dpdf-build=disabled'
