@@ -80,7 +80,8 @@ $stage = Join-Path ([IO.Path]::GetTempPath()) ("melearner-windows-" + [guid]::Ne
 New-Item -ItemType Directory -Path $stage | Out-Null
 try {
   Copy-Item -LiteralPath $appExe -Destination (Join-Path $stage 'melearner.exe')
-  & $windeployqt --release --no-compiler-runtime --webenginewidgets (Join-Path $stage 'melearner.exe')
+  # Local course documents do not use GPS/NMEA positioning backends.
+  & $windeployqt --release --no-compiler-runtime --skip-plugin-types position --webenginewidgets (Join-Path $stage 'melearner.exe')
   if ($LASTEXITCODE -ne 0) { throw 'windeployqt failed while staging the application.' }
 
   # Release windeployqt copies vc_redist.exe, not app-local CRT libraries.
@@ -116,6 +117,13 @@ try {
   # too, since media and mpv DLLs have their own runtime dependencies.
   $system32 = Join-Path $env:SystemRoot 'System32'
   $searchRoots = @($stage, (Join-Path $qtPath 'bin'), $vcpkgPath, $mpvPath, $system32)
+  $runtimeFiles = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
+  foreach ($root in $searchRoots) {
+    $files = if ($root -eq $system32) { Get-ChildItem -LiteralPath $root -File -Filter '*.dll' } else { Get-ChildItem -LiteralPath $root -File -Filter '*.dll' -Recurse }
+    foreach ($file in $files) {
+      if (-not $runtimeFiles.ContainsKey($file.Name)) { $runtimeFiles.Add($file.Name, $file.FullName) }
+    }
+  }
   $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
   $pending = [Collections.Generic.Queue[string]]::new()
   Get-ChildItem $stage -Filter '*.dll' -File -Recurse | ForEach-Object { $pending.Enqueue($_.FullName) }
@@ -130,15 +138,13 @@ try {
       $dependency = $Matches[1]
       if ($dependency -match '^(api|ext)-ms-') { continue }
       $resolved = $null
-      foreach ($root in $searchRoots) {
-        $candidate = Get-ChildItem -LiteralPath $root -Filter $dependency -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($candidate) { $resolved = $candidate.FullName; break }
-      }
+      [void]$runtimeFiles.TryGetValue($dependency, [ref]$resolved)
       if (-not $resolved) { throw "Unresolved runtime DLL: $($binary | Split-Path -Leaf) -> $dependency" }
       if ([string]::Equals((Split-Path $resolved -Parent), $system32, [StringComparison]::OrdinalIgnoreCase)) { continue }
       if ((Split-Path $resolved -Parent) -ne $stage) {
         $destination = Join-Path $stage $dependency
         if (-not (Test-Path -LiteralPath $destination)) { Copy-Item -LiteralPath $resolved -Destination $destination }
+        $runtimeFiles[$dependency] = $destination
         $pending.Enqueue($destination)
       }
     }

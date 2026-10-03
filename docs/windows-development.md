@@ -58,6 +58,8 @@ the remaining DLL dependencies separately. Include the official compiler
 runtime libraries in the installer rather than asking users to install them.
 The packager copies the x64 CRT DLLs from the active MSVC developer shell's
 `VCToolsRedistDir`. It does not run `vc_redist.exe` or request administrator access.
+GPS positioning plugins are not deployed. The local document viewer does not use
+them. All remaining DLL imports must resolve within the bundle or Windows itself.
 See [Qt Windows deployment](https://doc.qt.io/qt-6.11/windows-deployment.html).
 
 `scripts/package-cpp-windows.ps1` normalizes Windows cache line endings before
