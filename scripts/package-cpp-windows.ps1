@@ -80,8 +80,18 @@ $stage = Join-Path ([IO.Path]::GetTempPath()) ("melearner-windows-" + [guid]::Ne
 New-Item -ItemType Directory -Path $stage | Out-Null
 try {
   Copy-Item -LiteralPath $appExe -Destination (Join-Path $stage 'melearner.exe')
-  & $windeployqt --release --compiler-runtime --webenginewidgets (Join-Path $stage 'melearner.exe')
+  & $windeployqt --release --no-compiler-runtime --webenginewidgets (Join-Path $stage 'melearner.exe')
   if ($LASTEXITCODE -ne 0) { throw 'windeployqt failed while staging the application.' }
+
+  # Release windeployqt copies vc_redist.exe, not app-local CRT libraries.
+  # Use the active MSVC toolchain's redistributable DLLs for a per-user install
+  # that requires neither elevation nor a separate runtime setup program.
+  if (-not $env:VCToolsRedistDir) { throw 'The MSVC developer shell did not provide VCToolsRedistDir.' }
+  $crtRoots = @(Get-ChildItem -LiteralPath (Join-Path $env:VCToolsRedistDir 'x64') -Directory -Filter 'Microsoft.VC*.CRT')
+  if ($crtRoots.Count -ne 1) { throw 'Expected one x64 MSVC redistributable CRT directory in the active toolchain.' }
+  $crtDLLs = @(Get-ChildItem -LiteralPath $crtRoots[0].FullName -File -Filter '*.dll')
+  if (-not $crtDLLs.Count) { throw 'The active MSVC redistributable CRT directory contains no DLLs.' }
+  $crtDLLs | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $stage }
 
   foreach ($name in @('libmpv-2.dll', 'vulkan-1.dll')) {
     $source = if ($name -eq 'libmpv-2.dll') { Join-Path $mpvPath $name } else { Join-Path $vcpkgPath $name }

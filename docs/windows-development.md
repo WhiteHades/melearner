@@ -56,6 +56,8 @@ WebEngine helper and resources, required media and database libraries, fonts
 and license notices. Use windeployqt to collect Qt dependencies, then inspect
 the remaining DLL dependencies separately. Include the official compiler
 runtime libraries in the installer rather than asking users to install them.
+The packager copies the x64 CRT DLLs from the active MSVC developer shell's
+`VCToolsRedistDir`. It does not run `vc_redist.exe` or request administrator access.
 See [Qt Windows deployment](https://doc.qt.io/qt-6.11/windows-deployment.html).
 
 `scripts/package-cpp-windows.ps1` normalizes Windows cache line endings before
