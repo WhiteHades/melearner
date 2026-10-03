@@ -1,4 +1,5 @@
 #include <QCryptographicHash>
+#include <QCoreApplication>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
@@ -7,6 +8,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
+#include <QProcess>
+#include <QProcessEnvironment>
 #include <QSet>
 #include <QStringList>
 
@@ -46,6 +49,31 @@ bool sha256Text(const QString& value) {
               || (character >= QLatin1Char('a') && character <= QLatin1Char('f')))) return false;
     }
     return true;
+}
+
+void validateInterpreter(const QFileInfo& binary) {
+    QProcess readelf;
+    auto environment = QProcessEnvironment::systemEnvironment();
+    environment.insert(QStringLiteral("LC_ALL"), QStringLiteral("C"));
+    readelf.setProcessEnvironment(environment);
+    readelf.start(QStringLiteral("readelf"),
+                  {QStringLiteral("--program-headers"), QStringLiteral("--wide"), binary.filePath()});
+    if (!readelf.waitForStarted(10000) || !readelf.waitForFinished(10000)
+        || readelf.exitStatus() != QProcess::NormalExit || readelf.exitCode() != 0) {
+        readelf.kill();
+        readelf.waitForFinished(1000);
+        fail(QStringLiteral("cannot inspect the staged ELF interpreter: %1").arg(binary.filePath()));
+    }
+    int interpreters = 0;
+    for (const auto& line : QString::fromUtf8(readelf.readAllStandardOutput()).split(QLatin1Char('\n'))) {
+        const auto trimmed = line.trimmed();
+        if (!trimmed.startsWith(QStringLiteral("[Requesting program interpreter:"))) continue;
+        if (trimmed != QStringLiteral("[Requesting program interpreter: /lib64/ld-linux-x86-64.so.2]")) {
+            fail(QStringLiteral("staged executable does not use the standard system ELF interpreter: %1").arg(binary.filePath()));
+        }
+        ++interpreters;
+    }
+    if (interpreters != 1) fail(QStringLiteral("staged executable must have exactly one system ELF interpreter: %1").arg(binary.filePath()));
 }
 
 QSet<QString> validateInventory(const QString& stage, const QString& usrRoot) {
@@ -116,6 +144,8 @@ void validate(const QString& stage, bool appImage) {
     const auto webengineHelper = requireFile(stage, QStringLiteral("usr/libexec/QtWebEngineProcess"), QStringLiteral("QtWebEngineProcess helper"));
     requireFile(stage, QStringLiteral("usr/share/doc/melearner/qtwebengine/LICENSE.chromium"), QStringLiteral("Qt WebEngine provider notice"));
     if (!webengineHelper.isExecutable()) fail(QStringLiteral("staged QtWebEngineProcess is not executable: %1").arg(webengineHelper.filePath()));
+    validateInterpreter(binary);
+    validateInterpreter(webengineHelper);
     for (const auto& resource : {QStringLiteral("qtwebengine_resources.pak"), QStringLiteral("qtwebengine_resources_100p.pak"), QStringLiteral("qtwebengine_resources_200p.pak"), QStringLiteral("v8_context_snapshot.bin")}) {
         requireFile(stage, QStringLiteral("usr/share/qt6/resources/") + resource, QStringLiteral("Qt WebEngine resource"));
     }
@@ -282,6 +312,7 @@ void validate(const QString& stage, bool appImage) {
 } // namespace
 
 int main(int argc, char** argv) {
+    QCoreApplication application(argc, argv);
     const bool appImage = argc == 3 && QString::fromLocal8Bit(argv[2]) == QStringLiteral("--appimage");
     if (argc != 2 && !appImage) {
         std::cerr << "usage: validate_stage <stage-directory> [--appimage]\n";

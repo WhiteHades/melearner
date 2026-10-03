@@ -630,6 +630,20 @@ function(_run_patchelf _path _rpath)
   endif()
 endfunction()
 
+function(_set_system_interpreter _path)
+  # Homebrew GCC embeds its own prefix's ld.so. That path does not exist on
+  # users' machines, even when all bundled libraries meet the glibc baseline.
+  execute_process(
+    COMMAND "${_patchelf_tool}" --set-interpreter "/lib64/ld-linux-x86-64.so.2" "${_path}"
+    RESULT_VARIABLE _interpreter_result
+    ERROR_VARIABLE _interpreter_error)
+  if(NOT _interpreter_result EQUAL 0)
+    message(FATAL_ERROR "could not set the system ELF interpreter for ${_path}: ${_interpreter_error}")
+  endif()
+endfunction()
+
+_set_system_interpreter("${_binary}")
+_set_system_interpreter("${_install_prefix}/libexec/QtWebEngineProcess")
 _run_patchelf("${_binary}" "$ORIGIN/../lib/melearner")
 _run_patchelf("${_install_prefix}/libexec/QtWebEngineProcess" "$ORIGIN/../lib/melearner")
 
