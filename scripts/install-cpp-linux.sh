@@ -50,6 +50,10 @@ fi
 
 qtpaths_tool="$(command -v qtpaths6 || command -v qtpaths || true)"
 if [[ -z "$qtpaths_tool" ]]; then
+  qt_bindir="$(pkg-config --variable=bindir Qt6Core)"
+  [[ ! -x "$qt_bindir/qtpaths" ]] || qtpaths_tool="$qt_bindir/qtpaths"
+fi
+if [[ -z "$qtpaths_tool" ]]; then
   fail "Missing qtpaths6; Qt WebEngine runtime paths cannot be resolved. See docs/development.md."
 fi
 qt_query="$("$qtpaths_tool" --query)"

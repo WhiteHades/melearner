@@ -37,7 +37,9 @@ dark theme and bundled Geist font.
 HTML and Markdown documents use Qt WebEngine inside the application. The Linux
 source installer copies its sandboxed helper, resource packs, locales and
 Chromium notices into app-specific directories. Qt libraries still come from
-the development packages for a source installation. The document viewer starts
+the development packages for a source installation. The installer locates
+`qtpaths` through Qt's pkg-config binary directory when it is not on `PATH`.
+The document viewer starts
 only when needed, blocks network access, and restricts files to the open course.
 No separately installed browser or database server is needed.
 
