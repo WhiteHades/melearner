@@ -110,8 +110,30 @@ public:
   }
 protected:
   void draw(QPainter* painter) override {
-    painter->save(); painter->setOpacity(property("opacity").toDouble());
-    QGraphicsBlurEffect::draw(painter); painter->restore();
+    const auto opacity = std::clamp(property("opacity").toDouble(), 0.0, 1.0);
+    if (opacity <= 0) return;
+    painter->save();
+    if (opacity >= 1 || blurRadius() == 0) {
+      painter->setOpacity(opacity); drawSource(painter);
+    } else {
+      // Keep the blur's bounds stable. Crossfade a fixed diffuse image into the
+      // sharp source instead of reallocating its padded image on every frame.
+      painter->setOpacity(opacity * (1 - opacity));
+      QGraphicsBlurEffect::draw(painter);
+      painter->setOpacity(opacity * opacity / (1 - opacity * (1 - opacity))); drawSource(painter);
+    }
+    painter->restore();
+  }
+};
+class RouteTextEffect final : public QGraphicsEffect {
+public:
+  using QGraphicsEffect::QGraphicsEffect;
+  qreal progress = 1;
+protected:
+  QRectF boundingRectFor(const QRectF& source) const override { return source.adjusted(0, 0, 0, 4); }
+  void draw(QPainter* painter) override {
+    painter->save(); painter->setOpacity(.7 + .3 * progress);
+    painter->translate(0, 4 * (1 - progress)); drawSource(painter); painter->restore();
   }
 };
 QEasingCurve revealCurve() {
@@ -318,6 +340,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   libraryLayout->setContentsMargins(0, 0, 0, 0);
   libraryLayout->setSpacing(20);
   auto* libraryTools = new QHBoxLayout; libraryTools->setSpacing(8);
+  libraryTools->setContentsMargins(6, 0, 10, 0);
   libraryTools->addWidget(searchField_, 1); libraryTools->addStretch();
   listMode_ = button(tr("List"), "listView", shadcn::Variant::Ghost);
   cardsMode_ = button(tr("Cards"), "cardsView", shadcn::Variant::Ghost);
@@ -332,7 +355,14 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   });
   libraryLayout->addWidget(choose_, 0, Qt::AlignLeft);
   resumePanel_ = new shadcn::Card; resumePanel_->setObjectName("resumePanel");
-  resumePanel_->setTitle(tr("Welcome back, learner."));
+  resumePanel_->layout()->setContentsMargins(0, 0, 0, 0);
+  resumePanel_->content().setContentsMargins(0, 0, 0, 0);
+  resumePanel_->content().setSpacing(0);
+  resumePanel_->installEventFilter(this);
+  resumeHeading_ = new QWidget; resumeHeading_->setObjectName("resumeHeading");
+  auto* resumeHeadingLayout = new QVBoxLayout(resumeHeading_);
+  resumeHeadingLayout->setContentsMargins(0, 0, 0, 0); resumeHeadingLayout->setSpacing(8);
+  resumeHeadingLayout->addWidget(new shadcn::Label(tr("Welcome back, learner.")));
   resumeCourse_ = new ElidingLabel; resumeLesson_ = new ElidingLabel;
   resumeCourse_->setObjectName("resumeCourseTitle"); resumeLesson_->setObjectName("resumeLessonTitle");
   for (auto* label : {resumeCourse_, resumeLesson_}) {
@@ -340,7 +370,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   }
   resumeCourse_->setFont(headingFont(font(), 1.6, true));
   resumeCourse_->setWordWrap(true);
-  resumePanel_->content().addWidget(resumeCourse_);
+  resumeHeadingLayout->addWidget(resumeCourse_);
   auto* completionRow = new QHBoxLayout; completionRow->setSpacing(12);
   resumeProgress_ = new shadcn::Progress; resumeProgress_->setObjectName("resumeProgress");
   resumeProgress_->setAccessibleName(tr("Course completion")); resumeProgress_->setRange(0, 100);
@@ -348,11 +378,16 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   completionRow->addWidget(resumeProgress_, 1);
   resumeCompletion_ = new shadcn::Label; resumeCompletion_->setObjectName("resumeCompletion");
   completionRow->addWidget(resumeCompletion_); completionRow->addStretch();
-  resumePanel_->content().addLayout(completionRow);
+  resumeHeadingLayout->addLayout(completionRow);
+  resumeGroup_ = new QWidget;
+  auto* resumeGroupLayout = new QVBoxLayout(resumeGroup_);
+  // Match the card delegate's outer inset and the shared four-pixel scrollbar.
+  resumeGroupLayout->setContentsMargins(6, 0, 10, 0); resumeGroupLayout->setSpacing(16);
+  resumeHeading_->hide(); resumeGroupLayout->addWidget(resumeHeading_);
   auto* resumeBody = new QWidget;
-  resumeLayout_ = new QHBoxLayout(resumeBody); resumeLayout_->setContentsMargins(0, 0, 0, 0); resumeLayout_->setSpacing(24);
+  resumeLayout_ = new QHBoxLayout(resumeBody); resumeLayout_->setContentsMargins(0, 0, 0, 0); resumeLayout_->setSpacing(0);
   resumeCopy_ = new QWidget;
-  auto* copyLayout = new QVBoxLayout(resumeCopy_); copyLayout->setContentsMargins(8, 16, 8, 16); copyLayout->setSpacing(12);
+  auto* copyLayout = new QVBoxLayout(resumeCopy_); copyLayout->setContentsMargins(32, 32, 32, 32); copyLayout->setSpacing(8);
   auto* upNext = new shadcn::Label(tr("Up next")); upNext->setObjectName("resumeUpNext");
   copyLayout->addWidget(upNext);
   resumeLesson_->setWordWrap(true); resumeLesson_->setFont(headingFont(font(), 1.2, true));
@@ -361,13 +396,14 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   resume_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
   copyLayout->addWidget(resume_, 0, Qt::AlignLeft);
   preview_ = new melearner::CoursePreview(nullptr, softwareDecoding);
-  preview_->hide(); resumeLayout_->addWidget(resumeCopy_, 2); resumeLayout_->addWidget(preview_, 3);
+  preview_->hide(); resumeLayout_->addWidget(resumeCopy_, 42); resumeLayout_->addWidget(preview_, 58);
   resumePanel_->content().addWidget(resumeBody);
   connect(resume_, &QPushButton::clicked, this, [this] {
     if (resumeEntry_) showCourse(resumeEntry_->course, resumeEntry_->lesson.id);
   });
   connect(preview_, &melearner::CoursePreview::activated, resume_, &QPushButton::click);
-  resumePanel_->hide(); libraryLayout->addWidget(resumePanel_);
+  resumePanel_->hide(); resumeGroupLayout->addWidget(resumePanel_);
+  resumeGroup_->hide(); libraryLayout->addWidget(resumeGroup_);
   empty_ = new shadcn::Empty; empty_->setObjectName("libraryEmpty");
   empty_->setTitle(tr("Opening your Library…")); libraryLayout->addWidget(empty_, 1);
   courseModel_ = new PagedListModel(128, this); courses_ = list("courses", courseModel_);
@@ -426,8 +462,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   lessons_->setModel(outlineModel_); lessons_->hideProgress();
   lessons_->setCompact(false); lessons_->setAnimated(false);
   // Keep the shared shadcn handle colours and states, with a quieter local width.
-  lessons_->verticalScrollBar()->setStyleSheet("QScrollBar:vertical { width:4px; } QScrollBar::handle:vertical { border-radius:2px; }");
-  lessons_->verticalScrollBar()->setFixedWidth(4);
+  melearner::styleCourseScrollBars(lessons_);
   lessons_->setExpandsOnDoubleClick(false);
   // A revealed handout lives under its video, so the video opens on the way to it.
   connect(outlineModel_, &melearner::CourseOutlineModel::videoExpanded, this, [this](const QModelIndex& video) {
@@ -444,11 +479,13 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   outlineFade_->setObjectName("outlineReveal"); outlineFade_->setEasingCurve(revealCurve());
   connect(outlineFade_, &QPropertyAnimation::finished, this, [this] { updateLayout(); });
   auto* contentScroll = new shadcn::ScrollArea; contentScroll->setWidgetResizable(true);
+  melearner::styleCourseScrollBars(contentScroll);
   // The lesson canvas is sized to the viewport; its readers wrap and its titles
   // elide, so a horizontal scrollbar can only cover the bottom navigation.
   contentScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
   contentScroll->setObjectName("lessonScroll"); contentScroll->viewport()->installEventFilter(this);
   auto* contentBody = new QWidget; contentScroll->setWidget(contentBody); content_ = contentScroll; content_->setMinimumWidth(0);
+  connect(contentScroll->verticalScrollBar(), &QScrollBar::valueChanged, this, [this] { positionPlayerOverlays(); });
   auto* contentLayout = new QVBoxLayout(contentBody); contentLayout->setContentsMargins(20, 0, 0, 0); contentLayout->setSpacing(16);
   lessonHeader_ = new QWidget; lessonHeader_->setObjectName("lessonHeader");
   auto* lessonHeader = new QHBoxLayout(lessonHeader_); lessonHeader->setContentsMargins(0, 0, 0, 0);
@@ -653,7 +690,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   controlsFade_->setEasingCurve(revealCurve());
   connect(controlsFade_, &QVariantAnimation::valueChanged, this, [this](const QVariant& value) {
     controlsEffect_->setProperty("opacity", value);
-    controlsEffect_->setBlurRadius(melearner::reducedMotion() ? 0 : 4 * (1 - value.toDouble()));
+    controlsEffect_->setBlurRadius(melearner::reducedMotion() || melearner::highContrast() ? 0 : 4);
     controlsEffect_->update();
   });
   connect(controlsFade_, &QVariantAnimation::finished, this, [this] {
@@ -672,6 +709,19 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     const int duration = melearner::reducedMotion() || melearner::highContrast() ? 0 : 160;
     controlsFade_->stop(); controlsFade_->setDuration(duration); controlsFade_->setStartValue(controlsEffect_->property("opacity"));
     controlsFade_->setEndValue(0.0); controlsFade_->start();
+  });
+  routeReveal_ = new QVariantAnimation(this); routeReveal_->setObjectName("routeReveal");
+  routeReveal_->setDuration(180); routeReveal_->setStartValue(0.0); routeReveal_->setEndValue(180.0);
+  for (auto* group : {resumeHeading_, resumeCopy_, lessonHeader_, lessonLinks_})
+    group->setGraphicsEffect(new RouteTextEffect(group));
+  connect(routeReveal_, &QVariantAnimation::valueChanged, this, [this](const QVariant& value) {
+    const QList<QWidget*> groups = course_ ? QList<QWidget*>{lessonHeader_, lessonLinks_}
+                                         : QList<QWidget*>{resumeHeading_, resumeCopy_};
+    for (int index = 0; index < groups.size(); ++index) {
+      auto* effect = static_cast<RouteTextEffect*>(groups[index]->graphicsEffect());
+      effect->progress = revealCurve().valueForProgress(std::clamp((value.toDouble() - index * 30) / 150, 0.0, 1.0));
+      effect->update();
+    }
   });
   for (auto* widget : playbackWidgets_) widget->setParent(playerControls_);
   for (auto* widget : playerControls_->findChildren<QWidget*>() + QList<QWidget*>{video_, playerControls_}) {
@@ -790,6 +840,11 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
       previewRequestId_ = library_.previewVideo(course.id);
     }
     resumePanel_->setVisible(resumeEntry_.has_value());
+    resumeHeading_->setVisible(resumeEntry_.has_value());
+    resumeGroup_->setVisible(resumeEntry_.has_value());
+    if (!resumeEntry_) { preview_->clear(); preview_->hide(); }
+    updateLayout();
+    revealRoute();
   });
   connect(&library_, &lib::Library::previewVideoReady, this, [this](auto id, const lib::Lesson& item) {
     if (id != previewRequestId_ || resumeGeneration_ != routeGeneration_ || course_ || !resumeEntry_) return;
@@ -966,6 +1021,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     if (const auto row = courseModel_->row(index.row())) showCourse(row->value.value<lib::Course>());
   };
   const auto openLesson = [this](const QModelIndex& index) {
+    routePointerMotion_ = !keyboardNavigation_;
     if (const auto lesson = outlineModel_->lesson(index)) showLesson(*lesson);
     else if (!index.parent().isValid()) lessons_->setExpanded(index, !lessons_->isExpanded(index));
   };
@@ -1187,7 +1243,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
 }
 
 MainWindow::~MainWindow() {
-  hideControls_->stop(); controlsFade_->stop();
+  hideControls_->stop(); controlsFade_->stop(); routeReveal_->stop();
   preview_->clear();
   thumbnails_->cancelPending();
   // Child removal and focus changes happen before QObject disconnects us.
@@ -1230,7 +1286,7 @@ void MainWindow::showKeyboardPopup(bool commandPalette) {
   dialog->setTitle(commandPalette ? tr("Run a command") : tr("Keyboard shortcuts"));
   dialog->setDescription(commandPalette
       ? tr("Type to filter commands, then press Enter to run one.")
-      : tr("Space is the leader key. Press the next key within two seconds. Filter to find a shortcut."));
+      : tr("Comma is the leader key. Press the next key within two seconds. Filter to find a shortcut."));
   dialog->setContentWidth(620);
   auto* command = new shadcn::Command(dialog);
   command->setObjectName("keyboardPopupCommand");
@@ -1432,6 +1488,8 @@ void MainWindow::chooseRootWhenOpen(const QString& path) {
   chooseRoot(path);
 }
 void MainWindow::showLibrary() {
+  routePointerMotion_ = !keyboardNavigation_;
+  routeReveal_->stop();
   thumbnails_->cancelPending(); thumbnailRequests_.clear();
   outlineFade_->stop();
   cancelAutoplay(); neighborResolveId_ = 0; neighborReadId_ = 0;
@@ -1461,14 +1519,16 @@ void MainWindow::trackMutation(quint64 requestId) {
   else showError(tr("The Library is busy. Try again shortly."));
 }
 void MainWindow::refreshResume() {
-  previewRequestId_ = 0; preview_->clear(); preview_->hide();
-  resumeEntry_.reset(); resumePanel_->hide(); resumeGeneration_ = routeGeneration_;
+  previewRequestId_ = 0; preview_->suspend(); preview_->hide();
+  resumeEntry_.reset(); resumePanel_->hide(); resumeHeading_->hide(); resumeGroup_->hide(); resumeGeneration_ = routeGeneration_;
   resumeRequestId_ = library_.resume(0, 1);
 }
 void MainWindow::showCourse(const lib::Course& course, const QString& requestedLesson) {
+  routePointerMotion_ = !keyboardNavigation_;
+  routeReveal_->stop();
   if (course.missing) { showError(tr("Course folder missing: %1. Choose its root folder, then Rescan.").arg(course.path)); return; }
   cancelAutoplay(); neighborResolveId_ = 0; neighborReadId_ = 0;
-  previewRequestId_ = 0; preview_->clear(); preview_->hide();
+  previewRequestId_ = 0; preview_->suspend(); preview_->hide();
   thumbnails_->cancelPending(); thumbnailRequests_.clear();
   outlineFade_->stop(); outlineOpacity_->setOpacity(1);
   externalOpenId_ = 0; externalOpen_->hide();
@@ -1527,6 +1587,16 @@ void MainWindow::showLesson(const lib::Lesson& lesson) {
     documentRequestId_ = documents_.open({rootPath_, lesson.path});
     if (!documentRequestId_) documentStatus_->setText(tr("Document reader is busy. Select the lesson again to retry."));
   }
+  revealRoute();
+}
+void MainWindow::revealRoute() {
+  if (!routeReveal_) return;
+  routeReveal_->stop();
+  for (auto* group : {resumeHeading_, resumeCopy_, lessonHeader_, lessonLinks_}) {
+    auto* effect = static_cast<RouteTextEffect*>(group->graphicsEffect());
+    effect->progress = 1; effect->update();
+  }
+  if (routePointerMotion_ && !melearner::reducedMotion() && !melearner::highContrast()) routeReveal_->start();
 }
 void MainWindow::requestDocumentPage(qsizetype offset) {
   if (!lesson_ || documentGeneration_ == 0 || documentRequestId_) return;
@@ -1550,6 +1620,7 @@ void MainWindow::savePosition(bool completed) {
 void MainWindow::stepLesson(int delta) {
   cancelAutoplay();
   if (!course_ || !lesson_ || stepResolveId_ || stepReadId_) return;
+  routePointerMotion_ = !keyboardNavigation_;
   stepDelta_ = delta;
   stepResolveId_ = library_.resolveLesson(course_->id, lesson_->sectionId, lesson_->id);
   if (!stepResolveId_) showError(tr("Library is busy. Try changing lessons again."));
@@ -1582,6 +1653,9 @@ void MainWindow::keyPressEvent(QKeyEvent* event) {
   QMainWindow::keyPressEvent(event);
 }
 bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+  if (watched == resumePanel_ && event->type() == QEvent::Resize) updateLayout();
+  if (courses_ && watched == courses_->viewport() && event->type() == QEvent::Resize)
+    QTimer::singleShot(0, this, [this] { updateLayout(); });
   if (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseMove) keyboardNavigation_ = false;
   if (event->type() == QEvent::KeyPress && handleKeyboardEvent(watched, static_cast<QKeyEvent*>(event))) return true;
   if (event->type() == QEvent::Resize && playerControls_ &&
@@ -1696,20 +1770,26 @@ void MainWindow::updateControlsLayout() {
   const int controlsHeight = playerControls_->sizeHint().height();
   if (lesson_ && (lesson_->type == "video" || lesson_->type == "audio") && !videoFullscreen_)
     media_->setFixedHeight(std::max(preferredVideoHeight_, controlsHeight + 32));
-  const QRect geometry((video_->width() - controlsWidth) / 2,
-      std::max(8, video_->height() - controlsHeight - 16), controlsWidth, controlsHeight);
-  if (playerControls_->geometry() != geometry) playerControls_->setGeometry(geometry);
-  if (autoplayIndicator_) {
-    autoplayIndicator_->adjustSize();
-    autoplayIndicator_->move((video_->width() - autoplayIndicator_->width()) / 2,
-      std::max(0, (video_->height() - autoplayIndicator_->height()) / 2));
-  }
+  playerControls_->resize(controlsWidth, controlsHeight);
+  positionPlayerOverlays();
   if (videoFullscreen_) video_->clearMask();
   else {
     QPainterPath corners;
     const auto radius = melearner::themeFor(this).radius() * 1.4;
     corners.addRoundedRect(QRectF(video_->rect()), radius, radius);
     video_->setMask(QRegion(corners.toFillPolygon().toPolygon()));
+  }
+}
+void MainWindow::positionPlayerOverlays() {
+  if (!video_ || !playerControls_ || !content_) return;
+  const auto visible = videoFullscreen_ ? video_->rect() : video_->rect().intersected(
+    QRect(video_->mapFrom(content_->viewport(), QPoint()), content_->viewport()->size()));
+  const QPoint position((video_->width() - playerControls_->width()) / 2,
+    std::max(8, visible.bottom() + 1 - playerControls_->height() - 16));
+  if (playerControls_->pos() != position) playerControls_->move(position);
+  if (autoplayIndicator_) {
+    autoplayIndicator_->adjustSize();
+    autoplayIndicator_->move(visible.center() - QPoint(autoplayIndicator_->width() / 2, autoplayIndicator_->height() / 2));
   }
 }
 void MainWindow::toggleVideoFullscreen() {
@@ -1741,10 +1821,10 @@ void MainWindow::updateMediaLayout() {
   lessonLinks_->setVisible(!videoFullscreen_);
   const int width = content_->viewport()->width() - (videoFullscreen_ || !outline_->isVisible() ? 0 : 20);
   if (video && !videoFullscreen_) {
-    const int fittedWidth = std::max(1, std::min(1600, width));
-    const int available = content_->viewport()->height() - lessonHeader_->sizeHint().height()
-      - lessonLinks_->sizeHint().height() - 32;
-    preferredVideoHeight_ = std::max(180, std::min(available, fittedWidth * 9 / 16));
+    // Fit the video to the content width, not the height left after navigation.
+    // Metadata can scroll naturally below it instead of shrinking the material.
+    const int fittedWidth = std::max(1, width);
+    preferredVideoHeight_ = std::max(180, fittedWidth * 9 / 16);
     media_->setFixedHeight(preferredVideoHeight_);
     media_->setFixedWidth(fittedWidth);
     for (auto* widget : {lessonHeader_, lessonLinks_}) widget->setFixedWidth(fittedWidth);
@@ -1773,20 +1853,25 @@ void MainWindow::updateLayout() {
   }
   title_->show();
   if (resumeLayout_) {
-    const bool narrow = width() < 740;
+    if (courses_->presentation() == shadcn::ListPresentation::Cards && courses_->gridSize().width() > 0) {
+      const int columns = std::clamp((courses_->viewport()->width() - 1) / courses_->gridSize().width(), 1, 4);
+      const int rightInset = std::max(6, courses_->width() - columns * courses_->gridSize().width() + 6);
+      resumeGroup_->layout()->setContentsMargins(6, 0, rightInset, 0);
+    } else resumeGroup_->layout()->setContentsMargins(6, 0, 10, 0);
+    const bool narrow = resumePanel_->width() < 640;
     const bool shortDashboard = height() < 620;
-    resumePanel_->setTitle(shortDashboard ? QString{} : tr("Welcome back, learner."));
     resumeCourse_->setFont(headingFont(font(), shortDashboard ? 1.2 : 1.6, true));
     resumeCopy_->findChild<QLabel*>("resumeUpNext")->setVisible(!shortDashboard);
     resumeLesson_->setVisible(!shortDashboard);
-    resumeCopy_->layout()->setContentsMargins(8, shortDashboard ? 0 : 16, 8, shortDashboard ? 0 : 16);
+    resumeCopy_->layout()->setContentsMargins(24, shortDashboard ? 12 : 24, 24, shortDashboard ? 12 : 24);
     preview_->setVisible(preview_->hasPreview() && !shortDashboard);
     resumeLayout_->setDirection(narrow ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight);
-    const int previewWidth = narrow ? resumePanel_->width() - 32 : (resumePanel_->width() - 56) * 3 / 5;
-    preview_->setFixedHeight(std::clamp(previewWidth * 9 / 16, 140, narrow ? 180 : 230));
-    preview_->setFixedWidth(preview_->height() * 16 / 9);
-    resumeLayout_->setAlignment(preview_, narrow ? Qt::AlignHCenter : Qt::AlignRight);
-    resumeCopy_->setMaximumHeight(shortDashboard ? resume_->sizeHint().height() : narrow ? 150 : QWIDGETSIZE_MAX);
+    const int previewWidth = std::max(1, narrow ? resumePanel_->width() : resumePanel_->width() * 58 / 100);
+    preview_->setLayoutMode(narrow ? melearner::CoursePreview::LayoutMode::StackedBottom
+                                : melearner::CoursePreview::LayoutMode::SplitRight);
+    preview_->setFixedSize(previewWidth, std::max(1, previewWidth * 9 / 16));
+    resumeLayout_->setAlignment(preview_, {});
+    resumeCopy_->setMaximumHeight(QWIDGETSIZE_MAX);
   }
   statsNav_->setVisible(!course_);
   if (searchField_) searchField_->setVisible(!course_);
@@ -1858,6 +1943,8 @@ void MainWindow::applyAppearance(bool resetTheme) {
   const auto* currentStyle = qobject_cast<const shadcn::Style*>(QApplication::style());
   if (resetTheme || !currentStyle || currentStyle->theme().mode() != shadcn::ColorMode::Dark)
     melearner::installTheme(true);
+  for (auto* scroll : QList<QAbstractScrollArea*>{courses_, lessons_, content_, statsScroll_})
+    melearner::styleCourseScrollBars(scroll);
   // Icons take their colour from the theme role that matches where they sit, so
   // they follow a colour mode switch instead of holding a baked-in colour.
   using Icon = melearner::StudyIcon;

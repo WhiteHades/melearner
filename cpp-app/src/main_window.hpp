@@ -84,6 +84,8 @@ private:
   std::optional<melearner::library::Lesson> lesson_;
   std::optional<melearner::library::CourseEntry> resumeEntry_;
   shadcn::Card* resumePanel_;
+  QWidget* resumeHeading_ = nullptr;
+  QWidget* resumeGroup_ = nullptr;
   shadcn::Progress* resumeProgress_;
   QLabel* resumeCourse_;
   QLabel* resumeLesson_;
@@ -91,6 +93,10 @@ private:
   melearner::CoursePreview* preview_ = nullptr;
   QWidget* resumeCopy_ = nullptr;
   QBoxLayout* resumeLayout_ = nullptr;
+  QVariantAnimation* routeReveal_ = nullptr;
+  bool routePointerMotion_ = false;
+  void revealRoute();
+  void positionPlayerOverlays();
   QLabel* resumeCompletion_ = nullptr;
   quint64 previewRequestId_ = 0;
   quint64 resumeRequestId_ = 0;
@@ -119,7 +125,7 @@ private:
   shadcn::Input* searchField_ = nullptr;
   shadcn::Button* listMode_ = nullptr;
   shadcn::Button* cardsMode_ = nullptr;
-  shadcn::ListView* courses_;
+  shadcn::ListView* courses_ = nullptr;
   shadcn::TreeView* lessons_;
   PagedListModel* courseModel_;
   melearner::ThumbnailStore* thumbnails_ = nullptr;
