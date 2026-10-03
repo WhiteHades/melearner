@@ -121,6 +121,12 @@ bash scripts/test-cpp-playback.sh -- env MELEARNER_TEST_SCREENSHOTS="$PWD/.tmp/u
 Inspect the images as well as the test result; geometry checks alone do not
 establish visual correctness.
 
+For README screenshots, the optional `documentationShowcase` case creates
+sample courses and original lesson slides. Set `MELEARNER_SHOWCASE_DIR` to a
+private output directory and run that case with the playback runner. It writes
+`home.png` and `course.png` from the actual application windows and never uses
+personal course files or saved progress. The case skips when the variable is unset.
+
 The default build directory is `build/cpp-dev`; set `MELEARNER_BUILD_DIR` or
 pass `--build-dir` to select another. By default, the runner runs
 `main_window_test` and `main_playback_test`. It requires `pulseaudio`, Xvfb,
@@ -249,3 +255,7 @@ bash scripts/package-cpp-linux.sh --build-dir build/cpp-release
 same release build. Packaging requires third-party notices, an SPDX inventory,
 and runtime dependency records. The scripts report missing inputs before
 creating a package. No `0.1.9` binary package is currently published.
+
+Linux staging strips unused symbols from copied binaries before setting their
+runtime paths. Original build artifacts stay intact for debugging. The runtime
+inventory records the final packaged hashes and sizes after both changes.

@@ -18,6 +18,7 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QImage>
+#include <QPainter>
 #include <QLabel>
 #include <QListView>
 #include <QTreeView>
@@ -995,6 +996,114 @@ private slots:
       QTRY_COMPARE_WITH_TIMEOUT(play->text(), QString("Play"), 5000);
       window.close();
     }
+  }
+  void documentationShowcase() {
+    const auto captureDirectory = qEnvironmentVariable("MELEARNER_SHOWCASE_DIR");
+    if (captureDirectory.isEmpty()) QSKIP("Set MELEARNER_SHOWCASE_DIR to capture the opt in README showcase");
+    QVERIFY(QDir().mkpath(captureDirectory));
+    QTemporaryDir fixture;
+    QVERIFY(fixture.isValid());
+    const auto root = fixture.path() + "/Courses";
+    QVERIFY(QDir().mkpath(fixture.path() + "/artwork"));
+    const QList<QString> courses{"Computer Architecture", "Drawing Basics", "Everyday French"};
+    const QList<QString> sectionNames{"Foundations", "Studio Practice"};
+    const QList<QString> lessonNames{"A Clear Starting Point", "Ideas in Motion"};
+    for (int course = 0; course < courses.size(); ++course) {
+      for (int lesson = 0; lesson < lessonNames.size(); ++lesson) {
+        const auto folder = root + "/" + courses[course] + "/" + sectionNames[lesson];
+        QVERIFY(QDir().mkpath(folder));
+        QImage slide(1280, 720, QImage::Format_RGB32);
+        slide.fill(QColor("#101c2a"));
+        QPainter painter(&slide);
+        painter.setRenderHint(QPainter::Antialiasing);
+        QLinearGradient background(0, 0, 1280, 720);
+        background.setColorAt(0, QColor("#142538")); background.setColorAt(1, QColor("#233f59"));
+        painter.fillRect(slide.rect(), background);
+        painter.setPen(QPen(QColor("#5bc0be"), 5));
+        painter.drawRoundedRect(QRect(80, 74, 1120, 572), 28, 28);
+        painter.setPen(QColor("#9bc4d6"));
+        painter.setFont(QFont("Sans Serif", 20, QFont::DemiBold));
+        painter.drawText(QRect(132, 122, 900, 44), Qt::AlignLeft | Qt::AlignVCenter, sectionNames[lesson]);
+        painter.setPen(QColor("#f4f1de"));
+        painter.setFont(QFont("Sans Serif", 43, QFont::Bold));
+        painter.drawText(QRect(132, 190, 980, 72), Qt::AlignLeft | Qt::AlignVCenter, courses[course]);
+        painter.setPen(QColor("#c5d7df"));
+        painter.setFont(QFont("Sans Serif", 25));
+        painter.drawText(QRect(132, 278, 980, 54), Qt::AlignLeft | Qt::AlignVCenter, lessonNames[lesson]);
+        const int baseX = 190 + course * 34;
+        painter.setPen(QPen(QColor("#5bc0be"), 8, Qt::SolidLine, Qt::RoundCap));
+        painter.drawLine(baseX, 490, baseX + 250, 490);
+        painter.drawLine(baseX + 250, 490, baseX + 400, 420);
+        painter.drawLine(baseX + 250, 490, baseX + 400, 560);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor("#f4a261")); painter.drawEllipse(QPoint(baseX, 490), 23, 23);
+        painter.setBrush(QColor("#5bc0be")); painter.drawRoundedRect(QRect(baseX + 392, 392, 142, 56), 14, 14);
+        painter.drawRoundedRect(QRect(baseX + 392, 532, 142, 56), 14, 14);
+        painter.setPen(QColor("#f4f1de")); painter.setFont(QFont("Sans Serif", 17, QFont::Medium));
+        painter.drawText(QRect(baseX + 405, 398, 118, 42), Qt::AlignCenter, "Explore");
+        painter.drawText(QRect(baseX + 405, 538, 118, 42), Qt::AlignCenter, "Practice");
+        painter.end();
+        const auto imagePath = fixture.path() + QString("/artwork/slide %1 %2.png").arg(course).arg(lesson);
+        QVERIFY(slide.save(imagePath));
+        QProcess encode;
+        encode.start("ffmpeg", {"-hide_banner", "-loglevel", "error", "-y", "-loop", "1", "-framerate", "24",
+          "-i", imagePath, "-t", "10", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+          folder + "/" + (lesson == 0 ? "01 " : "02 ") + lessonNames[lesson] + ".mp4"});
+        QVERIFY2(encode.waitForFinished(30000), "ffmpeg timed out while creating showcase media");
+        QVERIFY2(encode.exitCode() == 0, encode.readAllStandardError().constData());
+      }
+    }
+    MainWindow window(fixture.path() + "/library.sqlite3", nullptr, true);
+    window.resize(1600, 1000); window.show(); window.activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(&window));
+    QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QPushButton*>("chooseRoot")->isEnabled(), 5000);
+    window.chooseRoot(root);
+    auto* coursesView = window.findChild<QListView*>("courses"); QVERIFY(coursesView);
+    QTRY_COMPARE_WITH_TIMEOUT(coursesView->model()->rowCount(), courses.size(), 15000);
+    auto* cards = window.findChild<QPushButton*>("cardsView"); QVERIFY(cards);
+    cards->click();
+    QTRY_COMPARE(static_cast<melearner::CourseListView*>(coursesView)->presentation(), shadcn::ListPresentation::Cards);
+    for (int row = 0; row < courses.size(); ++row) {
+      const auto index = coursesView->model()->index(row, 0);
+      QTRY_VERIFY_WITH_TIMEOUT(!index.data(melearner::CourseThumbnailRole).value<QPixmap>().isNull(), 10000);
+    }
+    auto* player = window.findChild<melearner::Player*>("lessonPlayer"); QVERIFY(player);
+    auto* outline = window.findChild<QTreeView*>("lessons");
+    QSignalSpy loaded(player, &melearner::Player::fileLoaded);
+    coursesView->setCurrentIndex(coursesView->model()->index(0, 0)); QTest::keyClick(coursesView, Qt::Key_Return);
+    QTRY_VERIFY_WITH_TIMEOUT(outline && outline->model()->rowCount() == 2, 10000);
+    QTRY_COMPARE_WITH_TIMEOUT(loaded.count(), 1, 10000);
+    auto* play = window.findChild<QPushButton*>("playPause"); QVERIFY(play);
+    QTRY_VERIFY_WITH_TIMEOUT(play->isEnabled(), 5000);
+    play->click();
+    QTRY_COMPARE_WITH_TIMEOUT(play->text(), QString("Pause"), 5000);
+    QTest::qWait(1200);
+    auto* back = window.findChild<QPushButton*>("backToLibrary"); QVERIFY(back);
+    QTest::mouseClick(back, Qt::LeftButton);
+    auto* resume = window.findChild<QPushButton*>("resumeLesson"); QVERIFY(resume);
+    QTRY_VERIFY_WITH_TIMEOUT(resume->isVisible() && resume->isEnabled(), 10000);
+    auto* preview = window.findChild<QWidget*>("coursePreview"); QVERIFY(preview);
+    QTRY_VERIFY(preview->isVisible());
+    auto* previewVideo = window.findChild<melearner::MpvVideoWidget*>("previewVideo"); QVERIFY(previewVideo);
+    QTRY_VERIFY_WITH_TIMEOUT(previewVideo->grabFramebuffer().pixelColor(previewVideo->width() * 3 / 4,
+      previewVideo->height() / 2).blue() > 30, 10000);
+    coursesView->clearSelection(); coursesView->setCurrentIndex(QModelIndex());
+    QTest::mouseMove(&window, QPoint(20, window.height() - 20));
+    QTest::qWait(300);
+    QVERIFY(window.grab().save(captureDirectory + "/home.png"));
+    resume->click();
+    QTRY_COMPARE_WITH_TIMEOUT(loaded.count(), 2, 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QWidget*>("courseOutline")->isVisible(), 10000);
+    auto* video = window.findChild<melearner::MpvVideoWidget*>("videoSurface"); QVERIFY(video);
+    QTRY_VERIFY_WITH_TIMEOUT(video->isVisible() && video->isRenderContextReady(), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(video->grabFramebuffer().pixelColor(video->width() * 3 / 4,
+      video->height() / 2).blue() > 30, 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(window.grab().toImage().pixelColor(video->mapTo(&window,
+      QPoint(video->width() * 3 / 4, video->height() / 2))).blue() > 30, 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(play->isVisible(), 5000);
+    QVERIFY(window.findChild<QWidget*>("playerControls")->isVisible());
+    QVERIFY(window.grab().save(captureDirectory + "/course.png"));
+    qInfo("Showcase captures: %s/home.png and course.png at %dx%d", qPrintable(captureDirectory), window.width(), window.height());
   }
 };
 QTEST_MAIN(MainPlaybackTest)
