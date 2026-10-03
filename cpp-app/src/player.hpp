@@ -24,12 +24,6 @@ struct PlayerTrack {
     bool external = false;
 };
 
-struct PlayerChapter {
-    int index = -1;
-    QString title;
-    qint64 timeMs = 0;
-};
-
 class Player final : public QObject {
     Q_OBJECT
 
@@ -72,11 +66,8 @@ public:
     [[nodiscard]] RequestId setVolume(double volume);
     [[nodiscard]] RequestId setMuted(bool muted);
     [[nodiscard]] RequestId setRate(double rate);
-    [[nodiscard]] RequestId selectAudioTrack(int trackId);
     [[nodiscard]] RequestId selectSubtitleTrack(int trackId);
-    [[nodiscard]] RequestId selectChapter(int chapterIndex);
     [[nodiscard]] RequestId frameStep();
-    [[nodiscard]] RequestId screenshot(const QString& outputPath);
 
     // Called only on the presentation widget's thread. OpenGL mode also needs
     // that widget's QOpenGLContext current. These methods never take the command
@@ -116,7 +107,6 @@ signals:
     void mutedChanged(bool muted);
     void rateChanged(double rate);
     void tracksChanged(QVector<melearner::PlayerTrack> tracks);
-    void chaptersChanged(QVector<melearner::PlayerChapter> chapters);
     void decoderChanged(QString decoder);
     void playbackEnded(QString path, bool failed);
     void commandFinished(melearner::Player::RequestId requestId);
@@ -131,6 +121,4 @@ private:
 }  // namespace melearner
 
 Q_DECLARE_METATYPE(melearner::PlayerTrack)
-Q_DECLARE_METATYPE(melearner::PlayerChapter)
 Q_DECLARE_METATYPE(QVector<melearner::PlayerTrack>)
-Q_DECLARE_METATYPE(QVector<melearner::PlayerChapter>)

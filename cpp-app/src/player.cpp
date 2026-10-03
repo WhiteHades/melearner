@@ -42,11 +42,8 @@ enum class CommandKind {
     setVolume,
     setMuted,
     setRate,
-    selectAudio,
     selectSubtitle,
-    selectChapter,
     frameStep,
-    screenshot,
 };
 
 struct Command {
@@ -123,19 +120,6 @@ struct PendingReply {
     }
     if (value->format == MPV_FORMAT_FLAG) {
         return value->u.flag == 0 ? 0 : 1;
-    }
-    return fallback;
-}
-
-[[nodiscard]] double nodeNumber(const mpv_node* value, double fallback = 0.0) {
-    if (value == nullptr) {
-        return fallback;
-    }
-    if (value->format == MPV_FORMAT_DOUBLE) {
-        return value->u.double_;
-    }
-    if (value->format == MPV_FORMAT_INT64) {
-        return static_cast<double>(value->u.int64);
     }
     return fallback;
 }
@@ -536,7 +520,6 @@ private:
             {1005, "mute", MPV_FORMAT_FLAG},
             {1006, "speed", MPV_FORMAT_DOUBLE},
             {1007, "track-list", MPV_FORMAT_NODE},
-            {1008, "chapter-list", MPV_FORMAT_NODE},
             {1009, "hwdec-current", MPV_FORMAT_STRING},
         };
         for (const auto& observation : observations) {
@@ -635,9 +618,6 @@ private:
         case CommandKind::setRate:
             issueDoubleProperty(command.id, "speed", std::clamp(command.number, 0.1, 8.0));
             return;
-        case CommandKind::selectAudio:
-            issueIntegerProperty(command.id, "aid", command.integer);
-            return;
         case CommandKind::selectSubtitle:
             if (command.integer < 0) {
                 issueStringProperty(command.id, "sid", QByteArrayLiteral("no"));
@@ -645,23 +625,9 @@ private:
                 issueIntegerProperty(command.id, "sid", command.integer);
             }
             return;
-        case CommandKind::selectChapter:
-            issueIntegerProperty(command.id, "chapter", command.integer);
-            return;
         case CommandKind::frameStep:
             issueCommand(command.id, {QByteArrayLiteral("frame-step")});
             return;
-        case CommandKind::screenshot: {
-            const auto canonical = canonicalOutputPath(command.path);
-            if (!canonical.has_value()) {
-                postCommandFailure(command.id, "invalid_path",
-                                   "The screenshot destination must be inside an approved root.");
-                return;
-            }
-            issueCommand(command.id, {QByteArrayLiteral("screenshot-to-file"), canonical->toUtf8(),
-                                      QByteArrayLiteral("video")});
-            return;
-        }
         }
     }
 
@@ -845,8 +811,6 @@ private:
             emit owner_->rateChanged(*static_cast<const double*>(property->data));
         } else if (name == "track-list") {
             emit owner_->tracksChanged(parseTracks(property));
-        } else if (name == "chapter-list") {
-            emit owner_->chaptersChanged(parseChapters(property));
         } else if (name == "hwdec-current") {
             const auto* decoder = property->format == MPV_FORMAT_STRING && property->data
                 ? *static_cast<char* const*>(property->data) : nullptr;
@@ -943,16 +907,6 @@ private:
         return std::nullopt;
     }
 
-    [[nodiscard]] std::optional<QString> canonicalOutputPath(const QString& input) const {
-        for (const auto& path : approvedRoots()) {
-            const auto root = local_files::LocalFiles::validateRoot(path);
-            if (!root) continue;
-            const auto file = local_files::LocalFiles::validateScreenshotDestination(*root, input);
-            if (file) return file->path;
-        }
-        return std::nullopt;
-    }
-
     [[nodiscard]] QVector<PlayerTrack> parseTracks(const mpv_event_property* property) const {
         QVector<PlayerTrack> tracks;
         if (property == nullptr || property->format != MPV_FORMAT_NODE || property->data == nullptr) {
@@ -977,28 +931,6 @@ private:
             tracks.push_back(std::move(track));
         }
         return tracks;
-    }
-
-    [[nodiscard]] QVector<PlayerChapter> parseChapters(const mpv_event_property* property) const {
-        QVector<PlayerChapter> chapters;
-        if (property == nullptr || property->format != MPV_FORMAT_NODE || property->data == nullptr) {
-            return chapters;
-        }
-        const auto* node = static_cast<const mpv_node*>(property->data);
-        if (node->format != MPV_FORMAT_NODE_ARRAY || node->u.list == nullptr || node->u.list->values == nullptr) {
-            return chapters;
-        }
-        const auto count = std::clamp(node->u.list->num, 0, 4096);
-        chapters.reserve(count);
-        for (int index = 0; index < count; ++index) {
-            const auto& item = node->u.list->values[index];
-            PlayerChapter chapter;
-            chapter.index = index;
-            chapter.title = nodeString(mapValue(item, "title"));
-            chapter.timeMs = static_cast<qint64>(std::max(0.0, nodeNumber(mapValue(item, "time"))) * 1000.0);
-            chapters.push_back(std::move(chapter));
-        }
-        return chapters;
     }
 
     void publishPosition(qint64 positionMs, qint64 durationMs) {
@@ -1134,9 +1066,7 @@ private:
 
 Player::Player(QObject* parent, DecodeMode decoding) : QObject(parent), impl_(std::make_unique<Impl>(*this, decoding)) {
     qRegisterMetaType<PlayerTrack>();
-    qRegisterMetaType<PlayerChapter>();
     qRegisterMetaType<QVector<PlayerTrack>>();
-    qRegisterMetaType<QVector<PlayerChapter>>();
 }
 
 Player::~Player() {
@@ -1187,23 +1117,11 @@ Player::RequestId Player::setRate(double rate) {
     return impl_->enqueue(Command{0, CommandKind::setRate, {}, 0, rate, false, 4});
 }
 
-Player::RequestId Player::selectAudioTrack(int trackId) {
-    return impl_->enqueue(Command{0, CommandKind::selectAudio, {}, trackId});
-}
-
 Player::RequestId Player::selectSubtitleTrack(int trackId) {
     return impl_->enqueue(Command{0, CommandKind::selectSubtitle, {}, trackId});
 }
 
-Player::RequestId Player::selectChapter(int chapterIndex) {
-    return impl_->enqueue(Command{0, CommandKind::selectChapter, {}, chapterIndex});
-}
-
 Player::RequestId Player::frameStep() { return impl_->enqueue(commandOf(CommandKind::frameStep)); }
-
-Player::RequestId Player::screenshot(const QString& outputPath) {
-    return impl_->enqueue(Command{0, CommandKind::screenshot, outputPath});
-}
 
 bool Player::createRenderContext(OpenGLProcAddress getProcAddress, void* getProcAddressContext,
                                  RenderUpdateCallback updateCallback, void* updateCallbackContext,
