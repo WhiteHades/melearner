@@ -13,7 +13,7 @@ namespace melearner {
 /// A course thumbnail supplied by the model as a QPixmap.
 inline constexpr int CourseThumbnailRole = Qt::UserRole + 40;
 
-/// Apply the application's narrow, themed scrollbars to a native scroll area.
+/// Apply narrow themed scrollbars and retargetable wheel motion for item views.
 void styleCourseScrollBars(QAbstractScrollArea* area);
 
 /// The course catalogue's photo-first cards and compact thumbnail list.

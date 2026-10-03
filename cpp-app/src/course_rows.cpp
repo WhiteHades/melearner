@@ -4,18 +4,28 @@
 
 #include <QFontMetrics>
 #include <QAbstractScrollArea>
+#include <QAbstractItemView>
+#include <QApplication>
+#include <QElapsedTimer>
+#include <QEvent>
+#include <QEasingCurve>
 #include <QIdentityProxyModel>
+#include <QKeyEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <QResizeEvent>
 #include <QScrollBar>
+#include <QTimer>
 #include <QTextLayout>
 #include <QTextOption>
+#include <QWheelEvent>
 
 #include <algorithm>
 #include <cmath>
 
 namespace melearner {
+
+namespace { void installItemViewWheelScroll(QAbstractScrollArea* area); }
 
 void styleCourseScrollBars(QAbstractScrollArea* area) {
     if (!area) return;
@@ -34,9 +44,111 @@ void styleCourseScrollBars(QAbstractScrollArea* area) {
     }
     area->verticalScrollBar()->setFixedWidth(4);
     area->horizontalScrollBar()->setFixedHeight(4);
+    installItemViewWheelScroll(area);
 }
 
 namespace {
+
+// Angle wheels are animated in short, retargetable steps. Pixel wheels already
+// carry a physical distance (typically from a touchpad), so they stay native.
+class ItemViewWheelScroll final : public QObject {
+public:
+    explicit ItemViewWheelScroll(QAbstractItemView* view)
+        : QObject(view), view_(view), viewport_(view->viewport()) {
+        timer_.setInterval(16);
+        connect(&timer_, &QTimer::timeout, this, [this] { advance(); });
+        view_->installEventFilter(this);
+        viewport_->installEventFilter(this);
+        view_->verticalScrollBar()->installEventFilter(this);
+        view_->horizontalScrollBar()->installEventFilter(this);
+        for (auto* bar : {view_->verticalScrollBar(), view_->horizontalScrollBar()}) {
+            connect(bar, &QScrollBar::valueChanged, this, [this] { if (!advancing_) stop(); });
+            connect(bar, &QScrollBar::rangeChanged, this, [this] { stop(); });
+        }
+    }
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override {
+        if (event->type() == QEvent::KeyPress || event->type() == QEvent::MouseButtonPress
+            || event->type() == QEvent::MouseButtonDblClick || event->type() == QEvent::Hide) {
+            stop();
+            return false;
+        }
+        // The view may already be in QWidget destruction when its viewport
+        // sends teardown events. Compare the saved target without calling it.
+        if (event->type() != QEvent::Wheel || watched != viewport_) return false;
+
+        auto* wheel = static_cast<QWheelEvent*>(event);
+        if (!wheel->pixelDelta().isNull() || wheel->angleDelta().isNull()
+            || (wheel->modifiers() & Qt::ControlModifier)) {
+            stop();
+            return false;
+        }
+        if (reducedMotion() || highContrast()) {
+            stop();
+            return false;
+        }
+
+        const bool horizontal = ((wheel->modifiers() & Qt::ShiftModifier)
+            || wheel->angleDelta().x() != 0)
+            && view_->horizontalScrollBar()->maximum() > view_->horizontalScrollBar()->minimum();
+        auto* bar = horizontal ? view_->horizontalScrollBar() : view_->verticalScrollBar();
+        if (bar->maximum() <= bar->minimum()) return false;
+
+        const int angle = wheel->angleDelta().x() != 0
+            ? wheel->angleDelta().x() : wheel->angleDelta().y();
+        if (!angle) return false;
+        const qreal amount = (qreal(angle) / 120.0) * qMax(1, bar->singleStep()) * QApplication::wheelScrollLines();
+        const bool sameDirection = activeBar_ == bar && (target_ - bar->value()) * amount < 0;
+        const int base = sameDirection ? target_ : bar->value();
+        const int target = qBound(bar->minimum(), qRound(base - amount), bar->maximum());
+        if (target == bar->value()) { stop(); return false; }
+
+        activeBar_ = bar;
+        start_ = bar->value();
+        target_ = target;
+        elapsed_.restart();
+        timer_.start();
+        wheel->accept();
+        return true;
+    }
+
+private:
+    void stop() {
+        timer_.stop();
+        activeBar_ = nullptr;
+    }
+
+    void advance() {
+        if (!activeBar_) { timer_.stop(); return; }
+        constexpr int duration = 130;
+        const qreal t = qBound<qreal>(0, qreal(elapsed_.elapsed()) / duration, 1);
+        QEasingCurve curve(QEasingCurve::BezierSpline);
+        curve.addCubicBezierSegment({.23, 1}, {.32, 1}, {1, 1});
+        advancing_ = true;
+        activeBar_->setValue(qRound(start_ + (target_ - start_) * curve.valueForProgress(t)));
+        advancing_ = false;
+        if (t >= 1) stop();
+    }
+
+    QAbstractItemView* view_;
+    QWidget* viewport_;
+    QScrollBar* activeBar_ = nullptr;
+    QTimer timer_;
+    QElapsedTimer elapsed_;
+    int start_ = 0;
+    int target_ = 0;
+    bool advancing_ = false;
+};
+
+void installItemViewWheelScroll(QAbstractScrollArea* area) {
+    auto* view = qobject_cast<QAbstractItemView*>(area);
+    if (!view) return;
+    for (auto* child : view->children()) {
+        if (dynamic_cast<ItemViewWheelScroll*>(child)) return;
+    }
+    new ItemViewWheelScroll(view);
+}
 
 class PaintRolesModel final : public QIdentityProxyModel {
 public:
