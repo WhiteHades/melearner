@@ -2,6 +2,12 @@ name: c++ macOS
 
 on:
   workflow_dispatch:
+    inputs:
+      package:
+        description: Create and upload a diagnostic arm64 DMG
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -55,7 +61,24 @@ jobs:
           cmake -S . -B build/macos -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
             -DBUILD_TESTING=ON
           cmake --build build/macos --parallel 3
           ctest --test-dir build/macos --output-on-failure -R '^core_workflow$'
+
+      - name: Package diagnostic DMG
+        if: inputs.package
+        run: |
+          set -euo pipefail
+          export PATH="$(brew --prefix qtbase)/bin:$(brew --prefix qttools)/bin:$PATH"
+          scripts/package-cpp-macos.sh
+
+      - name: Upload diagnostic DMG
+        if: inputs.package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: melearner-0.1.9-macos-arm64-diagnostic
+          path: dist/melearner-0.1.9-macos-arm64.dmg*
+          if-no-files-found: error
+          retention-days: 3
