@@ -53,4 +53,7 @@ package() {
 
   install -d "${pkgdir}/usr"
   cp -a "${MELEARNER_CPP_STAGE}/usr/." "${pkgdir}/usr/"
+  # AppImage extraction can restrict its tree to the extracting user. Package
+  # files must remain readable and executable after pacman installs them as root.
+  chmod -R u=rwX,go=rX "${pkgdir}/usr"
 }

@@ -114,7 +114,7 @@ jobs:
             -v "$GITHUB_WORKSPACE/$stage:/work/appdir:ro" \
             -e MELEARNER_CPP_STAGE=/work/appdir \
             archlinux:base-devel@sha256:8edb44f40a0cb5d3e44ef474f02780098ce0084e591c8641bdc01f02f185cc40 \
-            bash -euc 'stat -c "%a %u %g %n" /work/appdir /work/appdir/usr; stage_uid=$(stat -c %u /work/appdir); test "$stage_uid" -gt 0; useradd --uid "$stage_uid" --create-home builder; chown -R builder:builder /work/package; su - builder -c "test -d /work/appdir/usr && cd /work/package && MELEARNER_CPP_STAGE=/work/appdir makepkg --nodeps --noconfirm"'
+            bash -euc 'stat -c "%a %u %g %n" /work/appdir /work/appdir/usr; stage_uid=$(stat -c %u /work/appdir); test "$stage_uid" -gt 0; useradd --uid "$stage_uid" --create-home builder; chown -R builder:builder /work/package; su - builder -c "test -d /work/appdir/usr && cd /work/package && MELEARNER_CPP_STAGE=/work/appdir makepkg --nodeps --noconfirm"; bad_dir=$(find /work/package/pkg/melearner-bin/usr -type d ! -perm 755 -print -quit); test -z "$bad_dir"; bad_file=$(find /work/package/pkg/melearner-bin/usr -type f ! -perm -004 -print -quit); test -z "$bad_file"; test -x /work/package/pkg/melearner-bin/usr/bin/melearner'
           arch_pkg="$package_dir/melearner-bin-0.1.9-1-x86_64.pkg.tar.zst"
           [[ -s "$arch_pkg" && ! -L "$arch_pkg" ]] || { echo "makepkg did not produce expected Arch package" >&2; exit 1; }
           cp -- "$arch_pkg" "$out/"
