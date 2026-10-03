@@ -32,6 +32,10 @@ Use optimized release builds, remove unused symbols from packaged binaries, keep
 
 The Linux packaging scripts share a dependency inventory and validator. Diagnostic packages are not public releases. Publishing is authorized, but each offered download must have its runtime dependencies, source records and required notices in place.
 
+When a Qt provider omits its Chromium notice, the Linux notice collector retrieves
+the matching Qt source archive and verifies its checksum. The runtime stager can
+use that collected notice through its legal input directory.
+
 The Windows and macOS downloads will have no trusted publisher signature. Windows may show a SmartScreen warning. macOS may require the user to approve opening the app in Privacy & Security. Do not disable system security protections globally.
 
 ## Showcase images

@@ -252,6 +252,7 @@ set(_webengine_helper "${_QT_INSTALL_LIBEXECS}/QtWebEngineProcess")
 set(_webengine_resource_dir "${_QT_INSTALL_DATA}/resources")
 set(_webengine_locale_dir "${_QT_INSTALL_TRANSLATIONS}/qtwebengine_locales")
 set(_webengine_notice_candidates
+  "${MELEARNER_LEGAL_ROOT}/QtWebEngine-LICENSE.chromium"
   "${_QT_INSTALL_PREFIX}/licenses/QtWebEngine/LICENSE.chromium"
   "${_QT_INSTALL_PREFIX}/share/licenses/qt6-webengine/LICENSE.chromium"
   "${_QT_INSTALL_PREFIX}/share/licenses/qtwebengine/LICENSE.chromium"
