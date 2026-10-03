@@ -25,6 +25,48 @@
 namespace melearner {
 namespace {
 
+// Keep rounding in Qt's composited widget layer, like the transport controls.
+// Painting a mask into the video FBO alone is not retained by every widget grab
+// and compositor path. This static, transparent layer never captures the video.
+class VideoCornerCover final : public QWidget {
+public:
+    explicit VideoCornerCover(QWidget* parent) : QWidget(parent) {
+        setAttribute(Qt::WA_TransparentForMouseEvents);
+        setAttribute(Qt::WA_NoSystemBackground);
+    }
+    void setRadii(qreal tl, qreal tr, qreal br, qreal bl, QColor background) {
+        const QList<qreal> radii{qMax<qreal>(0, tl), qMax<qreal>(0, tr),
+                                 qMax<qreal>(0, br), qMax<qreal>(0, bl)};
+        if (radii_ == radii && background_ == background) return;
+        radii_ = radii; background_ = std::move(background);
+        setVisible(tl > 0 || tr > 0 || br > 0 || bl > 0); raise(); update();
+    }
+protected:
+    void paintEvent(QPaintEvent*) override {
+        const QRectF bounds(rect());
+        const qreal maxRadius = qMin(bounds.width(), bounds.height()) / 2.0;
+        const auto tl = qMin(radii_[0], maxRadius), tr = qMin(radii_[1], maxRadius);
+        const auto br = qMin(radii_[2], maxRadius), bl = qMin(radii_[3], maxRadius);
+        QPainterPath cover; cover.setFillRule(Qt::OddEvenFill); cover.addRect(bounds);
+        QPainterPath rounded;
+        rounded.moveTo(bounds.left() + tl, bounds.top());
+        rounded.lineTo(bounds.right() - tr, bounds.top());
+        if (tr > 0) rounded.arcTo(QRectF(bounds.right() - 2 * tr, bounds.top(), 2 * tr, 2 * tr), 90, -90);
+        rounded.lineTo(bounds.right(), bounds.bottom() - br);
+        if (br > 0) rounded.arcTo(QRectF(bounds.right() - 2 * br, bounds.bottom() - 2 * br, 2 * br, 2 * br), 0, -90);
+        rounded.lineTo(bounds.left() + bl, bounds.bottom());
+        if (bl > 0) rounded.arcTo(QRectF(bounds.left(), bounds.bottom() - 2 * bl, 2 * bl, 2 * bl), 270, -90);
+        rounded.lineTo(bounds.left(), bounds.top() + tl);
+        if (tl > 0) rounded.arcTo(QRectF(bounds.left(), bounds.top(), 2 * tl, 2 * tl), 180, -90);
+        rounded.closeSubpath(); cover.addPath(rounded);
+        QPainter painter(this); painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(Qt::NoPen); painter.setBrush(background_); painter.drawPath(cover);
+    }
+private:
+    QList<qreal> radii_{0, 0, 0, 0};
+    QColor background_ = Qt::black;
+};
+
 class AccessibleVideo final : public QAccessibleWidget, public QAccessibleImageInterface {
 public:
     explicit AccessibleVideo(MpvVideoWidget* video) : QAccessibleWidget(video, QAccessible::Animation) {}
@@ -129,6 +171,8 @@ MpvVideoWidget::MpvVideoWidget(Player* player, QWidget* parent)
     setUpdateBehavior(QOpenGLWidget::NoPartialUpdate);
     setMinimumSize(0, 0);
     setAutoFillBackground(false);
+    cornerCover_ = new VideoCornerCover(this);
+    cornerCover_->setObjectName("videoCorners"); cornerCover_->hide();
     doubleClickCandidateTimer_ = new QTimer(this);
     doubleClickCandidateTimer_->setSingleShot(true);
     connect(doubleClickCandidateTimer_, &QTimer::timeout, this, [this] { doubleClickCandidate_ = false; });
@@ -204,15 +248,8 @@ bool MpvVideoWidget::isRenderContextReady() const { return renderContextReady_; 
 
 void MpvVideoWidget::setCornerRadii(qreal topLeft, qreal topRight, qreal bottomRight,
                                     qreal bottomLeft, QColor background) {
-    if (topLeftRadius_ == topLeft && topRightRadius_ == topRight &&
-        bottomRightRadius_ == bottomRight && bottomLeftRadius_ == bottomLeft &&
-        cornerBackground_ == background) return;
-    topLeftRadius_ = qMax<qreal>(0.0, topLeft);
-    topRightRadius_ = qMax<qreal>(0.0, topRight);
-    bottomRightRadius_ = qMax<qreal>(0.0, bottomRight);
-    bottomLeftRadius_ = qMax<qreal>(0.0, bottomLeft);
-    cornerBackground_ = std::move(background);
-    update();
+    cornerCover_->setGeometry(rect());
+    static_cast<VideoCornerCover*>(cornerCover_)->setRadii(topLeft, topRight, bottomRight, bottomLeft, std::move(background));
 }
 
 void MpvVideoWidget::setTransportBackdrop(QRect logicalRect, qreal visibility) {
@@ -247,18 +284,25 @@ void MpvVideoWidget::initializeGL() {
 }
 
 void MpvVideoWidget::paintGL() {
-    // Qt enables blending while preparing QOpenGLWidget painting. libmpv
-    // requires its default (disabled), including for intermediate plane passes.
-    glDisable(GL_BLEND);
+    // One painter owns presentation. Native painting resets Qt's raster state
+    // before libmpv, then invalidates Qt's cached GL state after the raw overlay.
+    QPainter painter(this);
     renderDirty_.store(false, std::memory_order_release);
     const auto pixelRatio = devicePixelRatioF();
     const auto pixelWidth = qMax(1, qRound(width() * pixelRatio));
     const auto pixelHeight = qMax(1, qRound(height() * pixelRatio));
+    const bool softwareFrame = player_ && renderContextReady_ && softwareRendering_;
+    const bool softwareFrameReady = softwareFrame && renderSoftwareFrame(pixelWidth, pixelHeight);
+    if (softwareFrameReady) {
+        painter.drawImage(rect(), softwareFrame_);
+    }
+    painter.beginNativePainting();
+    glDisable(GL_BLEND);
     if (player_ == nullptr || !renderContextReady_) {
         glClearColor(0.0F, 0.0F, 0.0F, 1.0F);
         glClear(GL_COLOR_BUFFER_BIT);
-    } else if (softwareRendering_) {
-        if (!renderSoftwareFrame(pixelWidth, pixelHeight)) {
+    } else if (softwareFrame) {
+        if (!softwareFrameReady) {
             glClearColor(0.0F, 0.0F, 0.0F, 1.0F);
             glClear(GL_COLOR_BUFFER_BIT);
             emit renderError(QStringLiteral("render"), QStringLiteral("The software video frame could not be rendered."));
@@ -266,8 +310,11 @@ void MpvVideoWidget::paintGL() {
     } else if (!player_->renderFrame(defaultFramebufferObject(), pixelWidth, pixelHeight)) {
         emit renderError(QStringLiteral("render"), QStringLiteral("libmpv could not render the current frame."));
     }
+    // libmpv leaves the default framebuffer bound. QOpenGLWidget's framebuffer
+    // is not zero; the transport backdrop must target the widget framebuffer.
+    context()->functions()->glBindFramebuffer(GL_FRAMEBUFFER, defaultFramebufferObject());
     paintTransportBackdrop();
-    paintCornerCover();
+    painter.endNativePainting();
 }
 
 struct MpvVideoWidget::BackdropResources {
@@ -390,42 +437,6 @@ void MpvVideoWidget::destroyTransportBackdrop() {
     backdropResources_.reset();
 }
 
-void MpvVideoWidget::paintCornerCover() {
-    const QRectF bounds(rect());
-    if (bounds.isEmpty() || (topLeftRadius_ <= 0.0 && topRightRadius_ <= 0.0 &&
-                            bottomRightRadius_ <= 0.0 && bottomLeftRadius_ <= 0.0)) {
-        return;
-    }
-
-    const qreal maxRadius = qMin(bounds.width(), bounds.height()) / 2.0;
-    const qreal tl = qMin(topLeftRadius_, maxRadius);
-    const qreal tr = qMin(topRightRadius_, maxRadius);
-    const qreal br = qMin(bottomRightRadius_, maxRadius);
-    const qreal bl = qMin(bottomLeftRadius_, maxRadius);
-
-    QPainterPath cover;
-    cover.setFillRule(Qt::OddEvenFill);
-    cover.addRect(bounds);
-    QPainterPath rounded;
-    rounded.moveTo(bounds.left() + tl, bounds.top());
-    rounded.lineTo(bounds.right() - tr, bounds.top());
-    if (tr > 0) rounded.arcTo(QRectF(bounds.right() - 2 * tr, bounds.top(), 2 * tr, 2 * tr), 90, -90);
-    rounded.lineTo(bounds.right(), bounds.bottom() - br);
-    if (br > 0) rounded.arcTo(QRectF(bounds.right() - 2 * br, bounds.bottom() - 2 * br, 2 * br, 2 * br), 0, -90);
-    rounded.lineTo(bounds.left() + bl, bounds.bottom());
-    if (bl > 0) rounded.arcTo(QRectF(bounds.left(), bounds.bottom() - 2 * bl, 2 * bl, 2 * bl), 270, -90);
-    rounded.lineTo(bounds.left(), bounds.top() + tl);
-    if (tl > 0) rounded.arcTo(QRectF(bounds.left(), bounds.top(), 2 * tl, 2 * tl), 180, -90);
-    rounded.closeSubpath();
-    cover.addPath(rounded);
-
-    QPainter painter(this);
-    painter.setRenderHint(QPainter::Antialiasing, true);
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(cornerBackground_);
-    painter.drawPath(cover);
-}
-
 bool MpvVideoWidget::renderSoftwareFrame(int width, int height) {
     if (softwareFrame_.size() != QSize(width, height)) {
         if (width <= 0 || height <= 0 || width > 16384 || height > 16384) return false;
@@ -444,12 +455,10 @@ bool MpvVideoWidget::renderSoftwareFrame(int width, int height) {
         softwareFrame_ = QImage(reinterpret_cast<uchar*>(aligned), width, height, stride, QImage::Format_RGBX8888);
     }
     if (!player_->renderSoftwareFrame(softwareFrame_)) return false;
-    QPainter painter(this);
-    painter.drawImage(rect(), softwareFrame_);
     return true;
 }
 
-void MpvVideoWidget::resizeGL(int, int) { requestFrame(); }
+void MpvVideoWidget::resizeGL(int, int) { cornerCover_->setGeometry(rect()); requestFrame(); }
 void MpvVideoWidget::mousePressEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton) {
         clickOrigin_ = event->position();
@@ -480,7 +489,10 @@ void MpvVideoWidget::mouseDoubleClickEvent(QMouseEvent* event) {
     const bool revertSingleClick = doubleClickCandidate_;
     doubleClickCandidate_ = false;
     clickOrigin_.reset();
-    emit seekRequested(event->position().x() < width() / 2.0 ? -5000 : 5000, revertSingleClick);
+    const auto x = event->position().x();
+    if (x < width() / 3.0) emit seekRequested(-3000, revertSingleClick);
+    else if (x > width() * 2.0 / 3.0) emit seekRequested(3000, revertSingleClick);
+    else emit fullscreenRequested(revertSingleClick);
     event->accept();
 }
 

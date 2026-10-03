@@ -36,6 +36,7 @@ public:
 signals:
     void clicked();
     void seekRequested(qint64 milliseconds, bool revertSingleClick);
+    void fullscreenRequested(bool revertSingleClick);
     void renderContextReady();
     void renderContextLost();
     void renderError(QString code, QString message);
@@ -58,7 +59,6 @@ private:
     static void renderUpdateCallback(void* context);
     void connectPlayer(Player* player);
     bool renderSoftwareFrame(int width, int height);
-    void paintCornerCover();
     bool paintTransportBackdrop();
     void destroyTransportBackdrop();
 
@@ -75,11 +75,7 @@ private:
     bool doubleClickCandidate_ = false;
     QByteArray softwarePixels_;
     QImage softwareFrame_;
-    qreal topLeftRadius_ = 0.0;
-    qreal topRightRadius_ = 0.0;
-    qreal bottomRightRadius_ = 0.0;
-    qreal bottomLeftRadius_ = 0.0;
-    QColor cornerBackground_ = Qt::black;
+    QWidget* cornerCover_ = nullptr;
     QRect transportBackdropRect_;
     qreal transportBackdropVisibility_ = 0.0;
     struct BackdropResources;
