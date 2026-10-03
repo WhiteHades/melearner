@@ -30,9 +30,12 @@ two implementations. See [Qt Windows graphics](https://doc.qt.io/qt-6/windows-gr
 
 The app and its remaining build tools use the same native Release configuration.
 FFmpeg includes the file reading, video decoding and image scaling libraries
-used for thumbnails. Playback uses the separate pinned libmpv SDK. vcpkg does
+used for thumbnails and playback. The workflow builds libmpv from its verified
+0.41.0 source archive and libplacebo from an immutable source revision. Their
+original notices, build options and corresponding sources accompany the package
+evidence. It does not use an opaque prebuilt player DLL. vcpkg does
 not build Qt SQL drivers or PostgreSQL libraries that the application never uses.
-The pinned player DLL also imports vulkan-1.dll. The manual workflow builds the
+The manual workflow builds the
 Vulkan loader from the pinned vcpkg baseline and deploys it beside the test app,
 then checks application and local DLL imports before starting the test. A missing
 loader must not silently depend on an optional graphics driver installation.

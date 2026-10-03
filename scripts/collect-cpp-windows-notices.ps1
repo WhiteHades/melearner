@@ -2,7 +2,7 @@ param(
   [string]$BuildDir = 'build/manual-windows',
   [string]$VcpkgRoot = 'D:\v',
   [string]$MpvSdk = 'D:\v\mpv-sdk',
-  [string]$MpvArchive = 'D:\v\mpv-dev.7z',
+  [string]$MpvArchive = $env:MPV_SOURCE_ARCHIVE,
   [string]$QtRoot = $env:MELEARNER_QT_ROOT,
   [string]$OutputDir = '.tmp/manual-ci/windows-legal'
 )
@@ -162,60 +162,42 @@ try {
     foreach ($file in $qtNotices) { [void](Add-Notice 'qt-sdk' 'installed-sdk-notice' $file.FullName 'https://download.qt.io/online/qtsdkrepository/') }
   } else { Add-Missing 'qt-sdk' 'No licenses directory found in the installed Qt SDK.' }
 
-  $mpvUrl = 'https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20261003/mpv-dev-x86_64-20261003-git-3186d369f9.7z'
+  $mpvUrl = 'https://github.com/mpv-player/mpv/archive/refs/tags/v0.41.0.tar.gz'
   $mpvSha = (Get-FileHash -LiteralPath $mpvArchivePath -Algorithm SHA256).Hash.ToLowerInvariant()
-  $expectedMpvSha = 'b8c2d656c1584d5f08196fcee5c2d0783d1f76021897c4e0b3cc30f94c79522e'
-  if ($mpvSha -ne $expectedMpvSha) { throw "Pinned mpv SDK SHA-256 mismatch: $mpvSha" }
-  Add-Package 'libmpv-2' '2.5.0' 'mpv-dev-sdk' $mpvUrl '3186d369f9f090cd1363be0ac46a037824b702c6' 'gitCommit'
-  ($packages | Where-Object name -EQ 'libmpv-2' | Select-Object -First 1) | Add-Member -NotePropertyName archiveSHA256 -NotePropertyValue $mpvSha -Force
-  $mpvSourceUrl = 'https://github.com/mpv-player/mpv/archive/3186d369f9f090cd1363be0ac46a037824b702c6.tar.gz'
-  $mpvSourceArchive = Join-Path $scratch 'mpv-source.tar.gz'
-  Invoke-WebRequest -Uri $mpvSourceUrl -OutFile $mpvSourceArchive
-  Add-Package 'mpv-source' '3186d369f9f090cd1363be0ac46a037824b702c6' 'mpv-upstream-source' $mpvSourceUrl '3186d369f9f090cd1363be0ac46a037824b702c6' 'gitCommit'
-  $mpvListing = & $tar.Source -tf $mpvSourceArchive
-  if ($LASTEXITCODE -ne 0) { throw 'Could not list pinned mpv source archive.' }
-  $mpvPaths = @($mpvListing | Where-Object { $_ -match '(?i)(^|/)(copyright|license\.gpl|license\.lgpl)$' })
-  if (-not $mpvPaths) { Add-Missing 'mpv-source' 'No upstream Copyright/GPL/LGPL notice paths found at the pinned mpv revision.' }
-  else {
-    $pathList = Join-Path $scratch 'mpv-legal-paths.txt'
-    [IO.File]::WriteAllLines($pathList, [string[]]$mpvPaths, [Text.UTF8Encoding]::new($false))
-    $mpvExtract = Join-Path $scratch 'mpv-source'
-    New-Item -ItemType Directory -Path $mpvExtract | Out-Null
-    & $tar.Source -xf $mpvSourceArchive -C $mpvExtract -T $pathList
-    if ($LASTEXITCODE -ne 0) { throw 'Could not extract legal files from pinned mpv source.' }
-    foreach ($path in $mpvPaths) {
-      $file = Join-Path $mpvExtract ($path.Replace('/', '\'))
-      if (-not (Add-Notice 'mpv-source' 'upstream-source-notice' $file $mpvSourceUrl)) { Add-Missing 'mpv-source' "Could not read pinned source notice: $path" }
-    }
+  $expectedMpvSha = 'ee21092a5ee427353392360929dc64645c54479aefdb5babc5cfbb5fad626209'
+  if ($mpvSha -ne $expectedMpvSha) { throw "Pinned mpv source SHA-256 mismatch: $mpvSha" }
+  $manifestPath = Join-Path $mpvRoot 'source-manifest.json'
+  Require-File $manifestPath 'owned player source manifest'
+  $playerManifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+  if ($playerManifest.name -ne 'mpv' -or $playerManifest.version -ne '0.41.0' -or $playerManifest.sourceSHA256 -ne $expectedMpvSha) {
+    throw 'Player source manifest does not match the pinned mpv build.'
   }
-  $mpvSdkSource = Get-ChildItem -LiteralPath $mpvRoot -File -Recurse | Where-Object { $_.Name -in @('Copyright', 'LICENSE.GPL', 'LICENSE.LGPL') }
+  Add-Package 'libmpv-2' '0.41.0' 'owned-source-build' $mpvUrl $mpvSha
+  Copy-Item -LiteralPath $manifestPath -Destination (Join-Path $outputRoot 'player-source-manifest.json')
+  $sourcesDir = Join-Path $outputRoot 'sources'
+  New-Item -ItemType Directory -Force $sourcesDir | Out-Null
+  Copy-Item -LiteralPath $mpvArchivePath -Destination (Join-Path $sourcesDir 'mpv-0.41.0.tar.gz')
   foreach ($name in @('Copyright', 'LICENSE.GPL', 'LICENSE.LGPL')) {
-    $file = $mpvSdkSource | Where-Object Name -EQ $name | Select-Object -First 1
-    if ($file) { [void](Add-Notice 'libmpv-2' 'sdk-upstream-notice' $file.FullName $mpvUrl) }
+    $file = Join-Path $mpvRoot "source-notices\$name"
+    Require-File $file "mpv upstream $name"
+    [void](Add-Notice 'libmpv-2' 'upstream-source-notice' $file $mpvUrl)
   }
-  Add-Missing 'libmpv-2' 'The supplied static libmpv SDK does not identify the source revisions for its transitive linked libraries.'
-
-  $ffmpegCommit = '98e92563a3b60dbf6d370fd3491d7f896398e4c1'
-  $ffmpegUrl = "https://github.com/FFmpeg/FFmpeg/archive/$ffmpegCommit.tar.gz"
-  $ffmpegPackage = $packages | Where-Object name -EQ 'ffmpeg' | Select-Object -First 1
-  if (-not $ffmpegPackage) { throw 'FFmpeg version is missing from vcpkg installed status.' }
-  $ffmpegArchive = Join-Path $scratch 'ffmpeg.tar.gz'
-  Invoke-WebRequest -Uri $ffmpegUrl -OutFile $ffmpegArchive
-  Add-Package 'mpv-ffmpeg' $ffmpegCommit 'mpv-static-sdk-upstream-reference' $ffmpegUrl $ffmpegCommit 'gitCommit'
-  $ffmpegListing = & $tar.Source -tf $ffmpegArchive
-  if ($LASTEXITCODE -ne 0) { throw 'Could not list pinned FFmpeg source archive.' }
-  $ffmpegPaths = @($ffmpegListing | Where-Object { $_ -match '(?i)(^|/)(LICENSE|COPYING|README)([._-][^/]*)?$' })
-  if (-not $ffmpegPaths) { Add-Missing 'mpv-ffmpeg' 'No license/copyright/readme paths found in pinned source.' }
-  else {
-    $pathList = Join-Path $scratch 'ffmpeg-legal-paths.txt'
-    [IO.File]::WriteAllLines($pathList, [string[]]$ffmpegPaths, [Text.UTF8Encoding]::new($false))
-    $extract = Join-Path $scratch 'ffmpeg'
-    New-Item -ItemType Directory -Path $extract | Out-Null
-    & $tar.Source -xf $ffmpegArchive -C $extract -T $pathList
-    if ($LASTEXITCODE -ne 0) { throw 'Could not extract legal files from pinned FFmpeg source.' }
-    foreach ($path in $ffmpegPaths) {
-      $file = Join-Path $extract ($path.Replace('/', '\'))
-      if (-not (Add-Notice 'mpv-ffmpeg' 'upstream-source-notice' $file $ffmpegUrl)) { Add-Missing 'mpv-ffmpeg' "Could not read pinned source notice: $path" }
+  if (-not ($packages | Where-Object name -EQ 'ffmpeg')) { throw 'FFmpeg version is missing from vcpkg installed status.' }
+  if (@($playerManifest.dependencies).Count -ne 1) { throw 'Expected one pinned libplacebo source dependency in the player manifest.' }
+  foreach ($dependency in $playerManifest.dependencies) {
+    if ($dependency.name -ne 'libplacebo' -or $dependency.sourceHash -ne '1fd3c7bde7b943fe8985c893310b5269a09b46c5') {
+      throw 'Unexpected source-owned player dependency.'
+    }
+    Add-Package $dependency.name $dependency.version 'owned-source-build' $dependency.sourceURL $dependency.sourceHash 'gitCommit'
+    $dependencyArchive = Join-Path $mpvRoot 'libplacebo-source.tar.gz'
+    Require-File $dependencyArchive 'libplacebo corresponding source archive'
+    $sourceArchiveHash = (Get-FileHash -LiteralPath $dependencyArchive -Algorithm SHA256).Hash.ToLowerInvariant()
+    ($packages | Where-Object name -EQ $dependency.name | Select-Object -First 1) | Add-Member -NotePropertyName archiveSHA256 -NotePropertyValue $sourceArchiveHash
+    Copy-Item -LiteralPath $dependencyArchive -Destination $sourcesDir
+    $dependencyNotices = Get-ChildItem -LiteralPath (Join-Path $mpvRoot 'source-notices\libplacebo') -File -Recurse
+    if (-not $dependencyNotices) { throw 'libplacebo source notices were not preserved.' }
+    foreach ($notice in $dependencyNotices) {
+      [void](Add-Notice 'libplacebo' 'upstream-source-notice' $notice.FullName $dependency.sourceURL)
     }
   }
 
