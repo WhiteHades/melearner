@@ -1,4 +1,5 @@
 #include "main_window.hpp"
+#include "course_document_view.hpp"
 #include "course_preview.hpp"
 #include "seek_feedback.hpp"
 #include "course_rows.hpp"
@@ -43,7 +44,6 @@
 #include <QPointer>
 #include <QPainter>
 #include <QPainterPath>
-#include <QPropertyAnimation>
 #include <QVariantAnimation>
 #include <QResizeEvent>
 #include <QScrollArea>
@@ -90,13 +90,16 @@ public:
 class PlayerPill final : public QWidget {
 public:
   using QWidget::QWidget;
+  bool translucent = false;
 protected:
   void mousePressEvent(QMouseEvent* event) override { event->accept(); }
   void mouseReleaseEvent(QMouseEvent* event) override { event->accept(); }
   void paintEvent(QPaintEvent*) override {
     QPainter painter(this); painter.setRenderHint(QPainter::Antialiasing);
-    painter.setPen(melearner::roleColor(this, shadcn::Role::Border));
-    painter.setBrush(melearner::roleColor(this, shadcn::Role::Popover));
+    auto border = melearner::roleColor(this, shadcn::Role::Border);
+    auto fill = melearner::roleColor(this, shadcn::Role::Popover);
+    if (translucent && !melearner::highContrast()) { border.setAlphaF(.45); fill.setAlphaF(.84); }
+    painter.setPen(border); painter.setBrush(fill);
     const auto radius = std::min(28.0, height() / 2.0);
     painter.drawRoundedRect(QRectF(rect()).adjusted(.5, .5, -.5, -.5), radius, radius);
   }
@@ -130,7 +133,7 @@ public:
 protected:
   QRectF boundingRectFor(const QRectF& source) const override { return source.adjusted(0, 0, 0, 4); }
   void draw(QPainter* painter) override {
-    painter->save(); painter->setOpacity(.7 + .3 * progress);
+    painter->save(); painter->setOpacity(progress);
     painter->translate(0, 4 * (1 - progress)); drawSource(painter); painter->restore();
   }
 };
@@ -144,8 +147,9 @@ public:
   explicit LessonLink(const QString& direction, bool right) : shadcn::Button() {
     setVariant(shadcn::Variant::Outline);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    auto* layout = new QVBoxLayout(this); layout->setContentsMargins(16, 12, 16, 12); layout->setSpacing(4);
+    auto* layout = new QVBoxLayout(this); layout->setContentsMargins(12, 8, 12, 8); layout->setSpacing(2);
     auto* caption = new QLabel(direction, this);
+    caption->setFont(headingFont(font(), .9));
     name_ = new QLabel(this);
     for (auto* label : {caption, name_}) {
       label->setAttribute(Qt::WA_TransparentForMouseEvents);
@@ -159,7 +163,7 @@ public:
     if (compact_ == compact) return;
     compact_ = compact;
     name_->setVisible(!compact);
-    layout()->setContentsMargins(16, compact ? 8 : 12, 16, compact ? 8 : 12);
+    layout()->setContentsMargins(12, 8, 12, 8);
     updateGeometry();
   }
   void setLesson(const QString& name) {
@@ -167,7 +171,7 @@ public:
     setToolTip(name); setAccessibleDescription(name); updateGeometry();
     setProperty("melearnerCopyText", accessibleName() + "\n" + name);
   }
-  QSize sizeHint() const override { return {160, fontMetrics().height() * (compact_ ? 1 : 2) + (compact_ ? 16 : 28)}; }
+  QSize sizeHint() const override { return {160, fontMetrics().height() * (compact_ ? 1 : 2) + (compact_ ? 16 : 18)}; }
   QSize minimumSizeHint() const override { return sizeHint(); }
 protected:
   void resizeEvent(QResizeEvent* event) override {
@@ -283,6 +287,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   // Keep the route title on its own row so navigation actions cannot elide it at
   // narrow widths or larger text sizes.
   auto* headerActions = new QWidget(center); headerActions->setObjectName("headerActions");
+  headerActions_ = headerActions;
   auto* actionsLayout = new QHBoxLayout(headerActions); actionsLayout->setContentsMargins(0, 0, 0, 0);
   actionsLayout->setSpacing(8);
   searchButton_ = button(tr("Ctrl+K"), "searchButton", shadcn::Variant::Ghost);
@@ -452,7 +457,8 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     updateLayout();
   });
   split_ = new shadcn::ResizablePanelGroup(Qt::Horizontal);
-  outline_ = new QWidget; outline_->setMinimumWidth(240); outline_->setObjectName("courseOutline"); outline_->setAttribute(Qt::WA_StyledBackground);
+  outline_ = new QWidget; outline_->setMinimumWidth(0); outline_->setObjectName("courseOutline"); outline_->setAttribute(Qt::WA_StyledBackground);
+  outline_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
   auto* outlineLayout = new QVBoxLayout(outline_); outlineLayout->setContentsMargins(0, 0, 0, 0); outlineLayout->setSpacing(12);
   auto* outlineTitle = new shadcn::Label(tr("Course outline")); outlineTitle->setFont(headingFont(font(), 1.0, true));
   outlineTitle->setMargin(0); outlineLayout->addWidget(outlineTitle);
@@ -476,9 +482,18 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   outlineLayout->addWidget(lessons_, 1); split_->addPanel(*outline_);
   outlineOpacity_ = new QGraphicsOpacityEffect(outline_); outlineOpacity_->setOpacity(1);
   outline_->setGraphicsEffect(outlineOpacity_);
-  outlineFade_ = new QPropertyAnimation(outlineOpacity_, "opacity", this);
+  outlineFade_ = new QVariantAnimation(this);
   outlineFade_->setObjectName("outlineReveal"); outlineFade_->setEasingCurve(revealCurve());
-  connect(outlineFade_, &QPropertyAnimation::finished, this, [this] { updateLayout(); });
+  connect(outlineFade_, &QVariantAnimation::valueChanged, this, [this](const QVariant& value) {
+    const int railWidth = value.toInt();
+    split_->setSizes({railWidth, std::max(1, split_->width() - split_->handleWidth() - railWidth)});
+    outlineOpacity_->setOpacity(std::clamp(value.toDouble() / std::max(1, outlineWidth_), 0.0, 1.0));
+    if (content_) {
+      content_->widget()->layout()->setContentsMargins(qRound(20.0 * railWidth / std::max(1, outlineWidth_)), 0, 0, 0);
+      updateMediaLayout();
+    }
+  });
+  connect(outlineFade_, &QVariantAnimation::finished, this, [this] { updateLayout(); });
   auto* contentScroll = new shadcn::ScrollArea; contentScroll->setWidgetResizable(true);
   melearner::styleCourseScrollBars(contentScroll);
   // The lesson canvas is sized to the viewport; its readers wrap and its titles
@@ -507,7 +522,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   lessonLinksLayout_->addWidget(previous, 1); lessonLinksLayout_->addWidget(next, 1);
   complete_ = button(tr("Mark complete"), "markComplete", shadcn::Variant::Ghost);
   complete_->setEnabled(false); lessonNavigation_->addWidget(complete_);
-  lessonHeader->addWidget(lessonActions_);
+  toolbar->addWidget(lessonActions_);
   media_ = new QStackedWidget; media_->setObjectName("mediaFrame"); video_ = new melearner::MpvVideoWidget(player_, media_);
   video_->setObjectName("videoSurface"); video_->setFocusPolicy(Qt::StrongFocus);
   video_->setAccessibleName(tr("Video player"));
@@ -573,6 +588,8 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   pdfControls->addWidget(pdfPage); pdfControls->addWidget(pdfCount); pdfControls->addStretch();
   pdfLayout->addLayout(pdfControls);
   pdf_ = new PdfView; pdfLayout->addWidget(pdf_, 1); media_->addWidget(pdfPane);
+  browserDocument_ = new melearner::CourseDocumentView; media_->addWidget(browserDocument_);
+  connect(browserDocument_, &melearner::CourseDocumentView::error, this, &MainWindow::showError);
   connect(fit, &QPushButton::clicked, pdf_, &PdfView::fitWidth);
   connect(pdfZoom, &QComboBox::activated, this, [this, pdfZoom](int index) { pdf_->setZoom(pdfZoom->itemData(index).toDouble()); });
   // The field shows the current page and jumps on commit, so it is a page
@@ -595,6 +612,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   lessonBottomSpace_ = new QWidget; contentLayout->addWidget(lessonBottomSpace_, 1);
   lessonBottomSpace_->hide();
   playerControls_ = new PlayerPill(video_); playerControls_->setObjectName("playerControls");
+  static_cast<PlayerPill*>(playerControls_)->translucent = true;
   auto* controlsLayout = new QVBoxLayout(playerControls_); controlsLayout->setContentsMargins(20, 10, 20, 12);
   controlsLayout->setSpacing(6); playerControls_->hide();
   seek_ = new shadcn::Slider(0, 10000); seek_->setAccessibleName(tr("Playback position"));
@@ -616,6 +634,9 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   autoplay_->setAccessibleName(tr("Autoplay"));
   autoplay_->setChecked(QSettings().value("playback/autoplay", false).toBool());
   autoplay_->setToolTip(tr("Automatically play the next video"));
+  auto* autoplayCaption = new QLabel(tr("Autoplay"), lessonActions_);
+  autoplayCaption->setObjectName("autoplayCaption");
+  lessonNavigation_->addWidget(autoplayCaption); lessonNavigation_->addWidget(autoplay_);
   connect(autoplay_, &QCheckBox::toggled, this, [this](bool enabled) {
     QSettings().setValue("playback/autoplay", enabled);
     if (!enabled) cancelAutoplay();
@@ -662,7 +683,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   auto* screenshot = button(tr("Capture"), "screenshot", shadcn::Variant::Ghost);
   frame->setAccessibleName(tr("Next frame")); addSubtitles->setAccessibleName(tr("Add subtitles"));
   screenshot->setAccessibleName(tr("Copy frame to clipboard"));
-  playbackWidgets_ = {play_, timeReadout, rateButton, volumeButton, volume, autoplay_,
+  playbackWidgets_ = {play_, timeReadout, rateButton, volumeButton, volume,
                      subtitleButton, frame, addSubtitles, screenshot, fullscreen};
   for (auto* widget : playbackWidgets_) {
     if (auto* control = qobject_cast<shadcn::Button*>(widget)) {
@@ -682,7 +703,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   connect(screenshot, &QPushButton::clicked, this, [this] {
     if (!playerLoaded_ || !lesson_) return;
     const auto image = video_->grabFramebuffer();
-    if (!image.isNull()) { QApplication::clipboard()->setImage(image); notify(tr("Frame copied")); }
+    if (!image.isNull()) QApplication::clipboard()->setImage(image);
   });
   controlsLayout->addLayout(playbackLayout_);
   controlsEffect_ = new TransportEffect(playerControls_);
@@ -693,9 +714,11 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     controlsEffect_->setProperty("opacity", value);
     controlsEffect_->setBlurRadius(melearner::reducedMotion() || melearner::highContrast() ? 0 : 4 * (1 - value.toDouble()));
     controlsEffect_->update();
+    positionPlayerOverlays();
   });
   connect(controlsFade_, &QVariantAnimation::finished, this, [this] {
     if (controlsFade_->endValue().toDouble() == 0) playerControls_->hide();
+    positionPlayerOverlays();
   });
   hideControls_ = new QTimer(this); hideControls_->setObjectName("hidePlayerControls");
   hideControls_->setSingleShot(true); hideControls_->setInterval(2500);
@@ -739,11 +762,12 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   }
   split_->addWidget(content_); split_->setStretchFactor(0, 0); split_->setStretchFactor(1, 1); split_->setSizes({320, 880});
   connect(split_, &QSplitter::splitterMoved, this, [this](int position, int) {
-    if (!compactLayout_ && outline_->isVisible()) outlineWidth_ = position;
+    if (!compactLayout_ && outline_->isVisible() && outlineFade_->state() != QAbstractAnimation::Running)
+      outlineWidth_ = std::max(240, position);
   });
   routes_->addWidget(split_);
   // Reserve status space only while work is running or needs attention.
-  status_ = new shadcn::Label(tr("Opening Library…"), center);
+  status_ = new shadcn::Label({}, center); status_->hide();
   status_->setForegroundRole(QPalette::PlaceholderText);
   status_->setWordWrap(true); status_->setAccessibleName(tr("Status"));
   status_->setTextFormat(Qt::PlainText);
@@ -762,6 +786,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   statusRow->addWidget(rootLabel_, 1, Qt::AlignRight);
   rootLabel_->hide();
   shell->addWidget(statusHost_);
+  statusHost_->hide(); status_->installEventFilter(this); cancelScan_->installEventFilter(this);
   connect(cancelScan_, &QPushButton::clicked, this, [this] {
     if (!scanId_) return;
     status_->setText(library_.cancelScan(scanId_) ? tr("Canceling scan…") : tr("Scan is committing. Please wait."));
@@ -1043,7 +1068,9 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     if (!lesson_ || lesson_->id != result.lessonId) return;
     lesson_->completed = result.completed;
     lesson_->lastPosition = result.lastPosition; lesson_->watchedTime = result.watchedTime;
-    complete_->setText(result.completed ? tr("Mark incomplete") : tr("Mark complete"));
+    const auto label = result.completed ? tr("Mark incomplete") : tr("Mark complete");
+    complete_->setText(compactLayout_ ? QString{} : label);
+    complete_->setAccessibleName(label); complete_->setToolTip(label);
   });
   connect(play_, &QPushButton::clicked, this, [this] { cancelAutoplay(); if (paused_) (void)player_->play(); else (void)player_->pause(); });
   connect(seek_, &shadcn::Slider::valuesChanged, this, [this](const QVector<double>& values) {
@@ -1245,7 +1272,8 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
 }
 
 MainWindow::~MainWindow() {
-  hideControls_->stop(); controlsFade_->stop(); routeReveal_->stop();
+  hideControls_->stop(); controlsFade_->stop(); routeReveal_->stop(); outlineFade_->stop();
+  browserDocument_->clear();
   preview_->clear();
   thumbnails_->cancelPending();
   // Child removal and focus changes happen before QObject disconnects us.
@@ -1327,6 +1355,7 @@ bool MainWindow::isTextInputFocused() const {
 void MainWindow::moveSelection(int delta) {
   auto* focus = QApplication::focusWidget();
   const auto inside = [focus](QWidget* root) { return root && focus && (focus == root || root->isAncestorOf(focus)); };
+  if (inside(browserDocument_)) { browserDocument_->scrollBy(delta * 48); return; }
   if (inside(documentView_) && documentView_->isReadOnly()) {
     auto* bar = documentView_->verticalScrollBar(); bar->setValue(bar->value() + delta * bar->singleStep()); return;
   }
@@ -1347,6 +1376,7 @@ void MainWindow::moveSelection(int delta) {
 void MainWindow::jumpSelection(bool last) {
   auto* focus = QApplication::focusWidget();
   const auto inside = [focus](QWidget* root) { return root && focus && (focus == root || root->isAncestorOf(focus)); };
+  if (inside(browserDocument_)) { browserDocument_->jumpTo(last); return; }
   if (inside(documentView_) && documentView_->isReadOnly()) {
     auto* bar = documentView_->verticalScrollBar(); bar->setValue(last ? bar->maximum() : bar->minimum()); return;
   }
@@ -1365,6 +1395,7 @@ void MainWindow::jumpSelection(bool last) {
 void MainWindow::scrollDocument(int pages) {
   auto* focus = QApplication::focusWidget();
   const auto inside = [focus](QWidget* root) { return root && focus && (focus == root || root->isAncestorOf(focus)); };
+  if (inside(browserDocument_)) { browserDocument_->scrollBy(pages * browserDocument_->height()); return; }
   if (inside(documentView_) && documentView_->isReadOnly()) {
     auto* bar = documentView_->verticalScrollBar(); bar->setValue(bar->value() + pages * bar->pageStep()); return;
   }
@@ -1490,6 +1521,7 @@ void MainWindow::chooseRootWhenOpen(const QString& path) {
   chooseRoot(path);
 }
 void MainWindow::showLibrary() {
+  browserDocument_->clear();
   routePointerMotion_ = !keyboardNavigation_;
   routeReveal_->stop();
   thumbnails_->cancelPending(); thumbnailRequests_.clear();
@@ -1529,6 +1561,7 @@ void MainWindow::showCourse(const lib::Course& course, const QString& requestedL
   routePointerMotion_ = !keyboardNavigation_;
   routeReveal_->stop();
   if (course.missing) { showError(tr("Course folder missing: %1. Choose its root folder, then Rescan.").arg(course.path)); return; }
+  browserDocument_->clear();
   cancelAutoplay(); neighborResolveId_ = 0; neighborReadId_ = 0;
   previewRequestId_ = 0; preview_->suspend(); preview_->hide();
   thumbnails_->cancelPending(); thumbnailRequests_.clear();
@@ -1554,6 +1587,7 @@ void MainWindow::showCourse(const lib::Course& course, const QString& requestedL
   if (!entryRequestId_) showError(tr("Library is busy. Open the Course again to retry."));
 }
 void MainWindow::showLesson(const lib::Lesson& lesson) {
+  browserDocument_->clear();
   cancelAutoplay();
   seekFeedback_->hide();
   if (videoFullscreen_ && lesson.type != "video" && lesson.type != "audio") toggleVideoFullscreen();
@@ -1562,7 +1596,9 @@ void MainWindow::showLesson(const lib::Lesson& lesson) {
   externalOpenId_ = 0; externalOpen_->setVisible(lesson.type != "video" && lesson.type != "audio");
   pdf_->clear();
   savePosition(); playerLoaded_ = false; playerLoadRequested_ = false;
-  if (player_->isReady()) (void)player_->stop();
+  // loadfile replaces media itself. A separate stop creates an avoidable black
+  // frame and another command between adjacent videos.
+  if (player_->isReady() && lesson.type != "video" && lesson.type != "audio") (void)player_->stop();
   lesson_ = lesson;
   refreshNeighbors();
   content_->verticalScrollBar()->setValue(0);
@@ -1582,6 +1618,10 @@ void MainWindow::showLesson(const lib::Lesson& lesson) {
   if (lesson.type == "video" || lesson.type == "audio") {
     video_->setAccessibleName(lesson.type == "audio" ? tr("Audio: %1").arg(lesson.name) : tr("Video: %1").arg(lesson.name));
     media_->setCurrentIndex(0); player_->setApprovedRoots({rootPath_}); player_->start(); loadSelectedMedia();
+  } else if (const auto suffix = QFileInfo(lesson.path).suffix().toLower();
+             suffix == "html" || suffix == "htm" || suffix == "md" || suffix == "markdown") {
+    media_->setCurrentIndex(3);
+    browserDocument_->open(course_ ? course_->path : rootPath_, lesson.path);
   } else if (lesson.path.endsWith(".pdf", Qt::CaseInsensitive)) {
     media_->setCurrentIndex(2); pdf_->open(rootPath_, lesson.path);
   } else {
@@ -1598,7 +1638,14 @@ void MainWindow::revealRoute() {
     auto* effect = static_cast<RouteTextEffect*>(group->graphicsEffect());
     effect->progress = 1; effect->update();
   }
-  if (routePointerMotion_ && !melearner::reducedMotion() && !melearner::highContrast()) routeReveal_->start();
+  if (routePointerMotion_ && !melearner::reducedMotion() && !melearner::highContrast()) {
+    for (auto* group : course_ ? QList<QWidget*>{lessonHeader_, lessonLinks_}
+                              : QList<QWidget*>{resumeHeading_, resumeCopy_}) {
+      auto* effect = static_cast<RouteTextEffect*>(group->graphicsEffect());
+      effect->progress = 0; effect->update();
+    }
+    routeReveal_->start();
+  }
 }
 void MainWindow::requestDocumentPage(qsizetype offset) {
   if (!lesson_ || documentGeneration_ == 0 || documentRequestId_) return;
@@ -1609,7 +1656,6 @@ void MainWindow::requestDocumentPage(qsizetype offset) {
 void MainWindow::loadSelectedMedia() {
   if (!lesson_ || (lesson_->type != "video" && lesson_->type != "audio") || !player_->isReady() ||
       !video_->isRenderContextReady() || playerLoadRequested_) return;
-  status_->setText(tr("Opening %1…").arg(lesson_->name)); status_->show();
   playerLoadId_ = player_->loadFile(lesson_->path, positionMs_);
   playerLoadRequested_ = playerLoadId_ != 0;
 }
@@ -1655,6 +1701,9 @@ void MainWindow::keyPressEvent(QKeyEvent* event) {
   QMainWindow::keyPressEvent(event);
 }
 bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+  if (statusHost_ && (watched == status_ || watched == cancelScan_) &&
+      (event->type() == QEvent::ShowToParent || event->type() == QEvent::HideToParent))
+    statusHost_->setVisible(!videoFullscreen_ && (!status_->isHidden() || !cancelScan_->isHidden()));
   if (watched == resumePanel_ && event->type() == QEvent::Resize) updateLayout();
   if (courses_ && watched == courses_->viewport() && event->type() == QEvent::Resize)
     QTimer::singleShot(0, this, [this] { updateLayout(); });
@@ -1702,6 +1751,7 @@ void MainWindow::revealPlayerControls(bool animate) {
     controlsEffect_->setBlurRadius(0); controlsEffect_->update();
   }
   if (!hideControls_->isActive() || hideControls_->remainingTime() < hideControls_->interval() - 500) hideControls_->start();
+  positionPlayerOverlays();
 }
 void MainWindow::seekVideo(qint64 deltaMs) {
   if (!playerLoaded_) return;
@@ -1717,24 +1767,27 @@ void MainWindow::updatePlaybackTime(qint64 position, qint64 duration) {
   time_->setText(clockText(position)); durationTime_->setText(clockText(duration));
 }
 void MainWindow::toggleLessonOutline() {
+  const int currentWidth = outline_->isVisible() ? split_->sizes().value(0) : 0;
   compactOutline_ = !compactOutline_;
   outlineFade_->stop();
   outlineToggle_->setText(compactOutline_ ? tr("Hide lessons") : tr("Lessons"));
-  if (keyboardNavigation_ || melearner::reducedMotion() || melearner::highContrast()) {
+  if (compactLayout_ || keyboardNavigation_ || melearner::reducedMotion() || melearner::highContrast()) {
     outlineOpacity_->setOpacity(1); updateLayout(); return;
   }
-  if (compactOutline_ && !outline_->isVisible()) {
-    updateLayout(); outlineOpacity_->setOpacity(0);
-  }
-  outlineFade_->setDuration(compactOutline_ ? 180 : 140);
-  outlineFade_->setStartValue(outlineOpacity_->opacity());
-  outlineFade_->setEndValue(compactOutline_ ? 1.0 : 0.0); outlineFade_->start();
+  QEasingCurve drawer(QEasingCurve::BezierSpline);
+  drawer.addCubicBezierSegment(QPointF(.32, .72), QPointF(0, 1), QPointF(1, 1));
+  outlineFade_->setEasingCurve(drawer); outlineFade_->setDuration(220);
+  outlineFade_->setStartValue(currentWidth);
+  outlineFade_->setEndValue(compactOutline_ ? outlineWidth_ : 0);
+  outline_->show();
+  // Start before updateLayout so it never substitutes the final rail width.
+  outlineFade_->start(); updateLayout();
 }
 void MainWindow::updateControlsLayout() {
   if (playbackWidgets_.isEmpty() || !lessonNavigation_) return;
   const auto* scroll = qobject_cast<QScrollArea*>(content_);
   const int available = scroll->viewport()->width() - 12;
-  for (auto* navigation : {documentNavigation_, lessonNavigation_, lessonLinksLayout_}) {
+  for (auto* navigation : {documentNavigation_, lessonLinksLayout_}) {
     int needed = 0, count = 0;
     for (int index = 0; index < navigation->count(); ++index) {
       if (const auto* widget = navigation->itemAt(index)->widget()) {
@@ -1784,6 +1837,8 @@ void MainWindow::positionPlayerOverlays() {
   const QPoint position((video_->width() - playerControls_->width()) / 2,
     std::max(8, visible.bottom() + 1 - playerControls_->height() - 16));
   if (playerControls_->pos() != position) playerControls_->move(position);
+  video_->setTransportBackdrop(playerControls_->geometry(), playerControls_->isVisible() && !melearner::highContrast()
+    ? controlsEffect_->property("opacity").toDouble() : 0.0);
   if (autoplayIndicator_) {
     autoplayIndicator_->adjustSize();
     autoplayIndicator_->move(visible.center() - QPoint(autoplayIndicator_->width() / 2, autoplayIndicator_->height() / 2));
@@ -1820,10 +1875,9 @@ void MainWindow::updateMediaLayout() {
   layout->setSpacing(videoFullscreen_ ? 0 : shortViewport ? 8 : 16);
   for (auto* link : {"previousLesson", "nextLesson"})
     static_cast<LessonLink*>(findChild<shadcn::Button*>(link))->setCompact(video && shortViewport);
-  const int width = content_->viewport()->width() - (videoFullscreen_ || !outline_->isVisible() ? 0 : 20);
+  const int width = content_->viewport()->width() - layout->contentsMargins().left();
   auto* heading = static_cast<QHBoxLayout*>(lessonHeader_->layout());
   heading->setDirection(!video && width < 520 ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight);
-  heading->setAlignment(lessonActions_, Qt::AlignRight);
   for (auto* widget : {lessonHeader_, lessonLinks_}) widget->setFixedWidth(std::max(1, width));
   lessonHeader_->layout()->activate(); lessonLinks_->layout()->activate();
   if (video && !videoFullscreen_) {
@@ -1838,6 +1892,7 @@ void MainWindow::updateMediaLayout() {
     preferredVideoHeight_ = std::max(1, std::min(availableHeight, fittedWidth * 9 / 16));
     media_->setFixedHeight(preferredVideoHeight_);
     media_->setFixedWidth(fittedWidth);
+    for (auto* widget : {lessonHeader_, lessonLinks_}) widget->setFixedWidth(fittedWidth);
   } else {
     media_->setMinimumHeight(0);
     media_->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
@@ -1881,29 +1936,42 @@ void MainWindow::updateLayout() {
     resumeCopy_->setMaximumHeight(QWIDGETSIZE_MAX);
   }
   statsNav_->setVisible(!course_);
+  headerActions_->setVisible(!course_ && !videoFullscreen_);
   if (searchButton_) {
-    searchButton_->setVisible(!videoFullscreen_);
+    searchButton_->setVisible(!course_ && !videoFullscreen_);
     searchButton_->setButtonSize(width() < 720 ? shadcn::ButtonSize::Icon : shadcn::ButtonSize::Default);
   }
   if (rootLabel_) rootLabel_->hide();
   rescan_->hide(); choose_->setVisible(!course_ && rootPath_.isEmpty());
   headerHost_->setVisible(!videoFullscreen_);
   lessonHeader_->setVisible(!videoFullscreen_);
-  lessonActions_->setVisible(!videoFullscreen_);
-  statusHost_->setVisible(!videoFullscreen_);
+  lessonActions_->setVisible(course_.has_value() && !videoFullscreen_);
+  findChild<QLabel*>("autoplayCaption")->setVisible(!compact);
+  complete_->setText(compact ? QString{} : lesson_ && lesson_->completed ? tr("Mark incomplete") : tr("Mark complete"));
+  complete_->setButtonSize(compact ? shadcn::ButtonSize::Icon : shadcn::ButtonSize::Default);
+  complete_->setToolTip(lesson_ && lesson_->completed ? tr("Mark incomplete") : tr("Mark complete"));
+  complete_->setAccessibleName(complete_->toolTip());
+  statusHost_->setVisible(!videoFullscreen_ && (!status_->isHidden() || !cancelScan_->isHidden()));
   centralWidget()->layout()->setContentsMargins(videoFullscreen_ ? 0 : 24, videoFullscreen_ ? 0 : 20,
       videoFullscreen_ ? 0 : 24, videoFullscreen_ ? 0 : 20);
   centralWidget()->layout()->setSpacing(videoFullscreen_ ? 0 : 20);
   auto* contentLayout = content_->widget()->layout();
-  contentLayout->setContentsMargins(videoFullscreen_ || !compactOutline_ ? 0 : 20, 0, 0, 0);
+  const bool railPresent = compactOutline_ || outlineFade_->state() == QAbstractAnimation::Running;
+  const int railInset = outlineFade_->state() == QAbstractAnimation::Running
+    ? qRound(20.0 * outlineFade_->currentValue().toDouble() / std::max(1, outlineWidth_)) : railPresent ? 20 : 0;
+  contentLayout->setContentsMargins(videoFullscreen_ ? 0 : railInset, 0, 0, 0);
   contentLayout->setSpacing(videoFullscreen_ ? 0 : 16);
   if (!course_) { updateMediaLayout(); updateControlsLayout(); return; }
   outlineToggle_->setVisible(!videoFullscreen_);
-  outlineToggle_->setText(compactOutline_ ? tr("Hide lessons") : tr("Lessons"));
+  const auto outlineLabel = compactOutline_ ? tr("Hide lessons") : tr("Lessons");
+  outlineToggle_->setText(compact ? QString{} : outlineLabel);
+  outlineToggle_->setToolTip(outlineLabel);
+  outlineToggle_->setAccessibleName(outlineLabel);
+  outlineToggle_->setButtonSize(compact ? shadcn::ButtonSize::Icon : shadcn::ButtonSize::Default);
   split_->setStretchFactor(0, compact ? 1 : 0);
   split_->setStretchFactor(1, 1);
   outline_->setVisible(!videoFullscreen_ && (compactOutline_ || outlineFade_->state() == QAbstractAnimation::Running));
-  if (!compact && outline_->isVisible() && (!outlineWasVisible || wasCompact))
+  if (!compact && outline_->isVisible() && outlineFade_->state() != QAbstractAnimation::Running && (!outlineWasVisible || wasCompact))
     split_->setSizes({outlineWidth_, std::max(1, split_->width() - outlineWidth_)});
   if (outlineFade_->state() != QAbstractAnimation::Running && compactOutline_) outlineOpacity_->setOpacity(1);
   content_->setVisible(videoFullscreen_ || !compact ||
@@ -1955,7 +2023,7 @@ void MainWindow::applyAppearance(bool resetTheme) {
   const std::pair<const char*, Icon> icons[] = {
     {"showShortcuts", Icon::Keyboard}, {"searchButton", Icon::Search},
     {"appearance", Icon::Settings}, {"backToLibrary", Icon::ChevronLeft},
-    {"toggleOutline", Icon::Courses}, {"chooseRoot", Icon::Folder},
+    {"toggleOutline", Icon::Sidebar}, {"chooseRoot", Icon::Folder},
     {"markComplete", Icon::Check}, {"volumeButton", muted_ ? Icon::Muted : Icon::Volume},
     {"subtitleTrackButton", Icon::Subtitles}, {"frameStep", Icon::Frame},
     {"addSubtitle", Icon::AddSubtitle}, {"screenshot", Icon::Capture},
@@ -1981,8 +2049,4 @@ void MainWindow::applyAppearance(bool resetTheme) {
     }
   }
   updateLayout();
-}
-void MainWindow::notify(const QString& title, const QString& description) {
-  if (auto* toasts = findChild<shadcn::Sonner*>("toasts")) toasts->showToast(title, description);
-  else status_->setText(description.isEmpty() ? title : description);
 }

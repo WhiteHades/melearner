@@ -24,10 +24,10 @@ class QBoxLayout;
 class QTimer;
 class QGraphicsOpacityEffect;
 class QGraphicsBlurEffect;
-class QPropertyAnimation;
 class QVariantAnimation;
 class QKeyEvent;
 namespace melearner { class Player; class MpvVideoWidget; class StatsPanel; class CourseOutlineModel; class CoursePreview; class SeekFeedback; class ThumbnailStore; }
+namespace melearner { class CourseDocumentView; }
 
 class MainWindow final : public QMainWindow {
   Q_OBJECT
@@ -169,15 +169,17 @@ private:
   bool videoFullscreen_ = false;
   Qt::WindowStates previousWindowState_;
   QWidget* headerHost_ = nullptr;
+  QWidget* headerActions_ = nullptr;
   QWidget* lessonHeader_ = nullptr;
   QWidget* statusHost_ = nullptr;
   QTimer* hideControls_ = nullptr;
   QGraphicsBlurEffect* controlsEffect_ = nullptr;
   QVariantAnimation* controlsFade_ = nullptr;
   QGraphicsOpacityEffect* outlineOpacity_ = nullptr;
-  QPropertyAnimation* outlineFade_ = nullptr;
+  QVariantAnimation* outlineFade_ = nullptr;
   shadcn::Label* documentStatus_;
   shadcn::Prose* documentView_;
+  melearner::CourseDocumentView* browserDocument_ = nullptr;
   shadcn::Button* documentPrevious_;
   shadcn::Button* documentNext_;
   QBoxLayout* documentNavigation_ = nullptr;
@@ -231,7 +233,6 @@ private:
   void showLesson(const melearner::library::Lesson& lesson);
   void updateLayout();
   void showError(const QString& message);
-  void notify(const QString& title, const QString& description = {});
   void applyAppearance(bool resetTheme = false);
   void applyPresentation();
 };
