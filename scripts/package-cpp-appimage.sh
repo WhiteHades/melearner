@@ -14,7 +14,7 @@ usage: scripts/package-cpp-appimage.sh [options]
 Create the diagnostic C++ Linux AppImage from the configured release build.
 The existing CMake runtime stager owns dependency closure and RPATH auditing;
 the installed linuxdeploy AppImage output plugin only turns the staged AppDir
-into an AppImage. No browser runtime or updater is bundled.
+into an AppImage. The Qt WebEngine document viewer is bundled. No updater is bundled.
 
 Options:
   --build-dir <path>  configured CMake release build (default: build/cpp-release)
@@ -209,7 +209,7 @@ if ! grep -Fxq 'Exec=melearner' "$desktop" || \
 fi
 desktop_lower="$(<"$desktop")"
 desktop_lower="${desktop_lower,,}"
-if [[ "$desktop_lower" =~ (tauri|native-app|node|zig|rust|webview|webengine|qml|electron|chromium) ]]; then
+if [[ "$desktop_lower" =~ (tauri|native-app|node|zig|rust|webview|qml|electron|chromium) ]]; then
   echo "AppImage desktop launcher references an old or browser runtime" >&2
   exit 1
 fi
@@ -219,7 +219,7 @@ fi
 while IFS= read -r -d '' staged_path; do
   relative_path="${staged_path#"$appdir"/}"
   relative_lower="${relative_path,,}"
-  if [[ "$relative_lower" =~ (^|/)(native-app|src-tauri|node_modules|qml|webengine|webview|electron|chromium|zig|rust)(/|$) ]]; then
+  if [[ "$relative_lower" =~ (^|/)(native-app|src-tauri|node_modules|qml|webview|electron|chromium|zig|rust)(/|$) ]]; then
     echo "superseded runtime asset staged: $relative_path" >&2
     exit 1
   fi

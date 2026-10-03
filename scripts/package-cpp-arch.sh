@@ -189,7 +189,7 @@ while IFS= read -r -d '' candidate; do
       echo "readelf failed for staged ELF: $candidate" >&2
       exit 1
     fi
-    if grep -Eiq '\((NEEDED|SONAME)\).*\[[^]]*(webkit|javascriptcore|webview2|cef|electron|tauri|qwebengine|qt6webengine|qt6qml|qt6quick)' <<<"$dynamic"; then
+    if grep -Eiq '\((NEEDED|SONAME)\).*\[[^]]*(webkit|javascriptcore|webview2|cef|electron|tauri)' <<<"$dynamic"; then
       echo "old or browser runtime import in ELF: $candidate" >&2
       exit 1
     fi
