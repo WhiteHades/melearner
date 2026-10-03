@@ -4,6 +4,7 @@
 
 #include <QListView>
 
+class QAbstractScrollArea;
 class QChangeEvent;
 class QResizeEvent;
 
@@ -11,6 +12,9 @@ namespace melearner {
 
 /// A course thumbnail supplied by the model as a QPixmap.
 inline constexpr int CourseThumbnailRole = Qt::UserRole + 40;
+
+/// Apply the application's narrow, themed scrollbars to a native scroll area.
+void styleCourseScrollBars(QAbstractScrollArea* area);
 
 /// The course catalogue's photo-first cards and compact thumbnail list.
 class CourseListView final : public shadcn::ListView {

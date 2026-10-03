@@ -3,10 +3,12 @@
 #include "theme.hpp"
 
 #include <QFontMetrics>
+#include <QAbstractScrollArea>
 #include <QIdentityProxyModel>
 #include <QPainter>
 #include <QPainterPath>
 #include <QResizeEvent>
+#include <QScrollBar>
 #include <QTextLayout>
 #include <QTextOption>
 
@@ -14,6 +16,26 @@
 #include <cmath>
 
 namespace melearner {
+
+void styleCourseScrollBars(QAbstractScrollArea* area) {
+    if (!area) return;
+    auto color = roleColor(area, shadcn::Role::MutedForeground);
+    color.setAlphaF(color.alphaF() * .48);
+    const auto handle = color.name(QColor::HexArgb);
+    const QString rules = QStringLiteral(
+        "QScrollBar:vertical { background: transparent; width: 4px; margin: 0; }"
+        "QScrollBar:horizontal { background: transparent; height: 4px; margin: 0; }"
+        "QScrollBar::handle:vertical { background: %1; border-radius: 2px; min-height: 20px; }"
+        "QScrollBar::handle:horizontal { background: %1; border-radius: 2px; min-width: 20px; }"
+        "QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; border: none; }"
+        "QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }").arg(handle);
+    for (auto* bar : {area->verticalScrollBar(), area->horizontalScrollBar()}) {
+        if (bar->styleSheet() != rules) bar->setStyleSheet(rules);
+    }
+    area->verticalScrollBar()->setFixedWidth(4);
+    area->horizontalScrollBar()->setFixedHeight(4);
+}
+
 namespace {
 
 class PaintRolesModel final : public QIdentityProxyModel {
@@ -252,10 +274,22 @@ CourseListView::CourseListView(QWidget* parent) : shadcn::ListView(parent) {
     courseDelegate->setPresentation(presentation());
     courseDelegate->setCompact(compactRows());
     courseDelegate->setRowFont(font());
+    styleCourseScrollBars(this);
 }
 
 void CourseListView::setPresentation(shadcn::ListPresentation value) {
     shadcn::ListView::setPresentation(value);
+    if (value == shadcn::ListPresentation::Cards) {
+        // The native ListView reserves a twelve-pixel content inset and twelve
+        // pixels of item spacing. Course cells instead own a six-pixel card
+        // inset, so keeping both native reservations would waste 36 px at each
+        // outer edge and duplicate the gutter between cards.
+        setContentsMargins(0, 0, 0, 0);
+        // QListView's icon-mode flow treats a cell that ends exactly at the
+        // viewport's right boundary as outside the row. Keep one spare pixel
+        // in the width budget so the final cell stays inside the bounds.
+        setSpacing(0);
+    }
     if (auto* delegate = dynamic_cast<CourseRowDelegate*>(itemDelegate())) {
         delegate->setPresentation(value);
         delegate->setCompact(compactRows());
@@ -272,6 +306,10 @@ void CourseListView::resizeEvent(QResizeEvent* event) {
 
 void CourseListView::changeEvent(QEvent* event) {
     shadcn::ListView::changeEvent(event);
+    if (event->type() == QEvent::StyleChange || event->type() == QEvent::PaletteChange
+        || event->type() == QEvent::ApplicationPaletteChange) {
+        styleCourseScrollBars(this);
+    }
     if (event->type() == QEvent::FontChange || event->type() == QEvent::StyleChange
         || event->type() == QEvent::ApplicationFontChange) {
         if (auto* delegate = dynamic_cast<CourseRowDelegate*>(itemDelegate())) {
@@ -284,11 +322,13 @@ void CourseListView::changeEvent(QEvent* event) {
 
 void CourseListView::updateCourseGrid() {
     if (presentation() != shadcn::ListPresentation::Cards) return;
-    constexpr int gap = 12;
     const auto width = std::max(1, viewport()->width());
     const auto minCardWidth = std::max(260, QFontMetrics(font()).horizontalAdvance(QStringLiteral("MMMMMMMMMMMM")) + 36);
-    const auto columns = width < 560 ? 1 : std::clamp((width + gap) / (minCardWidth + gap), 1, 4);
-    const auto cardWidth = std::max(1, (width - gap * (columns - 1)) / columns);
+    const auto columns = width < 560 ? 1 : std::clamp(width / minCardWidth, 1, 4);
+    // QListView uses an inclusive right boundary for icon-mode flow. Reserving
+    // one pixel prevents an exact-fit last cell from wrapping. Integer division
+    // leaves at most four pixels, instead of losing a whole column.
+    const auto cardWidth = std::max(1, (width - 1) / columns);
     const auto innerWidth = std::max(1, cardWidth - 36);
     const auto imageHeight = qCeil(innerWidth * 9.0 / 16.0);
     QFont emphasized = font();
