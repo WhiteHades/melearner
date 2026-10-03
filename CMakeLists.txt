@@ -7,7 +7,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_AUTOMOC ON)
 include(CTest)
 include(GNUInstallDirs)
-find_package(Qt6 6.11.2 REQUIRED COMPONENTS Widgets OpenGLWidgets Network Pdf WebEngineWidgets Concurrent)
+find_package(Qt6 6.11.2 REQUIRED COMPONENTS Widgets OpenGLWidgets Network Pdf WebEngineWidgets Concurrent Quick)
 find_package(SQLite3 REQUIRED)
 find_package(PkgConfig REQUIRED)
 include(cpp-app/cmake/mpv.cmake)
@@ -42,7 +42,7 @@ add_library(melearner_app STATIC
 )
 target_include_directories(melearner_app PUBLIC cpp-app/src)
 target_link_libraries(melearner_app PUBLIC
-  Qt6::Widgets Qt6::OpenGLWidgets Qt6::Network Qt6::Pdf Qt6::WebEngineWidgets Qt6::Concurrent SQLite3::SQLite3
+  Qt6::Widgets Qt6::OpenGLWidgets Qt6::Network Qt6::Pdf Qt6::WebEngineWidgets Qt6::Concurrent Qt6::Quick SQLite3::SQLite3
   melearner::mpv PkgConfig::LIBZIP PkgConfig::MD4C PkgConfig::MD4C_HTML melearner::lexbor
   shadcn::widgets PkgConfig::THUMBNAIL_MEDIA)
 target_compile_options(melearner_app PRIVATE

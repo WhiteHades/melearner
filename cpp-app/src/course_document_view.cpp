@@ -12,6 +12,7 @@
 #include <QFutureWatcher>
 #include <QMimeDatabase>
 #include <QPointer>
+#include <QQuickWindow>
 #include <QRandomGenerator>
 #include <QScopeGuard>
 #include <QThreadPool>
@@ -65,9 +66,11 @@ struct ResourceRead {
   bool valid = false;
 };
 
-// Qt requires registration before QApplication. This initializer deliberately
-// only registers the name/flags; it creates no WebEngine objects or processes.
+// Configure before QApplication without creating WebEngine objects or processes.
 const bool kSchemeRegistered = [] {
+  // WebEngine's Quick surface shares a window with the OpenGL video canvas.
+  // Mixing the native Metal or Direct3D default with that canvas cannot render.
+  QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
   QWebEngineUrlScheme scheme{QByteArray(kScheme)};
   scheme.setSyntax(QWebEngineUrlScheme::Syntax::Host);
   scheme.setFlags(QWebEngineUrlScheme::SecureScheme |
