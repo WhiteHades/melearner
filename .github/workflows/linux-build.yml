@@ -46,7 +46,7 @@ jobs:
         run: |
           brew install --force-bottle \
             qtwebengine gcc cmake meson ninja pkgconf \
-            libzip md4c ffmpeg libplacebo libass lua sqlite \
+            libzip md4c ffmpeg libplacebo libass luajit sqlite \
             libva libvdpau libdrm pipewire pulseaudio alsa-lib wayland mesa \
             libx11 libxrandr libxpresent libxfixes libxv libxext \
             libxcomposite libxdamage libxrender libxkbcommon libxcb \
@@ -84,7 +84,7 @@ jobs:
           echo "CXX=$CXX" >> "$GITHUB_ENV"
           pkgconfig_paths=
           for formula in \
-            ffmpeg libplacebo libass libzip md4c lua libva libvdpau libdrm \
+            ffmpeg libplacebo libass libzip md4c luajit libva libvdpau libdrm \
             pipewire pulseaudio alsa-lib wayland mesa libx11 libxrandr \
             libxpresent libxfixes libxv libxext libxcomposite libxdamage \
             libxrender libxkbcommon libxcb xorgproto libxcursor libxi \

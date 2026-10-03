@@ -11,6 +11,7 @@ libswscale. Course thumbnails decode a single video frame through those native
 libraries on a bounded background worker. Linux also needs Meson 1.3 or newer,
 patch, and the media development
 libraries listed in the [Arch Linux installation commands](install.md).
+Use LuaJIT for the pinned Linux player. Its build does not support Lua 5.5.
 Windows instructions are in [Windows builds](windows-development.md).
 The [manual platform workflows](ci.md) build on native GitHub machines. macOS
 requires Xcode 26 or newer for standard C++ thread support. The workflows do not
