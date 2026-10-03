@@ -59,7 +59,7 @@ install_root="$work_dir/install"
 cmake --install "$build_dir" --prefix "$install_root" --config Release
 [[ -d "$install_root/melearner.app" ]] || { echo "CMake install did not produce melearner.app" >&2; exit 1; }
 ditto "$install_root/melearner.app" "$stage/melearner.app"
-macdeployqt "$stage/melearner.app" -always-overwrite -sign-for=-
+macdeployqt "$stage/melearner.app" -always-overwrite -codesign=-
 
 # CMake installs Lexbor and shadcn-cpp's original notices alongside the app.
 installed_licenses="$install_root/share/licenses/melearner"
