@@ -36,8 +36,9 @@ original notices, build options and corresponding sources accompany the package
 evidence. The build invokes the pinned Meson module through the same Python
 launcher that installed it, so it does not depend on a Scripts directory being
 on PATH. Python is a build tool only and is not included in the app.
-The source player build selects LLVM windres for mpv's GNU style resource
-arguments while keeping the native MSVC target for compiled code.
+The source player build uses the Windows SDK resource compiler and adapts mpv's
+UTF8 codepage option to its native syntax. The original source archive and the
+hashed build patch accompany the package evidence.
 It does not use an opaque prebuilt player DLL. vcpkg does
 not build Qt SQL drivers or PostgreSQL libraries that the application never uses.
 The manual workflow builds the

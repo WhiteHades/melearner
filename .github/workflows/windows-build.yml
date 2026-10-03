@@ -224,7 +224,7 @@ jobs:
         run: |
           py -3 -m pip install --disable-pip-version-check meson==1.9.1 ninja==1.13.0
           py -3 -m mesonbuild.mesonmain --version
-          ninja --version
+          py -3 -m ninja --version
       - name: build the pinned mpv source SDK
         shell: pwsh
         run: |
