@@ -293,6 +293,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed' }
           & $env:MELEARNER_CMAKE --build build\manual-windows --parallel 2
           if ($LASTEXITCODE -ne 0) { throw 'CMake build failed' }
+          $appExe = (Resolve-Path 'build\manual-windows\melearner.exe').Path
+          $headers = & dumpbin /nologo /headers $appExe
+          if ($LASTEXITCODE -ne 0 -or -not ($headers -match '^\s+2 subsystem \(Windows GUI\)\s*$')) {
+            throw 'melearner.exe must use the Windows GUI subsystem, not open a console window'
+          }
+          Write-Host 'melearner.exe uses the Windows GUI subsystem'
           $testExe = (Resolve-Path 'build\manual-windows\main_window_test.exe').Path
           $windeployqt = Join-Path $env:MELEARNER_QT_ROOT 'bin\windeployqt.exe'
           if (-not (Test-Path $windeployqt)) { throw 'windeployqt.exe not found in the official Qt SDK' }
@@ -304,7 +310,8 @@ jobs:
           $vulkanLoader = Join-Path $vcpkgInstalled 'bin\vulkan-1.dll'
           if (-not (Test-Path $vulkanLoader)) { throw 'Pinned mpv SDK requires vulkan-1.dll' }
           Copy-Item $vulkanLoader (Split-Path $testExe) -Force
-          $runtimeFiles = @(Get-Item $testExe) + @(Get-ChildItem (Split-Path $testExe) -Filter '*.dll' -File)
+          $runtimeFiles = @(Get-Item $appExe, $testExe, 'build\manual-windows\main_playback_test.exe') +
+            @(Get-ChildItem (Split-Path $testExe) -Filter '*.dll' -File)
           foreach ($runtimeFile in $runtimeFiles) {
             $imports = & dumpbin /nologo /dependents $runtimeFile.FullName
             if ($LASTEXITCODE -ne 0) { throw "Could not inspect DLL imports: $($runtimeFile.Name)" }
