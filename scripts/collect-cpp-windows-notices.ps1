@@ -53,12 +53,15 @@ $mpvRoot = [IO.Path]::GetFullPath($MpvSdk)
 $mpvArchivePath = [IO.Path]::GetFullPath($MpvArchive)
 $qtRoot = if ($QtRoot) { [IO.Path]::GetFullPath($QtRoot) } else { throw 'MELEARNER_QT_ROOT or -QtRoot is required.' }
 $outputRoot = RepoPath $OutputDir
-foreach ($path in @((Join-Path $buildRoot '_deps\lexbor-src'), (Join-Path $buildRoot '_deps\shadcn_cpp-src'), (Join-Path $mpvRoot 'bin'), $installedRoot, $qtRoot)) {
+foreach ($path in @((Join-Path $buildRoot '_deps\lexbor-src'), (Join-Path $buildRoot '_deps\shadcn_cpp-src'), $mpvRoot, $installedRoot, $qtRoot)) {
   if (-not (Test-Path -LiteralPath $path -PathType Container)) { throw "Required build/runtime input directory is missing: $path" }
 }
 Require-File (Join-Path $repoRoot 'LICENSE') 'project LICENSE'
 Require-File (Join-Path $vcpkgRoot 'versions\baseline.json') 'pinned vcpkg checkout metadata'
 Require-File $mpvArchivePath 'pinned mpv SDK archive'
+$mpvDLL = Get-ChildItem -LiteralPath $mpvRoot -Filter libmpv-2.dll -File -Recurse | Select-Object -First 1
+if (-not $mpvDLL) { throw 'Pinned mpv SDK contains no libmpv-2.dll.' }
+$mpvBin = $mpvDLL.Directory.FullName
 if (Test-Path -LiteralPath $outputRoot) { throw "Refusing to overwrite existing notice directory: $outputRoot" }
 $tar = Get-Command tar.exe -ErrorAction Stop
 $scratch = Join-Path $env:RUNNER_TEMP ("wn-" + [guid]::NewGuid().ToString('N').Substring(0, 10))
@@ -221,7 +224,7 @@ try {
   foreach ($source in @(
       @{ Kind='Qt'; Root=(Join-Path $qtRoot 'bin') },
       @{ Kind='vcpkg'; Root=(Join-Path $installedRoot 'bin') },
-      @{ Kind='mpv-sdk'; Root=(Join-Path $mpvRoot 'bin') })) {
+      @{ Kind='mpv-sdk'; Root=$mpvBin })) {
     Get-ChildItem -LiteralPath $source.Root -Filter '*.dll' -File -Recurse | ForEach-Object {
       $dllRecords.Add([pscustomobject]@{ provider=$source.Kind; path=[IO.Path]::GetRelativePath($source.Root, $_.FullName).Replace('\', '/'); sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() })
     }

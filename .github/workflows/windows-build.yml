@@ -408,7 +408,8 @@ jobs:
           Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
           $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
           if (-not (Test-Path -LiteralPath $iscc -PathType Leaf)) { throw 'Inno Setup 6 ISCC.exe is not installed on this runner' }
-          $env:Path = "$(Split-Path $iscc);$env:MELEARNER_QT_ROOT\bin;D:\v\mpv-sdk\bin;D:\v\installed\x64-windows-release\bin;$env:Path"
+          $mpvBin = Split-Path $env:MPV_DLL
+          $env:Path = "$(Split-Path $iscc);$env:MELEARNER_QT_ROOT\bin;$mpvBin;D:\v\installed\x64-windows-release\bin;$env:Path"
           & pwsh -NoProfile -File scripts/collect-cpp-windows-notices.ps1 `
             -BuildDir build/manual-windows -VcpkgRoot D:\v -MpvSdk D:\v\mpv-sdk `
             -MpvArchive D:\v\mpv-dev.7z -QtRoot $env:MELEARNER_QT_ROOT `
@@ -419,7 +420,7 @@ jobs:
           $installer = "dist/melearner-$($versionMatch.Groups[1].Value)-setup.exe"
           & pwsh -NoProfile -File scripts/package-cpp-windows.ps1 `
             -BuildDir build/manual-windows -QtRoot $env:MELEARNER_QT_ROOT `
-            -VcpkgBin D:\v\installed\x64-windows-release\bin -MpvBin D:\v\mpv-sdk\bin `
+            -VcpkgBin D:\v\installed\x64-windows-release\bin -MpvBin $mpvBin `
             -LegalRoot .tmp/manual-ci/windows-legal -Version $versionMatch.Groups[1].Value -Output $installer
           if ($LASTEXITCODE -ne 0) { throw 'Windows installer build failed' }
           $installerPath = (Resolve-Path $installer).Path
