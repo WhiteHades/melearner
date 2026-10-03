@@ -61,6 +61,13 @@ inventory contains no workstation paths and does not replace license notices.
 The native Arch stage validator checks the final sizes and hashes and requires
 every bundled ELF file to appear exactly once before packaging proceeds.
 
+Outline grouping uses an indexed exact title lookup before checking longer
+attachment titles. Duplicate video titles retain the earliest video order,
+and attached readings retain the longest matching title at a word boundary.
+This avoids scanning every video again for ordinary video rows. In a synthetic
+section of 6,000 videos, the grouping query fell from 4.54 seconds to 11 milliseconds
+with identical output. This measurement covers the query, not total course loading.
+
 ## Interface
 
 The interface uses shadcn-cpp widgets, composed into melearner's own library,
