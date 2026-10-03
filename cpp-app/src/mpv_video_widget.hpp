@@ -31,6 +31,7 @@ public:
     [[nodiscard]] bool isRenderContextReady() const;
     void setCornerRadii(qreal topLeft, qreal topRight, qreal bottomRight, qreal bottomLeft,
                         QColor background);
+    void setTransportBackdrop(QRect logicalRect, qreal visibility);
 
 signals:
     void clicked();
@@ -58,6 +59,8 @@ private:
     void connectPlayer(Player* player);
     bool renderSoftwareFrame(int width, int height);
     void paintCornerCover();
+    bool paintTransportBackdrop();
+    void destroyTransportBackdrop();
 
     QPointer<Player> player_;
     std::unique_ptr<CallbackState> callbackState_;
@@ -77,6 +80,10 @@ private:
     qreal bottomRightRadius_ = 0.0;
     qreal bottomLeftRadius_ = 0.0;
     QColor cornerBackground_ = Qt::black;
+    QRect transportBackdropRect_;
+    qreal transportBackdropVisibility_ = 0.0;
+    struct BackdropResources;
+    std::unique_ptr<BackdropResources> backdropResources_;
 };
 
 }  // namespace melearner

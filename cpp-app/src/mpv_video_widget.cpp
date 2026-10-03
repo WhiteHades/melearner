@@ -4,6 +4,11 @@
 
 #include <QOpenGLContext>
 #include <QOpenGLFunctions>
+#include <QOpenGLExtraFunctions>
+#include <QOpenGLFramebufferObject>
+#include <QOpenGLShaderProgram>
+#include <QOpenGLVertexArrayObject>
+#include <QOpenGLBuffer>
 #include <QMetaObject>
 #include <QAccessibleWidget>
 #include <QWindow>
@@ -44,6 +49,65 @@ void* resolveOpenGLProc(void* context, const char* name) {
     }
     return reinterpret_cast<void*>(glContext->getProcAddress(name));
 }
+
+struct BackdropGlState {
+    explicit BackdropGlState(QOpenGLExtraFunctions* functions) : gl(functions) {
+        gl->glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &readFbo);
+        gl->glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &drawFbo);
+        gl->glGetIntegerv(GL_CURRENT_PROGRAM, &program);
+        gl->glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &vao);
+        gl->glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &arrayBuffer);
+        gl->glGetIntegerv(GL_ACTIVE_TEXTURE, &activeTexture);
+        gl->glGetIntegerv(GL_VIEWPORT, viewport);
+        gl->glGetIntegerv(GL_READ_BUFFER, &readBuffer);
+        gl->glGetIntegerv(GL_DRAW_BUFFER, &drawBuffer);
+        gl->glGetIntegerv(GL_BLEND_SRC_RGB, &blendSrcRgb);
+        gl->glGetIntegerv(GL_BLEND_DST_RGB, &blendDstRgb);
+        gl->glGetIntegerv(GL_BLEND_SRC_ALPHA, &blendSrcAlpha);
+        gl->glGetIntegerv(GL_BLEND_DST_ALPHA, &blendDstAlpha);
+        gl->glGetIntegerv(GL_BLEND_EQUATION_RGB, &blendEqRgb);
+        gl->glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &blendEqAlpha);
+        blend = gl->glIsEnabled(GL_BLEND);
+        scissor = gl->glIsEnabled(GL_SCISSOR_TEST);
+        depth = gl->glIsEnabled(GL_DEPTH_TEST);
+        stencil = gl->glIsEnabled(GL_STENCIL_TEST);
+        cull = gl->glIsEnabled(GL_CULL_FACE);
+        gl->glActiveTexture(GL_TEXTURE0);
+        gl->glGetIntegerv(GL_TEXTURE_BINDING_2D, &texture0);
+        gl->glActiveTexture(activeTexture);
+    }
+    ~BackdropGlState() {
+        gl->glBindFramebuffer(GL_READ_FRAMEBUFFER, GLuint(readFbo));
+        gl->glReadBuffer(GLenum(readBuffer));
+        gl->glBindFramebuffer(GL_DRAW_FRAMEBUFFER, GLuint(drawFbo));
+        const GLenum drawBuffers[] = {GLenum(drawBuffer)};
+        gl->glDrawBuffers(1, drawBuffers);
+        gl->glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+        gl->glUseProgram(GLuint(program));
+        gl->glBindVertexArray(GLuint(vao));
+        gl->glBindBuffer(GL_ARRAY_BUFFER, GLuint(arrayBuffer));
+        gl->glActiveTexture(GL_TEXTURE0);
+        gl->glBindTexture(GL_TEXTURE_2D, GLuint(texture0));
+        gl->glActiveTexture(GLenum(activeTexture));
+        gl->glBlendFuncSeparate(GLenum(blendSrcRgb), GLenum(blendDstRgb), GLenum(blendSrcAlpha), GLenum(blendDstAlpha));
+        gl->glBlendEquationSeparate(GLenum(blendEqRgb), GLenum(blendEqAlpha));
+        set(GL_BLEND, blend);
+        set(GL_SCISSOR_TEST, scissor);
+        set(GL_DEPTH_TEST, depth);
+        set(GL_STENCIL_TEST, stencil);
+        set(GL_CULL_FACE, cull);
+    }
+    void set(GLenum capability, GLboolean enabled) {
+        if (enabled) gl->glEnable(capability); else gl->glDisable(capability);
+    }
+    QOpenGLExtraFunctions* gl;
+    GLint readFbo = 0, drawFbo = 0, program = 0, vao = 0, arrayBuffer = 0;
+    GLint activeTexture = GL_TEXTURE0, texture0 = 0, viewport[4] = {};
+    GLint readBuffer = 0, drawBuffer = 0;
+    GLint blendSrcRgb = 0, blendDstRgb = 0, blendSrcAlpha = 0, blendDstAlpha = 0;
+    GLint blendEqRgb = 0, blendEqAlpha = 0;
+    GLboolean blend = GL_FALSE, scissor = GL_FALSE, depth = GL_FALSE, stencil = GL_FALSE, cull = GL_FALSE;
+};
 
 }  // namespace
 
@@ -148,6 +212,14 @@ void MpvVideoWidget::setCornerRadii(qreal topLeft, qreal topRight, qreal bottomR
     update();
 }
 
+void MpvVideoWidget::setTransportBackdrop(QRect logicalRect, qreal visibility) {
+    visibility = qBound<qreal>(0.0, visibility, 1.0);
+    if (transportBackdropRect_ == logicalRect && qFuzzyCompare(transportBackdropVisibility_ + 1.0, visibility + 1.0)) return;
+    transportBackdropRect_ = logicalRect;
+    transportBackdropVisibility_ = visibility;
+    update();
+}
+
 void MpvVideoWidget::initializeGL() {
     const auto renderer = QByteArray(reinterpret_cast<const char*>(glGetString(GL_RENDERER))).toLower();
     // Mesa's CPU OpenGL drivers can corrupt libmpv's shader output. Let mpv
@@ -191,7 +263,128 @@ void MpvVideoWidget::paintGL() {
     } else if (!player_->renderFrame(defaultFramebufferObject(), pixelWidth, pixelHeight)) {
         emit renderError(QStringLiteral("render"), QStringLiteral("libmpv could not render the current frame."));
     }
+    paintTransportBackdrop();
     paintCornerCover();
+}
+
+struct MpvVideoWidget::BackdropResources {
+    std::unique_ptr<QOpenGLFramebufferObject> crop;
+    std::unique_ptr<QOpenGLShaderProgram> program;
+    std::unique_ptr<QOpenGLVertexArrayObject> vao;
+    std::unique_ptr<QOpenGLBuffer> vertices;
+    QSize cropSize;
+};
+
+bool MpvVideoWidget::paintTransportBackdrop() {
+    if (transportBackdropVisibility_ <= 0.0 || transportBackdropRect_.isEmpty()) return false;
+    const qreal ratio = devicePixelRatioF();
+    const QRect bounds(0, 0, qRound(width() * ratio), qRound(height() * ratio));
+    const QRect cropRect = QRect(qRound(transportBackdropRect_.x() * ratio),
+                                 qRound(transportBackdropRect_.y() * ratio),
+                                 qRound(transportBackdropRect_.width() * ratio),
+                                 qRound(transportBackdropRect_.height() * ratio)).intersected(bounds);
+    if (cropRect.width() < 3 || cropRect.height() < 3 || cropRect.width() > 2048 ||
+        cropRect.height() > 512 || context() == nullptr) return false;
+
+    auto* gl = context()->extraFunctions();
+    if (gl == nullptr) return false;
+    gl->initializeOpenGLFunctions();
+    BackdropGlState restoreState(gl);
+    const QSize smallSize(qMax(1, (cropRect.width() + 2) / 3), qMax(1, (cropRect.height() + 2) / 3));
+    if (!backdropResources_) backdropResources_ = std::make_unique<BackdropResources>();
+    auto& resources = *backdropResources_;
+    if (!resources.program) {
+        resources.program = std::make_unique<QOpenGLShaderProgram>();
+        static const char vertexShader[] =
+            "attribute vec2 position; varying vec2 uv;"
+            "void main(){ uv=position*0.5+0.5; gl_Position=vec4(position,0.0,1.0); }";
+        static const char fragmentShader[] =
+            "uniform sampler2D image; uniform vec2 texel; uniform vec2 size; uniform float visibility; uniform float radius;"
+            "varying vec2 uv; void main(){"
+            "vec2 p=uv*size; float r=radius;"
+            "vec2 c=clamp(p,vec2(r),size-vec2(r));"
+            "float coverage=1.0-smoothstep(r-1.0,r+1.0,length(p-c));"
+            "if(coverage<=0.0) discard;"
+            "vec4 s=vec4(0.0);"
+            "s+=texture2D(image,uv+texel*vec2(-1.0,-1.0));"
+            "s+=2.0*texture2D(image,uv+texel*vec2(0.0,-1.0));"
+            "s+=texture2D(image,uv+texel*vec2(1.0,-1.0));"
+            "s+=2.0*texture2D(image,uv+texel*vec2(-1.0,0.0));"
+            "s+=4.0*texture2D(image,uv);"
+            "s+=2.0*texture2D(image,uv+texel*vec2(1.0,0.0));"
+            "s+=texture2D(image,uv+texel*vec2(-1.0,1.0));"
+            "s+=2.0*texture2D(image,uv+texel*vec2(0.0,1.0));"
+            "s+=texture2D(image,uv+texel*vec2(1.0,1.0)); gl_FragColor=vec4((s/16.0).rgb,visibility*coverage); }";
+        if (!resources.program->addShaderFromSourceCode(QOpenGLShader::Vertex, vertexShader) ||
+            !resources.program->addShaderFromSourceCode(QOpenGLShader::Fragment, fragmentShader)) {
+            resources.program.reset();
+            return false;
+        }
+        resources.program->bindAttributeLocation("position", 0);
+        if (!resources.program->link()) { resources.program.reset(); return false; }
+        resources.vao = std::make_unique<QOpenGLVertexArrayObject>();
+        resources.vertices = std::make_unique<QOpenGLBuffer>(QOpenGLBuffer::VertexBuffer);
+        if (!resources.vao->create() || !resources.vertices->create()) {
+            resources.vertices.reset(); resources.vao.reset(); resources.program.reset();
+            return false;
+        }
+        static const GLfloat quad[] = {-1.f,-1.f, 1.f,-1.f, -1.f,1.f, 1.f,1.f};
+        resources.vao->bind();
+        resources.vertices->bind();
+        resources.vertices->allocate(quad, sizeof(quad));
+        resources.program->bind();
+        resources.program->enableAttributeArray(0);
+        resources.program->setAttributeBuffer(0, GL_FLOAT, 0, 2, 2 * sizeof(GLfloat));
+        resources.program->release();
+        resources.vertices->release();
+        resources.vao->release();
+    }
+    if (!resources.crop || resources.cropSize != smallSize) {
+        resources.crop.reset();
+        QOpenGLFramebufferObjectFormat format;
+        format.setAttachment(QOpenGLFramebufferObject::NoAttachment);
+        format.setTextureTarget(GL_TEXTURE_2D);
+        format.setInternalTextureFormat(GL_RGBA8);
+        resources.crop = std::make_unique<QOpenGLFramebufferObject>(smallSize, format);
+        if (!resources.crop->isValid()) { resources.crop.reset(); return false; }
+        resources.cropSize = smallSize;
+    }
+
+    gl->glBindFramebuffer(GL_READ_FRAMEBUFFER, defaultFramebufferObject());
+    gl->glReadBuffer(GL_COLOR_ATTACHMENT0);
+    gl->glBindFramebuffer(GL_DRAW_FRAMEBUFFER, resources.crop->handle());
+    const GLenum colorAttachment = GL_COLOR_ATTACHMENT0;
+    gl->glDrawBuffers(1, &colorAttachment);
+    gl->glDisable(GL_SCISSOR_TEST);
+    gl->glBlitFramebuffer(cropRect.x(), bounds.height() - cropRect.bottom() - 1,
+                          cropRect.x() + cropRect.width(), bounds.height() - cropRect.y(),
+                          0, 0, smallSize.width(), smallSize.height(), GL_COLOR_BUFFER_BIT, GL_LINEAR);
+
+    gl->glBindFramebuffer(GL_DRAW_FRAMEBUFFER, defaultFramebufferObject());
+    gl->glViewport(cropRect.x(), bounds.height() - cropRect.y() - cropRect.height(), cropRect.width(), cropRect.height());
+    gl->glEnable(GL_BLEND);
+    gl->glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+    gl->glBlendEquation(GL_FUNC_ADD);
+    gl->glDisable(GL_DEPTH_TEST);
+    gl->glDisable(GL_STENCIL_TEST);
+    gl->glDisable(GL_CULL_FACE);
+    resources.program->bind();
+    gl->glBindVertexArray(resources.vao->objectId());
+    gl->glBindBuffer(GL_ARRAY_BUFFER, resources.vertices->bufferId());
+    gl->glActiveTexture(GL_TEXTURE0);
+    gl->glBindTexture(GL_TEXTURE_2D, resources.crop->texture());
+    resources.program->setUniformValue("image", 0);
+    resources.program->setUniformValue("texel", 1.0F / smallSize.width(), 1.0F / smallSize.height());
+    resources.program->setUniformValue("size", GLfloat(cropRect.width()), GLfloat(cropRect.height()));
+    resources.program->setUniformValue("radius", GLfloat(qMin(28.0 * ratio, cropRect.height() / 2.0)));
+    resources.program->setUniformValue("visibility", GLfloat(transportBackdropVisibility_));
+    gl->glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+    return true;
+}
+
+void MpvVideoWidget::destroyTransportBackdrop() {
+    backdropResources_.reset();
 }
 
 void MpvVideoWidget::paintCornerCover() {
@@ -323,6 +516,7 @@ void MpvVideoWidget::detachRenderContext() {
     if (player_ != nullptr && player_->hasRenderContext() && (currentForRender || softwareRendering_)) {
         player_->destroyRenderContext();
     }
+    if (currentForRender) destroyTransportBackdrop();
     while (callbackState_->inFlight.load(std::memory_order_acquire) != 0U) {
         std::this_thread::yield();
     }
