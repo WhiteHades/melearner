@@ -116,11 +116,9 @@ protected:
     if (opacity >= 1 || blurRadius() == 0) {
       painter->setOpacity(opacity); drawSource(painter);
     } else {
-      // Keep the blur's bounds stable. Crossfade a fixed diffuse image into the
-      // sharp source instead of reallocating its padded image on every frame.
-      painter->setOpacity(opacity * (1 - opacity));
+      painter->setOpacity(opacity);
+      painter->translate(0, 3 * (1 - opacity));
       QGraphicsBlurEffect::draw(painter);
-      painter->setOpacity(opacity * opacity / (1 - opacity * (1 - opacity))); drawSource(painter);
     }
     painter->restore();
   }
@@ -157,12 +155,19 @@ public:
     auto bold = font(); bold.setWeight(QFont::DemiBold); name_->setFont(bold);
     setAccessibleName(direction);
   }
+  void setCompact(bool compact) {
+    if (compact_ == compact) return;
+    compact_ = compact;
+    name_->setVisible(!compact);
+    layout()->setContentsMargins(16, compact ? 8 : 12, 16, compact ? 8 : 12);
+    updateGeometry();
+  }
   void setLesson(const QString& name) {
     name_->setText(name_->fontMetrics().elidedText(name, Qt::ElideRight, std::max(1, width() - 32)));
     setToolTip(name); setAccessibleDescription(name); updateGeometry();
     setProperty("melearnerCopyText", accessibleName() + "\n" + name);
   }
-  QSize sizeHint() const override { return {160, fontMetrics().height() * 2 + 28}; }
+  QSize sizeHint() const override { return {160, fontMetrics().height() * (compact_ ? 1 : 2) + (compact_ ? 16 : 28)}; }
   QSize minimumSizeHint() const override { return sizeHint(); }
 protected:
   void resizeEvent(QResizeEvent* event) override {
@@ -170,6 +175,7 @@ protected:
   }
 private:
   QLabel* name_;
+  bool compact_ = false;
 };
 /// Fill a shadcn command list with the window's keyboard commands. The component
 /// does the filtering and the arrow-key movement, so this only decides which
@@ -255,16 +261,14 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   auto* shell = new QVBoxLayout(center);
   shell->setContentsMargins(24, 20, 24, 20); shell->setSpacing(20);
 
-  // The header row carries where you are and the two controls that act on the whole
-  // application. The search is a field rather than a button, because a reader types
-  // into it and a button that opens a dialog is a step they did not ask for.
+  // Global actions stay in one stable header, leaving course material clear.
   headerHost_ = new QWidget(center); headerHost_->setObjectName("headerHost");
   auto* toolbar = new QHBoxLayout(headerHost_); toolbar->setContentsMargins(0, 0, 0, 0); toolbar->setSpacing(8);
   // The way back to the library only exists once the reader is inside a course, so
   // it appears in the header when there is somewhere to go back to and not before.
   back_ = button(tr("Courses"), "backToLibrary", shadcn::Variant::Ghost); back_->hide();
   toolbar->addWidget(back_);
-  title_ = new ElidingLabel(tr("Your learning path")); title_->setObjectName("routeTitle");
+  title_ = new ElidingLabel(tr("meLearner")); title_->setObjectName("routeTitle");
   auto heading = headingFont(font(), 1.3, true); title_->setFont(heading);
   title_->setMinimumWidth(0); title_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
   toolbar->addWidget(title_, 1);
@@ -281,14 +285,11 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   auto* headerActions = new QWidget(center); headerActions->setObjectName("headerActions");
   auto* actionsLayout = new QHBoxLayout(headerActions); actionsLayout->setContentsMargins(0, 0, 0, 0);
   actionsLayout->setSpacing(8);
-  // Search is a field, not a button, and belongs to the Library rather than a Course.
-  searchField_ = new shadcn::Input; searchField_->setObjectName("searchButton");
-  searchField_->setAccessibleName(tr("Search your Library"));
-  searchField_->setPlaceholderText(tr("Search your courses…"));
-  searchField_->setToolTip(tr("Search your Library (/ outside a text field)"));
-  searchField_->setMaximumWidth(460);
-  searchField_->installEventFilter(this);
-  connect(searchField_, &QLineEdit::returnPressed, this, &MainWindow::openSearch);
+  searchButton_ = button(tr("Ctrl+K"), "searchButton", shadcn::Variant::Ghost);
+  searchButton_->setAccessibleName(tr("Search your Library"));
+  searchButton_->setToolTip(tr("Search your Library (Ctrl+K or /)"));
+  connect(searchButton_, &QPushButton::clicked, this, &MainWindow::openSearch);
+  actionsLayout->addWidget(searchButton_);
   actionsLayout->addWidget(statsNav_);
   auto* shortcuts = button(tr("Keyboard shortcuts"), "showShortcuts",
     shadcn::Variant::Ghost, shadcn::ButtonSize::Icon);
@@ -341,7 +342,8 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   libraryLayout->setSpacing(20);
   auto* libraryTools = new QHBoxLayout; libraryTools->setSpacing(8);
   libraryTools->setContentsMargins(6, 0, 10, 0);
-  libraryTools->addWidget(searchField_, 1); libraryTools->addStretch();
+  auto* greeting = new shadcn::Label(tr("Welcome back, learner.")); greeting->setObjectName("learnerGreeting");
+  libraryTools->addWidget(greeting); libraryTools->addStretch();
   listMode_ = button(tr("List"), "listView", shadcn::Variant::Ghost);
   cardsMode_ = button(tr("Cards"), "cardsView", shadcn::Variant::Ghost);
   listMode_->setCheckable(true); cardsMode_->setCheckable(true);
@@ -362,7 +364,6 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   resumeHeading_ = new QWidget; resumeHeading_->setObjectName("resumeHeading");
   auto* resumeHeadingLayout = new QVBoxLayout(resumeHeading_);
   resumeHeadingLayout->setContentsMargins(0, 0, 0, 0); resumeHeadingLayout->setSpacing(8);
-  resumeHeadingLayout->addWidget(new shadcn::Label(tr("Welcome back, learner.")));
   resumeCourse_ = new ElidingLabel; resumeLesson_ = new ElidingLabel;
   resumeCourse_->setObjectName("resumeCourseTitle"); resumeLesson_->setObjectName("resumeLessonTitle");
   for (auto* label : {resumeCourse_, resumeLesson_}) {
@@ -690,14 +691,14 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   controlsFade_->setEasingCurve(revealCurve());
   connect(controlsFade_, &QVariantAnimation::valueChanged, this, [this](const QVariant& value) {
     controlsEffect_->setProperty("opacity", value);
-    controlsEffect_->setBlurRadius(melearner::reducedMotion() || melearner::highContrast() ? 0 : 4);
+    controlsEffect_->setBlurRadius(melearner::reducedMotion() || melearner::highContrast() ? 0 : 4 * (1 - value.toDouble()));
     controlsEffect_->update();
   });
   connect(controlsFade_, &QVariantAnimation::finished, this, [this] {
     if (controlsFade_->endValue().toDouble() == 0) playerControls_->hide();
   });
   hideControls_ = new QTimer(this); hideControls_->setObjectName("hidePlayerControls");
-  hideControls_->setSingleShot(true); hideControls_->setInterval(4000);
+  hideControls_->setSingleShot(true); hideControls_->setInterval(2500);
   connect(hideControls_, &QTimer::timeout, this, [this] {
     auto* focus = QApplication::focusWidget();
     if (!playerLoaded_ || !lesson_ || lesson_->type == "audio" ||
@@ -1142,7 +1143,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     play_->setAccessibleName(play_->text());
     play_->setIcon(melearner::studyIcon(paused ? melearner::StudyIcon::Play : melearner::StudyIcon::Pause,
       melearner::roleColor(this, shadcn::Role::Foreground), 1.125));
-    revealPlayerControls();
+    revealPlayerControls(!keyboardNavigation_);
   });
   connect(player_, &melearner::Player::tracksChanged, this, [this, subtitleGroup](const auto& tracks) {
     subtitles_->clear();
@@ -1183,8 +1184,9 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   // native editors never lose their text input semantics.
   registerKeyboardCommand("library", tr("Return to Library"), tr(", b"), tr("Navigation"),
     [this] { if (course_) showLibrary(); });
-  registerKeyboardCommand("search", tr("Search library"), tr("/"), tr("Navigation"),
+  auto* searchCommand = registerKeyboardCommand("search", tr("Search library"), tr("/ · Ctrl+K"), tr("Navigation"),
     [this] { openSearch(); });
+  searchCommand->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_K));
   registerKeyboardCommand("shortcuts", tr("Show keyboard shortcuts"), tr("?"), tr("Help"),
     [this] { showKeyboardPopup(false); });
   registerKeyboardCommand("commandPalette", tr("Open command palette"), tr(":"), tr("Help"),
@@ -1768,17 +1770,12 @@ void MainWindow::updateControlsLayout() {
   playerControls_->setFixedWidth(controlsWidth);
   playerControls_->layout()->activate();
   const int controlsHeight = playerControls_->sizeHint().height();
-  if (lesson_ && (lesson_->type == "video" || lesson_->type == "audio") && !videoFullscreen_)
-    media_->setFixedHeight(std::max(preferredVideoHeight_, controlsHeight + 32));
   playerControls_->resize(controlsWidth, controlsHeight);
   positionPlayerOverlays();
-  if (videoFullscreen_) video_->clearMask();
-  else {
-    QPainterPath corners;
-    const auto radius = melearner::themeFor(this).radius() * 1.4;
-    corners.addRoundedRect(QRectF(video_->rect()), radius, radius);
-    video_->setMask(QRegion(corners.toFillPolygon().toPolygon()));
-  }
+  video_->clearMask();
+  const auto radius = videoFullscreen_ ? 0.0 : melearner::themeFor(this).radius() * 1.4;
+  video_->setCornerRadii(radius, radius, radius, radius,
+    melearner::roleColor(this, shadcn::Role::Background));
 }
 void MainWindow::positionPlayerOverlays() {
   if (!video_ || !playerControls_ || !content_) return;
@@ -1819,24 +1816,34 @@ void MainWindow::updateMediaLayout() {
   layout->setStretchFactor(media_, video && !videoFullscreen_ ? 0 : 1);
   lessonBottomSpace_->setVisible(video && !videoFullscreen_);
   lessonLinks_->setVisible(!videoFullscreen_);
+  const bool shortViewport = !videoFullscreen_ && content_->viewport()->height() < 420;
+  layout->setSpacing(videoFullscreen_ ? 0 : shortViewport ? 8 : 16);
+  for (auto* link : {"previousLesson", "nextLesson"})
+    static_cast<LessonLink*>(findChild<shadcn::Button*>(link))->setCompact(video && shortViewport);
   const int width = content_->viewport()->width() - (videoFullscreen_ || !outline_->isVisible() ? 0 : 20);
+  auto* heading = static_cast<QHBoxLayout*>(lessonHeader_->layout());
+  heading->setDirection(!video && width < 520 ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight);
+  heading->setAlignment(lessonActions_, Qt::AlignRight);
+  for (auto* widget : {lessonHeader_, lessonLinks_}) widget->setFixedWidth(std::max(1, width));
+  lessonHeader_->layout()->activate(); lessonLinks_->layout()->activate();
   if (video && !videoFullscreen_) {
-    // Fit the video to the content width, not the height left after navigation.
-    // Metadata can scroll naturally below it instead of shrinking the material.
-    const int fittedWidth = std::max(1, width);
-    preferredVideoHeight_ = std::max(180, fittedWidth * 9 / 16);
+    // Reserve real text/action heights before fitting the video to both axes.
+    // The lesson canvas never needs an outer scroll to reach navigation.
+    const auto margins = layout->contentsMargins();
+    const int availableHeight = std::max(1, content_->viewport()->height() - margins.top() - margins.bottom()
+      - lessonHeader_->sizeHint().height() - lessonLinks_->sizeHint().height() - 3 * layout->spacing());
+    // In a short viewport, a wider letterboxed canvas keeps the complete
+    // transport usable while libmpv preserves the footage's aspect ratio.
+    const int fittedWidth = std::max(1, shortViewport ? width : std::min(width, availableHeight * 16 / 9));
+    preferredVideoHeight_ = std::max(1, std::min(availableHeight, fittedWidth * 9 / 16));
     media_->setFixedHeight(preferredVideoHeight_);
     media_->setFixedWidth(fittedWidth);
-    for (auto* widget : {lessonHeader_, lessonLinks_}) widget->setFixedWidth(fittedWidth);
   } else {
     media_->setMinimumHeight(0);
     media_->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
     media_->setFixedWidth(std::max(1, width));
     for (auto* widget : {lessonHeader_, lessonLinks_}) widget->setFixedWidth(std::max(1, width));
   }
-  auto* heading = static_cast<QHBoxLayout*>(lessonHeader_->layout());
-  heading->setDirection(width < 520 ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight);
-  heading->setAlignment(lessonActions_, Qt::AlignRight);
 }
 void MainWindow::updateLayout() {
   if (!rescan_ || !choose_) return;
@@ -1849,7 +1856,7 @@ void MainWindow::updateLayout() {
   lessonTitle_->setFont(headingFont(font(), 1.2, true));
   if (!course_) {
     const bool activity = libraryStack_->currentValue() == QLatin1String("stats");
-    title_->setText(activity ? tr("Stats") : tr("Your learning path"));
+    title_->setText(activity ? tr("Stats") : tr("meLearner"));
   }
   title_->show();
   if (resumeLayout_) {
@@ -1874,7 +1881,10 @@ void MainWindow::updateLayout() {
     resumeCopy_->setMaximumHeight(QWIDGETSIZE_MAX);
   }
   statsNav_->setVisible(!course_);
-  if (searchField_) searchField_->setVisible(!course_);
+  if (searchButton_) {
+    searchButton_->setVisible(!videoFullscreen_);
+    searchButton_->setButtonSize(width() < 720 ? shadcn::ButtonSize::Icon : shadcn::ButtonSize::Default);
+  }
   if (rootLabel_) rootLabel_->hide();
   rescan_->hide(); choose_->setVisible(!course_ && rootPath_.isEmpty());
   headerHost_->setVisible(!videoFullscreen_);
@@ -1905,13 +1915,6 @@ void MainWindow::openSearch() {
   const QPointer<QWidget> invoker = QApplication::focusWidget();
   auto* dialog = new SearchDialog(library_, this);
   dialog->setAttribute(Qt::WA_DeleteOnClose);
-  // What the reader typed in the window's field goes into the search, and the field
-  // is cleared so it shows its placeholder again rather than last query's text. A
-  // field that looks typeable and throws the text away is worse than a button.
-  if (searchField_) {
-    dialog->setQuery(searchField_->text());
-    searchField_->clear();
-  }
   connect(dialog, &SearchDialog::selected, this, [this](const lib::SearchRow& row) {
     searchResolveGeneration_ = routeGeneration_;
     searchResolveId_ = library_.resolveSearch(row.kind, row.id);

@@ -122,7 +122,7 @@ private:
   shadcn::Button* cancelScan_ = nullptr;
   quint64 scanId_ = 0;
   shadcn::Button* complete_;
-  shadcn::Input* searchField_ = nullptr;
+  shadcn::Button* searchButton_ = nullptr;
   shadcn::Button* listMode_ = nullptr;
   shadcn::Button* cardsMode_ = nullptr;
   shadcn::ListView* courses_ = nullptr;
