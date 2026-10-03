@@ -28,6 +28,10 @@ The app and its remaining build tools use the same native Release configuration.
 FFmpeg includes the file reading, video decoding and image scaling libraries
 used for thumbnails. Playback uses the separate pinned libmpv SDK. vcpkg does
 not build Qt SQL drivers or PostgreSQL libraries that the application never uses.
+The pinned player DLL also imports vulkan-1.dll. The manual workflow builds the
+Vulkan loader from the pinned vcpkg baseline and deploys it beside the test app,
+then checks application and local DLL imports before starting the test. A missing
+loader must not silently depend on an optional graphics driver installation.
 Completed dependency archives are also saved if a later dependency fails, within
 the 4 GiB cache cap. The next manual run restores them instead of rebuilding
 everything. A complete dependency cache takes priority over partial caches.

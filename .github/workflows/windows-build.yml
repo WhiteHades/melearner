@@ -92,8 +92,10 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: D:\vcache\archives
-          key: windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v3
+          key: windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v4
           restore-keys: |
+            windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v4-partial-
+            windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v3
             windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v3-partial-
             windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v2-partial-
             windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v1
@@ -119,7 +121,7 @@ jobs:
           Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
           & D:\v\bootstrap-vcpkg.bat -disableMetrics
           if ($LASTEXITCODE -ne 0) { throw 'vcpkg bootstrap failed' }
-          & D:\v\vcpkg.exe install sqlite3 libzip md4c 'ffmpeg[core,avcodec,avformat,swscale]' pkgconf `
+          & D:\v\vcpkg.exe install sqlite3 libzip md4c 'ffmpeg[core,avcodec,avformat,swscale]' vulkan-loader pkgconf `
             --triplet x64-windows-release --host-triplet x64-windows-release --overlay-triplets=$tripletDir `
             --clean-buildtrees-after-build --clean-packages-after-build
           if ($LASTEXITCODE -ne 0) { throw 'vcpkg dependency installation failed' }
@@ -142,7 +144,7 @@ jobs:
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: D:\vcache\archives
-          key: windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-${{ steps.dependencies.outcome == 'success' && 'v3' || format('v3-partial-{0}', github.run_id) }}
+          key: windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-${{ steps.dependencies.outcome == 'success' && 'v4' || format('v4-partial-{0}', github.run_id) }}
       - name: fetch and prepare the pinned mpv development SDK
         shell: pwsh
         run: |
@@ -231,6 +233,25 @@ jobs:
           $platformPlugin = Join-Path (Split-Path $testExe) 'platforms\qwindows.dll'
           if (-not (Test-Path $platformPlugin)) { throw 'Windows platform plugin was not deployed' }
           Copy-Item $env:MPV_DLL (Split-Path $testExe) -Force
+          $vulkanLoader = Join-Path $vcpkgInstalled 'bin\vulkan-1.dll'
+          if (-not (Test-Path $vulkanLoader)) { throw 'Pinned mpv SDK requires vulkan-1.dll' }
+          Copy-Item $vulkanLoader (Split-Path $testExe) -Force
+          $runtimeFiles = @(Get-Item $testExe) + @(Get-ChildItem (Split-Path $testExe) -Filter '*.dll' -File)
+          foreach ($runtimeFile in $runtimeFiles) {
+            $imports = & dumpbin /nologo /dependents $runtimeFile.FullName
+            if ($LASTEXITCODE -ne 0) { throw "Could not inspect DLL imports: $($runtimeFile.Name)" }
+            foreach ($line in $imports) {
+              if ($line -notmatch '^\s+([\w.-]+\.dll)\s*$') { continue }
+              $dependency = $Matches[1]
+              # Windows API sets are virtual DLL names resolved by the OS.
+              if ($dependency -match '^(api|ext)-ms-') { continue }
+              $local = Join-Path (Split-Path $testExe) $dependency
+              $system = Join-Path "$env:SystemRoot\System32" $dependency
+              if (-not (Test-Path $local) -and -not (Test-Path $system)) {
+                throw "Unresolved runtime import: $($runtimeFile.Name) -> $dependency"
+              }
+            }
+          }
           $env:Path = "$(Split-Path $testExe);$env:Path"
           & $env:MELEARNER_CTEST --test-dir build\manual-windows --verbose --output-on-failure -R '^core_workflow$'
           if ($LASTEXITCODE -ne 0) { throw 'core workflow test failed' }
