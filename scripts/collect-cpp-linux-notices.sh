@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
+trap 'status=$?; printf "error: notice collection failed at line %s: %s\n" "$LINENO" "$BASH_COMMAND" >&2; exit "$status"' ERR
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 build_dir="${repo_root}/build/linux"
@@ -42,12 +43,13 @@ collect_file() {
   local package="$1" source="$2" label="$3" dest relative hash
   [[ -f "$source" && -s "$source" ]] || return 1
   relative="${source#/}"
-  dest="$evidence_dir/${package//[^A-Za-z0-9_.+-]/_}/${relative//\//_}"
+  hash="$(sha256sum "$source" | awk '{print $1}')"
+  dest="$evidence_dir/${package//[^A-Za-z0-9_.+-]/_}/$hash"
   mkdir -p "$(dirname "$dest")"
   cp -- "$source" "$dest"
   hash="$(sha256sum "$dest" | awk '{print $1}')"
-  jq -cn --arg package "$package" --arg label "$label" --arg path "${dest#"$output_dir"/}" --arg sha256 "$hash" \
-    '{package:$package,label:$label,path:$path,sha256:$sha256}' >> "$evidence_jsonl"
+  jq -cn --arg package "$package" --arg label "$label" --arg path "${dest#"$output_dir"/}" --arg sourcePath "$relative" --arg sha256 "$hash" \
+    '{package:$package,label:$label,path:$path,sourcePath:$sourcePath,sha256:$sha256}' >> "$evidence_jsonl"
   cat -- "$source" >> "$legal_dir/THIRD_PARTY_NOTICES"
   printf '\n\n--- %s: %s ---\n\n' "$package" "$source" >> "$legal_dir/THIRD_PARTY_NOTICES"
   return 0
@@ -84,12 +86,48 @@ while IFS= read -r formula; do
   while IFS= read -r -d '' file; do
     case "${file,,}" in
       */license|*/license.*|*/copying|*/copying.*|*/notice|*/notice.*|*/copyright|*/copyright.*|*/licenses/*|*/share/doc/*/copyright)
-        if collect_file "$formula" "$file" installed-license; then found=true; fi
+        if collect_file "$formula" "$file" installed-license; then
+          found=true
+          basename="${file##*/}"
+          if [[ "$formula" == qtwebengine && "${basename,,}" == license.chromium ]]; then
+            cp -- "$file" "$legal_dir/QtWebEngine-LICENSE.chromium"
+          fi
+        fi
         ;;
     esac
   done < <(find "$prefix" \( -type f -o -type l \) -print0 2>/dev/null)
   if [[ "$found" != true ]]; then jq -cn --arg package "$formula" '{package:$package,reason:"No non-empty installed license/copyright/NOTICE file found under Homebrew prefix"}' >> "$missing_jsonl"; fi
 done < <(brew list --formula)
+
+# Homebrew's Qt WebEngine bottle omits Chromium's required notice. Use the
+# same verified official source archive as the Windows notice collector when
+# no installed copy was collected above.
+if [[ ! -s "$legal_dir/QtWebEngine-LICENSE.chromium" ]]; then
+  qtwebengine_url='https://download.qt.io/official_releases/qt/6.11/6.11.2/submodules/qtwebengine-everywhere-src-6.11.2.tar.xz'
+  qtwebengine_sha='6101c1aa00ff933d1b65ee5d167f76e8d71b9ac5b378b0111277723ebda7c163'
+  qt_work_dir="$(mktemp -d "${TMPDIR:-/tmp}/melearner-qtwebengine-notices.XXXXXX")"
+  trap 'rm -rf -- "$qt_work_dir"' EXIT
+  qtwebengine_archive="$qt_work_dir/qtwebengine.tar.xz"
+  curl --fail --location --silent --show-error "$qtwebengine_url" -o "$qtwebengine_archive"
+  printf '%s  %s\n' "$qtwebengine_sha" "$qtwebengine_archive" | sha256sum --check
+  add_package qtwebengine-source 6.11.2 qt-official-source-archive "$qtwebengine_url" "$qtwebengine_sha"
+  tar -tJf "$qtwebengine_archive" > "$qt_work_dir/archive.list"
+  chromium_path="$(awk -F/ '$NF == "LICENSE.Chromium" { print; exit }' "$qt_work_dir/archive.list")"
+  [[ -n "$chromium_path" ]] || { printf 'Qt WebEngine source archive is missing LICENSE.Chromium\n' >&2; exit 1; }
+  mkdir "$qt_work_dir/extract"
+  awk 'tolower($0) ~ /(^|\/)licenses\/[^/]+|(^|\/)(license|copying|copyright|notice|readme)([._-][^\/]*)?$/ && $0 !~ /\/$/ {print}' \
+    "$qt_work_dir/archive.list" > "$qt_work_dir/legal-paths"
+  tar -xJf "$qtwebengine_archive" -C "$qt_work_dir/extract" -T "$qt_work_dir/legal-paths"
+  while IFS= read -r legal_path; do
+    notice="$qt_work_dir/extract/$legal_path"
+    if [[ -f "$notice" && -s "$notice" ]] && grep -Iq . "$notice"; then
+      collect_file qtwebengine-source "$notice" upstream-source-notice
+    fi
+  done < "$qt_work_dir/legal-paths"
+  chromium_notice="$qt_work_dir/extract/$chromium_path"
+  collect_file qtwebengine "$chromium_notice" upstream-source-notice
+  cp -- "$chromium_notice" "$legal_dir/QtWebEngine-LICENSE.chromium"
+fi
 
 # Capture only explicit apt build dependencies and dpkg providers for shared
 # libraries in the built application's resolved ELF dependency closure.
@@ -98,7 +136,8 @@ add_dpkg_package() {
   local package="$1" version
   [[ -n "$package" ]] || return 0
   version="$(dpkg-query -W -f='${Version}' "$package" 2>/dev/null || true)"
-  [[ -n "$version" ]] && dpkg_packages["$package"]="$version"
+  if [[ -n "$version" ]]; then dpkg_packages["$package"]="$version"; fi
+  return 0
 }
 for package in libffmpeg-nvenc-dev libdisplay-info-dev; do
   add_dpkg_package "$package"

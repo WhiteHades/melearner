@@ -137,7 +137,7 @@ jobs:
       - name: Run core workflow test
         run: ctest --test-dir build/linux --output-on-failure -R '^core_workflow$'
 
-      - name: Collect installed notice evidence
+      - name: Collect Linux package notice evidence
         if: inputs.package == true
         run: bash scripts/collect-cpp-linux-notices.sh --build-dir build/linux --output-dir .tmp/manual-ci
 
@@ -159,6 +159,8 @@ jobs:
             .tmp/manual-ci/melearner_0.1.9_amd64.AppImage
             .tmp/manual-ci/legal/
             .tmp/manual-ci/notice-evidence/
+            .tmp/manual-ci/packages.jsonl
+            .tmp/manual-ci/evidence.jsonl
             .tmp/manual-ci/missing.jsonl
           include-hidden-files: true
           if-no-files-found: warn
