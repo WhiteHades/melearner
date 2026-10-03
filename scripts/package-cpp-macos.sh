@@ -131,6 +131,9 @@ notices="$stage/melearner.app/Contents/Resources/THIRD_PARTY_NOTICES.txt"
       echo "missing SHA-256 or immutable 40-character Git revision for $formula $installed_version" >&2
       exit 1
     fi
+    if [[ "$formula" == ca-certificates && "$source_url" == *.pem && "$source_kind" == archive-sha256 ]]; then
+      source_kind="pem-sha256"
+    fi
     license="$(jq -r '.license // "unspecified"' <<<"$formula_record")"
     printf '%s %s | license: %s | source: %s | source %s: %s\n' \
       "$formula" "$installed_version" "$license" "$source_url" "$source_kind" "$source_identity"
@@ -166,26 +169,55 @@ notices="$stage/melearner.app/Contents/Resources/THIRD_PARTY_NOTICES.txt"
       source_archive="$work_dir/$formula-$installed_version-source"
       source_tree="$work_dir/$formula-$installed_version-source-tree"
       source_manifest="$work_dir/$formula-$installed_version-source-manifest"
+      source_entries="$work_dir/$formula-$installed_version-source-entries"
+      source_error="$work_dir/$formula-$installed_version-source-error"
       mkdir -p "$source_tree"
-      if [[ "$source_kind" == archive-sha256 ]]; then
-        curl --fail --location --silent --show-error "$source_url" -o "$source_archive"
+      if [[ "$source_kind" == archive-sha256 || "$source_kind" == pem-sha256 ]]; then
+        if ! curl --fail --location --silent --show-error "$source_url" -o "$source_archive"; then
+          echo "source download failed for $formula $installed_version ($source_kind): $source_url" >&2
+          exit 1
+        fi
         actual_source_hash="$(shasum -a 256 "$source_archive" | awk '{print $1}')"
         [[ "$actual_source_hash" == "$source_identity" ]] || {
           echo "source checksum mismatch for $formula $installed_version: expected $source_identity, got $actual_source_hash" >&2
           exit 1
         }
-        # Source archives such as QtWebEngine are large; extract only legal
-        # paths while retaining the verified archive as provenance evidence.
-        tar -tf "$source_archive" | awk '
+        if [[ "$source_kind" == pem-sha256 ]]; then
+          # curl's pinned CA bundle is a standalone PEM file, not a tarball.
+          # Keep that exact, hash-verified source with its Mozilla attribution.
+          if ! awk '/Certificate data from Mozilla/ { mozilla=1 } /-----BEGIN CERTIFICATE-----/ { certificate=1; exit } END { if (!mozilla || !certificate) exit 1 }' "$source_archive"; then
+            echo "verified source for $formula $installed_version is not the expected Mozilla CA PEM: $source_url" >&2
+            exit 1
+          fi
+          pem_name="$(basename -- "$source_url")"
+          cp -p "$source_archive" "$formula_license_dir/$pem_name"
+          copied=1
+        else
+          # Source archives such as QtWebEngine are large; extract only legal
+          # paths while retaining the verified archive as provenance evidence.
+          if ! tar -tf "$source_archive" > "$source_entries" 2> "$source_error"; then
+            echo "expected a tar source archive for $formula $installed_version ($source_kind): $source_url" >&2
+            sed 's/^/tar: /' "$source_error" >&2
+            exit 1
+          fi
+          awk '
           { path=tolower($0); n=split(path, part, "/"); leaf=part[n]
             if (leaf ~ /^(license|copying|notice|copyright)([._-].*)?$/ || path ~ /(^|\/)license[s]?\// || path ~ /(^|\/)license[s]?$/) print $0
-          }' > "$source_manifest"
-        [[ -s "$source_manifest" ]] || { echo "no license paths in verified source archive for $formula $installed_version" >&2; exit 1; }
-        tar -xf "$source_archive" -C "$source_tree" --strip-components=1 -T "$source_manifest"
+          }' "$source_entries" > "$source_manifest"
+          [[ -s "$source_manifest" ]] || { echo "no license paths in verified source archive for $formula $installed_version ($source_url)" >&2; exit 1; }
+          if ! tar -xf "$source_archive" -C "$source_tree" --strip-components=1 -T "$source_manifest" 2> "$source_error"; then
+            echo "failed extracting legal files from verified source archive for $formula $installed_version: $source_url" >&2
+            sed 's/^/tar: /' "$source_error" >&2
+            exit 1
+          fi
+        fi
       else
         git init -q "$source_tree"
         git -C "$source_tree" remote add origin "$source_url"
-        git -C "$source_tree" fetch --quiet --depth 1 origin "$source_revision"
+        if ! git -C "$source_tree" fetch --quiet --depth 1 origin "$source_revision"; then
+          echo "source fetch failed for $formula $installed_version at immutable commit $source_identity: $source_url" >&2
+          exit 1
+        fi
         git -C "$source_tree" checkout --quiet --detach FETCH_HEAD
         actual_source_revision="$(git -C "$source_tree" rev-parse HEAD)"
         [[ "$actual_source_revision" == "$source_identity" ]] || {
