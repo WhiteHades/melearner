@@ -52,7 +52,7 @@ jobs:
             libxcomposite libxdamage libxrender libxkbcommon libxcb \
             xorgproto libxcursor libxi libxshmfence libxscrnsaver
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y libffmpeg-nvenc-dev
+          sudo apt-get install --no-install-recommends -y libffmpeg-nvenc-dev libdisplay-info-dev
 
       - name: Check Homebrew download cache size
         id: downloads-size

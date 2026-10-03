@@ -266,3 +266,6 @@ creating a package. No `0.1.9` binary package is currently published.
 Linux staging strips unused symbols from copied binaries before setting their
 runtime paths. Original build artifacts stay intact for debugging. The runtime
 inventory records the final packaged hashes and sizes after both changes.
+
+The manual Ubuntu build installs `libdisplay-info-dev` for mpv's DRM output.
+Finding `libdrm` alone does not enable DRM or the required VAAPI DRM path.
