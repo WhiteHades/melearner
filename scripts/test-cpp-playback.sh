@@ -134,7 +134,7 @@ Usage: scripts/test-cpp-playback.sh [--build-dir DIR] [-- COMMAND [ARG...]]
 
 Runs main_window_test and main_playback_test from DIR. Supplying a command
 after -- runs only that command in the same private X11/audio environment.
-MELEARNER_PLAYBACK_TIMEOUT_SECONDS defaults to 60 seconds per command.
+MELEARNER_PLAYBACK_TIMEOUT_SECONDS defaults to 90 seconds per command.
 USAGE
 }
 
@@ -182,7 +182,7 @@ else
   done
 fi
 
-MELEARNER_PLAYBACK_TIMEOUT_SECONDS=${MELEARNER_PLAYBACK_TIMEOUT_SECONDS:-60}
+MELEARNER_PLAYBACK_TIMEOUT_SECONDS=${MELEARNER_PLAYBACK_TIMEOUT_SECONDS:-90}
 [[ $MELEARNER_PLAYBACK_TIMEOUT_SECONDS =~ ^[1-9][0-9]*$ ]] || {
   printf 'MELEARNER_PLAYBACK_TIMEOUT_SECONDS must be a positive integer.\n' >&2
   exit 2

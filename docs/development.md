@@ -144,7 +144,8 @@ process with `LC_ALL=C`, and leaves `HOME` unchanged. It selects Mesa software
 OpenGL and the Qt portal theme so desktop GTK styles and proprietary GLX
 overrides do not change the test environment.
 Each command has a 60-second limit, configurable with
-`MELEARNER_PLAYBACK_TIMEOUT_SECONDS`; logs are retained under the run directory
+`MELEARNER_PLAYBACK_TIMEOUT_SECONDS`, which defaults to 90 seconds per command;
+logs are retained under the run directory
 and the script prints their path. The private Unix sockets live under `.tmp`,
 so the checkout path must fit the platform's socket-path limit; the runner
 reports a clear error if it is too long.
