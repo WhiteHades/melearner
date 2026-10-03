@@ -31,7 +31,7 @@ public:
 
 signals:
     void clicked();
-    void seekRequested(qint64 milliseconds);
+    void seekRequested(qint64 milliseconds, bool revertSingleClick);
     void renderContextReady();
     void renderContextLost();
     void renderError(QString code, QString message);
@@ -64,7 +64,8 @@ private:
     bool cleaningUp_ = false;
     bool softwareRendering_ = false;
     std::optional<QPointF> clickOrigin_;
-    QTimer* singleClick_ = nullptr;
+    QTimer* doubleClickCandidateTimer_ = nullptr;
+    bool doubleClickCandidate_ = false;
     QByteArray softwarePixels_;
     QImage softwareFrame_;
 };

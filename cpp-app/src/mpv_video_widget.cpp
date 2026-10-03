@@ -61,9 +61,9 @@ MpvVideoWidget::MpvVideoWidget(Player* player, QWidget* parent)
     setUpdateBehavior(QOpenGLWidget::NoPartialUpdate);
     setMinimumSize(320, 180);
     setAutoFillBackground(false);
-    singleClick_ = new QTimer(this);
-    singleClick_->setSingleShot(true);
-    connect(singleClick_, &QTimer::timeout, this, &MpvVideoWidget::clicked);
+    doubleClickCandidateTimer_ = new QTimer(this);
+    doubleClickCandidateTimer_->setSingleShot(true);
+    connect(doubleClickCandidateTimer_, &QTimer::timeout, this, [this] { doubleClickCandidate_ = false; });
     setPlayer(player);
 }
 
@@ -97,8 +97,14 @@ void MpvVideoWidget::connectPlayer(Player* player) {
     if (player == nullptr) {
         return;
     }
-    connect(player, &Player::fileLoaded, singleClick_, &QTimer::stop);
-    connect(player, &Player::playbackEnded, singleClick_, &QTimer::stop);
+    connect(player, &Player::fileLoaded, this, [this] {
+        doubleClickCandidateTimer_->stop();
+        doubleClickCandidate_ = false;
+    });
+    connect(player, &Player::playbackEnded, this, [this] {
+        doubleClickCandidateTimer_->stop();
+        doubleClickCandidate_ = false;
+    });
     connect(player, &QObject::destroyed, this, [this] {
         player_ = nullptr;
         callbackState_->active.store(false, std::memory_order_release);
@@ -210,7 +216,9 @@ void MpvVideoWidget::mouseReleaseEvent(QMouseEvent* event) {
     const auto origin = std::exchange(clickOrigin_, std::nullopt);
     if (event->button() == Qt::LeftButton && origin && rect().contains(event->position().toPoint()) &&
         (event->position() - *origin).manhattanLength() < QApplication::startDragDistance()) {
-        singleClick_->start(QApplication::doubleClickInterval());
+        doubleClickCandidate_ = true;
+        doubleClickCandidateTimer_->start(QApplication::doubleClickInterval());
+        emit clicked();
         event->accept();
         return;
     }
@@ -221,9 +229,11 @@ void MpvVideoWidget::mouseDoubleClickEvent(QMouseEvent* event) {
         QOpenGLWidget::mouseDoubleClickEvent(event);
         return;
     }
-    singleClick_->stop();
+    doubleClickCandidateTimer_->stop();
+    const bool revertSingleClick = doubleClickCandidate_;
+    doubleClickCandidate_ = false;
     clickOrigin_.reset();
-    emit seekRequested(event->position().x() < width() / 2.0 ? -5000 : 5000);
+    emit seekRequested(event->position().x() < width() / 2.0 ? -5000 : 5000, revertSingleClick);
     event->accept();
 }
 
