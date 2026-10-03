@@ -84,10 +84,17 @@ private slots:
     QVERIFY(localImage.save(section + "/.assets/local.png"));
     QFile outside(files.path() + "/outside.txt"); QVERIFY(outside.open(QIODevice::WriteOnly));
     outside.write("private-outside-course"); outside.close();
-    QVERIFY(QFile::link(outside.fileName(), section + "/.assets/outside.txt"));
+    QString outsideAsset = QStringLiteral(".assets/outside.txt");
+#if defined(Q_OS_WIN)
+    // QFile::link creates a Windows shortcut, which requires a .lnk suffix.
+    outsideAsset += QStringLiteral(".lnk");
+#endif
+    const auto outsideLink = section + "/" + outsideAsset;
+    QVERIFY(QFile::link(outside.fileName(), outsideLink));
+    QVERIFY(QFileInfo(outsideLink).isSymLink());
     const QList<QPair<QString, QByteArray>> lessons{
       {"01 Reading.md", "# Markdown lesson\n\nRead this **in the app** with *emphasis*.\n\n- First idea\n- Second idea\n\n![Local image](.assets/local.png)\n\n| Name | Value |\n| --- | --- |\n| Data | **Strong** |\n"},
-      {"02 Reading.html", QByteArray("<!doctype html><html><head><link rel=\"stylesheet\" href=\".assets/layout.css?cache=1\"></head><body><h1>HTML lesson</h1><div id=\"layout\"><strong>Read this here too.</strong><img src=\".assets/local.png\"></div><canvas id=\"paint\" width=\"8\" height=\"8\"></canvas><script>const c=document.getElementById('paint').getContext('2d');c.fillStyle='#0abedc';c.fillRect(0,0,8,8);document.body.dataset.canvas=c.getImageData(0,0,1,1).data.join(',');fetch('.assets/outside.txt').then(r=>r.text()).then(t=>document.body.dataset.outside=t).catch(()=>document.body.dataset.outside='blocked');fetch('") + probeUrl.toUtf8() + "').catch(()=>document.body.dataset.network='blocked');</script></body></html>"},
+      {"02 Reading.html", (QByteArray("<!doctype html><html><head><link rel=\"stylesheet\" href=\".assets/layout.css?cache=1\"></head><body><h1>HTML lesson</h1><div id=\"layout\"><strong>Read this here too.</strong><img src=\".assets/local.png\"></div><canvas id=\"paint\" width=\"8\" height=\"8\"></canvas><script>const c=document.getElementById('paint').getContext('2d');c.fillStyle='#0abedc';c.fillRect(0,0,8,8);document.body.dataset.canvas=c.getImageData(0,0,1,1).data.join(',');fetch('.assets/outside.txt').then(r=>r.text()).then(t=>document.body.dataset.outside=t).catch(()=>document.body.dataset.outside='blocked');fetch('") + probeUrl.toUtf8() + "').catch(()=>document.body.dataset.network='blocked');</script></body></html>").replace(".assets/outside.txt", outsideAsset.toUtf8())},
       {"03 rom-cu.csv", "Address,Value\r\n0,\"A, B\"\r\n1,\"C\"\"D\"\r\n"},
       {"05 output.hex.txt", "v3.0 hex words addressed\n0000: 01 02 03"}};
     for (const auto& [name, bytes] : lessons) {
@@ -329,7 +336,7 @@ private slots:
         browserValue(browser, "fetch('.assets/layout.css').then(r=>r.text()).then(t=>document.body.dataset.localfetch=t.includes('grid')?'ok':'wrong').catch(()=>document.body.dataset.localfetch='failed')");
         QTRY_COMPARE(browserValue(browser, "document.body.dataset.localfetch").toString(), QString("ok"));
         QTRY_VERIFY(!deniedResources.isEmpty());
-        QVERIFY(deniedResources.first().first().toString().endsWith("/.assets/outside.txt"));
+        QVERIFY(deniedResources.first().first().toString().endsWith("/" + outsideAsset));
         const auto denied = browserValue(browser, "document.body.dataset.outside").toString();
         QVERIFY(denied.isEmpty() || denied == "blocked");
         QTRY_COMPARE(browserValue(browser, "document.body.dataset.network").toString(), QString("blocked"));
