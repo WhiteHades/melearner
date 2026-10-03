@@ -27,7 +27,7 @@ class QGraphicsBlurEffect;
 class QPropertyAnimation;
 class QVariantAnimation;
 class QKeyEvent;
-namespace melearner { class Player; class MpvVideoWidget; class StatsPanel; class CourseOutlineModel; }
+namespace melearner { class Player; class MpvVideoWidget; class StatsPanel; class CourseOutlineModel; class CoursePreview; class SeekFeedback; class ThumbnailStore; }
 
 class MainWindow final : public QMainWindow {
   Q_OBJECT
@@ -88,6 +88,11 @@ private:
   QLabel* resumeCourse_;
   QLabel* resumeLesson_;
   shadcn::Button* resume_;
+  melearner::CoursePreview* preview_ = nullptr;
+  QWidget* resumeCopy_ = nullptr;
+  QBoxLayout* resumeLayout_ = nullptr;
+  QLabel* resumeCompletion_ = nullptr;
+  quint64 previewRequestId_ = 0;
   quint64 resumeRequestId_ = 0;
   quint64 resumeGeneration_ = 0;
   quint64 entryRequestId_ = 0;
@@ -117,6 +122,8 @@ private:
   shadcn::ListView* courses_;
   shadcn::TreeView* lessons_;
   PagedListModel* courseModel_;
+  melearner::ThumbnailStore* thumbnails_ = nullptr;
+  QMap<quint64, QString> thumbnailRequests_;
   melearner::CourseOutlineModel* outlineModel_;
   bool compactOutline_ = true;
   int outlineWidth_ = 320;
@@ -124,6 +131,8 @@ private:
   bool keyboardNavigation_ = false;
   melearner::Player* player_;
   melearner::MpvVideoWidget* video_ = nullptr;
+  melearner::SeekFeedback* seekFeedback_ = nullptr;
+  void seekVideo(qint64 deltaMs);
   QStackedWidget* media_;
   PdfView* pdf_;
   QWidget* playerControls_ = nullptr;
