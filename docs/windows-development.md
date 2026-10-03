@@ -37,8 +37,10 @@ evidence. It does not use an opaque prebuilt player DLL. vcpkg does
 not build Qt SQL drivers or PostgreSQL libraries that the application never uses.
 The manual workflow builds the
 Vulkan loader from the pinned vcpkg baseline and deploys it beside the test app,
-then checks application and local DLL imports before starting the test. A missing
-loader must not silently depend on an optional graphics driver installation.
+then resolves and stages the required DLL dependency closure from the app, Qt,
+vcpkg and mpv SDK directories beside the test app. Unresolved imports fail before
+the test starts; runtime dependencies must not silently depend on PATH or an
+optional graphics driver installation. A missing loader must fail explicitly.
 The workflow also probes native DLL loading and sends Qt startup logs to stderr.
 Windows system error dialogs are suppressed in CI so loader errors cannot wait
 for an unseen confirmation button.

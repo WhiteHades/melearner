@@ -274,7 +274,7 @@ jobs:
           $testExe = (Resolve-Path 'build\manual-windows\main_window_test.exe').Path
           $windeployqt = Join-Path $env:MELEARNER_QT_ROOT 'bin\windeployqt.exe'
           if (-not (Test-Path $windeployqt)) { throw 'windeployqt.exe not found in the official Qt SDK' }
-          & $windeployqt --release --compiler-runtime --webenginewidgets $testExe
+          & $windeployqt --release --compiler-runtime --webenginewidgets --skip-plugin-types position $testExe
           if ($LASTEXITCODE -ne 0) { throw 'windeployqt failed for core workflow test' }
           $platformPlugin = Join-Path (Split-Path $testExe) 'platforms\qwindows.dll'
           if (-not (Test-Path $platformPlugin)) { throw 'Windows platform plugin was not deployed' }
@@ -282,21 +282,54 @@ jobs:
           $vulkanLoader = Join-Path $vcpkgInstalled 'bin\vulkan-1.dll'
           if (-not (Test-Path $vulkanLoader)) { throw 'Pinned mpv SDK requires vulkan-1.dll' }
           Copy-Item $vulkanLoader (Split-Path $testExe) -Force
-          $runtimeFiles = @(Get-Item $appExe, $testExe, 'build\manual-windows\main_playback_test.exe') +
-            @(Get-ChildItem (Split-Path $testExe) -Filter '*.dll' -File)
-          foreach ($runtimeFile in $runtimeFiles) {
-            $imports = & dumpbin /nologo /dependents $runtimeFile.FullName
-            if ($LASTEXITCODE -ne 0) { throw "Could not inspect DLL imports: $($runtimeFile.Name)" }
+          # Copy only the indexed dependency closure needed by the app, tests,
+          # and already staged DLLs. Prefer files already deployed beside the
+          # test, then Qt, vcpkg, mpv SDK, and finally Windows system DLLs.
+          $testDirectory = (Resolve-Path (Split-Path $testExe)).Path
+          $system32 = Join-Path $env:SystemRoot 'System32'
+          $runtimeRoots = @(
+            $testDirectory, (Join-Path $env:MELEARNER_QT_ROOT 'bin'),
+            (Join-Path $vcpkgInstalled 'bin'), (Split-Path $env:MPV_DLL), $system32
+          )
+          $runtimeFiles = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
+          foreach ($root in $runtimeRoots) {
+            if (-not (Test-Path -LiteralPath $root -PathType Container)) { throw "Runtime DLL search directory is missing: $root" }
+            $files = if ($root -eq $system32) {
+              Get-ChildItem -LiteralPath $root -File -Filter '*.dll'
+            } else {
+              Get-ChildItem -LiteralPath $root -File -Filter '*.dll' -Recurse
+            }
+            foreach ($file in $files) {
+              if (-not $runtimeFiles.ContainsKey($file.Name)) { $runtimeFiles.Add($file.Name, $file.FullName) }
+            }
+          }
+          $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+          $pending = [Collections.Generic.Queue[string]]::new()
+          @(Get-Item $appExe, $testExe, 'build\manual-windows\main_playback_test.exe') |
+            ForEach-Object { $pending.Enqueue($_.FullName) }
+          Get-ChildItem -LiteralPath $testDirectory -Filter '*.dll' -File -Recurse |
+            ForEach-Object { $pending.Enqueue($_.FullName) }
+          while ($pending.Count -gt 0) {
+            $binary = $pending.Dequeue()
+            if (-not $seen.Add($binary)) { continue }
+            $imports = & dumpbin /nologo /dependents $binary
+            if ($LASTEXITCODE -ne 0) { throw "Could not inspect DLL imports: $([IO.Path]::GetFileName($binary))" }
             foreach ($line in $imports) {
               if ($line -notmatch '^\s+([\w.-]+\.dll)\s*$') { continue }
               $dependency = $Matches[1]
               # Windows API sets are virtual DLL names resolved by the OS.
               if ($dependency -match '^(api|ext)-ms-') { continue }
-              $local = Join-Path (Split-Path $testExe) $dependency
-              $system = Join-Path "$env:SystemRoot\System32" $dependency
-              if (-not (Test-Path $local) -and -not (Test-Path $system)) {
-                throw "Unresolved runtime import: $($runtimeFile.Name) -> $dependency"
+              $resolved = $null
+              [void]$runtimeFiles.TryGetValue($dependency, [ref]$resolved)
+              if (-not $resolved) { throw "Unresolved runtime import: $([IO.Path]::GetFileName($binary)) -> $dependency" }
+              if ([string]::Equals((Split-Path $resolved -Parent), $system32, [StringComparison]::OrdinalIgnoreCase)) { continue }
+              if (-not [string]::Equals((Split-Path $resolved -Parent), $testDirectory, [StringComparison]::OrdinalIgnoreCase)) {
+                $destination = Join-Path $testDirectory $dependency
+                if (-not (Test-Path -LiteralPath $destination)) { Copy-Item -LiteralPath $resolved -Destination $destination }
+                $runtimeFiles[$dependency] = $destination
+                $resolved = $destination
               }
+              $pending.Enqueue($resolved)
             }
           }
           $env:Path = "$(Split-Path $testExe);$env:Path"
