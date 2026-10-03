@@ -56,7 +56,7 @@ private:
     quint64 initialMuteRequest_ = 0;
     QString approvedRoot_;
     melearner::library::Lesson lesson_;
-    melearner::Player* player_ = nullptr;
+    QPointer<melearner::Player> player_;
     melearner::MpvVideoWidget* video_ = nullptr;
     QFrame* surface_ = nullptr;
     QLabel* hint_ = nullptr;

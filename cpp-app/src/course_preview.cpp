@@ -97,21 +97,28 @@ void CoursePreview::startPreview() {
     video_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     video_->lower();
     connect(video_, &melearner::MpvVideoWidget::clicked, this, &CoursePreview::activated);
-    connect(video_, &melearner::MpvVideoWidget::renderError, this, [](const QString&, const QString&) {});
+    connect(video_, &melearner::MpvVideoWidget::renderError, this, [this](const QString&, const QString&) {
+        if (!hasPreview_) return;
+        hint_->setText(tr("Video preview unavailable")); hint_->show(); hint_->raise(); muteButton_->raise();
+    });
     video_->installEventFilter(this);
     connect(player_, &Player::initialized, this, &CoursePreview::loadWhenReady);
     connect(video_, &MpvVideoWidget::renderContextReady, this, &CoursePreview::loadWhenReady);
-    connect(player_, &Player::fileLoaded, this, [this] {
+    const QPointer<Player> instance = player_;
+    connect(player_, &Player::fileLoaded, this, [this, instance] {
+        if (!instance || instance != player_) return;
         loaded_ = true; muteButton_->setEnabled(true);
+        hint_->hide();
         if (active_) (void)player_->play(); else (void)player_->pause();
     });
-    connect(player_, &Player::commandFinished, this, [this](auto id) {
-        if (id != initialMuteRequest_) return;
+    connect(player_, &Player::commandFinished, this, [this, instance](auto id) {
+        if (!instance || instance != player_ || id != initialMuteRequest_) return;
         initialMuteRequest_ = 0;
         const auto savedMs = static_cast<qint64>(std::max(0.0, lesson_.lastPosition) * 1000);
         loadRequested_ = player_->loadFile(lesson_.path, savedMs) != 0;
     });
-    connect(player_, &Player::commandFailed, this, [this](auto, const QString&, const QString&) {
+    connect(player_, &Player::commandFailed, this, [this, instance](auto, const QString&, const QString&) {
+        if (!instance || instance != player_ || loaded_) return;
         hint_->setText(tr("Video preview unavailable")); hint_->show(); hint_->raise(); muteButton_->raise();
     });
     updateSurface(); video_->show();
