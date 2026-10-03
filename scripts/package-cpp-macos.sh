@@ -154,9 +154,10 @@ notices="$stage/melearner.app/Contents/Resources/THIRD_PARTY_NOTICES.txt"
       cp -p "$license_file" "$formula_license_dir/$relative"
       copied=$((copied + 1))
     done < <(find "$keg" -type f \( \
-      -iname 'LICENSE' -o -iname 'LICENSE.*' -o -iname 'COPYING' -o \
+      -iname 'LICENSE' -o -iname 'LICENSE.*' -o -iname 'LICENCE' -o -iname 'LICENCE.*' -o -iname 'COPYING' -o \
       -iname 'COPYING.*' -o -iname 'NOTICE' -o -iname 'NOTICE.*' -o \
-      -iname 'COPYRIGHT*' -o -path '*/licenses/*' -o -path '*/LICENSES/*' \) -print0)
+      -iname 'COPYRIGHT*' -o -path '*/licenses/*' -o -path '*/LICENSES/*' -o \
+      -path '*/licences/*' -o -path '*/LICENCES/*' \) -print0)
     if (( copied == 0 )) && [[ "$formula" == sqlite && -s "$keg/include/sqlite3.h" ]]; then
       # SQLite's original installed header carries its public domain statement.
       cp -p "$keg/include/sqlite3.h" "$formula_license_dir/sqlite3.h"
@@ -202,7 +203,7 @@ notices="$stage/melearner.app/Contents/Resources/THIRD_PARTY_NOTICES.txt"
           fi
           awk '
           { path=tolower($0); n=split(path, part, "/"); leaf=part[n]
-            if (leaf ~ /^(license|copying|notice|copyright)([._-].*)?$/ || path ~ /(^|\/)license[s]?\// || path ~ /(^|\/)license[s]?$/) print $0
+            if (leaf ~ /^(licen[cs]e[s]?|copying|notice|copyright)([._-].*)?$/ || path ~ /(^|\/)licen[cs]e[s]?(\/|$)/) print $0
           }' "$source_entries" > "$source_manifest"
           [[ -s "$source_manifest" ]] || { echo "no license paths in verified source archive for $formula $installed_version ($source_url)" >&2; exit 1; }
           if ! tar -xf "$source_archive" -C "$source_tree" --strip-components=1 -T "$source_manifest" 2> "$source_error"; then
@@ -231,9 +232,10 @@ notices="$stage/melearner.app/Contents/Resources/THIRD_PARTY_NOTICES.txt"
         cp -p "$license_file" "$formula_license_dir/$relative"
         copied=$((copied + 1))
       done < <(find "$source_tree" -type f \( \
-        -iname 'LICENSE' -o -iname 'LICENSE.*' -o -iname 'COPYING' -o \
+        -iname 'LICENSE' -o -iname 'LICENSE.*' -o -iname 'LICENCE' -o -iname 'LICENCE.*' -o -iname 'COPYING' -o \
         -iname 'COPYING.*' -o -iname 'NOTICE' -o -iname 'NOTICE.*' -o \
-        -iname 'COPYRIGHT*' -o -path '*/licenses/*' -o -path '*/LICENSES/*' \) -print0)
+        -iname 'COPYRIGHT*' -o -path '*/licenses/*' -o -path '*/LICENSES/*' -o \
+        -path '*/licences/*' -o -path '*/LICENCES/*' \) -print0)
     fi
     if (( copied == 0 )); then
       case "$formula" in
