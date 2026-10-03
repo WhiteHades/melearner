@@ -5,6 +5,7 @@
 #include <QPointer>
 #include <QImage>
 #include <QByteArray>
+#include <QColor>
 
 #include <atomic>
 #include <memory>
@@ -28,6 +29,8 @@ public:
     void setPlayer(Player* player);
     [[nodiscard]] Player* player() const;
     [[nodiscard]] bool isRenderContextReady() const;
+    void setCornerRadii(qreal topLeft, qreal topRight, qreal bottomRight, qreal bottomLeft,
+                        QColor background);
 
 signals:
     void clicked();
@@ -54,6 +57,7 @@ private:
     static void renderUpdateCallback(void* context);
     void connectPlayer(Player* player);
     bool renderSoftwareFrame(int width, int height);
+    void paintCornerCover();
 
     QPointer<Player> player_;
     std::unique_ptr<CallbackState> callbackState_;
@@ -68,6 +72,11 @@ private:
     bool doubleClickCandidate_ = false;
     QByteArray softwarePixels_;
     QImage softwareFrame_;
+    qreal topLeftRadius_ = 0.0;
+    qreal topRightRadius_ = 0.0;
+    qreal bottomRightRadius_ = 0.0;
+    qreal bottomLeftRadius_ = 0.0;
+    QColor cornerBackground_ = Qt::black;
 };
 
 }  // namespace melearner

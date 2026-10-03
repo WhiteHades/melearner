@@ -8,6 +8,7 @@
 #include <QAccessibleWidget>
 #include <QWindow>
 #include <QPainter>
+#include <QPainterPath>
 #include <QMouseEvent>
 #include <QApplication>
 #include <QTimer>
@@ -59,7 +60,7 @@ MpvVideoWidget::MpvVideoWidget(Player* player, QWidget* parent)
     callbackState_ = std::make_unique<CallbackState>();
     callbackState_->widget = this;
     setUpdateBehavior(QOpenGLWidget::NoPartialUpdate);
-    setMinimumSize(320, 180);
+    setMinimumSize(0, 0);
     setAutoFillBackground(false);
     doubleClickCandidateTimer_ = new QTimer(this);
     doubleClickCandidateTimer_->setSingleShot(true);
@@ -134,6 +135,19 @@ Player* MpvVideoWidget::player() const { return player_; }
 
 bool MpvVideoWidget::isRenderContextReady() const { return renderContextReady_; }
 
+void MpvVideoWidget::setCornerRadii(qreal topLeft, qreal topRight, qreal bottomRight,
+                                    qreal bottomLeft, QColor background) {
+    if (topLeftRadius_ == topLeft && topRightRadius_ == topRight &&
+        bottomRightRadius_ == bottomRight && bottomLeftRadius_ == bottomLeft &&
+        cornerBackground_ == background) return;
+    topLeftRadius_ = qMax<qreal>(0.0, topLeft);
+    topRightRadius_ = qMax<qreal>(0.0, topRight);
+    bottomRightRadius_ = qMax<qreal>(0.0, bottomRight);
+    bottomLeftRadius_ = qMax<qreal>(0.0, bottomLeft);
+    cornerBackground_ = std::move(background);
+    update();
+}
+
 void MpvVideoWidget::initializeGL() {
     const auto renderer = QByteArray(reinterpret_cast<const char*>(glGetString(GL_RENDERER))).toLower();
     // Mesa's CPU OpenGL drivers can corrupt libmpv's shader output. Let mpv
@@ -177,6 +191,43 @@ void MpvVideoWidget::paintGL() {
     } else if (!player_->renderFrame(defaultFramebufferObject(), pixelWidth, pixelHeight)) {
         emit renderError(QStringLiteral("render"), QStringLiteral("libmpv could not render the current frame."));
     }
+    paintCornerCover();
+}
+
+void MpvVideoWidget::paintCornerCover() {
+    const QRectF bounds(rect());
+    if (bounds.isEmpty() || (topLeftRadius_ <= 0.0 && topRightRadius_ <= 0.0 &&
+                            bottomRightRadius_ <= 0.0 && bottomLeftRadius_ <= 0.0)) {
+        return;
+    }
+
+    const qreal maxRadius = qMin(bounds.width(), bounds.height()) / 2.0;
+    const qreal tl = qMin(topLeftRadius_, maxRadius);
+    const qreal tr = qMin(topRightRadius_, maxRadius);
+    const qreal br = qMin(bottomRightRadius_, maxRadius);
+    const qreal bl = qMin(bottomLeftRadius_, maxRadius);
+
+    QPainterPath cover;
+    cover.setFillRule(Qt::OddEvenFill);
+    cover.addRect(bounds);
+    QPainterPath rounded;
+    rounded.moveTo(bounds.left() + tl, bounds.top());
+    rounded.lineTo(bounds.right() - tr, bounds.top());
+    if (tr > 0) rounded.arcTo(QRectF(bounds.right() - 2 * tr, bounds.top(), 2 * tr, 2 * tr), 90, -90);
+    rounded.lineTo(bounds.right(), bounds.bottom() - br);
+    if (br > 0) rounded.arcTo(QRectF(bounds.right() - 2 * br, bounds.bottom() - 2 * br, 2 * br, 2 * br), 0, -90);
+    rounded.lineTo(bounds.left() + bl, bounds.bottom());
+    if (bl > 0) rounded.arcTo(QRectF(bounds.left(), bounds.bottom() - 2 * bl, 2 * bl, 2 * bl), 270, -90);
+    rounded.lineTo(bounds.left(), bounds.top() + tl);
+    if (tl > 0) rounded.arcTo(QRectF(bounds.left(), bounds.top(), 2 * tl, 2 * tl), 180, -90);
+    rounded.closeSubpath();
+    cover.addPath(rounded);
+
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(cornerBackground_);
+    painter.drawPath(cover);
 }
 
 bool MpvVideoWidget::renderSoftwareFrame(int width, int height) {
