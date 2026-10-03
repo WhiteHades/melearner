@@ -41,6 +41,9 @@ SearchDialog::SearchDialog(lib::Library& library, QWidget* parent) : shadcn::Dia
   // when the row has one.
   results_ = new shadcn::ListView; results_->setObjectName("searchResults");
   results_->setAccessibleName(tr("Search results")); results_->setModel(model_);
+#if defined(Q_OS_MACOS)
+  results_->installEventFilter(this);
+#endif
   results_->showProgress();
   content().addWidget(results_, 1);
   status_ = new shadcn::Label(tr("Type a name to search.")); status_->setWordWrap(true);
@@ -119,6 +122,16 @@ void SearchDialog::openSelected() {
 }
 
 bool SearchDialog::eventFilter(QObject* object, QEvent* event) {
+#if defined(Q_OS_MACOS)
+  if (object == results_ && event->type() == QEvent::KeyPress) {
+    auto* key = static_cast<QKeyEvent*>(event);
+    if (key->modifiers() == Qt::NoModifier &&
+        (key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter)) {
+      openSelected();
+      return true;
+    }
+  }
+#endif
   if (object == query_ && event->type() == QEvent::KeyPress) {
     auto* key = static_cast<QKeyEvent*>(event);
     if ((key->key() == Qt::Key_Down || key->key() == Qt::Key_Up) && model_->rowCount()) {

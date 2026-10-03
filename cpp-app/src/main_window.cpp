@@ -1465,6 +1465,19 @@ bool MainWindow::handleKeyboardEvent(QObject* watched, QKeyEvent* event) {
     return root && ((focus && (focus == root || root->isAncestorOf(focus))) || watched == root ||
                     (watchedWidget && root->isAncestorOf(watchedWidget)));
   };
+#if defined(Q_OS_MACOS)
+  // Qt edits list rows on Return on macOS. Our navigation rows are not editors.
+  if (noModifiers && (key == Qt::Key_Return || key == Qt::Key_Enter)) {
+    if (courses_ && courses_->isVisible() && inside(courses_)) {
+      if (courses_->currentIndex().isValid()) emit courses_->activated(courses_->currentIndex());
+      event->accept(); return true;
+    }
+    if (lessons_ && lessons_->isVisible() && inside(lessons_)) {
+      if (lessons_->currentIndex().isValid()) emit lessons_->activated(lessons_->currentIndex());
+      event->accept(); return true;
+    }
+  }
+#endif
   if (keyPrefix_ != KeyPrefix::None && keyPrefixAge_.elapsed() > 2000) keyPrefix_ = KeyPrefix::None;
   if (key == Qt::Key_Escape && noModifiers) {
     keyPrefix_ = KeyPrefix::None;
