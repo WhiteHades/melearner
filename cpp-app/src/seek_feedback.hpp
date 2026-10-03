@@ -17,7 +17,10 @@ protected:
 private:
     QTimer* hold_;
     QVariantAnimation* fade_;
+    QVariantAnimation* arrowGesture_;
     double opacity_ = 1;
+    double arrowOffset_ = 0;
+    bool returningArrow_ = false;
     qint64 seconds_ = 0;
 };
 }
