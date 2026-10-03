@@ -24,6 +24,8 @@ The operating system still provides its kernel, graphics driver and desktop serv
 
 Build Linux releases against the oldest supported system runtime. Check the required runtime versions in every bundled library, not just the app executable. A bundle built on a newer system can still fail on an older desktop. Do not copy glibc into the app as a compatibility workaround.
 
+The C++ AppImage packager rejects bundled ELF files requiring newer than glibc 2.39, matching the Ubuntu 24.04 CI baseline. This floor is necessary, not a universal portability guarantee; graphics drivers, desktop services and distribution differences still matter.
+
 ## Size without feature cuts
 
 Use optimized release builds, remove unused symbols from packaged binaries, keep one copy of each runtime file and compress the installer. Keep codecs, document readers, language resources, accessibility and license notices. Measure the final package and retest playback and documents after each change.

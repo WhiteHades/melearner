@@ -6,6 +6,7 @@ version="0.1.9"
 build_dir="${repo_root}/build/cpp-release"
 legal_root="${repo_root}/packaging"
 output="${repo_root}/dist/melearner_${version}_amd64.AppImage"
+max_glibc_version="2.39"
 
 usage() {
   cat <<'EOF'
@@ -103,6 +104,81 @@ absolute_path() {
   fi
 }
 
+glibc_version_at_most() {
+  local required="$1"
+  local limit="$max_glibc_version"
+  local -a required_parts limit_parts
+  local index part_count required_part limit_part
+  local LC_ALL=C
+
+  IFS=. read -r -a required_parts <<<"$required"
+  IFS=. read -r -a limit_parts <<<"$limit"
+  part_count="${#required_parts[@]}"
+  if ((${#limit_parts[@]} > part_count)); then
+    part_count="${#limit_parts[@]}"
+  fi
+  for ((index = 0; index < part_count; index++)); do
+    required_part="${required_parts[index]:-0}"
+    limit_part="${limit_parts[index]:-0}"
+    while [[ ${#required_part} -gt 1 && "$required_part" == 0* ]]; do
+      required_part="${required_part#0}"
+    done
+    while [[ ${#limit_part} -gt 1 && "$limit_part" == 0* ]]; do
+      limit_part="${limit_part#0}"
+    done
+    if ((${#required_part} > ${#limit_part})) || \
+       { ((${#required_part} == ${#limit_part})) && [[ "$required_part" > "$limit_part" ]]; }; then
+      return 1
+    fi
+    if ((${#required_part} < ${#limit_part})) || \
+       { ((${#required_part} == ${#limit_part})) && [[ "$required_part" < "$limit_part" ]]; }; then
+      return 0
+    fi
+  done
+  return 0
+}
+
+check_glibc_requirements() {
+  local path="$1"
+  local label="$2"
+  local version_info requirements token version
+  local LC_ALL=C
+
+  if ! version_info="$(readelf --version-info -W "$path" 2>&1)"; then
+    echo "could not inspect GLIBC requirements for $label ($path): $version_info" >&2
+    exit 1
+  fi
+  requirements="$(awk '
+    /^Version needs section/ { in_needs = 1; next }
+    /^Version / { in_needs = 0 }
+    in_needs {
+      for (i = 1; i < NF; i++) {
+        if ($i == "Name:" && $(i + 1) ~ /^GLIBC_/) print $(i + 1)
+      }
+    }
+  ' <<<"$version_info")"
+
+  while IFS= read -r token; do
+    [[ -n "$token" ]] || continue
+    if [[ "$token" == GLIBC_PRIVATE ]]; then
+      echo "unsupported GLIBC_PRIVATE requirement in $label ($path)" >&2
+      exit 1
+    fi
+    if [[ "$token" == GLIBC_ABI_DT_RELR ]]; then
+      version="2.36"
+    elif [[ "$token" =~ ^GLIBC_([0-9]+(\.[0-9]+)+)$ ]]; then
+      version="${BASH_REMATCH[1]}"
+    else
+      echo "unknown GLIBC requirement token $token in $label ($path)" >&2
+      exit 1
+    fi
+    if ! glibc_version_at_most "$version"; then
+      echo "GLIBC $version requirement in $label ($path) exceeds the AppImage maximum of $max_glibc_version" >&2
+      exit 1
+    fi
+  done <<<"$requirements"
+}
+
 build_dir="$(absolute_path "$build_dir")"
 legal_root="$(absolute_path "$legal_root")"
 output="$(absolute_path "$output")"
@@ -111,6 +187,11 @@ if [[ ! -d "$build_dir" || ! -f "$build_dir/CMakeCache.txt" ]]; then
   echo "configured CMake build directory is missing: $build_dir" >&2
   exit 1
 fi
+if [[ ! -f "$build_dir/melearner" ]]; then
+  echo "built application executable is missing: $build_dir/melearner" >&2
+  exit 1
+fi
+check_glibc_requirements "$build_dir/melearner" "application executable"
 if [[ ! -d "$legal_root" ]]; then
   echo "legal input directory is missing: $legal_root" >&2
   exit 1
@@ -175,6 +256,16 @@ cmake \
   -DMELEARNER_LEGAL_ROOT="$legal_root" \
   -DMELEARNER_VERSION="$version" \
   -P "$repo_root/scripts/stage-cpp-linux.cmake"
+
+while IFS= read -r -d '' staged_path; do
+  if ! staged_description="$(file -b -- "$staged_path")"; then
+    echo "could not inspect staged file: $staged_path" >&2
+    exit 1
+  fi
+  if [[ "$staged_description" == ELF\ * ]]; then
+    check_glibc_requirements "$staged_path" "staged ELF ${staged_path#"$appdir"/}"
+  fi
+done < <(find "$appdir" -type f -print0)
 
 appimage_desktop_name="io.github.whitehades.melearner.appimage.desktop"
 appimage_desktop_target="usr/share/applications/${appimage_desktop_name}"
