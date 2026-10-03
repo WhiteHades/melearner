@@ -54,6 +54,14 @@ qt_add_resources(melearner_app assets PREFIX / FILES
 
 add_executable(melearner cpp-app/src/main.cpp)
 target_link_libraries(melearner PRIVATE melearner_app)
+if(APPLE)
+  set_target_properties(melearner PROPERTIES
+    MACOSX_BUNDLE TRUE
+    MACOSX_BUNDLE_GUI_IDENTIFIER "io.github.whitehades.melearner"
+    MACOSX_BUNDLE_BUNDLE_NAME "melearner"
+    MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+    MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}")
+endif()
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   set_target_properties(melearner PROPERTIES
     INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}/melearner")
@@ -63,18 +71,24 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic>)
 endif()
 target_compile_definitions(melearner PRIVATE MELEARNER_VERSION="${PROJECT_VERSION}")
-install(TARGETS melearner RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(FILES packaging/linux/io.github.whitehades.melearner.desktop
-  DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
-# The icon goes into the hicolor theme at the sizes a desktop shell asks for.
-# Installing one oversized copy under share/pixmaps did not put it on any icon
-# search path, so the app grid showed nothing for it.
-foreach(icon_size 16 22 24 32 48 64 96 128 192 256 512)
-  install(FILES
-    "cpp-app/assets/icons/hicolor/${icon_size}x${icon_size}/apps/io.github.whitehades.melearner.png"
-    DESTINATION
-      "${CMAKE_INSTALL_DATADIR}/icons/hicolor/${icon_size}x${icon_size}/apps")
-endforeach()
+if(APPLE)
+  install(TARGETS melearner BUNDLE DESTINATION .)
+else()
+  install(TARGETS melearner RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif()
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  install(FILES packaging/linux/io.github.whitehades.melearner.desktop
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+  # The icon goes into the hicolor theme at the sizes a desktop shell asks for.
+  # Installing one oversized copy under share/pixmaps did not put it on any icon
+  # search path, so the app grid showed nothing for it.
+  foreach(icon_size 16 22 24 32 48 64 96 128 192 256 512)
+    install(FILES
+      "cpp-app/assets/icons/hicolor/${icon_size}x${icon_size}/apps/io.github.whitehades.melearner.png"
+      DESTINATION
+        "${CMAKE_INSTALL_DATADIR}/icons/hicolor/${icon_size}x${icon_size}/apps")
+  endforeach()
+endif()
 if(BUILD_TESTING)
   find_package(Qt6 REQUIRED COMPONENTS Test)
   file(MAKE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.tmp/cpp-tests")

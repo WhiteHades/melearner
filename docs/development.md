@@ -22,6 +22,10 @@ on a worker thread into a bounded tile cache. HTML and Markdown use a lazy,
 off-the-record WebEngine profile and the bundled sandboxed QtWebEngineProcess.
 The application itself remains Qt Widgets; it has no QML interface.
 
+On macOS, a native source build installs a versioned `.app` bundle with the
+`io.github.whitehades.melearner` identity. This does not qualify the bundle as a
+standalone app or DMG; macOS dependency deployment remains unqualified.
+
 `course_document_view.cpp` serves validated course-local files through a custom
 URL scheme. Network requests, downloads, popups and permissions are blocked.
 Markdown uses md4c-html with app typography; authored HTML keeps its CSS and
