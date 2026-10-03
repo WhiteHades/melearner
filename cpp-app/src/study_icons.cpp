@@ -152,6 +152,10 @@ void drawFolder(QPainter& painter) {
 void drawIcon(QPainter& painter, StudyIcon icon) {
   switch (icon) {
     case StudyIcon::Courses: drawCourses(painter); break;
+    case StudyIcon::Sidebar:
+      painter.drawRoundedRect(QRectF(3, 3, 18, 18), 2, 2);
+      painter.drawLine(QPointF(9, 3), QPointF(9, 21));
+      break;
     case StudyIcon::Activity: drawActivity(painter); break;
     case StudyIcon::Search: drawSearch(painter); break;
     case StudyIcon::Settings: drawSettings(painter); break;
