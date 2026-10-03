@@ -51,9 +51,11 @@ appear above long text documents only when the document spans multiple pages.
 
 Click the video to play or pause. A centered floating control bar appears when
 you move the pointer over the video and hides after inactivity. Keyboard focus
-keeps it available. Speed, audio, subtitles, chapters, frame stepping and capture
-have direct controls. **Volume** opens a vertical slider; raising the volume
-unmutes playback. Fullscreen shows only the video and its controls. Escape exits.
+keeps it available. Speed, subtitles, frame stepping and capture have direct
+controls. The inline volume slider mutes at zero and unmutes when raised. Click
+the sound icon to mute or restore sound. **Capture** copies the current frame to
+your clipboard. Fullscreen is the last control and shows only the video and its
+controls. Escape exits.
 Double-click the left half to go back five seconds, or the right half to go forward
 five seconds. **Autoplay** is off by default. When enabled, the next video starts
 after a five-second countdown, skipping documents. **Cancel** stops that countdown.
