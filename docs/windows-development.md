@@ -20,6 +20,10 @@ one hour limit. It does not publish an installer. The legacy UCRT64 script check
 for the required WebEngine module before configuring; it is not a qualified
 Windows build path.
 
+The video renderer links the Windows system OpenGL import library explicitly.
+The official Qt kit resolves its own OpenGL calls dynamically and does not
+provide that import library for the app's direct desktop OpenGL calls.
+
 The app and its remaining build tools use the same native Release configuration.
 FFmpeg includes the file reading, video decoding and image scaling libraries
 used for thumbnails. Playback uses the separate pinned libmpv SDK. vcpkg does
