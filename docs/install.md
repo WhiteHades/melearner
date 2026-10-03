@@ -1,5 +1,38 @@
 # Install
 
+## Desktop downloads
+
+Download version `0.1.9` for your system:
+
+| System | Download |
+| --- | --- |
+| Linux x86_64 with glibc 2.39 or newer | [AppImage](https://github.com/WhiteHades/melearner/releases/download/v0.1.9/melearner_0.1.9_amd64.AppImage) |
+| Arch Linux x86_64 | [Package](https://github.com/WhiteHades/melearner/releases/download/v0.1.9/melearner-bin-0.1.9-1-x86_64.pkg.tar.zst) |
+| Windows x64 | [Setup installer](https://github.com/WhiteHades/melearner/releases/download/v0.1.9/melearner-0.1.9-setup.exe) |
+| macOS Apple silicon with macOS 15 or newer | [Disk image](https://github.com/WhiteHades/melearner/releases/download/v0.1.9/melearner-0.1.9-macos-arm64.dmg) |
+
+The installers include the app runtime, including its browser engine, database
+and media playback support. You do not need to install a separate browser,
+database server or codec pack.
+
+The Windows installer is unsigned, so Windows may show a security warning. The
+macOS app is not notarized. You may need to approve it in macOS settings before
+opening it.
+
+On Windows, open the EXE and follow the installer. On macOS, open the DMG and
+drag meLearner to Applications.
+
+On Linux, mark the AppImage executable in your file manager and open it. If
+your desktop lacks FUSE, run it from a terminal with `--appimage-extract-and-run`.
+The glibc requirement does not guarantee compatibility with every distribution
+or graphics driver.
+
+On Arch or Omarchy, install the downloaded package with:
+
+```bash
+sudo pacman -U melearner-bin-0.1.9-1-x86_64.pkg.tar.zst
+```
+
 ## Linux from source
 
 The application needs C and C++23 compilers, CMake 4.4 or newer, Meson 1.3
@@ -49,14 +82,4 @@ No separately installed browser or database server is needed.
 Launch with `$HOME/.local/bin/melearner`. The desktop entry is installed with
 the executable when the prefix supports it.
 
-## Binary packages
-
-Binary packages for version `0.1.9` are not yet available. Use the source
-installer above. Older release downloads contain an earlier application.
-
-## Other platforms
-
-Windows and macOS packages are not available. Contributors can use the
-[Windows requirements](windows-development.md) to see the remaining native
-toolchain and installer work. The earlier MSYS2 build instructions do not cover
-the current document engine.
+For Windows build requirements, see the [Windows development notes](windows-development.md).
