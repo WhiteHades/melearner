@@ -183,12 +183,6 @@ void drawIcon(QPainter& painter, StudyIcon icon) {
       for (int x : {7, 13}) { cc.moveTo(x + 3, 9); cc.lineTo(x, 9); cc.lineTo(x, 15); cc.lineTo(x + 3, 15); }
       painter.drawPath(cc); break;
     }
-    case StudyIcon::Chapters:
-      for (int y : {6, 12, 18}) {
-        painter.drawLine(QPointF(4, y), QPointF(5, y));
-        painter.drawLine(QPointF(9, y), QPointF(20, y));
-      }
-      break;
     case StudyIcon::Frame: drawPlay(painter); painter.drawLine(QPointF(21, 6), QPointF(21, 18)); break;
     case StudyIcon::AddSubtitle: {
       painter.drawRoundedRect(QRectF(3, 10, 18, 10), 2, 2);
@@ -207,7 +201,8 @@ void drawIcon(QPainter& painter, StudyIcon icon) {
 
 class StudyIconEngine final : public QIconEngine {
 public:
-  StudyIconEngine(StudyIcon icon, QColor color) : icon_(icon), color_(std::move(color)) {}
+  StudyIconEngine(StudyIcon icon, QColor color, qreal scale)
+      : icon_(icon), color_(std::move(color)), scale_(scale) {}
 
   void paint(QPainter* painter, const QRect& rect, QIcon::Mode mode, QIcon::State) override {
     if (!painter || rect.isEmpty()) return;
@@ -220,7 +215,7 @@ public:
                          Qt::RoundCap, Qt::RoundJoin));
     painter->setBrush(Qt::NoBrush);
     painter->translate(QRectF(rect).center());
-    painter->scale(side / kCanvas, side / kCanvas);
+    painter->scale(side / kCanvas * scale_, side / kCanvas * scale_);
     painter->translate(-kCanvas / 2, -kCanvas / 2);
     drawIcon(*painter, icon_);
     painter->restore();
@@ -248,14 +243,15 @@ public:
   // a size was what every later icon at that size returned.
   QString key() const override {
     return QStringLiteral("melearner.study-icon/%1/%2/%3")
-        .arg(int(icon_)).arg(color_.rgba(), 8, 16);
+        .arg(int(icon_)).arg(color_.rgba(), 8, 16).arg(scale_, 0, 'g', 16);
   }
 
-  QIconEngine* clone() const override { return new StudyIconEngine(icon_, color_); }
+  QIconEngine* clone() const override { return new StudyIconEngine(icon_, color_, scale_); }
 
 private:
   StudyIcon icon_;
   QColor color_;
+  qreal scale_;
 };
 
 /// One icon per shape and colour, reused by every caller. The list delegate
@@ -268,13 +264,14 @@ QHash<QString, QIcon>& iconCache() {
 
 }  // namespace
 
-QIcon studyIcon(StudyIcon icon, QColor color) {
+QIcon studyIcon(StudyIcon icon, QColor color, qreal scale) {
   color.setAlpha(255);
-  const auto cacheKey = QStringLiteral("%1/%2").arg(int(icon)).arg(color.rgba(), 8, 16);
+  const auto cacheKey = QStringLiteral("%1/%2/%3")
+      .arg(int(icon)).arg(color.rgba(), 8, 16).arg(scale, 0, 'g', 16);
   auto& cache = iconCache();
   const auto found = cache.constFind(cacheKey);
   if (found != cache.constEnd()) return *found;
-  return cache.insert(cacheKey, QIcon(new StudyIconEngine(icon, color))).value();
+  return cache.insert(cacheKey, QIcon(new StudyIconEngine(icon, color, scale))).value();
 }
 
 }  // namespace melearner

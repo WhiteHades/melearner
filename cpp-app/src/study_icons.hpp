@@ -21,12 +21,11 @@ enum class StudyIcon {
   Volume,
   Muted,
   Subtitles,
-  Chapters,
   Frame,
   AddSubtitle,
   Capture,
 };
 
-[[nodiscard]] QIcon studyIcon(StudyIcon icon, QColor color);
+[[nodiscard]] QIcon studyIcon(StudyIcon icon, QColor color, qreal scale = 1.0);
 
 }  // namespace melearner
