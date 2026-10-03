@@ -127,6 +127,9 @@ private output directory and run that case with the playback runner. It writes
 `home.png` and `course.png` from the actual application windows and never uses
 personal course files or saved progress. The case skips when the variable is unset.
 
+Keep the centered logo and status badges above the sample screenshots when
+updating the README.
+
 The default build directory is `build/cpp-dev`; set `MELEARNER_BUILD_DIR` or
 pass `--build-dir` to select another. By default, the runner runs
 `main_window_test` and `main_playback_test`. It requires `pulseaudio`, Xvfb,

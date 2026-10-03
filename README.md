@@ -1,4 +1,15 @@
+<div align="center">
+
+<img src="cpp-app/assets/melearner-logo.png" width="112" height="112" alt="meLearner logo" />
+
 # meLearner
+
+[![platform](https://img.shields.io/badge/platform-Linux-262626?style=flat)](docs/install.md)
+[![stack](https://img.shields.io/badge/stack-C%2B%2B23%20%C2%B7%20Qt%206.11-262626?style=flat)](docs/development.md)
+[![storage](https://img.shields.io/badge/storage-local%20SQLite-262626?style=flat)](docs/privacy-and-legal.md)
+[![source license](https://img.shields.io/badge/source%20license-MIT-262626?style=flat)](LICENSE)
+
+</div>
 
 Watch your courses offline.
 
