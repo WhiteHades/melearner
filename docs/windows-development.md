@@ -20,6 +20,9 @@ build path.
 
 The app and its build tools use the same native Release configuration. This
 avoids a second Debug build of Qt and keeps vcpkg on its native build path.
+Completed dependency archives are also saved if a later dependency fails, within
+the 4 GiB cache cap. The next manual run restores them instead of rebuilding
+everything. A complete dependency cache takes priority over partial caches.
 
 Choose a folder on a local drive. URLs, network shares and symlinked paths are
 not accepted as course roots.

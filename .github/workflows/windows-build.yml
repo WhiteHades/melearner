@@ -44,7 +44,9 @@ jobs:
         with:
           path: C:\vcache\archives
           key: windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v2
-          restore-keys: windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v1
+          restore-keys: |
+            windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v2-partial-
+            windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v1
       - name: bootstrap pinned vcpkg and install dependencies
         id: dependencies
         shell: pwsh
@@ -71,25 +73,25 @@ jobs:
             --triplet x64-windows-release --host-triplet x64-windows-release --overlay-triplets=$tripletDir
           if ($LASTEXITCODE -ne 0) { throw 'vcpkg dependency installation failed' }
       - name: measure binary archive cache size
-        if: success() && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        if: ${{ !cancelled() && steps.dependencies.outcome != 'skipped' && steps.vcpkg-cache.outputs.cache-hit != 'true' }}
         id: cache-budget
         shell: pwsh
         run: |
           $bytes = (Get-ChildItem C:\vcache\archives -File -Recurse -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
           if ($null -eq $bytes) { $bytes = 0 }
           Write-Host "Compressed vcpkg archive cache size: $bytes bytes"
-          if ($bytes -le 4294967296) {
+          if ($bytes -gt 0 -and $bytes -le 4294967296) {
             "cacheable=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           } else {
-            Write-Host 'Skipping cache save because compressed archives exceed 4 GiB.'
+            Write-Host 'Skipping empty cache or compressed archives exceeding 4 GiB.'
             "cacheable=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           }
       - name: save vcpkg binary archives
-        if: success() && steps.cache-budget.outputs.cacheable == 'true'
+        if: ${{ !cancelled() && steps.cache-budget.outputs.cacheable == 'true' }}
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: C:\vcache\archives
-          key: windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v2
+          key: windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-${{ steps.dependencies.outcome == 'success' && 'v2' || format('v2-partial-{0}', github.run_id) }}
       - name: fetch and prepare the pinned mpv development SDK
         shell: pwsh
         run: |
