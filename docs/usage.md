@@ -1,6 +1,9 @@
 # Usage
 
-## First Run
+Choose your course folder to organize its videos, audio and readings into one
+library. Your place is saved as you learn.
+
+## First run
 
 1. Open melearner.
 2. Click **Choose root folder**.
@@ -9,7 +12,7 @@
 
 melearner groups files into courses, sections, and lessons based on the folder structure it scans.
 
-## Supported Learning Items
+## Supported learning items
 
 - Video files
 - Audio files
@@ -26,14 +29,15 @@ refresh when their source file changes. Courses without a video keep a quiet
 placeholder. Thumbnails are generated in the background without playing audio.
 
 The dashboard greets you as learner and shows your most recently viewed course.
-Its up-next video preview starts muted, with a sound toggle in the corner. Choose
+Its preview starts muted after three seconds while the app is active, with a
+sound toggle in the corner. Choose
 **Resume learning** or click the preview to open that lesson. Previews pause when
 you leave the dashboard or switch away from the app, and never record progress.
 Courses without an unfinished video keep a reading resume card.
 
-The course outline stays to the left of the lesson. Video titles and completion
-controls sit together below the player, with completion beside the lesson title.
-In documents, completion is beside the title above the reader.
+The course outline stays to the left of the lesson. Completion and Autoplay
+controls sit in the app header. Video titles appear below the player; document
+titles appear above the reader.
 Previous and next cards show adjacent lesson names.
 Use **Lessons** or
 **Hide lessons** to toggle the outline at any window size. On narrow windows,
@@ -42,8 +46,9 @@ Section headings show compact completion counts. Lesson rows show completion
 marks and a quiet media-type line, including duration when known. Hover for the
 full title and file details.
 
-Markdown and HTML are read inside the app without running scripts or loading
-remote content. CSV and XLSX display cell values as tables. XLSX formatting,
+Markdown and HTML are read inside the app. HTML scripts can run, but remote
+content is blocked and local resources are limited to the open course.
+CSV and XLSX display cell values as tables. XLSX formatting,
 charts, and macros are not rendered, and formulas show their stored values.
 Other indexed files show readable text when possible, or a bounded hexadecimal
 preview for unrecognized binary content. **Open in default app** is available
@@ -52,7 +57,7 @@ for document formats that need a dedicated application.
 PDF zoom and page controls sit directly above the PDF. Reading-page controls
 appear above long text documents only when the document spans multiple pages.
 
-## Playback Shortcuts
+## Playback shortcuts
 
 | Key | Action |
 | --- | --- |
@@ -71,8 +76,9 @@ controls. The inline volume slider mutes at zero and unmutes when raised. Click
 the sound icon to mute or restore sound. **Capture** copies the current frame to
 your clipboard. Fullscreen is the last control and shows only the video and its
 controls. Escape exits.
-Double-click the left half to go back five seconds, or the right half to go forward
-five seconds. **Autoplay** is off by default. When enabled, the next video starts
+Double click the left third to go back three seconds, or the right third to go
+forward three seconds. Double click the center third to enter or leave fullscreen.
+**Autoplay** is off by default. When enabled, the next video starts
 after a five-second countdown, skipping documents. **Cancel** stops that countdown.
 The autoplay choice is saved on your computer.
 Arrow-key and double-click seeking show a brief directional acknowledgement.

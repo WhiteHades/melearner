@@ -11,9 +11,9 @@
 
 </div>
 
-Watch your courses offline.
+Organize and view your downloaded courses.
 
-Play videos and audio, read lessons and keep your progress on your device.
+Keep videos, audio and readings in a clean, minimal library that remembers your progress.
 
 ![Your course library in meLearner](docs/images/home.png)
 
