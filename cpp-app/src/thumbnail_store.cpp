@@ -88,7 +88,8 @@ bool insideRoot(const QString& rootPath, const QString& filePath, QString* canon
     const QString root = QFileInfo(rootPath).canonicalFilePath();
     const QString file = QFileInfo(filePath).canonicalFilePath();
     if (root.isEmpty() || file.isEmpty()) return false;
-    const QString prefix = root.endsWith(QDir::separator()) ? root : root + QDir::separator();
+    // QFileInfo canonical paths use '/', including Windows drive paths.
+    const QString prefix = root.endsWith(QLatin1Char('/')) ? root : root + QLatin1Char('/');
     if (file != root && !file.startsWith(prefix, Qt::CaseSensitive)) return false;
     if (canonicalFile) *canonicalFile = file;
     return true;

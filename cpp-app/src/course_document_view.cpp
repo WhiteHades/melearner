@@ -214,9 +214,11 @@ public:
     }
 
     const QString path = QDir::cleanPath(QDir(root_.path).filePath(relative));
-    const QString rootPrefix = root_.path == QStringLiteral("/")
+    // Qt's cleaned and canonical paths use '/', even on Windows. A native
+    // backslash here would reject every valid document under a Windows root.
+    const QString rootPrefix = root_.path.endsWith(QLatin1Char('/'))
                                    ? root_.path
-                                   : root_.path + QDir::separator();
+                                   : root_.path + QLatin1Char('/');
     if (path != root_.path && !path.startsWith(rootPrefix)) {
       job->fail(QWebEngineUrlRequestJob::RequestDenied);
       return;
