@@ -7,12 +7,13 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_AUTOMOC ON)
 include(CTest)
 include(GNUInstallDirs)
-find_package(Qt6 6.11.2 REQUIRED COMPONENTS Widgets OpenGLWidgets Network Pdf)
+find_package(Qt6 6.11.2 REQUIRED COMPONENTS Widgets OpenGLWidgets Network Pdf WebEngineWidgets Concurrent)
 find_package(SQLite3 REQUIRED)
 find_package(PkgConfig REQUIRED)
 include(cpp-app/cmake/mpv.cmake)
 pkg_check_modules(LIBZIP REQUIRED IMPORTED_TARGET libzip)
 pkg_check_modules(MD4C REQUIRED IMPORTED_TARGET md4c)
+pkg_check_modules(MD4C_HTML REQUIRED IMPORTED_TARGET md4c-html)
 pkg_check_modules(THUMBNAIL_MEDIA REQUIRED IMPORTED_TARGET libavformat libavcodec libavutil libswscale)
 include(cpp-app/cmake/lexbor.cmake)
 include(cpp-app/cmake/shadcn.cmake)
@@ -35,13 +36,14 @@ add_library(melearner_app STATIC
   cpp-app/src/pdf_view.cpp
   cpp-app/src/library.cpp
   cpp-app/src/documents.cpp
+  cpp-app/src/course_document_view.cpp
   cpp-app/src/player.cpp
   cpp-app/src/mpv_video_widget.cpp
 )
 target_include_directories(melearner_app PUBLIC cpp-app/src)
 target_link_libraries(melearner_app PUBLIC
-  Qt6::Widgets Qt6::OpenGLWidgets Qt6::Network Qt6::Pdf SQLite3::SQLite3
-  melearner::mpv PkgConfig::LIBZIP PkgConfig::MD4C melearner::lexbor
+  Qt6::Widgets Qt6::OpenGLWidgets Qt6::Network Qt6::Pdf Qt6::WebEngineWidgets Qt6::Concurrent SQLite3::SQLite3
+  melearner::mpv PkgConfig::LIBZIP PkgConfig::MD4C PkgConfig::MD4C_HTML melearner::lexbor
   shadcn::widgets PkgConfig::THUMBNAIL_MEDIA)
 target_compile_options(melearner_app PRIVATE
   $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic>)

@@ -39,7 +39,7 @@ for tool in cmake ctest ninja c++ cc meson patch pkg-config; do
   fi
 done
 if ! pkg-config --print-errors --exists \
-  Qt6Widgets Qt6OpenGLWidgets Qt6Network Qt6Pdf Qt6Test sqlite3 libzip md4c \
+  Qt6Widgets Qt6OpenGLWidgets Qt6Network Qt6Pdf Qt6WebEngineCore Qt6WebEngineWidgets Qt6Concurrent Qt6Test sqlite3 libzip md4c md4c-html \
   libavcodec libavdevice libavfilter libavformat libavutil libswresample libswscale \
   libass libplacebo alsa libpipewire-0.3 libpulse \
   egl gl libdrm gbm x11 xext xpresent xrandr xscrnsaver \
@@ -47,6 +47,42 @@ if ! pkg-config --print-errors --exists \
   libva libva-drm libva-x11 libva-wayland vdpau ffnvcodec; then
   fail "Missing native development libraries (including Qt Test and libmpv build dependencies). See docs/development.md."
 fi
+
+qtpaths_tool="$(command -v qtpaths6 || command -v qtpaths || true)"
+if [[ -z "$qtpaths_tool" ]]; then
+  fail "Missing qtpaths6; Qt WebEngine runtime paths cannot be resolved. See docs/development.md."
+fi
+qt_query="$("$qtpaths_tool" --query)"
+qt_path_value() {
+  local key="$1"
+  sed -n "s/^${key}://p" <<<"$qt_query" | head -n 1
+}
+qt_prefix="$(qt_path_value QT_INSTALL_PREFIX)"
+qt_libexecs="$(qt_path_value QT_INSTALL_LIBEXECS)"
+qt_data="$(qt_path_value QT_INSTALL_DATA)"
+qt_translations="$(qt_path_value QT_INSTALL_TRANSLATIONS)"
+qtwebengine_notice=""
+for qt_notice_candidate in \
+  "$qt_prefix/licenses/QtWebEngine/LICENSE.chromium" \
+  "$qt_prefix/share/licenses/qt6-webengine/LICENSE.chromium" \
+  "$qt_prefix/share/licenses/qtwebengine/LICENSE.chromium" \
+  "$qt_data/../licenses/qt6-webengine/LICENSE.chromium"; do
+  if [[ -f "$qt_notice_candidate" && ! -L "$qt_notice_candidate" && -s "$qt_notice_candidate" ]]; then
+    qtwebengine_notice="$qt_notice_candidate"
+    break
+  fi
+done
+[[ -n "$qtwebengine_notice" ]] || fail "Missing Qt WebEngine provider notice LICENSE.chromium below Qt prefix $qt_prefix"
+for qt_required in \
+  "$qt_libexecs/QtWebEngineProcess" \
+  "$qt_data/resources/qtwebengine_resources.pak" \
+  "$qt_data/resources/qtwebengine_resources_100p.pak" \
+  "$qt_data/resources/qtwebengine_resources_200p.pak" \
+  "$qt_data/resources/v8_context_snapshot.bin"; do
+  [[ -s "$qt_required" ]] || fail "Missing Qt WebEngine runtime file: $qt_required"
+done
+[[ -d "$qt_translations/qtwebengine_locales" ]] || fail "Missing Qt WebEngine locales: $qt_translations/qtwebengine_locales"
+compgen -G "$qt_translations/qtwebengine_locales/*.pak" >/dev/null || fail "Qt WebEngine locales are empty: $qt_translations/qtwebengine_locales"
 
 # Match mpv 0.41's Lua dependency candidates and version bounds. The bundled
 # runtime enables Lua, so absence of every supported provider must fail before
@@ -77,6 +113,17 @@ cmake --install build/cpp-release --prefix "$install_prefix"
 if [[ ! -x "$install_prefix/bin/melearner" ]]; then
   fail "Installation did not produce an executable at $install_prefix/bin/melearner."
 fi
+install -D -m 755 "$qt_libexecs/QtWebEngineProcess" "$install_prefix/libexec/melearner/QtWebEngineProcess"
+install -D -m 644 "$qt_data/resources/qtwebengine_resources.pak" "$install_prefix/share/melearner/qtwebengine/resources/qtwebengine_resources.pak"
+install -D -m 644 "$qt_data/resources/qtwebengine_resources_100p.pak" "$install_prefix/share/melearner/qtwebengine/resources/qtwebengine_resources_100p.pak"
+install -D -m 644 "$qt_data/resources/qtwebengine_resources_200p.pak" "$install_prefix/share/melearner/qtwebengine/resources/qtwebengine_resources_200p.pak"
+if [[ -s "$qt_data/resources/icudtl.dat" ]]; then
+  install -D -m 644 "$qt_data/resources/icudtl.dat" "$install_prefix/share/melearner/qtwebengine/resources/icudtl.dat"
+fi
+install -D -m 644 "$qt_data/resources/v8_context_snapshot.bin" "$install_prefix/share/melearner/qtwebengine/resources/v8_context_snapshot.bin"
+install -d "$install_prefix/share/melearner/qtwebengine/locales"
+install -m 644 "$qt_translations/qtwebengine_locales"/*.pak "$install_prefix/share/melearner/qtwebengine/locales/"
+install -D -m 644 "$qtwebengine_notice" "$install_prefix/share/doc/melearner/qtwebengine/LICENSE.chromium"
 if command -v update-desktop-database >/dev/null; then
   update-desktop-database "$install_prefix/share/applications"
 fi
