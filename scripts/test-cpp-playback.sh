@@ -135,6 +135,7 @@ Usage: scripts/test-cpp-playback.sh [--build-dir DIR] [-- COMMAND [ARG...]]
 Runs main_window_test and main_playback_test from DIR. Supplying a command
 after -- runs only that command in the same private X11/audio environment.
 MELEARNER_PLAYBACK_TIMEOUT_SECONDS defaults to 90 seconds per command.
+Set that environment variable to override the limit.
 USAGE
 }
 
