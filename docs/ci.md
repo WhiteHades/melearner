@@ -20,7 +20,7 @@ This check does not replace clean machine installer or graphics driver testing.
 
 Dependency caches reduce repeated downloads and compilation. Save them before the application build so an application failure does not discard the dependencies. Use standard runners and keep cache storage within the included allowance. Do not enable paid runners or raise storage limits without approval.
 
-Linux builds target an Ubuntu baseline. macOS builds target Apple silicon and use Xcode 26 for standard C++ thread support. Windows builds use the native Microsoft toolchain. Each platform still needs package deployment and clean machine playback checks before its download is offered.
+Linux builds target an Ubuntu baseline. macOS builds target Apple silicon and use Xcode 26 for standard C++ thread support. Windows builds use the native Microsoft toolchain. Packaging checks runtime deployment on each platform. Clean machine installer lifecycle and broad graphics driver compatibility are not covered by these workflows.
 
 ## Installer builds
 

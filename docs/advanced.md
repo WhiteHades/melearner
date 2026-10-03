@@ -12,15 +12,15 @@ Windows gets an EXE installer. macOS gets a DMG containing the app. Linux gets a
 
 AppImage is a practical default because it carries the app and required libraries in one file for supported Linux distributions. See the [AppImage documentation](https://docs.appimage.org/introduction/index.html).
 
-Only older Linux binaries are published today. Native builds and core workflow tests pass on Linux, Windows and macOS. The manual workflows can also prepare diagnostic installers. See [Manual builds](ci.md) for their checks and limits. Do not label a build artifact as a public release.
+Version 0.1.9 provides Linux AppImage and Arch packages, a Windows x64 EXE, and an Apple silicon macOS DMG. Native builds and core workflow tests pass on all three platforms. Windows also passes the existing video playback checks. See [Manual builds](ci.md) for their checks and limits.
 
 ## Contained runtime
 
-Release packages must bundle the player, document renderer, required libraries, fonts and resources. Users should not need a separate browser, database server or codec pack. Course files and saved progress remain on the user's device.
+Release packages bundle the player, document renderer, required libraries, fonts and resources. Users do not need a separate browser, database server or codec pack. Course files and saved progress remain on the user's device.
 
 Progress uses SQLite inside the app. It needs no server or separate setup.
 
-The operating system still provides its kernel, graphics driver and desktop services. An AppImage does not make an incompatible operating system compatible. Test each advertised system on a clean machine without development packages or the build directory.
+The operating system still provides its kernel, graphics driver and desktop services. The Linux download requires x86_64 and glibc 2.39 or newer. The macOS download requires Apple silicon and macOS 15 or newer. Intel Macs are not supported by this release. Clean machine installer lifecycle and every distribution or graphics driver combination have not been verified.
 
 Build Linux releases against the oldest supported system runtime. Check the required runtime versions in every bundled library, not just the app executable. A bundle built on a newer system can still fail on an older desktop. Do not copy glibc into the app as a compatibility workaround.
 
@@ -33,13 +33,13 @@ Use optimized release builds, remove unused symbols from packaged binaries, keep
 The Linux stager makes its copied binaries writable before stripping and
 updating their library paths. Installed provider libraries remain unchanged.
 
-The Linux packaging scripts share a dependency inventory and validator. Diagnostic packages are not public releases. Publishing is authorized, but each offered download must have its runtime dependencies, source records and required notices in place.
+The Linux packaging scripts share a dependency inventory and validator. Release assets include checksums and the source revisions used by each platform build. The Windows source bundle retains the player source archives, build patch and manifest. Each package includes dependency notices and source records.
 
 When a Qt provider omits its Chromium notice, the Linux notice collector retrieves
 the matching Qt source archive and verifies its checksum. The runtime stager can
 use that collected notice through its legal input directory.
 
-The Windows and macOS downloads will have no trusted publisher signature. Windows may show a SmartScreen warning. macOS may require the user to approve opening the app in Privacy & Security. Do not disable system security protections globally.
+The Windows and macOS downloads have no trusted publisher signature. Windows may show a SmartScreen warning. The macOS bundle has an ad hoc signature but is not notarized, so macOS may require approval in Privacy & Security. Do not disable system security protections globally.
 
 ## Showcase images
 
