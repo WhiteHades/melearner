@@ -269,7 +269,7 @@ void MpvVideoWidget::setTransportBackdrop(QRect logicalRect, qreal visibility) {
 }
 
 void MpvVideoWidget::initializeGL() {
-    const auto renderer = QByteArray(reinterpret_cast<const char*>(glGetString(GL_RENDERER))).toLower();
+    const auto renderer = QByteArray(reinterpret_cast<const char*>(context()->functions()->glGetString(GL_RENDERER))).toLower();
     // Mesa's CPU OpenGL drivers can corrupt libmpv's shader output. Let mpv
     // convert and scale on the CPU, then let Qt present the opaque image. The
     // hardware OpenGL path remains unchanged.
@@ -305,14 +305,15 @@ void MpvVideoWidget::paintGL() {
         painter.drawImage(rect(), softwareFrame_);
     }
     painter.beginNativePainting();
-    glDisable(GL_BLEND);
+    auto* gl = context()->functions();
+    gl->glDisable(GL_BLEND);
     if (player_ == nullptr || !renderContextReady_) {
-        glClearColor(0.0F, 0.0F, 0.0F, 1.0F);
-        glClear(GL_COLOR_BUFFER_BIT);
+        gl->glClearColor(0.0F, 0.0F, 0.0F, 1.0F);
+        gl->glClear(GL_COLOR_BUFFER_BIT);
     } else if (softwareFrame) {
         if (!softwareFrameReady) {
-            glClearColor(0.0F, 0.0F, 0.0F, 1.0F);
-            glClear(GL_COLOR_BUFFER_BIT);
+            gl->glClearColor(0.0F, 0.0F, 0.0F, 1.0F);
+            gl->glClear(GL_COLOR_BUFFER_BIT);
             emit renderError(QStringLiteral("render"), QStringLiteral("The software video frame could not be rendered."));
         }
     } else if (!player_->renderFrame(defaultFramebufferObject(), pixelWidth, pixelHeight)) {
@@ -597,7 +598,7 @@ void MpvVideoWidget::deliverRenderUpdate() {
                 // owner thread so decoder allocations and playback can run.
                 makeCurrent();
                 if (QOpenGLContext::currentContext() == context()) {
-                    glDisable(GL_BLEND);
+                    context()->functions()->glDisable(GL_BLEND);
                     if (!player_->processHiddenRenderUpdate()) {
                         emit renderError(QStringLiteral("render"),
                                          QStringLiteral("libmpv could not process the hidden frame."));

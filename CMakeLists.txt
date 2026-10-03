@@ -45,11 +45,6 @@ target_link_libraries(melearner_app PUBLIC
   Qt6::Widgets Qt6::OpenGLWidgets Qt6::Network Qt6::Pdf Qt6::WebEngineWidgets Qt6::Concurrent Qt6::Quick SQLite3::SQLite3
   melearner::mpv PkgConfig::LIBZIP PkgConfig::MD4C PkgConfig::MD4C_HTML melearner::lexbor
   shadcn::widgets PkgConfig::THUMBNAIL_MEDIA)
-if(WIN32)
-  # The video renderer calls desktop GL entry points directly. Qt's dynamic
-  # OpenGL kit does not supply the Windows import library transitively.
-  target_link_libraries(melearner_app PUBLIC opengl32)
-endif()
 target_compile_options(melearner_app PRIVATE
   $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic>)
 set_source_files_properties(cpp-app/schema/library-v1.sql PROPERTIES QT_RESOURCE_ALIAS "schema/library-v1.sql")
