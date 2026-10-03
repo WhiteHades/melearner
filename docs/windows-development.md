@@ -33,7 +33,10 @@ FFmpeg includes the file reading, video decoding and image scaling libraries
 used for thumbnails and playback. The workflow builds libmpv from its verified
 0.41.0 source archive and libplacebo from an immutable source revision. Their
 original notices, build options and corresponding sources accompany the package
-evidence. It does not use an opaque prebuilt player DLL. vcpkg does
+evidence. The build invokes the pinned Meson module through the same Python
+launcher that installed it, so it does not depend on a Scripts directory being
+on PATH. Python is a build tool only and is not included in the app.
+It does not use an opaque prebuilt player DLL. vcpkg does
 not build Qt SQL drivers or PostgreSQL libraries that the application never uses.
 The manual workflow builds the
 Vulkan loader from the pinned vcpkg baseline and deploys it beside the test app,

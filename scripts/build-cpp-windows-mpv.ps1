@@ -91,11 +91,11 @@ foreach ($file in $sourceFiles) {
 }
 $libplaceboNoticeFiles = @(Get-ChildItem -LiteralPath $libplaceboNotices -File -Recurse)
 if (-not $libplaceboNoticeFiles) { throw 'No libplacebo or submodule copyright notices were collected' }
-& meson setup $libplaceboBuildRoot $libplaceboRoot --prefix=$sdkRoot --libdir=lib --buildtype=release --wrap-mode=nofallback @libplaceboBuildOptions
+& py -3 -m mesonbuild.mesonmain setup $libplaceboBuildRoot $libplaceboRoot --prefix=$sdkRoot --libdir=lib --buildtype=release --wrap-mode=nofallback @libplaceboBuildOptions
 if ($LASTEXITCODE -ne 0) { throw 'libplacebo Meson configuration failed' }
-& meson compile -C $libplaceboBuildRoot --jobs 2
+& py -3 -m mesonbuild.mesonmain compile -C $libplaceboBuildRoot --jobs 2
 if ($LASTEXITCODE -ne 0) { throw 'libplacebo compilation failed' }
-& meson install -C $libplaceboBuildRoot
+& py -3 -m mesonbuild.mesonmain install -C $libplaceboBuildRoot
 if ($LASTEXITCODE -ne 0) { throw 'libplacebo installation failed' }
 
 $dependencyMetadata = @([ordered]@{
@@ -123,11 +123,11 @@ $buildOptions = @(
   '-Dgl-win32=enabled', '-Dd3d-hwaccel=enabled', '-Dd3d9-hwaccel=enabled',
   '-Dwin32-smtc=enabled', '-Dmanpage-build=disabled', '-Dhtml-build=disabled', '-Dpdf-build=disabled'
 )
-& meson setup $buildRoot $sourceRoot --prefix=$sdkRoot --libdir=lib --buildtype=release --wrap-mode=nofallback @buildOptions
+& py -3 -m mesonbuild.mesonmain setup $buildRoot $sourceRoot --prefix=$sdkRoot --libdir=lib --buildtype=release --wrap-mode=nofallback @buildOptions
 if ($LASTEXITCODE -ne 0) { throw 'mpv Meson configuration failed' }
-& meson compile -C $buildRoot --jobs 2
+& py -3 -m mesonbuild.mesonmain compile -C $buildRoot --jobs 2
 if ($LASTEXITCODE -ne 0) { throw 'mpv compilation failed' }
-& meson install -C $buildRoot
+& py -3 -m mesonbuild.mesonmain install -C $buildRoot
 if ($LASTEXITCODE -ne 0) { throw 'mpv installation failed' }
 
 $dllCandidates = @(Get-ChildItem -LiteralPath (Join-Path $sdkRoot 'bin') -Filter '*mpv*.dll' -File)
