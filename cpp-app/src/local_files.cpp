@@ -41,8 +41,18 @@ namespace {
 }
 
 [[nodiscard]] bool hasUrlScheme(const QString& path) {
+    if (path.startsWith(QStringLiteral("//")) || path.startsWith(QStringLiteral("\\\\"))) {
+        return true;
+    }
+#if defined(Q_OS_WIN)
+    // A Windows drive prefix is a filesystem path, not a URL scheme.
+    if (path.size() >= 3 && path.at(1) == QLatin1Char(':') &&
+        path.indexOf(QLatin1Char(':'), 2) < 0 && QFileInfo(path).isAbsolute()) {
+        return false;
+    }
+#endif
     const QUrl url(path);
-    return !url.scheme().isEmpty() || path.startsWith(QStringLiteral("//"));
+    return !url.scheme().isEmpty();
 }
 
 [[nodiscard]] std::optional<Error> validateInputPath(
@@ -86,10 +96,9 @@ namespace {
     if (candidate == root) {
         return true;
     }
-    if (root == QStringLiteral("/")) {
-        return candidate.startsWith(QStringLiteral("/"));
-    }
-    return candidate.startsWith(root + QDir::separator());
+    // QFileInfo's canonical paths use '/' on every platform, including Windows.
+    const auto prefix = root.endsWith(QLatin1Char('/')) ? root : root + QLatin1Char('/');
+    return candidate.startsWith(prefix);
 }
 
 [[nodiscard]] std::optional<Error> canonicalizeRoot(

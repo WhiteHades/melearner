@@ -11,10 +11,15 @@ the current app. See [Qt WebEngine platform requirements](https://doc.qt.io/qt-6
 
 Prepare a native MSVC environment with a matching Qt kit and compatible builds
 of SQLite, libmpv, libzip, md4c and FFmpeg. CMake also consumes the pinned Lexbor
-and shadcn sources. The MSVC build entrypoint and dependency setup remain to be
-implemented and verified on Windows. The legacy UCRT64 script checks for the
+and shadcn sources. The [manual Windows workflow](ci.md) installs a pinned native
+toolchain and builds the required libraries. Its first run compiles Qt WebEngine
+from source, then caches the compiled dependencies for later runs. It does not
+publish an installer. The legacy UCRT64 script checks for the
 required WebEngine module before configuring; it is not a qualified Windows
 build path.
+
+Choose a folder on a local drive. URLs, network shares and symlinked paths are
+not accepted as course roots.
 
 ## Contained installer
 
