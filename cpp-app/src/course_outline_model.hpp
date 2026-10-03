@@ -63,7 +63,8 @@ private slots:
     void progressSaved(library::RequestId requestId, library::ProgressResult result);
 
 private:
-    static constexpr int kOutlineRowHeight = 40;
+    static constexpr int kLessonRowHeight = 56;
+    static constexpr int kSectionRowHeight = 48;
     static constexpr int kSectionPageSize = 128;
     static constexpr int kLessonPageSize = 256;
     static constexpr int kMaxCachedPages = 4;

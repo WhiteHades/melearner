@@ -3,6 +3,9 @@
 #include "study_icons.hpp"
 
 #include <QSize>
+#include <QPainter>
+#include <QPixmap>
+#include <QPixmapCache>
 
 #include <algorithm>
 #include <limits>
@@ -23,15 +26,39 @@ constexpr quintptr kFileTag = quintptr{1} << (kIndexBits - 2);
 constexpr quintptr kLessonRowMask = (quintptr{1} << kIndexRowBits) - 1;
 constexpr quintptr kSectionRowMask = (kFileTag - 1) >> kIndexRowBits;
 
-[[nodiscard]] QString completionText(const library::Section& section) {
-    return QStringLiteral("%1 of %2 lessons complete")
-        .arg(section.completedLessons)
-        .arg(section.lessonCount);
+[[nodiscard]] QString lessonMetadata(const library::Lesson& lesson) {
+    if (lesson.type == QStringLiteral("video") || lesson.type == QStringLiteral("audio")) {
+        auto metadata = lesson.type == QStringLiteral("video") ? QObject::tr("Video") : QObject::tr("Audio");
+        if (lesson.duration > 0) {
+            const auto minutes = (lesson.duration + 59) / 60;
+            metadata += QStringLiteral(" · %1 min").arg(minutes);
+        }
+        return metadata;
+    }
+    return QObject::tr("Reading");
 }
 
-[[nodiscard]] QString lessonDescription(const library::Lesson& lesson) {
-    return lesson.type
-        + (lesson.completed ? QStringLiteral(" · Complete") : QString());
+[[nodiscard]] QPixmap completionMark(bool completed) {
+    const auto colour = roleColor(nullptr, completed ? shadcn::Role::Primary : shadcn::Role::MutedForeground);
+    const auto key = QStringLiteral("melearner-outline-%1-%2").arg(completed).arg(colour.rgba());
+    QPixmap cached;
+    if (QPixmapCache::find(key, &cached)) return cached;
+    QPixmap pixmap(18, 18);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setPen(QPen(colour, 1.4));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawEllipse(QRectF(2.5, 2.5, 13, 13));
+    if (completed) {
+        painter.setPen(QPen(colour, 1.6,
+                            Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        painter.drawLine(QPointF(6, 9), QPointF(8, 11));
+        painter.drawLine(QPointF(8, 11), QPointF(12, 7));
+    }
+    painter.end();
+    QPixmapCache::insert(key, pixmap);
+    return pixmap;
 }
 
 }  // namespace
@@ -255,7 +282,7 @@ QVariant CourseOutlineModel::data(const QModelIndex& modelIndex, int role) const
     const auto supportedRole = role == Qt::DisplayRole || role == Qt::AccessibleTextRole
         || role == Qt::AccessibleDescriptionRole || role == Qt::ToolTipRole || role == Qt::UserRole
         || role == Qt::SizeHintRole || role == Qt::FontRole || role == shadcnRowDescription
-        || role == shadcnRowProgress || role == shadcnRowHeading
+        || role == shadcnRowProgress || role == shadcnRowHeading || role == shadcnRowLeading
         || role == shadcnRowTrailing || role == shadcnRowTrailingText;
     if (!supportedRole) {
         return {};
@@ -278,12 +305,12 @@ QVariant CourseOutlineModel::data(const QModelIndex& modelIndex, int role) const
         }
         const auto item = loadedLesson(sectionRow, *order);
         if (role == Qt::SizeHintRole) {
-            return QSize(180, kOutlineRowHeight);
+            return QSize(180, kLessonRowHeight);
         }
         if (!item.has_value()) {
             return role == Qt::UserRole ? QVariant{} : QVariant(tr("Loading…"));
         }
-        const auto description = lessonDescription(*item);
+        const auto description = lessonMetadata(*item);
         if (role == Qt::DisplayRole) {
             // The title alone. The description has its own role, so a row is not a
             // newline the delegate has to split, and a title containing a newline
@@ -291,19 +318,19 @@ QVariant CourseOutlineModel::data(const QModelIndex& modelIndex, int role) const
             return item->name;
         }
         if (role == shadcnRowDescription) {
-            return {};
+            return description;
         }
-        if (role == shadcnRowTrailing && item->completed) {
-            return studyIcon(StudyIcon::Check,
-                roleColor(nullptr, shadcn::Role::MutedForeground)).pixmap(16, 16);
+        if (role == shadcnRowLeading) {
+            return completionMark(item->completed);
         }
         if (role == Qt::AccessibleTextRole || role == Qt::AccessibleDescriptionRole) {
-            return item->name + QStringLiteral(", ") + item->sectionName + QStringLiteral(", ") + description;
+            return item->name + QStringLiteral(", ") + item->sectionName + QStringLiteral(", ") + description
+                + (item->completed ? QStringLiteral(", ") + tr("Complete") : QString());
         }
         if (role == Qt::ToolTipRole) {
-            return QStringLiteral("<qt>%1<br>%2</qt>")
-                .arg(item->name.toHtmlEscaped(),
-                    (item->sectionName + QStringLiteral(" · ") + description).toHtmlEscaped());
+            const auto detail = item->sectionName + QStringLiteral(" · ") + description
+                + (item->completed ? QStringLiteral(" · ") + tr("Complete") : QString());
+            return QStringLiteral("<qt>%1<br>%2</qt>").arg(item->name.toHtmlEscaped(), detail.toHtmlEscaped());
         }
         if (role == Qt::UserRole) {
             return item->id;
@@ -311,32 +338,31 @@ QVariant CourseOutlineModel::data(const QModelIndex& modelIndex, int role) const
         return {};
     }
 
-    // Section counts share one quiet heading. Details stay in accessible text
-    // and tooltips rather than adding another line and rail to every row.
+    // Section counts share one quiet heading, with a compact count instead of
+    // a second progress rail.
     if (role == shadcnRowHeading) {
         return true;
     }
     if (role == Qt::SizeHintRole) {
-        return QSize(180, kOutlineRowHeight);
+        return QSize(180, kSectionRowHeight);
     }
     const auto item = loadedSection(modelIndex.row());
     if (!item.has_value()) {
         return role == Qt::UserRole ? QVariant{} : QVariant(tr("Loading…"));
     }
-    const auto description = completionText(*item);
+    const auto description = QStringLiteral("%1 of %2 lessons complete")
+        .arg(item->completedLessons).arg(item->lessonCount);
     if (role == Qt::DisplayRole) {
         return item->name;
     }
     if (role == shadcnRowDescription) {
         return {};
     }
+    if (role == shadcnRowProgress) {
+        return {};
+    }
     if (role == shadcnRowTrailingText) {
         return QStringLiteral("%1/%2").arg(item->completedLessons).arg(item->lessonCount);
-    }
-    if (role == shadcnRowProgress) {
-        return item->lessonCount > 0
-            ? QVariant(std::min(1.0, static_cast<double>(item->completedLessons) / item->lessonCount))
-            : QVariant{};
     }
     if (role == Qt::AccessibleTextRole || role == Qt::AccessibleDescriptionRole) {
         return item->name + QStringLiteral(", ") + description;
