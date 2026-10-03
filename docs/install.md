@@ -39,6 +39,9 @@ source installer copies its sandboxed helper, resource packs, locales and
 Chromium notices into app-specific directories. Qt libraries still come from
 the development packages for a source installation. The installer locates
 `qtpaths` through Qt's pkg-config binary directory when it is not on `PATH`.
+When QtWebEngine is installed in a separate module prefix, packaging resolves
+its helper, resources and locales together from that provider rather than
+assuming every Qt module shares the `qtpaths` prefix.
 The document viewer starts
 only when needed, blocks network access, and restricts files to the open course.
 No separately installed browser or database server is needed.

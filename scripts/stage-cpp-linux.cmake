@@ -251,6 +251,86 @@ endforeach()
 set(_webengine_helper "${_QT_INSTALL_LIBEXECS}/QtWebEngineProcess")
 set(_webengine_resource_dir "${_QT_INSTALL_DATA}/resources")
 set(_webengine_locale_dir "${_QT_INSTALL_TRANSLATIONS}/qtwebengine_locales")
+
+# Some Qt providers split QtWebEngine into its own module prefix. Homebrew's
+# qtwebengine formula stages files under its keg while qtpaths reports paths
+# rooted at the shared Homebrew prefix. Resolve the whole runtime payload from
+# one provider layout instead of mixing files across Qt module prefixes.
+set(_webengine_provider_prefixes "")
+find_program(_brew_tool NAMES brew)
+if(_brew_tool)
+  execute_process(COMMAND "${_brew_tool}" --prefix qtwebengine
+    RESULT_VARIABLE _brew_qtwebengine_result OUTPUT_VARIABLE _brew_qtwebengine_prefix
+    OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+  if(_brew_qtwebengine_result EQUAL 0 AND IS_DIRECTORY "${_brew_qtwebengine_prefix}")
+    list(APPEND _webengine_provider_prefixes "${_brew_qtwebengine_prefix}")
+    execute_process(COMMAND "${_brew_tool}" --prefix
+      RESULT_VARIABLE _brew_prefix_result OUTPUT_VARIABLE _brew_prefix
+      OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    if(_brew_prefix_result EQUAL 0 AND IS_DIRECTORY "${_brew_prefix}")
+      file(RELATIVE_PATH _webengine_libexec_relative "${_brew_prefix}" "${_QT_INSTALL_LIBEXECS}")
+      file(RELATIVE_PATH _webengine_data_relative "${_brew_prefix}" "${_QT_INSTALL_DATA}")
+      file(RELATIVE_PATH _webengine_translations_relative "${_brew_prefix}" "${_QT_INSTALL_TRANSLATIONS}")
+      if(NOT _webengine_libexec_relative MATCHES "^\\.\\.(/|$)"
+          AND NOT _webengine_data_relative MATCHES "^\\.\\.(/|$)"
+          AND NOT _webengine_translations_relative MATCHES "^\\.\\.(/|$)")
+        set(_webengine_has_brew_relative_layout TRUE)
+      endif()
+    endif()
+  endif()
+endif()
+
+function(_webengine_provider_is_complete _helper _resources _locales _result)
+  set(_complete TRUE)
+  foreach(_required_resource IN ITEMS
+      qtwebengine_resources.pak qtwebengine_resources_100p.pak
+      qtwebengine_resources_200p.pak v8_context_snapshot.bin)
+    if(NOT EXISTS "${_resources}/${_required_resource}" OR IS_DIRECTORY "${_resources}/${_required_resource}")
+      set(_complete FALSE)
+    endif()
+  endforeach()
+  if(NOT EXISTS "${_helper}" OR IS_DIRECTORY "${_helper}" OR IS_SYMLINK "${_helper}"
+      OR NOT IS_DIRECTORY "${_locales}")
+    set(_complete FALSE)
+  else()
+    file(GLOB _locale_files "${_locales}/*.pak")
+    if(NOT _locale_files)
+      set(_complete FALSE)
+    endif()
+  endif()
+  set("${_result}" "${_complete}" PARENT_SCOPE)
+endfunction()
+
+set(_webengine_provider_found FALSE)
+set(_webengine_candidate_layouts qtpaths)
+if(_webengine_provider_prefixes AND _webengine_has_brew_relative_layout)
+  list(APPEND _webengine_candidate_layouts module-qtpaths)
+endif()
+foreach(_provider_layout IN LISTS _webengine_candidate_layouts)
+  if(_provider_layout STREQUAL "qtpaths")
+    set(_candidate_helper "${_QT_INSTALL_LIBEXECS}/QtWebEngineProcess")
+    set(_candidate_resources "${_QT_INSTALL_DATA}/resources")
+    set(_candidate_locales "${_QT_INSTALL_TRANSLATIONS}/qtwebengine_locales")
+  else()
+    list(GET _webengine_provider_prefixes 0 _provider_prefix)
+    set(_candidate_helper "${_provider_prefix}/${_webengine_libexec_relative}/QtWebEngineProcess")
+    set(_candidate_resources "${_provider_prefix}/${_webengine_data_relative}/resources")
+    set(_candidate_locales "${_provider_prefix}/${_webengine_translations_relative}/qtwebengine_locales")
+  endif()
+  _webengine_provider_is_complete(
+    "${_candidate_helper}" "${_candidate_resources}" "${_candidate_locales}" _candidate_complete)
+  if(_candidate_complete)
+    set(_webengine_helper "${_candidate_helper}")
+    set(_webengine_resource_dir "${_candidate_resources}")
+    set(_webengine_locale_dir "${_candidate_locales}")
+    set(_webengine_provider_found TRUE)
+    break()
+  endif()
+endforeach()
+if(NOT _webengine_provider_found)
+  message(FATAL_ERROR
+    "could not find a complete Qt WebEngine runtime (helper, resources, and locales) from qtpaths or a qtwebengine module prefix")
+endif()
 set(_webengine_notice_candidates
   "${MELEARNER_LEGAL_ROOT}/QtWebEngine-LICENSE.chromium"
   "${_QT_INSTALL_PREFIX}/licenses/QtWebEngine/LICENSE.chromium"
