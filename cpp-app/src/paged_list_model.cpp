@@ -2,6 +2,7 @@
 #include "library.hpp"
 #include "study_icons.hpp"
 #include "theme.hpp"
+#include "course_rows.hpp"
 #include <QPixmap>
 #include <QSize>
 #include <algorithm>
@@ -75,10 +76,23 @@ QVariant PagedListModel::data(const QModelIndex& index, int role) const {
   if (role != Qt::DisplayRole && role != Qt::AccessibleTextRole && role != Qt::ToolTipRole
       && role != Qt::UserRole && role != melearner::shadcnRowDescription
       && role != melearner::shadcnRowProgress && role != melearner::shadcnRowLeading
-      && role != melearner::shadcnRowTrailing) return {};
+      && role != melearner::shadcnRowTrailing && role != melearner::CourseThumbnailRole) return {};
   const auto item = row(index.row());
   if (!item) return role == Qt::UserRole ? QVariant() : QVariant(tr("Loading…"));
   if (role == Qt::UserRole) return item->id;
+  if (role == melearner::CourseThumbnailRole) {
+    if (!item->available) return QPixmap{};
+    if (const auto* cached = thumbnails_.object(item->id)) return *cached;
+    if (!pendingThumbnails_.contains(item->id) && pendingThumbnails_.size() < 32) {
+      pendingThumbnails_.insert(item->id);
+      auto* self = const_cast<PagedListModel*>(this);
+      QMetaObject::invokeMethod(self, [self, id = item->id, generation = generation_] {
+        if (generation == self->generation_ && self->pendingThumbnails_.contains(id))
+          emit self->thumbnailRequested(id);
+      }, Qt::QueuedConnection);
+    }
+    return QPixmap{};
+  }
   const auto course = item->value.canConvert<melearner::library::Course>()
     ? std::optional<melearner::library::Course>(item->value.value<melearner::library::Course>())
     : std::nullopt;
@@ -111,6 +125,7 @@ Qt::ItemFlags PagedListModel::flags(const QModelIndex& index) const {
 void PagedListModel::reset() {
   beginResetModel();
   ++generation_; total_ = 0; pages_.clear(); pending_.clear(); deferred_.reset();
+  pendingThumbnails_.clear(); thumbnails_.clear();
   endResetModel();
   pending_.insert(0);
   emit pageRequested(0);
@@ -145,6 +160,19 @@ bool PagedListModel::updateRow(const StudyRow& row) {
     }
   }
   return false;
+}
+void PagedListModel::setThumbnail(const QString& courseId, const QImage& image) {
+  pendingThumbnails_.remove(courseId);
+  const int cost = image.isNull() ? 64 : std::max(1, static_cast<int>(image.sizeInBytes() / 1024));
+  thumbnails_.insert(courseId, new QPixmap(QPixmap::fromImage(image)), cost);
+  for (auto page = pages_.begin(); page != pages_.end(); ++page) {
+    for (int local = 0; local < page->rows.size(); ++local) {
+      if (page->rows[local].id != courseId) continue;
+      const auto changed = index(page.key() + local);
+      emit dataChanged(changed, changed, {melearner::CourseThumbnailRole});
+      return;
+    }
+  }
 }
 void PagedListModel::refreshRowIcons() {
   // Only the rows that are resident change, and only their icon roles. The

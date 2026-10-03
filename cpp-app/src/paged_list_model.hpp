@@ -2,6 +2,8 @@
 #include <QAbstractListModel>
 #include <QMap>
 #include <QSet>
+#include <QCache>
+#include <QPixmap>
 #include <optional>
 
 struct StudyRow {
@@ -29,6 +31,7 @@ public:
   void reset();
   bool setPage(int offset, int total, const QList<StudyRow>& rows);
   bool updateRow(const StudyRow& row);
+  void setThumbnail(const QString& courseId, const QImage& image);
   void failedPage(int offset);
   std::optional<StudyRow> row(int index) const;
   /// Re-asks the loaded rows for their icons, without dropping the cached pages.
@@ -38,6 +41,7 @@ public:
   int cachedRows() const;
 signals:
   void pageRequested(int offset);
+  void thumbnailRequested(QString courseId);
 private:
   struct Page { QList<StudyRow> rows; quint64 used; };
   int pageSize_;
@@ -47,5 +51,7 @@ private:
   mutable QMap<int, Page> pages_;
   mutable QSet<int> pending_;
   mutable std::optional<int> deferred_;
+  mutable QCache<QString, QPixmap> thumbnails_{16384};
+  mutable QSet<QString> pendingThumbnails_;
   void request(int offset) const;
 };
