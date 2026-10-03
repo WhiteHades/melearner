@@ -9,6 +9,7 @@
 #include <QHash>
 #include <QList>
 #include <QMap>
+#include <QPointer>
 #include <QSet>
 #include <QElapsedTimer>
 #include <functional>
@@ -58,6 +59,7 @@ private:
   void installKeyboardFilters();
   QList<QAction*> keyboardActions_;
   QHash<QString, QAction*> keyboardCommands_;
+  QPointer<QWidget> commandTarget_;
   enum class KeyPrefix { None, Go, Leader };
   KeyPrefix keyPrefix_ = KeyPrefix::None;
   QElapsedTimer keyPrefixAge_;

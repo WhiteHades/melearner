@@ -57,6 +57,7 @@
 #include <QStyle>
 #include <QStyleHints>
 #include <QSettings>
+#include <QScopedValueRollback>
 #include <QTimer>
 #include <QTextEdit>
 #include <QTextCursor>
@@ -1350,13 +1351,21 @@ void MainWindow::showKeyboardPopup(bool commandPalette) {
     const QPointer<QAction> action = reinterpret_cast<QAction*>(
       static_cast<quintptr>(data.toULongLong()));
     if (!action || !action->isEnabled()) return;
-    dialog->accept();
     // The command runs after the dialog has closed, so a command that opens
     // another dialog is not immediately dismissed by the one closing.
-    QTimer::singleShot(0, this, [invoker, action] {
-      if (invoker) invoker->setFocus(Qt::OtherFocusReason);
-      if (action) action->trigger();
-    });
+    connect(dialog, &QDialog::finished, this, [this, invoker, action] {
+      QTimer::singleShot(0, this, [this, invoker, action] {
+        if (invoker) {
+          invoker->window()->activateWindow();
+          invoker->setFocus(Qt::OtherFocusReason);
+        }
+        // Native window activation is asynchronous. Keep navigation scoped to
+        // the original view even before its keyboard focus has been restored.
+        const QScopedValueRollback<QPointer<QWidget>> target(commandTarget_, invoker);
+        if (action) action->trigger();
+      });
+    }, Qt::SingleShotConnection);
+    dialog->accept();
   });
   dialog->open();
 }
@@ -1369,7 +1378,7 @@ bool MainWindow::isTextInputFocused() const {
   return false;
 }
 void MainWindow::moveSelection(int delta) {
-  auto* focus = QApplication::focusWidget();
+  auto* focus = commandTarget_ ? commandTarget_.data() : QApplication::focusWidget();
   const auto inside = [focus](QWidget* root) { return root && focus && (focus == root || root->isAncestorOf(focus)); };
   if (inside(browserDocument_)) { browserDocument_->scrollBy(delta * 48); return; }
   if (inside(documentView_) && documentView_->isReadOnly()) {
@@ -1390,7 +1399,7 @@ void MainWindow::moveSelection(int delta) {
   }
 }
 void MainWindow::jumpSelection(bool last) {
-  auto* focus = QApplication::focusWidget();
+  auto* focus = commandTarget_ ? commandTarget_.data() : QApplication::focusWidget();
   const auto inside = [focus](QWidget* root) { return root && focus && (focus == root || root->isAncestorOf(focus)); };
   if (inside(browserDocument_)) { browserDocument_->jumpTo(last); return; }
   if (inside(documentView_) && documentView_->isReadOnly()) {
@@ -1409,7 +1418,7 @@ void MainWindow::jumpSelection(bool last) {
   QApplication::sendEvent(lessons_, &nativeJump);
 }
 void MainWindow::scrollDocument(int pages) {
-  auto* focus = QApplication::focusWidget();
+  auto* focus = commandTarget_ ? commandTarget_.data() : QApplication::focusWidget();
   const auto inside = [focus](QWidget* root) { return root && focus && (focus == root || root->isAncestorOf(focus)); };
   if (inside(browserDocument_)) { browserDocument_->scrollBy(pages * browserDocument_->height()); return; }
   if (inside(documentView_) && documentView_->isReadOnly()) {
@@ -1421,7 +1430,7 @@ void MainWindow::scrollDocument(int pages) {
   if (inside(courses_) || inside(lessons_)) moveSelection(pages > 0 ? 8 : -8);
 }
 void MainWindow::toggleOutlineBranch(bool expand) {
-  auto* focus = QApplication::focusWidget();
+  auto* focus = commandTarget_ ? commandTarget_.data() : QApplication::focusWidget();
   if (!lessons_ || !focus || !(focus == lessons_ || lessons_->isAncestorOf(focus))) return;
   auto index = lessons_->currentIndex(); if (!index.isValid()) return;
   if (!expand && index.parent().isValid()) { index = index.parent(); lessons_->setCurrentIndex(index); }
