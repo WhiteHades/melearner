@@ -45,6 +45,7 @@ protected:
 
 private:
     void syncPlayback();
+    void schedulePlayback();
     void startPreview();
     void loadWhenReady();
     void updateSurface();

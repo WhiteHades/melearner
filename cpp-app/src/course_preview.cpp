@@ -30,13 +30,13 @@ CoursePreview::CoursePreview(QWidget* parent, bool softwareDecoding)
     startupTimer_ = new QTimer(this);
     startupTimer_->setObjectName("previewStartupDelay");
     startupTimer_->setSingleShot(true);
-    startupTimer_->setInterval(900);
+    startupTimer_->setInterval(3000);
     connect(startupTimer_, &QTimer::timeout, this, [this] {
         auto* window = this->window()->windowHandle();
         if (!active_ || !hasPreview_ || !isVisible() || !window || !window->isActive() ||
             window->windowState() == Qt::WindowMinimized ||
-            qApp->applicationState() != Qt::ApplicationActive) return;
-        startPreview();
+            qApp->applicationState() != Qt::ApplicationActive || !loaded_ || !player_) return;
+        (void)player_->play();
     });
 
     surface_ = new QFrame(this);
@@ -148,7 +148,10 @@ void CoursePreview::startPreview() {
         if (!instance || instance != player_) return;
         loaded_ = true; muteButton_->setEnabled(true);
         hint_->hide();
-        if (active_) (void)player_->play(); else (void)player_->pause();
+        // Player emits fileLoaded only after confirming its initial pause. Keep
+        // the ready frame visible before starting the active-dashboard delay.
+        (void)player_->pause();
+        schedulePlayback();
     });
     connect(player_, &Player::commandFinished, this, [this, instance](auto id) {
         if (!instance || instance != player_ || id != initialMuteRequest_) return;
@@ -210,19 +213,24 @@ void CoursePreview::syncPlayback() {
             activeConnection_ = connect(watchedWindow_, &QWindow::activeChanged, this, &CoursePreview::syncPlayback);
         }
     }
+    const bool wasActive = active_;
     active_ = isVisible() && window && window->isActive()
         && window->windowState() != Qt::WindowMinimized
         && qApp->applicationState() == Qt::ApplicationActive;
     if (active_) {
         if (player_) {
-            if (loaded_) (void)player_->play();
+            if (!wasActive) schedulePlayback();
         } else if (!startupTimer_->isActive()) {
-            startupTimer_->start();
+            startPreview();
         }
     } else {
         startupTimer_->stop();
         if (player_) (void)player_->pause();
     }
+}
+
+void CoursePreview::schedulePlayback() {
+    if (active_ && loaded_ && player_ && !startupTimer_->isActive()) startupTimer_->start();
 }
 
 void CoursePreview::updateMuteButton() {
