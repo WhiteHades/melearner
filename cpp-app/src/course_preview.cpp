@@ -72,17 +72,44 @@ CoursePreview::CoursePreview(QWidget* parent, bool softwareDecoding)
 CoursePreview::~CoursePreview() { shutdownPlayer(); }
 
 void CoursePreview::setPreview(const QString& approvedRoot, const melearner::library::Lesson& lesson) {
+    const bool validVideo = lesson.type == QStringLiteral("video") && !lesson.path.isEmpty();
+    if (validVideo && hasPreview_ && approvedRoot_ == approvedRoot &&
+        lesson_.id == lesson.id && lesson_.path == lesson.path) {
+        const bool positionChanged = lesson_.lastPosition != lesson.lastPosition;
+        lesson_ = lesson;
+        if (positionChanged && loaded_ && player_)
+            (void)player_->seek(static_cast<qint64>(std::max(0.0, lesson_.lastPosition) * 1000));
+        syncPlayback();
+        return;
+    }
     clear();
     muted_ = true;
     muteButton_->setEnabled(false);
     updateMuteButton();
     approvedRoot_ = approvedRoot;
     lesson_ = lesson;
-    hasPreview_ = lesson.type == QStringLiteral("video") && !lesson.path.isEmpty();
+    hasPreview_ = validVideo;
     hint_->setText(hasPreview_ ? QString{} : tr("No video preview available"));
     hint_->setVisible(!hasPreview_);
     if (!hasPreview_) return;
     syncPlayback();
+}
+
+void CoursePreview::setLayoutMode(LayoutMode mode) {
+    if (layoutMode_ == mode) return;
+    layoutMode_ = mode;
+    updateSurface();
+}
+
+void CoursePreview::suspend() {
+    active_ = false;
+    if (!player_) return;
+    (void)player_->pause();
+    if (!muted_ && loaded_) {
+        muted_ = true;
+        (void)player_->setMuted(true);
+        updateMuteButton();
+    }
 }
 
 void CoursePreview::startPreview() {
@@ -211,7 +238,14 @@ void CoursePreview::showEvent(QShowEvent* event) {
 
 void CoursePreview::hideEvent(QHideEvent* event) {
     active_ = false;
-    if (player_) (void)player_->pause();
+    if (player_) {
+        (void)player_->pause();
+        if (!muted_ && loaded_) {
+            muted_ = true;
+            (void)player_->setMuted(true);
+            updateMuteButton();
+        }
+    }
     QWidget::hideEvent(event);
 }
 
@@ -221,12 +255,36 @@ void CoursePreview::resizeEvent(QResizeEvent* event) {
 }
 void CoursePreview::updateSurface() {
     surface_->setGeometry(rect());
+    const auto radius = std::min(themeFor(this).radius() * 1.4,
+        std::min(surface_->width(), surface_->height()) / 2.0);
+    const qreal tl = layoutMode_ == LayoutMode::Standalone ? radius : 0.0;
+    const qreal tr = layoutMode_ == LayoutMode::SplitRight || layoutMode_ == LayoutMode::Standalone ? radius : 0.0;
+    const qreal br = layoutMode_ == LayoutMode::StackedBottom || layoutMode_ == LayoutMode::SplitRight ||
+        layoutMode_ == LayoutMode::Standalone ? radius : 0.0;
+    const qreal bl = layoutMode_ == LayoutMode::StackedBottom || layoutMode_ == LayoutMode::Standalone ? radius : 0.0;
+    const QString radiusStyle = QStringLiteral(
+        "QFrame#coursePreviewSurface { background:%1; border-top-left-radius:%2px; "
+        "border-top-right-radius:%3px; border-bottom-right-radius:%4px; border-bottom-left-radius:%5px; }")
+        .arg(melearner::roleColor(this, shadcn::Role::Card).name())
+        .arg(tl).arg(tr).arg(br).arg(bl);
+    surface_->setStyleSheet(radiusStyle);
+    QPainterPath corners;
+    const QRectF rect(surface_->rect());
+    corners.moveTo(rect.left() + tl, rect.top());
+    corners.lineTo(rect.right() - tr, rect.top());
+    if (tr > 0) corners.quadTo(rect.right(), rect.top(), rect.right(), rect.top() + tr);
+    corners.lineTo(rect.right(), rect.bottom() - br);
+    if (br > 0) corners.quadTo(rect.right(), rect.bottom(), rect.right() - br, rect.bottom());
+    corners.lineTo(rect.left() + bl, rect.bottom());
+    if (bl > 0) corners.quadTo(rect.left(), rect.bottom(), rect.left(), rect.bottom() - bl);
+    corners.lineTo(rect.left(), rect.top() + tl);
+    if (tl > 0) corners.quadTo(rect.left(), rect.top(), rect.left() + tl, rect.top());
+    corners.closeSubpath();
+    const QRegion clip(corners.toFillPolygon().toPolygon());
+    surface_->setMask(clip);
     if (video_) {
         video_->setGeometry(surface_->rect());
-        QPainterPath corners;
-        const auto radius = themeFor(this).radius() * 1.4;
-        corners.addRoundedRect(QRectF(video_->rect()), radius, radius);
-        video_->setMask(QRegion(corners.toFillPolygon().toPolygon()));
+        video_->setMask(clip);
     }
     hint_->setGeometry(surface_->rect());
     continueLabel_->adjustSize();

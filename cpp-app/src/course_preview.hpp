@@ -20,10 +20,14 @@ namespace melearner {
 class CoursePreview final : public QWidget {
     Q_OBJECT
 public:
+    enum class LayoutMode { Standalone, SplitRight, StackedBottom };
+
     explicit CoursePreview(QWidget* parent = nullptr, bool softwareDecoding = false);
     ~CoursePreview() override;
 
     void setPreview(const QString& approvedRoot, const melearner::library::Lesson& lesson);
+    void setLayoutMode(LayoutMode mode);
+    void suspend();
     void clear();
     [[nodiscard]] bool hasPreview() const { return hasPreview_; }
 
@@ -53,6 +57,7 @@ private:
     bool active_ = false;
     bool loadRequested_ = false;
     bool loaded_ = false;
+    LayoutMode layoutMode_ = LayoutMode::Standalone;
     quint64 initialMuteRequest_ = 0;
     QString approvedRoot_;
     melearner::library::Lesson lesson_;
