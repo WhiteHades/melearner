@@ -1,0 +1,41 @@
+name: c++ macOS
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cpp-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Qt application build and core workflow
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: cache Homebrew downloads
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/Library/Caches/Homebrew/downloads
+          key: macos-15-${{ runner.arch }}-homebrew-downloads-v1
+
+      - name: install build dependencies
+        run: |
+          brew install cmake ninja pkgconf qtbase qttools qtwebengine \
+            sqlite mpv libzip md4c ffmpeg
+
+      - name: build and run core workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S . -B build/macos -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
+            -DBUILD_TESTING=ON
+          cmake --build build/macos --parallel 3
+          ctest --test-dir build/macos --output-on-failure -R '^core_workflow$'

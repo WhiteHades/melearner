@@ -1,0 +1,11 @@
+# Manual builds
+
+Open the repository's Actions tab, choose a platform workflow and select Run workflow.
+
+Builds run on native GitHub machines for Linux, Windows and macOS. They do not run on pushes or pull requests. Start only the platform affected by a change, then inspect its build and test logs. Fix a failure before starting another run.
+
+The workflows compile the app and its existing test executables, then run the core course library and document workflow. They do not upload installers or publish releases. A passing build does not certify video playback, graphics drivers or installer compatibility on users' machines.
+
+Dependency caches reduce repeated downloads and compilation. Use standard runners and keep cache storage within the included allowance. Do not enable paid runners or raise storage limits without approval.
+
+Linux builds target an Ubuntu baseline. macOS builds target Apple silicon. Windows builds use the native Microsoft toolchain. Each platform still needs package deployment and clean machine playback checks before its download is offered.
