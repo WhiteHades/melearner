@@ -12,7 +12,7 @@ Windows gets an EXE installer. macOS gets a DMG containing the app. Linux gets a
 
 AppImage is a practical default because it carries the app and required libraries in one file for supported Linux distributions. See the [AppImage documentation](https://docs.appimage.org/introduction/index.html).
 
-Only older Linux binaries are published today. The current app still needs package qualification. Windows and macOS need native builds and tests before their installers can be offered. Do not label a planned installer as available.
+Only older Linux binaries are published today. Native builds and core workflow tests pass on Linux, Windows and macOS. The manual workflows can also prepare diagnostic installers. See [Manual builds](ci.md) for their checks and limits. Do not label a build artifact as a public release.
 
 ## Contained runtime
 
@@ -30,7 +30,9 @@ The C++ AppImage packager rejects bundled ELF files requiring newer than glibc 2
 
 Use optimized release builds, remove unused symbols from packaged binaries, keep one copy of each runtime file and compress the installer. Keep codecs, document readers, language resources, accessibility and license notices. Measure the final package and retest playback and documents after each change.
 
-The Linux packaging scripts share a dependency inventory and validator. Private diagnostic packages are not public releases. Publishing stays on hold until the installed app and its packages pass acceptance.
+The Linux packaging scripts share a dependency inventory and validator. Diagnostic packages are not public releases. Publishing is authorized, but each offered download must have its runtime dependencies, source records and required notices in place.
+
+The Windows and macOS downloads will have no trusted publisher signature. Windows may show a SmartScreen warning. macOS may require the user to approve opening the app in Privacy & Security. Do not disable system security protections globally.
 
 ## Showcase images
 
