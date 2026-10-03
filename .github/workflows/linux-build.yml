@@ -51,7 +51,7 @@ jobs:
       - name: Install build dependencies
         run: |
           brew install --force-bottle \
-            qtwebengine gcc cmake meson ninja pkgconf \
+            qtwebengine qtimageformats gcc cmake meson ninja pkgconf \
             libzip md4c ffmpeg libplacebo libass luajit sqlite \
             libva libvdpau libdrm pipewire pulseaudio alsa-lib wayland mesa \
             libx11 libxrandr libxpresent libxfixes libxv libxext \

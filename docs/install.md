@@ -8,7 +8,7 @@ SQLite, libzip, md4c with md4c-html, and the media development libraries below. 
 
 ```bash
 sudo pacman -S --needed \
-  base-devel cmake meson ninja patch pkgconf qt6-base qt6-webengine sqlite libzip md4c \
+  base-devel cmake meson ninja patch pkgconf qt6-base qt6-webengine qt6-imageformats sqlite libzip md4c \
   ffmpeg libass libplacebo luajit alsa-lib libpipewire libpulse mesa libdrm libva libvdpau \
   libx11 libxext libxpresent libxrandr libxss wayland wayland-protocols libxkbcommon \
   ffnvcodec-headers
