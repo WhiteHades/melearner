@@ -84,8 +84,12 @@ if(BUILD_TESTING)
     target_compile_definitions(${test}_test PRIVATE MELEARNER_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
   endforeach()
   add_test(NAME core_workflow COMMAND main_window_test)
+  set(_core_workflow_platform offscreen)
+  if(APPLE)
+    set(_core_workflow_platform cocoa)
+  endif()
   set_tests_properties(core_workflow PROPERTIES ENVIRONMENT
-    "QT_QPA_PLATFORM=offscreen;LC_ALL=C;TMPDIR=${CMAKE_CURRENT_SOURCE_DIR}/.tmp/cpp-tests" TIMEOUT 60)
+    "QT_QPA_PLATFORM=${_core_workflow_platform};LC_ALL=C;TMPDIR=${CMAKE_CURRENT_SOURCE_DIR}/.tmp/cpp-tests" TIMEOUT 60)
   # The playback E2E needs a private display; the offscreen plugin has no GL.
   # scripts/test-cpp-playback.sh runs both core flows on private X11 and audio.
 endif()
