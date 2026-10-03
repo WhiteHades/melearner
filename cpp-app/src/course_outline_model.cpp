@@ -3,7 +3,6 @@
 #include "study_icons.hpp"
 
 #include <QSize>
-#include <QPainter>
 #include <QPixmap>
 #include <QPixmapCache>
 
@@ -40,25 +39,15 @@ constexpr quintptr kSectionRowMask = (kFileTag - 1) >> kIndexRowBits;
 
 [[nodiscard]] QPixmap completionMark(bool completed) {
     const auto colour = roleColor(nullptr, completed ? shadcn::Role::Primary : shadcn::Role::MutedForeground);
-    const auto key = QStringLiteral("melearner-outline-%1-%2").arg(completed).arg(colour.rgba());
+    // The native row's leading role accepts a pixmap, not a QIcon. Rasterize the
+    // shared vector at the regular row's 20px size with supersampled edges.
+    const auto key = QStringLiteral("melearner-outline-smooth-%1-%2").arg(completed).arg(colour.rgba());
     QPixmap cached;
     if (QPixmapCache::find(key, &cached)) return cached;
-    QPixmap pixmap(18, 18);
-    pixmap.fill(Qt::transparent);
-    QPainter painter(&pixmap);
-    painter.setRenderHint(QPainter::Antialiasing);
-    painter.setPen(QPen(colour, 1.4));
-    painter.setBrush(Qt::NoBrush);
-    painter.drawEllipse(QRectF(2.5, 2.5, 13, 13));
-    if (completed) {
-        painter.setPen(QPen(colour, 1.6,
-                            Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-        painter.drawLine(QPointF(6, 9), QPointF(8, 11));
-        painter.drawLine(QPointF(8, 11), QPointF(12, 7));
-    }
-    painter.end();
-    QPixmapCache::insert(key, pixmap);
-    return pixmap;
+    auto mark = studyIcon(completed ? StudyIcon::CircleCheck : StudyIcon::Circle, colour)
+      .pixmap(QSize(80, 80)).scaled(20, 20, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    QPixmapCache::insert(key, mark);
+    return mark;
 }
 
 }  // namespace

@@ -17,8 +17,6 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QWindow>
-#include <QPainterPath>
-#include <QRegion>
 #include <algorithm>
 
 namespace melearner {
@@ -268,23 +266,11 @@ void CoursePreview::updateSurface() {
         .arg(melearner::roleColor(this, shadcn::Role::Card).name())
         .arg(tl).arg(tr).arg(br).arg(bl);
     surface_->setStyleSheet(radiusStyle);
-    QPainterPath corners;
-    const QRectF rect(surface_->rect());
-    corners.moveTo(rect.left() + tl, rect.top());
-    corners.lineTo(rect.right() - tr, rect.top());
-    if (tr > 0) corners.quadTo(rect.right(), rect.top(), rect.right(), rect.top() + tr);
-    corners.lineTo(rect.right(), rect.bottom() - br);
-    if (br > 0) corners.quadTo(rect.right(), rect.bottom(), rect.right() - br, rect.bottom());
-    corners.lineTo(rect.left() + bl, rect.bottom());
-    if (bl > 0) corners.quadTo(rect.left(), rect.bottom(), rect.left(), rect.bottom() - bl);
-    corners.lineTo(rect.left(), rect.top() + tl);
-    if (tl > 0) corners.quadTo(rect.left(), rect.top(), rect.left() + tl, rect.top());
-    corners.closeSubpath();
-    const QRegion clip(corners.toFillPolygon().toPolygon());
-    surface_->setMask(clip);
+    surface_->clearMask();
     if (video_) {
         video_->setGeometry(surface_->rect());
-        video_->setMask(clip);
+        video_->clearMask();
+        video_->setCornerRadii(tl, tr, br, bl, melearner::roleColor(this, shadcn::Role::Background));
     }
     hint_->setGeometry(surface_->rect());
     continueLabel_->adjustSize();
