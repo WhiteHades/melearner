@@ -62,9 +62,6 @@ public:
     [[nodiscard]] static ReadResult openRead(
         const ValidatedRoot& root,
         const QString& filePath);
-    [[nodiscard]] static FileResult validateScreenshotDestination(
-        const ValidatedRoot& root,
-        const QString& destinationPath);
 };
 
 }  // namespace melearner::local_files
