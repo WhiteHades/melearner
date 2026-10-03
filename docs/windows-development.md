@@ -1,7 +1,7 @@
 # Windows development
 
-The manual workflow builds the app with native MSVC. The Windows EXE installer
-is planned, not available. Clean machine installation checks are still required.
+The manual workflow builds the app with native MSVC. Its optional `package` input
+also builds an unsigned EXE installer. A workflow artifact is not a published release.
 
 ## Required toolchain
 
@@ -20,7 +20,7 @@ MSVC SDK, including PDF and WebEngine, with pinned SHA256 checks. Qt is not
 compiled from source. The SDK archives are cached separately before building the
 remaining libraries. The SDK archive cache has a 1 GiB cap and each build has a
 one hour limit. Use that workflow for the current Windows build. It does not
-publish an installer. Its optional `run_playback` input runs the existing video,
+publish releases automatically. Its optional `run_playback` input runs the existing video,
 controls, layout and saved progress checks with software OpenGL. Leave it off
 unless playback verification is needed.
 
@@ -55,8 +55,13 @@ The EXE installer must include the application, Qt libraries and plugins,
 WebEngine helper and resources, required media and database libraries, fonts
 and license notices. Use windeployqt to collect Qt dependencies, then inspect
 the remaining DLL dependencies separately. Include the official compiler
-redistributable in the installer rather than asking users to install it.
+runtime libraries in the installer rather than asking users to install them.
 See [Qt Windows deployment](https://doc.qt.io/qt-6.11/windows-deployment.html).
+
+`scripts/package-cpp-windows.ps1` reads native CMake cache files with Windows or
+Unix line endings. Set `MPV_DLL` to the player DLL or pass `MpvBin` as the directory
+containing it. The downloaded SDK stores that DLL at its root.
+Unsigned installers can show a Windows publisher warning.
 
 Verify on a Windows machine without Qt, MSYS2, a separate player or a database
 server. Test installation, playback, documents, saved progress, restart and
