@@ -32,13 +32,13 @@ $appExe = Join-Path $buildPath 'melearner.exe'
 Require-File $cachePath 'configured CMake cache'
 Require-File $appExe 'Release application executable'
 
-$cache = Get-Content -LiteralPath $cachePath -Raw
-if ($cache -notmatch '(?m)^CMAKE_BUILD_TYPE:STRING=Release\r?$') { throw 'Build directory must be configured with CMAKE_BUILD_TYPE=Release.' }
+$cache = (Get-Content -LiteralPath $cachePath -Raw).Replace("`r`n", "`n")
+if ($cache -notmatch '(?m)^CMAKE_BUILD_TYPE:STRING=Release$') { throw 'Build directory must be configured with CMAKE_BUILD_TYPE=Release.' }
 $configuredSource = [regex]::Match($cache, '(?m)^CMAKE_HOME_DIRECTORY:INTERNAL=(.+)$').Groups[1].Value.Replace('/', '\').TrimEnd('\')
 if (-not $configuredSource -or -not [string]::Equals($configuredSource, $repoRoot.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)) {
   throw 'Build directory was not configured from this source tree.'
 }
-if ($cache -notmatch '(?m)^CMAKE_GENERATOR_PLATFORM:INTERNAL=x64\r?$' -and $cache -notmatch '(?m)^CMAKE_GENERATOR:INTERNAL=Ninja\r?$') {
+if ($cache -notmatch '(?m)^CMAKE_GENERATOR_PLATFORM:INTERNAL=x64$' -and $cache -notmatch '(?m)^CMAKE_GENERATOR:INTERNAL=Ninja$') {
   throw 'Build directory must use the x64 Ninja generator or an explicitly x64 generator platform.'
 }
 $projectFile = Get-Content (Join-Path $repoRoot 'CMakeLists.txt') -Raw

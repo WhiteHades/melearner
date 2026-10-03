@@ -58,8 +58,8 @@ the remaining DLL dependencies separately. Include the official compiler
 runtime libraries in the installer rather than asking users to install them.
 See [Qt Windows deployment](https://doc.qt.io/qt-6.11/windows-deployment.html).
 
-`scripts/package-cpp-windows.ps1` reads native CMake cache files with Windows or
-Unix line endings. Set `MPV_DLL` to the player DLL or pass `MpvBin` as the directory
+`scripts/package-cpp-windows.ps1` normalizes Windows cache line endings before
+validating the Release configuration and source directory. Set `MPV_DLL` to the player DLL or pass `MpvBin` as the directory
 containing it. The downloaded SDK stores that DLL at its root.
 Unsigned installers can show a Windows publisher warning.
 
