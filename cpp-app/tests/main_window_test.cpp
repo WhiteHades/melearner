@@ -316,6 +316,8 @@ private slots:
     for (int item = 0; item < expected.size(); ++item) {
       QTRY_VERIFY(next->isEnabled());
       QTest::mouseClick(next, Qt::LeftButton);
+      for (const auto* label : window.findChildren<QLabel*>())
+        QVERIFY(!label->text().startsWith("Opening document"));
       if (item == 0) {
         QTRY_VERIFY(!browser);
         QTRY_VERIFY(window.findChild<QWebEngineView*>("documentBrowser"));

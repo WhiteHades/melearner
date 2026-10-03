@@ -62,15 +62,18 @@ private slots:
     QTest::addColumn<int>("fontScale");
     QTest::addColumn<QString>("mediaFile");
     QTest::addColumn<int>("audioTracks");
-    QTest::newRow("normal-text") << 1 << "Systems 日本語/01 H264 AAC.mp4" << 1;
-    QTest::newRow("double-text") << 2 << "Systems 日本語/01 H264 AAC.mp4" << 1;
-    QTest::newRow("hevc-main10") << 1 << "03 HEVC Main 10.mkv" << 0;
-    QTest::newRow("multiple-audio-tracks") << 1 << "02 Multi audio chapters.mkv" << 2;
+    QTest::addColumn<bool>("softwareDecoding");
+    QTest::newRow("normal-text") << 1 << "Systems 日本語/01 H264 AAC.mp4" << 1 << true;
+    QTest::newRow("double-text") << 2 << "Systems 日本語/01 H264 AAC.mp4" << 1 << true;
+    QTest::newRow("hevc-main10") << 1 << "03 HEVC Main 10.mkv" << 0 << true;
+    QTest::newRow("multiple-audio-tracks") << 1 << "02 Multi audio chapters.mkv" << 2 << true;
+    QTest::newRow("automatic-decoding") << 1 << "Systems 日本語/01 H264 AAC.mp4" << 1 << false;
   }
   void playsPausesAndRestoresPosition() {
     QFETCH(int, fontScale);
     QFETCH(QString, mediaFile);
     QFETCH(int, audioTracks);
+    QFETCH(bool, softwareDecoding);
     const auto originalFont = QApplication::font();
     const auto restoreFont = qScopeGuard([originalFont] { QApplication::setFont(originalFont); });
     auto scaledFont = originalFont;
@@ -89,7 +92,7 @@ private slots:
     qint64 saved = 0;
     qint64 thumbnailModified = 0;
     for (int launch = 0; launch < 2; ++launch) {
-      MainWindow window(database, nullptr, true); window.show(); window.activateWindow();
+      MainWindow window(database, nullptr, softwareDecoding); window.show(); window.activateWindow();
       QVERIFY(QTest::qWaitForWindowActive(&window));
       auto* choose = window.findChild<QPushButton*>("chooseRoot");
       QTRY_VERIFY_WITH_TIMEOUT(choose->isEnabled(), 5000);
@@ -125,6 +128,7 @@ private slots:
       QSignalSpy positions(player, &melearner::Player::positionChanged);
       QSignalSpy tracksChanged(player, &melearner::Player::tracksChanged);
       QSignalSpy ended(player, &melearner::Player::playbackEnded);
+      QSignalSpy decoder(player, &melearner::Player::decoderChanged);
       QElapsedTimer courseOpen; courseOpen.start();
       courses->setCurrentIndex(courses->model()->index(0, 0)); QTest::keyClick(courses, Qt::Key_Return);
       auto* lessons = window.findChild<QTreeView*>("lessons");
@@ -138,6 +142,8 @@ private slots:
       qInfo("OpenGL: %s; %s", reinterpret_cast<const char*>(gl->glGetString(GL_RENDERER)),
             reinterpret_cast<const char*>(gl->glGetString(GL_VERSION)));
       rendererWidget->doneCurrent();
+      QTRY_VERIFY_WITH_TIMEOUT(hasValidVideoFrame(rendererWidget->grabFramebuffer()), 3000);
+      if (!decoder.isEmpty()) qInfo("Decoder: %s", qPrintable(decoder.last().first().toString()));
       QVERIFY(player->setVolume(0));
       QSignalSpy volumes(player, &melearner::Player::volumeChanged);
       QSignalSpy muted(player, &melearner::Player::mutedChanged);
@@ -399,7 +405,23 @@ private slots:
             QVERIFY(fullscreen->height() >= 36);
             QVERIFY(surface->mask().isEmpty());
             const auto cornerFrame = rendererWidget->grabFramebuffer();
-            QCOMPARE(cornerFrame.pixelColor(0, 0).rgba(), melearner::roleColor(shadcn::Role::Background).rgba());
+            QCOMPARE(cornerFrame.pixelColor(0, 0).alpha(), 255); // Captures retain the full video frame.
+            const auto composed = window.grab().toImage();
+            for (const auto& corner : {surface->rect().topLeft(), surface->rect().topRight(),
+                                       surface->rect().bottomLeft(), surface->rect().bottomRight()}) {
+              const auto position = surface->mapTo(&window, corner);
+              QCOMPARE(composed.pixelColor(qRound(position.x() * composed.devicePixelRatio()),
+                                           qRound(position.y() * composed.devicePixelRatio())).rgba(),
+                       melearner::roleColor(shadcn::Role::Background).rgba());
+            }
+            QVERIFY(hasValidVideoFrame(cornerFrame));
+            auto* previous = window.findChild<QPushButton*>("previousLesson");
+            auto* next = window.findChild<QPushButton*>("nextLesson");
+            QVERIFY(previous->width() <= 320 && next->width() <= 320);
+            const QRect previousRect(previous->mapTo(&window, QPoint()), previous->size());
+            const QRect nextRect(next->mapTo(&window, QPoint()), next->size());
+            const auto groupCenter = previousRect.united(nextRect).center().x();
+            QVERIFY(qAbs(groupCenter - surface->mapTo(&window, surface->rect().center()).x()) <= 1);
           }
           // The controls must remain readable over bright footage. Sample a
           // blank padding pixel in the actual composed window, not a widget
@@ -516,12 +538,14 @@ private slots:
           auto* lessonHeader = window.findChild<QWidget*>("lessonHeader"); QVERIFY(lessonHeader);
           auto* actions = window.findChild<QWidget*>("lessonActions"); QVERIFY(actions);
           fullscreen->click(); QTRY_VERIFY(window.isFullScreen());
+          QVERIFY(!surface->findChild<QWidget*>("videoCorners")->isVisible());
           QTRY_VERIFY(!header->isVisible() && !outlinePane->isVisible());
           QTRY_VERIFY(!lessonHeader->isVisible() && !actions->isVisible());
           QTRY_COMPARE(QRect(surface->mapTo(window.centralWidget(), QPoint()), surface->size()),
                        window.centralWidget()->rect());
           if (!captureDirectory.isEmpty()) QVERIFY(window.grab().save(captureDirectory + "/player-fullscreen.png"));
           fullscreen->click(); QTRY_VERIFY(!window.isFullScreen());
+          QTRY_VERIFY(surface->findChild<QWidget*>("videoCorners")->isVisible());
           QTRY_VERIFY(header->isVisible() && outlinePane->isVisible());
           QTRY_VERIFY(lessonHeader->isVisible() && actions->isVisible());
           QTRY_VERIFY(surface->height() <= window.height());
@@ -565,22 +589,29 @@ private slots:
     QTRY_COMPARE_WITH_TIMEOUT(courses->model()->rowCount(), 1, 10000);
     auto* preview = window.findChild<QWidget*>("coursePreview"); QVERIFY(preview);
     auto* previewDelay = preview->findChild<QTimer*>("previewStartupDelay"); QVERIFY(previewDelay);
-    QTRY_VERIFY(previewDelay->isActive());
-    QVERIFY(!window.findChild<melearner::Player*>("previewPlayer"));
-    QCOMPARE(previewDelay->interval(), 900);
-    window.hide();
-    QVERIFY(!previewDelay->isActive());
-    QTest::qWait(950);
-    QVERIFY(!window.findChild<melearner::Player*>("previewPlayer"));
-    window.show(); window.activateWindow(); QVERIFY(QTest::qWaitForWindowActive(&window));
-    QTRY_VERIFY(previewDelay->isActive());
     QPointer<melearner::Player> previewPlayer;
     QTRY_VERIFY((previewPlayer = window.findChild<melearner::Player*>("previewPlayer")));
     QSignalSpy previewPositions(previewPlayer, &melearner::Player::positionChanged);
     QSignalSpy previewMuted(previewPlayer, &melearner::Player::mutedChanged);
     QSignalSpy previewPaused(previewPlayer, &melearner::Player::pausedChanged);
-    QSignalSpy previewSaves(window.findChild<melearner::library::Library*>(), &melearner::library::Library::progressSaved);
+    QTRY_VERIFY(previewDelay->isActive());
+    QCOMPARE(previewDelay->interval(), 3000);
+    QVERIFY(previewDelay->remainingTime() > 2500);
     auto* previewVideo = window.findChild<melearner::MpvVideoWidget*>("previewVideo"); QVERIFY(previewVideo);
+    QTRY_VERIFY(hasValidVideoFrame(previewVideo->grabFramebuffer()));
+    QTest::qWait(1000);
+    QVERIFY(previewDelay->isActive());
+    QVERIFY(previewPaused.empty() || previewPaused.last()[0].toBool());
+    QVERIFY(previewPositions.empty() || previewPositions.last()[0].toLongLong() < 250);
+    window.hide();
+    QVERIFY(!previewDelay->isActive());
+    QTest::qWait(3100);
+    QCOMPARE(window.findChild<melearner::Player*>("previewPlayer"), previewPlayer.data());
+    QVERIFY(previewPaused.empty() || previewPaused.last()[0].toBool());
+    window.show(); window.activateWindow(); QVERIFY(QTest::qWaitForWindowActive(&window));
+    QTRY_VERIFY(previewDelay->isActive());
+    QSignalSpy previewSaves(window.findChild<melearner::library::Library*>(), &melearner::library::Library::progressSaved);
+    QVERIFY(previewDelay->remainingTime() > 2500);
     const bool previewPlaying = QTest::qWaitFor([&] {
       return !previewPositions.empty() && previewPositions.last()[0].toLongLong() > 250;
     }, 10000);
@@ -659,11 +690,17 @@ private slots:
     QCOMPARE(window.findChild<melearner::Player*>("previewPlayer"), retainedPreviewPlayer);
 
     auto* backToLibrary = window.findChild<QPushButton*>("backToLibrary"); QVERIFY(backToLibrary);
+    auto* routeReveal = window.findChild<QVariantAnimation*>("routeReveal"); QVERIFY(routeReveal);
+    QSignalSpy routeStates(routeReveal, &QAbstractAnimation::stateChanged);
     QElapsedTimer libraryReturn;
-    libraryReturn.start(); backToLibrary->click();
+    libraryReturn.start(); QTest::mouseClick(backToLibrary, Qt::LeftButton);
     QTRY_VERIFY(courses->isVisible());
     qInfo("Course to Library route visible: %lld ms", libraryReturn.elapsed());
     QTRY_VERIFY(previewVideo->isVisible());
+    QTRY_VERIFY(!routeStates.empty());
+    QVERIFY(std::any_of(routeStates.cbegin(), routeStates.cend(), [](const auto& state) {
+      return state[0].template value<QAbstractAnimation::State>() == QAbstractAnimation::Running;
+    }));
     QCOMPARE(window.findChild<melearner::Player*>("previewPlayer"), retainedPreviewPlayer);
     QTRY_VERIFY(!previewPaused.empty() && !previewPaused.last()[0].toBool());
 
@@ -679,7 +716,14 @@ private slots:
     auto* rail = window.findChild<QWidget*>("courseOutline"); QVERIFY(rail);
     auto* railToggle = window.findChild<QPushButton*>("toggleOutline"); QVERIFY(railToggle);
     auto* drawer = window.findChild<QVariantAnimation*>("outlineReveal"); QVERIFY(drawer);
+    // Reveal the auto-hiding transport before clicking its visible button.
+    QTest::mouseMove(surface, QPoint(surface->width() / 2, 20));
+    QTRY_VERIFY(window.findChild<QWidget*>("playerControls")->isVisible());
+    QTRY_COMPARE(window.findChild<QVariantAnimation*>("transportReveal")->state(), QAbstractAnimation::Stopped);
+    QVERIFY(play->isEnabled());
+    QSignalSpy playClicks(play, &QPushButton::clicked);
     QTest::mouseClick(play, Qt::LeftButton); QTRY_COMPARE(play->text(), QString("Pause"));
+    QCOMPARE(playClicks.size(), 1);
     heartbeatSamples = 0; previousHeartbeat = 0; worstHeartbeatGap = 0;
     heartbeatClock.restart(); routeHeartbeat.start();
     QTest::mouseClick(railToggle, Qt::LeftButton);
@@ -721,13 +765,32 @@ private slots:
     QTRY_VERIFY(!feedback->isVisible());
     QTest::keyClick(surface, Qt::Key_Space); QTRY_COMPARE(play->text(), QString("Pause"));
     QTest::keyClick(surface, Qt::Key_Space); QTRY_COMPARE(play->text(), QString("Play"));
+    // Space deliberately played briefly. Seek relative to its settled position,
+    // not the earlier seven-second timestamp from before that playback.
+    QTest::qWait(150);
+    const auto leftTarget = positions.last()[0].toLongLong() - 3000;
     QTest::mouseClick(surface, Qt::LeftButton, Qt::NoModifier, QPoint(surface->width() / 4, 20));
     QTest::mouseDClick(surface, Qt::LeftButton, Qt::NoModifier, QPoint(surface->width() / 4, 20));
-    QTRY_VERIFY(positions.last()[0].toLongLong() < 2500);
+    QTRY_VERIFY2(qAbs(positions.last()[0].toLongLong() - leftTarget) <= 200,
+                 qPrintable(QString("After -3s double click: %1 ms, expected %2 ms, playback %3")
+                   .arg(positions.last()[0].toLongLong()).arg(leftTarget).arg(play->text())));
+    QCOMPARE(feedback->property("deltaMs").toLongLong(), -3000);
     QCOMPARE(time->width(), clockWidth); QCOMPARE(duration->width(), durationWidth);
     QTest::qWait(QApplication::doubleClickInterval() + 30); QCOMPARE(play->text(), QString("Play"));
+    const auto rightTarget = positions.last()[0].toLongLong() + 3000;
     QTest::mouseDClick(surface, Qt::LeftButton, Qt::NoModifier, QPoint(surface->width() * 3 / 4, 20));
-    QTRY_VERIFY(positions.last()[0].toLongLong() >= 6800);
+    QCOMPARE(feedback->property("deltaMs").toLongLong(), 3000);
+    QTRY_VERIFY2(qAbs(positions.last()[0].toLongLong() - rightTarget) <= 200,
+                 qPrintable(QString("After +3s double click: %1 ms, expected %2 ms, playback %3")
+                   .arg(positions.last()[0].toLongLong()).arg(rightTarget).arg(play->text())));
+    QTest::qWait(QApplication::doubleClickInterval() + 30);
+    QTest::mouseClick(surface, Qt::LeftButton, Qt::NoModifier, surface->rect().center());
+    QTest::mouseDClick(surface, Qt::LeftButton, Qt::NoModifier, surface->rect().center());
+    QTRY_VERIFY(window.isFullScreen());
+    QTRY_COMPARE(play->text(), QString("Play"));
+    QTest::mouseDClick(surface, Qt::LeftButton, Qt::NoModifier, surface->rect().center());
+    QTRY_VERIFY(!window.isFullScreen());
+    QTRY_COMPARE(play->text(), QString("Play"));
     QCOMPARE(time->width(), clockWidth);
     QCOMPARE(duration->width(), durationWidth);
     auto* next = window.findChild<QPushButton*>("nextLesson");
@@ -754,6 +817,66 @@ private slots:
     QVERIFY(!indicator->isVisible());
     autoplay->setChecked(false); window.close();
   }
+  void reportedMediaRendersAcrossSeeks() {
+    // Optional local repro media stays out of tracked fixtures and app state.
+    const auto source = qEnvironmentVariable("MELEARNER_REPRO_VIDEO");
+    if (source.isEmpty()) QSKIP("Set MELEARNER_REPRO_VIDEO for the installed-app rendering report");
+    QTemporaryDir data; QVERIFY(data.isValid());
+    const auto root = data.path() + "/Courses";
+    QVERIFY(QDir().mkpath(root + "/Rendering/Section"));
+    QVERIFY(QFile::copy(source, root + "/Rendering/Section/01 Video.mp4"));
+    MainWindow window(data.path() + "/library.sqlite3");
+    window.resize(1600, 1000); window.show(); window.activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(&window));
+    QTRY_VERIFY(window.findChild<QPushButton*>("chooseRoot")->isEnabled());
+    window.chooseRoot(root);
+    auto* courses = window.findChild<QListView*>("courses");
+    QTRY_COMPARE_WITH_TIMEOUT(courses->model()->rowCount(), 1, 10000);
+    auto* player = window.findChild<melearner::Player*>("lessonPlayer");
+    QSignalSpy loaded(player, &melearner::Player::fileLoaded);
+    QSignalSpy decoder(player, &melearner::Player::decoderChanged);
+    QSignalSpy positions(player, &melearner::Player::positionChanged);
+    courses->setCurrentIndex(courses->model()->index(0, 0)); QTest::keyClick(courses, Qt::Key_Return);
+    QTRY_COMPARE_WITH_TIMEOUT(loaded.size(), 1, 10000);
+    auto* video = window.findChild<melearner::MpvVideoWidget*>("videoSurface"); QVERIFY(video);
+    video->makeCurrent();
+    qInfo("Reported media OpenGL: %s", reinterpret_cast<const char*>(video->context()->functions()->glGetString(GL_RENDERER)));
+    video->doneCurrent();
+    if (!decoder.isEmpty()) qInfo("Reported media decoder: %s", qPrintable(decoder.last().first().toString()));
+    const auto visibleFrame = [](const QImage& frame) {
+      if (frame.isNull()) return false;
+      int bright = 0, minimum = 255, maximum = 0;
+      for (int y = 1; y < 8; ++y) for (int x = 1; x < 16; ++x) {
+        const auto pixel = frame.pixelColor(x * frame.width() / 16, y * frame.height() / 10);
+        const int level = qGray(pixel.rgb());
+        bright += level > 35; minimum = std::min(minimum, level); maximum = std::max(maximum, level);
+      }
+      return bright >= 10 && maximum - minimum > 40;
+    };
+    QVERIFY(player->seek(134000));
+    QTRY_VERIFY_WITH_TIMEOUT(!positions.empty() && positions.last()[0].toLongLong() >= 133800, 5000);
+    QImage frame;
+    QTRY_VERIFY_WITH_TIMEOUT(visibleFrame(frame = video->grabFramebuffer()), 5000);
+    const auto composedVideo = [&] {
+      const auto windowImage = window.grab().toImage();
+      const auto ratio = windowImage.devicePixelRatio();
+      return windowImage.copy(QRect(video->mapTo(&window, QPoint()) * ratio, video->size() * ratio));
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(visibleFrame(composedVideo()), 5000);
+    const auto captures = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
+    if (!captures.isEmpty()) QVERIFY(window.grab().save(captures + "/reported-media.png"));
+    auto* play = window.findChild<QPushButton*>("playPause");
+    QTest::mouseClick(play, Qt::LeftButton); QTRY_COMPARE(play->text(), QString("Pause"));
+    QTRY_VERIFY_WITH_TIMEOUT(video->grabFramebuffer() != frame, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(positions.last()[0].toLongLong() >= 134500, 5000);
+    QVERIFY(visibleFrame(video->grabFramebuffer()));
+    QVERIFY(visibleFrame(composedVideo()));
+    QTest::mouseClick(play, Qt::LeftButton); QTRY_COMPARE(play->text(), QString("Play"));
+    QVERIFY(player->seek(10000));
+    QTRY_VERIFY_WITH_TIMEOUT(positions.last()[0].toLongLong() < 10300, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(visibleFrame(video->grabFramebuffer()), 5000);
+  }
+
   void malformedVideoRecoversAndResumes() {
     QTemporaryDir data; QVERIFY(data.isValid());
     const auto root = data.path() + "/Courses/Recovery course/Section";
