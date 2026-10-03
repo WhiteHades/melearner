@@ -25,6 +25,8 @@
 #include <QHBoxLayout>
 #include <QGridLayout>
 #include <QGraphicsOpacityEffect>
+#include <QGraphicsBlurEffect>
+#include <QClipboard>
 #include <QLabel>
 #include <QKeyEvent>
 #include <QLineEdit>
@@ -36,7 +38,9 @@
 #include <QPushButton>
 #include <QPointer>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPropertyAnimation>
+#include <QVariantAnimation>
 #include <QResizeEvent>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -46,16 +50,13 @@
 #include <QAbstractSpinBox>
 #include <QPlainTextEdit>
 #include <QStackedWidget>
-#include <QStatusBar>
 #include <QStyle>
 #include <QStyleHints>
 #include <QSettings>
-#include <QFontDatabase>
 #include <QTimer>
 #include <QTextEdit>
 #include <QTextCursor>
 #include <QVBoxLayout>
-#include <QWidgetAction>
 #include <QUrl>
 #include <algorithm>
 #include <limits>
@@ -96,6 +97,23 @@ protected:
     painter.drawRoundedRect(QRectF(rect()).adjusted(.5, .5, -.5, -.5), radius, radius);
   }
 };
+// Bound the blur to the small transport, never the video or the lesson canvas.
+class TransportEffect final : public QGraphicsBlurEffect {
+public:
+  explicit TransportEffect(QObject* parent) : QGraphicsBlurEffect(parent) {
+    setProperty("opacity", 1.0); setBlurRadius(0);
+  }
+protected:
+  void draw(QPainter* painter) override {
+    painter->save(); painter->setOpacity(property("opacity").toDouble());
+    QGraphicsBlurEffect::draw(painter); painter->restore();
+  }
+};
+QEasingCurve revealCurve() {
+  QEasingCurve curve(QEasingCurve::BezierSpline);
+  curve.addCubicBezierSegment(QPointF(.23, 1), QPointF(.32, 1), QPointF(1, 1));
+  return curve;
+}
 class LessonLink final : public shadcn::Button {
 public:
   explicit LessonLink(const QString& direction, bool right) : shadcn::Button() {
@@ -154,7 +172,7 @@ void populateKeyboardPopup(shadcn::Command& command, const QList<QAction*>& acti
 }
 QString clockText(qint64 milliseconds) {
   const auto seconds = std::max<qint64>(0, milliseconds / 1000);
-  return QString("%1:%2:%3").arg(seconds / 3600, 3, 10, QChar(' ')).arg(seconds / 60 % 60, 2, 10, QChar('0')).arg(seconds % 60, 2, 10, QChar('0'));
+  return QString("%1:%2:%3").arg(seconds / 3600).arg(seconds / 60 % 60, 2, 10, QChar('0')).arg(seconds % 60, 2, 10, QChar('0'));
 }
 
 /// Every action control in the window is a shadcn button, so the variants and
@@ -224,6 +242,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   title_->setMinimumWidth(0); title_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
   toolbar->addWidget(title_, 1);
   outlineToggle_ = button(tr("Lessons"), "toggleOutline", shadcn::Variant::Ghost); outlineToggle_->hide(); toolbar->addWidget(outlineToggle_);
+  outlineToggle_->installEventFilter(this);
   // The one control the rail used to hold. It is a toggle rather than a pair of
   // entries because there are two pages and one of them is where the reader starts.
   statsNav_ = button(tr("Stats"), "navStats", shadcn::Variant::Outline);
@@ -360,7 +379,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     updateLayout();
   });
   split_ = new shadcn::ResizablePanelGroup(Qt::Horizontal);
-  outline_ = new QWidget; outline_->setMinimumWidth(180); outline_->setObjectName("courseOutline"); outline_->setAttribute(Qt::WA_StyledBackground);
+  outline_ = new QWidget; outline_->setMinimumWidth(240); outline_->setObjectName("courseOutline"); outline_->setAttribute(Qt::WA_StyledBackground);
   auto* outlineLayout = new QVBoxLayout(outline_); outlineLayout->setContentsMargins(0, 0, 0, 0); outlineLayout->setSpacing(12);
   auto* outlineTitle = new shadcn::Label(tr("Course outline")); outlineTitle->setFont(headingFont(font(), 1.0, true));
   outlineTitle->setMargin(0); outlineLayout->addWidget(outlineTitle);
@@ -371,6 +390,9 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   lessons_->setAccessibleName(tr("Course sections and lessons"));
   lessons_->setModel(outlineModel_); lessons_->hideProgress();
   lessons_->setCompact(true); lessons_->setAnimated(false);
+  // Keep the shared shadcn handle colours and states, with a quieter local width.
+  lessons_->verticalScrollBar()->setStyleSheet("QScrollBar:vertical { width:4px; } QScrollBar::handle:vertical { border-radius:2px; }");
+  lessons_->verticalScrollBar()->setFixedWidth(4);
   lessons_->setExpandsOnDoubleClick(false);
   // A revealed handout lives under its video, so the video opens on the way to it.
   connect(outlineModel_, &melearner::CourseOutlineModel::videoExpanded, this, [this](const QModelIndex& video) {
@@ -381,6 +403,11 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   });
   connect(outlineModel_, &melearner::CourseOutlineModel::errorOccurred, this, &MainWindow::showError);
   outlineLayout->addWidget(lessons_, 1); split_->addPanel(*outline_);
+  outlineOpacity_ = new QGraphicsOpacityEffect(outline_); outlineOpacity_->setOpacity(1);
+  outline_->setGraphicsEffect(outlineOpacity_);
+  outlineFade_ = new QPropertyAnimation(outlineOpacity_, "opacity", this);
+  outlineFade_->setObjectName("outlineReveal"); outlineFade_->setEasingCurve(revealCurve());
+  connect(outlineFade_, &QPropertyAnimation::finished, this, [this] { updateLayout(); });
   auto* contentScroll = new shadcn::ScrollArea; contentScroll->setWidgetResizable(true);
   // The lesson canvas is sized to the viewport; its readers wrap and its titles
   // elide, so a horizontal scrollbar can only cover the bottom navigation.
@@ -414,11 +441,15 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   video_->setAccessibleDescription(tr("Click to play or pause. Space then P plays or pauses. H and L seek ten seconds. Space then F toggles fullscreen."));
   connect(video_, &melearner::MpvVideoWidget::clicked, this, [this] {
     cancelAutoplay();
-    if (playerLoaded_) play_->click();
+    if (playerLoaded_) { videoClickPaused_ = paused_; play_->click(); }
   });
-  connect(video_, &melearner::MpvVideoWidget::seekRequested, this, [this](qint64 delta) {
+  connect(video_, &melearner::MpvVideoWidget::seekRequested, this, [this](qint64 delta, bool revertSingleClick) {
     cancelAutoplay();
-    if (playerLoaded_) (void)player_->seekRelative(delta);
+    if (!playerLoaded_) return;
+    if (revertSingleClick) {
+      if (videoClickPaused_) (void)player_->pause(); else (void)player_->play();
+    }
+    (void)player_->seekRelative(delta);
   });
   media_->addWidget(video_);
   auto* documentPane = new QWidget;
@@ -490,18 +521,23 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   lessonBottomSpace_ = new QWidget; contentLayout->addWidget(lessonBottomSpace_, 1);
   lessonBottomSpace_->hide();
   playerControls_ = new PlayerPill(video_); playerControls_->setObjectName("playerControls");
-  auto* controlsLayout = new QVBoxLayout(playerControls_); controlsLayout->setContentsMargins(16, 8, 16, 10);
-  controlsLayout->setSpacing(4); playerControls_->hide();
+  auto* controlsLayout = new QVBoxLayout(playerControls_); controlsLayout->setContentsMargins(20, 10, 20, 12);
+  controlsLayout->setSpacing(6); playerControls_->hide();
   seek_ = new shadcn::Slider(0, 10000); seek_->setAccessibleName(tr("Playback position"));
   seek_->setObjectName("playbackPosition");
   seek_->setEnabled(false); controlsLayout->addWidget(seek_);
   playbackLayout_ = new QGridLayout; playbackLayout_->setHorizontalSpacing(8); playbackLayout_->setVerticalSpacing(4);
   play_ = button(tr("Play"), "playPause", shadcn::Variant::Ghost, shadcn::ButtonSize::Icon); play_->setEnabled(false);
-  time_ = new shadcn::Label("0:00:00 / 0:00:00");
+  auto* timeReadout = new QWidget; timeReadout->setObjectName("timeReadout");
+  auto* timeLayout = new QHBoxLayout(timeReadout); timeLayout->setContentsMargins(0, 0, 0, 0); timeLayout->setSpacing(4);
+  time_ = new shadcn::Label("0:00:00"); durationTime_ = new shadcn::Label("0:00:00");
   time_->setObjectName("playbackTime");
-  auto clockFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
-  clockFont.setPixelSize(fontMetrics().height() * 3 / 4); time_->setFont(clockFont);
-  time_->setFixedWidth(time_->fontMetrics().horizontalAdvance("000:00:00 / 000:00:00"));
+  durationTime_->setObjectName("playbackDuration");
+  auto clockFont = font(); clockFont.setFeature(QFont::Tag("tnum"), 1);
+  for (auto* field : {time_, durationTime_}) { field->setFont(clockFont); timeLayout->addWidget(field); }
+  time_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+  durationTime_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+  timeLayout->insertWidget(1, new shadcn::Label("/")); updatePlaybackTime(0, 0);
   autoplay_ = new shadcn::Switch; autoplay_->setObjectName("autoplay");
   autoplay_->setAccessibleName(tr("Autoplay"));
   autoplay_->setChecked(QSettings().value("playback/autoplay", false).toBool());
@@ -528,7 +564,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     showLesson(lesson); autoplayStartPath_ = lesson.path;
   });
   auto* volume = new shadcn::Slider(0, 100); volume->setValues({100});
-  volume->setOrientation(Qt::Vertical); volume->setFixedSize(40, 140);
+  volume->setOrientation(Qt::Horizontal); volume->setFixedSize(92, 36);
   volume->setObjectName("volume");
   volume->setAccessibleName(tr("Volume")); volume->setToolTip(tr("Volume"));
   auto* fullscreen = button(tr("Fullscreen"), "fullscreen", shadcn::Variant::Ghost, shadcn::ButtonSize::Icon);
@@ -540,39 +576,29 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     auto* action = rate->addAction(QString::number(speed) + "×");
     action->setData(speed); action->setCheckable(true); action->setChecked(speed == 1.0); rateGroup->addAction(action);
   }
-  auto* audioButton = button(tr("Audio"), "audioTrackButton", shadcn::Variant::Ghost);
   auto* subtitleButton = button(tr("CC"), "subtitleTrackButton", shadcn::Variant::Ghost);
   subtitleButton->setAccessibleName(tr("Subtitles")); subtitleButton->setToolTip(tr("Subtitles"));
-  auto* chapterButton = button(tr("Chapters"), "chapterButton", shadcn::Variant::Ghost);
-  audio_ = new shadcn::DropdownMenu(audioButton); audio_->setTitle(tr("Audio track"));
-  audio_->setObjectName("audioTrack"); audioButton->setMenu(audio_);
   subtitles_ = new shadcn::DropdownMenu(subtitleButton); subtitles_->setTitle(tr("Subtitles"));
   subtitles_->setObjectName("subtitleTrack"); subtitleButton->setMenu(subtitles_);
-  chapters_ = new shadcn::DropdownMenu(chapterButton); chapters_->setTitle(tr("Chapters"));
-  chapters_->setObjectName("chapter"); chapterButton->setMenu(chapters_);
-  auto* audioGroup = new QActionGroup(audio_);
   auto* subtitleGroup = new QActionGroup(subtitles_);
-  for (auto* menu : {audio_, subtitles_, chapters_}) menu->setEnabled(false);
-  auto* muteButton = button(tr("Mute"), "mute", shadcn::Variant::Ghost); muteButton->setCheckable(true);
-  auto* volumeButton = button(tr("Volume"), "volumeButton", shadcn::Variant::Ghost);
-  auto* volumeMenu = new shadcn::DropdownMenu(volumeButton); volumeMenu->setObjectName("volumeMenu");
-  auto* volumeAction = new QWidgetAction(volumeMenu); volumeAction->setDefaultWidget(volume); volumeMenu->addAction(volumeAction);
-  volumeButton->setMenu(volumeMenu);
+  subtitles_->setEnabled(false);
+  auto* volumeButton = button(tr("Mute"), "volumeButton", shadcn::Variant::Ghost);
   auto* frame = button(tr("Frame"), "frameStep", shadcn::Variant::Ghost);
   auto* addSubtitles = button(tr("Add CC"), "addSubtitle", shadcn::Variant::Ghost);
   auto* screenshot = button(tr("Capture"), "screenshot", shadcn::Variant::Ghost);
   frame->setAccessibleName(tr("Next frame")); addSubtitles->setAccessibleName(tr("Add subtitles"));
-  screenshot->setAccessibleName(tr("Save screenshot"));
-  playbackWidgets_ = {play_, time_, rateButton, volumeButton, muteButton, autoplay_, fullscreen,
-                     audioButton, subtitleButton, chapterButton, frame, addSubtitles, screenshot};
+  screenshot->setAccessibleName(tr("Copy frame to clipboard"));
+  playbackWidgets_ = {play_, timeReadout, rateButton, volumeButton, volume, autoplay_,
+                     subtitleButton, frame, addSubtitles, screenshot, fullscreen};
   for (auto* widget : playbackWidgets_) {
     if (auto* control = qobject_cast<shadcn::Button*>(widget)) {
       if (control != play_ && control != fullscreen) control->setButtonSize(shadcn::ButtonSize::Sm);
       control->setToolTip(control->accessibleName());
     }
   }
-  for (auto* control : {volumeButton, muteButton, audioButton, subtitleButton, chapterButton, frame, addSubtitles, screenshot})
-    control->setButtonSize(shadcn::ButtonSize::Icon);
+  for (auto* control : {play_, volumeButton, subtitleButton, frame, addSubtitles, screenshot, fullscreen})
+    control->setButtonSize(shadcn::ButtonSize::IconLg);
+  rateButton->setButtonSize(shadcn::ButtonSize::Default);
   connect(frame, &QPushButton::clicked, this, [this] { if (playerLoaded_) (void)player_->frameStep(); });
   connect(addSubtitles, &QPushButton::clicked, this, [this] {
     if (!playerLoaded_) return;
@@ -581,20 +607,22 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   });
   connect(screenshot, &QPushButton::clicked, this, [this] {
     if (!playerLoaded_ || !lesson_) return;
-    const auto suggested = QFileInfo(lesson_->path).absolutePath() + "/Screenshot-" + QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss") + ".png";
-    QFileDialog dialog(this, tr("Save screenshot inside your root folder"), suggested, tr("PNG image (*.png)"));
-    dialog.setAcceptMode(QFileDialog::AcceptSave); dialog.setDefaultSuffix("png");
-    if (dialog.exec() != QDialog::Accepted || dialog.selectedFiles().isEmpty()) return;
-    const auto path = dialog.selectedFiles().first();
-    const auto id = player_->screenshot(path);
-    if (id) screenshotRequests_.insert(id, path); else showError(tr("Player is busy. Try saving the screenshot again."));
+    const auto image = video_->grabFramebuffer();
+    if (!image.isNull()) { QApplication::clipboard()->setImage(image); notify(tr("Frame copied")); }
   });
   controlsLayout->addLayout(playbackLayout_);
-  controlsOpacity_ = new QGraphicsOpacityEffect(playerControls_); controlsOpacity_->setOpacity(1);
-  playerControls_->setGraphicsEffect(controlsOpacity_);
-  controlsFade_ = new QPropertyAnimation(controlsOpacity_, "opacity", this);
-  controlsFade_->setEasingCurve(QEasingCurve::OutCubic);
-  connect(controlsFade_, &QPropertyAnimation::finished, this, [this] { playerControls_->hide(); });
+  controlsEffect_ = new TransportEffect(playerControls_);
+  playerControls_->setGraphicsEffect(controlsEffect_);
+  controlsFade_ = new QVariantAnimation(this); controlsFade_->setObjectName("transportReveal");
+  controlsFade_->setEasingCurve(revealCurve());
+  connect(controlsFade_, &QVariantAnimation::valueChanged, this, [this](const QVariant& value) {
+    controlsEffect_->setProperty("opacity", value);
+    controlsEffect_->setBlurRadius(melearner::reducedMotion() ? 0 : 2 * (1 - value.toDouble()));
+    controlsEffect_->update();
+  });
+  connect(controlsFade_, &QVariantAnimation::finished, this, [this] {
+    if (controlsFade_->endValue().toDouble() == 0) playerControls_->hide();
+  });
   hideControls_ = new QTimer(this); hideControls_->setObjectName("hidePlayerControls");
   hideControls_->setSingleShot(true); hideControls_->setInterval(2500);
   connect(hideControls_, &QTimer::timeout, this, [this] {
@@ -605,25 +633,27 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
       if (playerLoaded_ && !paused_) hideControls_->start();
       return;
     }
-    const bool highContrast = QApplication::styleHints()->accessibility()->contrastPreference() == Qt::ContrastPreference::HighContrast;
-    const int duration = highContrast ? 0 : std::clamp(style()->styleHint(QStyle::SH_Widget_Animation_Duration), 0, 160);
-    controlsFade_->setDuration(duration); controlsFade_->setStartValue(controlsOpacity_->opacity());
+    const int duration = melearner::reducedMotion() || melearner::highContrast() ? 0 : 125;
+    controlsFade_->stop(); controlsFade_->setDuration(duration); controlsFade_->setStartValue(controlsEffect_->property("opacity"));
     controlsFade_->setEndValue(0.0); controlsFade_->start();
   });
   for (auto* widget : playbackWidgets_) widget->setParent(playerControls_);
   for (auto* widget : playerControls_->findChildren<QWidget*>() + QList<QWidget*>{video_, playerControls_}) {
     widget->setMouseTracking(true); widget->installEventFilter(this);
   }
-  for (auto* menu : {rate, volumeMenu, audio_, subtitles_, chapters_}) {
-    connect(menu, &QMenu::aboutToShow, this, &MainWindow::revealPlayerControls);
+  for (auto* menu : {rate, subtitles_}) {
+    connect(menu, &QMenu::aboutToShow, this, [this] { revealPlayerControls(); });
     connect(menu, &QMenu::aboutToHide, this, [this] { hideControls_->start(); });
   }
   setTabOrder(video_, seek_);
   QWidget* previousControl = seek_;
   for (auto* control : playbackWidgets_) {
-    if (qobject_cast<QPushButton*>(control)) { setTabOrder(previousControl, control); previousControl = control; }
+    if (control->focusPolicy() != Qt::NoFocus) { setTabOrder(previousControl, control); previousControl = control; }
   }
-  split_->addWidget(content_); split_->setStretchFactor(0, 0); split_->setStretchFactor(1, 1); split_->setSizes({220, 880});
+  split_->addWidget(content_); split_->setStretchFactor(0, 0); split_->setStretchFactor(1, 1); split_->setSizes({320, 880});
+  connect(split_, &QSplitter::splitterMoved, this, [this](int position, int) {
+    if (!compactLayout_ && outline_->isVisible()) outlineWidth_ = position;
+  });
   routes_->addWidget(split_);
   // Reserve status space only while work is running or needs attention.
   status_ = new shadcn::Label(tr("Opening Library…"), center);
@@ -656,7 +686,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   });
   connect(rescan_, &QPushButton::clicked, this, [this] { chooseRoot(rootPath_); });
   connect(back_, &QPushButton::clicked, this, [this] { libraryStack_->setCurrentValue("courses"); showLibrary(); });
-  connect(outlineToggle_, &QPushButton::clicked, this, [this] { compactOutline_ = !compactOutline_; updateLayout(); });
+  connect(outlineToggle_, &QPushButton::clicked, this, &MainWindow::toggleLessonOutline);
   connect(courseModel_, &PagedListModel::pageRequested, this, [this](int offset) {
     const auto id = library_.courses(offset);
     if (id) courseRequests_.insert(id, {routeGeneration_, offset}); else courseModel_->failedPage(offset);
@@ -915,25 +945,45 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     // next position update redraws them, and while paused that update may not
     // arrive, so the label is refreshed here too.
     shownPositionSeconds_ = -1;
-    time_->setText(clockText(durationMs_ * values.first() / 10000.0) + " / " + clockText(durationMs_));
+    updatePlaybackTime(durationMs_ * values.first() / 10000.0, durationMs_);
     (void)player_->seek(static_cast<qint64>(durationMs_ * values.first() / 10000.0));
   });
-  connect(muteButton, &QPushButton::clicked, this, [this](bool checked) { (void)player_->setMuted(checked); });
-  connect(player_, &melearner::Player::mutedChanged, this, [this, muteButton](bool value) {
+  const auto updateMute = [this, volumeButton](bool value) {
     muted_ = value;
-    muteButton->setChecked(value);
-    muteButton->setAccessibleName(value ? tr("Unmute") : tr("Mute"));
-    muteButton->setToolTip(muteButton->accessibleName());
-    muteButton->setIcon(melearner::studyIcon(value ? melearner::StudyIcon::Muted : melearner::StudyIcon::Volume,
-        melearner::roleColor(this, shadcn::Role::Foreground)));
+    volumeButton->setAccessibleName(value ? tr("Unmute") : tr("Mute"));
+    volumeButton->setToolTip(volumeButton->accessibleName());
+    volumeButton->setIcon(melearner::studyIcon(value ? melearner::StudyIcon::Muted : melearner::StudyIcon::Volume,
+        melearner::roleColor(this, shadcn::Role::Foreground), 1.125));
+  };
+  const auto requestMute = [this, updateMute](bool value) {
+    requestedMuted_ = value;
+    updateMute(value);
+    muteRequestId_ = player_->setMuted(value);
+    if (!muteRequestId_) requestedMuted_.reset();
+  };
+  connect(volumeButton, &QPushButton::clicked, this, [this, volume, requestMute] {
+    const bool silent = muted_ || volume->values().first() == 0;
+    if (silent && volume->values().first() == 0) volume->setValues({lastAudibleVolume_});
+    requestMute(!silent);
   });
-  connect(volume, &shadcn::Slider::valuesChanged, this, [this](const QVector<double>& values) {
+  connect(player_, &melearner::Player::mutedChanged, this, [this, updateMute](bool value) {
+    // This app owns sound changes. Once edited, user intent stays authoritative:
+    // untagged worker observations may describe any older command, even when
+    // they happen to match the newest value in a mute/unmute burst.
+    if (requestedMuted_ && value != *requestedMuted_) return;
+    updateMute(value);
+  });
+  connect(volume, &shadcn::Slider::valuesChanged, this, [this, requestMute](const QVector<double>& values) {
     if (!values.isEmpty()) {
-      (void)player_->setVolume(values.first());
-      if (values.first() > 0) (void)player_->setMuted(false);
+      requestedVolume_ = values.first();
+      volumeRequestId_ = player_->setVolume(values.first());
+      if (!volumeRequestId_) requestedVolume_.reset();
+      if (values.first() > 0) lastAudibleVolume_ = values.first();
+      requestMute(values.first() == 0);
     }
   });
-  connect(player_, &melearner::Player::volumeChanged, volume, [volume](double value) {
+  connect(player_, &melearner::Player::volumeChanged, volume, [this, volume](double value) {
+    if (requestedVolume_ && !qFuzzyCompare(value + 1, *requestedVolume_ + 1)) return;
     const QSignalBlocker blocker(volume);
     const QVector<double> target{value};
     if (volume->values() != target) volume->setValues(target);
@@ -945,9 +995,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     updateControlsLayout();
   });
   connect(fullscreen, &QPushButton::clicked, this, &MainWindow::toggleVideoFullscreen);
-  connect(audio_, &QMenu::triggered, this, [this](QAction* action) { (void)player_->selectAudioTrack(action->data().toInt()); });
   connect(subtitles_, &QMenu::triggered, this, [this](QAction* action) { (void)player_->selectSubtitleTrack(action->data().toInt()); });
-  connect(chapters_, &QMenu::triggered, this, [this](QAction* action) { (void)player_->selectChapter(action->data().toInt()); });
   connect(player_, &melearner::Player::initialized, this, &MainWindow::loadSelectedMedia);
   connect(player_, &melearner::Player::decoderChanged, this, [this](const QString& decoder) { decoder_ = decoder; });
   connect(video_, &melearner::MpvVideoWidget::renderContextReady, this, &MainWindow::loadSelectedMedia);
@@ -971,7 +1019,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     if (shownPosition != shownPositionSeconds_ || shownDuration != shownDurationSeconds_) {
       shownPositionSeconds_ = shownPosition;
       shownDurationSeconds_ = shownDuration;
-      time_->setText(clockText(position) + " / " + clockText(duration));
+      updatePlaybackTime(position, duration);
     }
     // The timeline is a ten-thousandth-of-the-lesson control, so it needs finer
     // resolution than a second, but only when the thumb would actually move.
@@ -986,28 +1034,22 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     paused_ = paused; play_->setText(paused ? tr("Play") : tr("Pause")); if (paused && playerLoaded_) savePosition();
     play_->setAccessibleName(play_->text());
     play_->setIcon(melearner::studyIcon(paused ? melearner::StudyIcon::Play : melearner::StudyIcon::Pause,
-      melearner::roleColor(this, shadcn::Role::Foreground)));
+      melearner::roleColor(this, shadcn::Role::Foreground), 1.125));
     revealPlayerControls();
   });
-  connect(player_, &melearner::Player::tracksChanged, this, [this, audioGroup, subtitleGroup](const auto& tracks) {
-    audio_->clear(); subtitles_->clear();
+  connect(player_, &melearner::Player::tracksChanged, this, [this, subtitleGroup](const auto& tracks) {
+    subtitles_->clear();
     auto& off = subtitles_->addItem(tr("Off"));
     off.setData(-1); off.setCheckable(true); off.setChecked(true);
     subtitleGroup->addAction(&off);
     for (const auto& track : tracks) {
-      auto* target = track.type == "audio" ? audio_ : track.type == "sub" ? subtitles_ : nullptr;
-      if (!target) continue;
-      auto& added = target->addItem(track.title.isEmpty()
+      if (track.type != "sub") continue;
+      auto& added = subtitles_->addItem(track.title.isEmpty()
         ? tr("%1 %2 · %3").arg(track.type).arg(track.id).arg(track.language) : track.title);
       added.setData(track.id); added.setCheckable(true);
-      (target == audio_ ? audioGroup : subtitleGroup)->addAction(&added); added.setChecked(track.selected);
+      subtitleGroup->addAction(&added); added.setChecked(track.selected);
     }
-    audio_->setEnabled(!audio_->actions().isEmpty()); subtitles_->setEnabled(subtitles_->actions().size() > 1);
-  });
-  connect(player_, &melearner::Player::chaptersChanged, this, [this](const auto& chapters) {
-    chapters_->clear();
-    for (const auto& chapter : chapters) chapters_->addItem(chapter.title).setData(chapter.index);
-    chapters_->setEnabled(!chapters.empty());
+    subtitles_->setEnabled(subtitles_->actions().size() > 1);
   });
   connect(player_, &melearner::Player::playbackEnded, this, [this](const QString& path, bool failed) {
     if (!lesson_ || lesson_->path != path || !playerLoaded_) return;
@@ -1022,12 +1064,11 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
       }
     }
   });
-  connect(player_, &melearner::Player::commandFinished, this, [this](auto id) {
-    if (screenshotRequests_.contains(id)) status_->setText(tr("Screenshot saved: %1").arg(screenshotRequests_.take(id)));
-  });
   connect(player_, &melearner::Player::commandFailed, this, [this](auto id, const QString& code, const QString& message) {
     if (code == "superseded") return;
-    screenshotRequests_.remove(id); showError(message);
+    if (id == volumeRequestId_) { requestedVolume_.reset(); volumeRequestId_ = 0; }
+    if (id == muteRequestId_) { requestedMuted_.reset(); muteRequestId_ = 0; }
+    showError(message);
   });
   connect(player_, &melearner::Player::fatalError, this, [this](const QString&, const QString& message) { showError(message); });
   // Keep the command list as the single source for keyboard help.
@@ -1074,7 +1115,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   registerKeyboardCommand("fullscreen", tr("Toggle fullscreen"), tr("Space f"), tr("Player"),
     [this] { toggleVideoFullscreen(); });
   registerKeyboardCommand("mute", tr("Mute or unmute"), tr("Space m"), tr("Player"),
-    [this] { if (playerLoaded_) (void)player_->setMuted(!muted_); });
+    [this, volumeButton] { if (playerLoaded_) volumeButton->click(); });
   registerKeyboardCommand("frameBack", tr("Seek back one second"), tr("Space ,"), tr("Player"),
     [this] { if (playerLoaded_) (void)player_->seekRelative(-1000); });
   registerKeyboardCommand("frameForward", tr("Advance one frame"), tr("Space ."), tr("Player"),
@@ -1329,6 +1370,7 @@ void MainWindow::chooseRootWhenOpen(const QString& path) {
   chooseRoot(path);
 }
 void MainWindow::showLibrary() {
+  outlineFade_->stop();
   cancelAutoplay(); neighborResolveId_ = 0; neighborReadId_ = 0;
   if (videoFullscreen_) toggleVideoFullscreen();
   if (course_ && lesson_) { rememberedCourse_ = course_->id; rememberedLesson_ = lesson_->id; }
@@ -1362,6 +1404,7 @@ void MainWindow::refreshResume() {
 void MainWindow::showCourse(const lib::Course& course, const QString& requestedLesson) {
   if (course.missing) { showError(tr("Course folder missing: %1. Choose its root folder, then Rescan.").arg(course.path)); return; }
   cancelAutoplay(); neighborResolveId_ = 0; neighborReadId_ = 0;
+  outlineFade_->stop(); outlineOpacity_->setOpacity(1);
   externalOpenId_ = 0; externalOpen_->hide();
   pdf_->clear();
   savePosition(); playerLoaded_ = false; playerLoadRequested_ = false; documentRequestId_ = 0;
@@ -1375,6 +1418,7 @@ void MainWindow::showCourse(const lib::Course& course, const QString& requestedL
   documentTools_->hide(); documentStatus_->setText(tr("Choose an item from the course outline.")); documentStatus_->show();
   documentPrevious_->setEnabled(false); documentNext_->setEnabled(false); complete_->setEnabled(false);
   lessonTitle_->setText(tr("Select a lesson")); updateLayout(); lessons_->setFocus();
+  if (!compactLayout_) split_->setSizes({outlineWidth_, std::max(1, split_->width() - outlineWidth_)});
   entryGeneration_ = routeGeneration_;
   const auto target = requestedLesson.isEmpty() && rememberedCourse_ == course.id ? rememberedLesson_ : requestedLesson;
   entryRequestId_ = library_.enterCourse(course.id, target);
@@ -1402,7 +1446,7 @@ void MainWindow::showLesson(const lib::Lesson& lesson) {
   lastSaveMs_ = QDateTime::currentMSecsSinceEpoch(); lessonTitle_->setText(lesson.name);
   lessonTitle_->setToolTip(tooltip(lesson.name));
   complete_->setEnabled(true); complete_->setText(lesson.completed ? tr("Mark incomplete") : tr("Mark complete"));
-  play_->setEnabled(false); seek_->setEnabled(false); time_->setText(clockText(positionMs_) + " / " + clockText(durationMs_));
+  play_->setEnabled(false); seek_->setEnabled(false); updatePlaybackTime(positionMs_, durationMs_);
   if (width() < std::max(768, fontMetrics().height() * 40)) compactOutline_ = false;
   updateLayout();
   revealPlayerControls();
@@ -1480,24 +1524,58 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
   }
   if (hideControls_ && (watched == video_ || watched == playerControls_ || playerControls_->isAncestorOf(qobject_cast<QWidget*>(watched)))) {
     if (event->type() == QEvent::MouseMove || event->type() == QEvent::MouseButtonPress ||
-        event->type() == QEvent::FocusIn || event->type() == QEvent::KeyPress) revealPlayerControls();
+        event->type() == QEvent::FocusIn || event->type() == QEvent::KeyPress)
+      revealPlayerControls(event->type() == QEvent::MouseMove);
     if (watched == video_ && event->type() == QEvent::MouseButtonPress) video_->setFocus(Qt::MouseFocusReason);
     if (event->type() == QEvent::Leave) hideControls_->start(500);
   }
   return QMainWindow::eventFilter(watched, event);
 }
-void MainWindow::revealPlayerControls() {
+void MainWindow::revealPlayerControls(bool animate) {
   if (!controlsFade_) return;
   const bool mediaLesson = lesson_ && (lesson_->type == "video" || lesson_->type == "audio");
   if (!mediaLesson) { playerControls_->hide(); return; }
   // Pointer motion is a hot path. It only changes visibility when the transport
   // is hidden or fading; geometry belongs to resize, not every input event.
-  if (controlsFade_->state() == QAbstractAnimation::Running) controlsFade_->stop();
-  if (controlsOpacity_->opacity() != 1.0) controlsOpacity_->setOpacity(1.0);
+  const bool wasHidden = !playerControls_->isVisible();
   if (!playerControls_->isVisible()) {
     playerControls_->show(); playerControls_->raise(); updateControlsLayout();
   }
+  if (animate && !melearner::reducedMotion() && !melearner::highContrast()) {
+    if (wasHidden) controlsEffect_->setProperty("opacity", 0.0);
+    if (controlsEffect_->property("opacity").toDouble() < 1 &&
+        !(controlsFade_->state() == QAbstractAnimation::Running && controlsFade_->endValue().toDouble() == 1)) {
+      controlsFade_->stop(); controlsFade_->setDuration(150);
+      controlsFade_->setStartValue(controlsEffect_->property("opacity"));
+      controlsFade_->setEndValue(1.0); controlsFade_->start();
+    }
+  } else {
+    controlsFade_->stop(); controlsEffect_->setProperty("opacity", 1.0);
+    controlsEffect_->setBlurRadius(0); controlsEffect_->update();
+  }
   if (!hideControls_->isActive() || hideControls_->remainingTime() < 2000) hideControls_->start();
+}
+void MainWindow::updatePlaybackTime(qint64 position, qint64 duration) {
+  // Right-align elapsed time against a stationary separator. Reserve hours from
+  // the whole lesson so neither the separator nor duration moves during playback.
+  const auto sample = clockText(std::max(position, duration));
+  const int fieldWidth = time_->fontMetrics().horizontalAdvance(sample);
+  for (auto* field : {time_, durationTime_}) if (field->width() != fieldWidth) field->setFixedWidth(fieldWidth);
+  time_->setText(clockText(position)); durationTime_->setText(clockText(duration));
+}
+void MainWindow::toggleLessonOutline() {
+  compactOutline_ = !compactOutline_;
+  outlineFade_->stop();
+  outlineToggle_->setText(compactOutline_ ? tr("Hide lessons") : tr("Lessons"));
+  if (keyboardNavigation_ || melearner::reducedMotion() || melearner::highContrast()) {
+    outlineOpacity_->setOpacity(1); updateLayout(); return;
+  }
+  if (compactOutline_ && !outline_->isVisible()) {
+    updateLayout(); outlineOpacity_->setOpacity(0);
+  }
+  outlineFade_->setDuration(compactOutline_ ? 180 : 140);
+  outlineFade_->setStartValue(outlineOpacity_->opacity());
+  outlineFade_->setEndValue(compactOutline_ ? 1.0 : 0.0); outlineFade_->start();
 }
 void MainWindow::updateControlsLayout() {
   if (playbackWidgets_.isEmpty() || !lessonNavigation_) return;
@@ -1513,18 +1591,25 @@ void MainWindow::updateControlsLayout() {
     needed += std::max(0, count - 1) * navigation->spacing();
     navigation->setDirection(needed > available ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight);
   }
-  const int controlsWidth = std::max(1, std::min(740, video_->width() - 32));
+  const auto controlWidth = [](const QWidget* widget) {
+    return widget->minimumWidth() == widget->maximumWidth()
+      ? widget->width() : widget->sizeHint().width();
+  };
+  constexpr int slotWidth = 4;
+  int naturalWidth = 40;
+  for (const auto* widget : playbackWidgets_)
+    naturalWidth += ((controlWidth(widget) + 8 + slotWidth - 1) / slotWidth) * slotWidth;
+  const int controlsWidth = std::max(1, std::min(naturalWidth, video_->width() - 32));
   for (auto* widget : playbackWidgets_) playbackLayout_->removeWidget(widget);
   // Small grid slots let rows wrap without sharing unrelated column widths.
   // A conventional grid otherwise widens every row to its longest cell above.
-  constexpr int slotWidth = 4;
-  const int gridSlots = std::max(1, (controlsWidth - 32) / slotWidth);
+  const int gridSlots = std::max(1, (controlsWidth - 40) / slotWidth);
   playbackLayout_->setHorizontalSpacing(0);
   for (int col = 0; col < std::max(gridSlots, playbackLayout_->columnCount()); ++col)
     playbackLayout_->setColumnMinimumWidth(col, col < gridSlots ? slotWidth : 0);
   int row = 0, column = 0;
   for (auto* widget : playbackWidgets_) {
-    const int span = std::min(gridSlots, (widget->sizeHint().width() + 2 + slotWidth - 1) / slotWidth);
+    const int span = std::min(gridSlots, (controlWidth(widget) + 8 + slotWidth - 1) / slotWidth);
     if (column > 0 && column + span > gridSlots) { ++row; column = 0; }
     playbackLayout_->addWidget(widget, row, column, 1, span, Qt::AlignCenter);
     column += span;
@@ -1541,6 +1626,13 @@ void MainWindow::updateControlsLayout() {
     autoplayIndicator_->adjustSize();
     autoplayIndicator_->move((video_->width() - autoplayIndicator_->width()) / 2,
       std::max(0, (video_->height() - autoplayIndicator_->height()) / 2));
+  }
+  if (videoFullscreen_) video_->clearMask();
+  else {
+    QPainterPath corners;
+    const auto radius = melearner::themeFor(this).radius() * 1.4;
+    corners.addRoundedRect(QRectF(video_->rect()), radius, radius);
+    video_->setMask(QRegion(corners.toFillPolygon().toPolygon()));
   }
 }
 void MainWindow::toggleVideoFullscreen() {
@@ -1573,7 +1665,7 @@ void MainWindow::updateMediaLayout() {
   lessonLinks_->setVisible(!videoFullscreen_);
   const int width = content_->viewport()->width() - (videoFullscreen_ || !outline_->isVisible() ? 0 : 20);
   if (video && !videoFullscreen_) {
-    const int fittedWidth = std::max(1, std::min(1100, width));
+    const int fittedWidth = std::max(1, std::min(1240, width));
     const int available = content_->viewport()->height() - lessonHeader_->sizeHint().height()
       - lessonActions_->sizeHint().height() - lessonLinks_->sizeHint().height() - 48;
     preferredVideoHeight_ = std::max(180, std::min(available, fittedWidth * 9 / 16));
@@ -1589,6 +1681,8 @@ void MainWindow::updateMediaLayout() {
 }
 void MainWindow::updateLayout() {
   if (!rescan_ || !choose_) return;
+  const bool wasCompact = compactLayout_;
+  const bool outlineWasVisible = outline_->isVisible();
   const bool compact = width() < std::max(768, fontMetrics().height() * 40);
   if (compact && !compactLayout_ && lesson_) compactOutline_ = false;
   compactLayout_ = compact;
@@ -1618,8 +1712,12 @@ void MainWindow::updateLayout() {
   outlineToggle_->setText(compactOutline_ ? tr("Hide lessons") : tr("Lessons"));
   split_->setStretchFactor(0, compact ? 1 : 0);
   split_->setStretchFactor(1, 1);
-  outline_->setVisible(!videoFullscreen_ && compactOutline_);
-  content_->setVisible(videoFullscreen_ || !compact || !compactOutline_);
+  outline_->setVisible(!videoFullscreen_ && (compactOutline_ || outlineFade_->state() == QAbstractAnimation::Running));
+  if (!compact && outline_->isVisible() && (!outlineWasVisible || wasCompact))
+    split_->setSizes({outlineWidth_, std::max(1, split_->width() - outlineWidth_)});
+  if (outlineFade_->state() != QAbstractAnimation::Running && compactOutline_) outlineOpacity_->setOpacity(1);
+  content_->setVisible(videoFullscreen_ || !compact ||
+    (!compactOutline_ && outlineFade_->state() != QAbstractAnimation::Running));
   updateMediaLayout(); updateControlsLayout();
 }
 void MainWindow::openSearch() {
@@ -1673,9 +1771,8 @@ void MainWindow::applyAppearance(bool resetTheme) {
     {"showShortcuts", Icon::Keyboard}, {"searchButton", Icon::Search},
     {"appearance", Icon::Settings}, {"backToLibrary", Icon::ChevronLeft},
     {"toggleOutline", Icon::Courses}, {"chooseRoot", Icon::Folder},
-    {"markComplete", Icon::Check}, {"volumeButton", Icon::Volume}, {"mute", muted_ ? Icon::Muted : Icon::Volume},
-    {"audioTrackButton", Icon::Volume}, {"subtitleTrackButton", Icon::Subtitles},
-    {"chapterButton", Icon::Chapters}, {"frameStep", Icon::Frame},
+    {"markComplete", Icon::Check}, {"volumeButton", muted_ ? Icon::Muted : Icon::Volume},
+    {"subtitleTrackButton", Icon::Subtitles}, {"frameStep", Icon::Frame},
     {"addSubtitle", Icon::AddSubtitle}, {"screenshot", Icon::Capture},
     {"fullscreen", Icon::Fullscreen}, {"playPause", paused_ ? Icon::Play : Icon::Pause}
   };
@@ -1685,7 +1782,8 @@ void MainWindow::applyAppearance(bool resetTheme) {
     const bool onAccent = target->variant() == shadcn::Variant::Default ||
                           target->variant() == shadcn::Variant::Destructive;
     target->setIcon(melearner::studyIcon(icon, onAccent
-      ? melearner::roleColor(this, shadcn::Role::PrimaryForeground) : foreground));
+      ? melearner::roleColor(this, shadcn::Role::PrimaryForeground) : foreground,
+      playerControls_->isAncestorOf(target) ? 1.125 : 1.0));
     target->setIconSize(QSize(16, 16));
     // An icon-only button carries no label. The accessible name and the tooltip
     // carry it instead, and the text is cleared so it is not painted into a
@@ -1694,7 +1792,7 @@ void MainWindow::applyAppearance(bool resetTheme) {
         target->buttonSize() == shadcn::ButtonSize::IconSm ||
         target->buttonSize() == shadcn::ButtonSize::IconLg) {
       const auto label = target->text();
-      if (!label.isEmpty()) { target->setText({}); target->setToolTip(label); }
+      if (!label.isEmpty()) { target->setText({}); target->setToolTip(target->accessibleName()); }
     }
   }
   updateLayout();

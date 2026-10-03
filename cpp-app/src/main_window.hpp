@@ -23,7 +23,9 @@ class QGridLayout;
 class QBoxLayout;
 class QTimer;
 class QGraphicsOpacityEffect;
+class QGraphicsBlurEffect;
 class QPropertyAnimation;
+class QVariantAnimation;
 class QKeyEvent;
 namespace melearner { class Player; class MpvVideoWidget; class StatsPanel; class CourseOutlineModel; }
 
@@ -117,6 +119,7 @@ private:
   PagedListModel* courseModel_;
   melearner::CourseOutlineModel* outlineModel_;
   bool compactOutline_ = true;
+  int outlineWidth_ = 320;
   bool compactLayout_ = false;
   bool keyboardNavigation_ = false;
   melearner::Player* player_;
@@ -127,7 +130,9 @@ private:
   QGridLayout* playbackLayout_;
   QList<QWidget*> playbackWidgets_;
   void updateControlsLayout();
-  void revealPlayerControls();
+  void revealPlayerControls(bool animate = false);
+  void updatePlaybackTime(qint64 position, qint64 duration);
+  void toggleLessonOutline();
   void toggleVideoFullscreen();
   void updateMediaLayout();
   void cancelAutoplay();
@@ -152,8 +157,10 @@ private:
   QWidget* lessonHeader_ = nullptr;
   QWidget* statusHost_ = nullptr;
   QTimer* hideControls_ = nullptr;
-  QGraphicsOpacityEffect* controlsOpacity_ = nullptr;
-  QPropertyAnimation* controlsFade_ = nullptr;
+  QGraphicsBlurEffect* controlsEffect_ = nullptr;
+  QVariantAnimation* controlsFade_ = nullptr;
+  QGraphicsOpacityEffect* outlineOpacity_ = nullptr;
+  QPropertyAnimation* outlineFade_ = nullptr;
   shadcn::Label* documentStatus_;
   shadcn::Prose* documentView_;
   shadcn::Button* documentPrevious_;
@@ -172,13 +179,16 @@ private:
   shadcn::Button* play_;
   shadcn::Slider* seek_;
   shadcn::Label* time_;
-  shadcn::DropdownMenu* audio_;
+  shadcn::Label* durationTime_;
   shadcn::DropdownMenu* subtitles_;
-  shadcn::DropdownMenu* chapters_;
   bool playerLoaded_ = false;
   bool playerLoadRequested_ = false;
   quint64 playerLoadId_ = 0;
-  QMap<quint64, QString> screenshotRequests_;
+  double lastAudibleVolume_ = 100;
+  std::optional<double> requestedVolume_;
+  std::optional<bool> requestedMuted_;
+  quint64 volumeRequestId_ = 0, muteRequestId_ = 0;
+  bool videoClickPaused_ = true;
   bool paused_ = true;
   bool muted_ = false;
   QString decoder_;
