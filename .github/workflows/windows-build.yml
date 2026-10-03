@@ -14,11 +14,12 @@ jobs:
   windows:
     name: Windows build and core workflow
     runs-on: windows-2025
-    timeout-minutes: 180
+    timeout-minutes: 60
     env:
       VCPKG_ROOT: D:\v
       VCPKG_DEFAULT_BINARY_CACHE: D:\vcache\archives
       VCPKG_MAX_CONCURRENCY: 2
+      MELEARNER_QT_ROOT: D:\qt\6.11.2\msvc2022_64
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: install pinned CMake
@@ -38,13 +39,62 @@ jobs:
           "MELEARNER_CMAKE=$bin\cmake.exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "MELEARNER_CTEST=$bin\ctest.exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           & "$bin\cmake.exe" --version
+      - name: restore official Qt SDK archives
+        id: qt-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: D:\qcache
+          key: windows-msvc2022-qt-6.11.2-20260813-v1
+      - name: install the pinned official Qt SDK
+        shell: pwsh
+        run: |
+          $desktop = 'https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_6112/qt6_6112_msvc2022_64'
+          $extensions = 'https://download.qt.io/online/qtsdkrepository/windows_x86/extensions'
+          $suffix = '-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z'
+          $archives = @(
+            @{ Root = "$desktop/qt.qt6.6112.win64_msvc2022_64"; Version = '6.11.2-0-202608131017'; Module = 'qtbase'; Sha256 = 'fd984b7264361b4dd3fd2a417702ca1258e4086268f2ee6a69b9a393d9c3f6bb' },
+            @{ Root = "$desktop/qt.qt6.6112.win64_msvc2022_64"; Version = '6.11.2-0-202608131017'; Module = 'qtdeclarative'; Sha256 = '5591ca564c1a9299a45a15b6b1d324c86e0aaed7cf6c47b7e6fe464aecae2587' },
+            @{ Root = "$desktop/qt.qt6.6112.addons.qtwebchannel.win64_msvc2022_64"; Version = '6.11.2-0-202608131017'; Module = 'qtwebchannel'; Sha256 = 'eb99ba81ea6fc245765d9c1f0d278edeff596fab91cadf8cf43f8fb958a7ca40' },
+            @{ Root = "$desktop/qt.qt6.6112.addons.qtpositioning.win64_msvc2022_64"; Version = '6.11.2-0-202608131017'; Module = 'qtpositioning'; Sha256 = 'ad22601482896fb3551e62b1609f0c8397ed33e5c540e0bb2e93bb1ec3a43873' },
+            @{ Root = "$desktop/qt.qt6.6112.win64_msvc2022_64"; Version = '6.11.2-0-202608131017'; File = 'd3dcompiler_47-x64.7z'; Subdir = 'bin'; Sha256 = 'b1c379f739fa59a495a388c0878757e3d90fb72e0df771237a1ee4a2c1675d15' },
+            @{ Root = "$desktop/qt.qt6.6112.win64_msvc2022_64"; Version = '6.11.2-0-202608131017'; File = 'opengl32sw-64-mesa_11_2_2-signed_sha256.7z'; Subdir = 'bin'; Sha256 = '59a086716cfd4bdec035698d501ba45526f8d2ecb5c0c428a356d8be0b5d2c79' },
+            @{ Root = "$extensions/qtpdf/6112/msvc2022_64/extensions.qtpdf.6112.win64_msvc2022_64"; Version = '6.11.2-0-202608131017'; Module = 'qtpdf'; Sha256 = '83306fe90cdbb2a365bdea1188be9352772ad8f1aea94ef327758f1635c86908' },
+            @{ Root = "$extensions/qtwebengine/6112/msvc2022_64/extensions.qtwebengine.6112.win64_msvc2022_64"; Version = '6.11.2-0-202608131118'; Module = 'qtwebengine'; Sha256 = '689791f9af21e35bf72fe494b428ba38699a974f868cde6424a0442a465db94c' }
+          )
+          New-Item -ItemType Directory -Force 'D:\qcache', $env:MELEARNER_QT_ROOT | Out-Null
+          $sevenZip = Get-Command 7z.exe -ErrorAction Stop
+          foreach ($archive in $archives) {
+            $name = if ($archive.File) { "$($archive.Version)$($archive.File)" } else { "$($archive.Version)$($archive.Module)$suffix" }
+            $file = Join-Path 'D:\qcache' $name
+            if (-not (Test-Path $file)) { Invoke-WebRequest "$($archive.Root)/$name" -OutFile $file }
+            $hash = (Get-FileHash -Algorithm SHA256 $file).Hash.ToLowerInvariant()
+            if ($hash -ne $archive.Sha256) { throw "Qt SDK SHA-256 mismatch: $name" }
+            $destination = if ($archive.Subdir) { Join-Path $env:MELEARNER_QT_ROOT $archive.Subdir } else { $env:MELEARNER_QT_ROOT }
+            & $sevenZip.Source x $file "-o$destination" -y -bso0 -bsp0
+            if ($LASTEXITCODE -ne 0) { throw "Qt SDK extraction failed: $name" }
+          }
+          @'
+          [Paths]
+          Prefix=..
+          '@ | Set-Content -Encoding ascii (Join-Path $env:MELEARNER_QT_ROOT 'bin\qt.conf')
+          $version = & "$env:MELEARNER_QT_ROOT\bin\qtpaths.exe" --query QT_VERSION
+          if ($LASTEXITCODE -ne 0 -or $version -ne '6.11.2') { throw 'Qt SDK path/version validation failed' }
+          $bytes = (Get-ChildItem 'D:\qcache' -File | Measure-Object -Property Length -Sum).Sum
+          if ($bytes -gt 1073741824) { throw 'Qt SDK archive cache exceeds the 1 GiB budget' }
+      - name: save official Qt SDK archives
+        if: steps.qt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: D:\qcache
+          key: windows-msvc2022-qt-6.11.2-20260813-v1
       - name: restore vcpkg binary archives
         id: vcpkg-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: D:\vcache\archives
-          key: windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v2
+          key: windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v3
           restore-keys: |
+            windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v3-partial-
             windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v2-partial-
             windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v1
       - name: bootstrap pinned vcpkg and install dependencies
@@ -69,7 +119,7 @@ jobs:
           Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
           & D:\v\bootstrap-vcpkg.bat -disableMetrics
           if ($LASTEXITCODE -ne 0) { throw 'vcpkg bootstrap failed' }
-          & D:\v\vcpkg.exe install qtbase qtwebengine qttools sqlite3 libzip md4c ffmpeg pkgconf `
+          & D:\v\vcpkg.exe install sqlite3 libzip md4c 'ffmpeg[core,avcodec,avformat,swscale]' pkgconf `
             --triplet x64-windows-release --host-triplet x64-windows-release --overlay-triplets=$tripletDir `
             --clean-buildtrees-after-build --clean-packages-after-build
           if ($LASTEXITCODE -ne 0) { throw 'vcpkg dependency installation failed' }
@@ -92,7 +142,7 @@ jobs:
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: D:\vcache\archives
-          key: windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-${{ steps.dependencies.outcome == 'success' && 'v2' || format('v2-partial-{0}', github.run_id) }}
+          key: windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-${{ steps.dependencies.outcome == 'success' && 'v3' || format('v3-partial-{0}', github.run_id) }}
       - name: fetch and prepare the pinned mpv development SDK
         shell: pwsh
         run: |
@@ -159,10 +209,11 @@ jobs:
           $pkgconf = Join-Path $vcpkgInstalled 'tools\pkgconf\pkgconf.exe'
           if (-not (Test-Path $pkgconf)) { throw "pkgconf not found at $pkgconf" }
           $env:PKG_CONFIG_PATH = "$env:MPV_SDK\lib\pkgconfig;$vcpkgInstalled\lib\pkgconfig;$vcpkgInstalled\share\pkgconfig"
-          $env:Path = "$env:MPV_SDK\bin;$vcpkgInstalled\bin;$env:Path"
+          $env:Path = "$env:MELEARNER_QT_ROOT\bin;$env:MPV_SDK\bin;$vcpkgInstalled\bin;$env:Path"
           & $pkgconf --exists mpv libzip md4c md4c-html libavformat libavcodec libavutil libswscale
           if ($LASTEXITCODE -ne 0) { throw 'pkgconf dependency validation failed' }
           & $env:MELEARNER_CMAKE -S . -B build\manual-windows -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON `
+            -DCMAKE_PREFIX_PATH="$env:MELEARNER_QT_ROOT" `
             -DCMAKE_TOOLCHAIN_FILE=D:\v\scripts\buildsystems\vcpkg.cmake `
             -DVCPKG_TARGET_TRIPLET=x64-windows-release `
             -DVCPKG_HOST_TRIPLET=x64-windows-release `
@@ -172,9 +223,9 @@ jobs:
           & $env:MELEARNER_CMAKE --build build\manual-windows --parallel 2
           if ($LASTEXITCODE -ne 0) { throw 'CMake build failed' }
           $testExe = (Resolve-Path 'build\manual-windows\main_window_test.exe').Path
-          $windeployqt = Get-ChildItem $vcpkgInstalled -Filter windeployqt.exe -Recurse | Select-Object -First 1
-          if (-not $windeployqt) { throw 'windeployqt.exe not found in the vcpkg Qt tools' }
-          & $windeployqt.FullName --release --compiler-runtime --webenginewidgets $testExe
+          $windeployqt = Join-Path $env:MELEARNER_QT_ROOT 'bin\windeployqt.exe'
+          if (-not (Test-Path $windeployqt)) { throw 'windeployqt.exe not found in the official Qt SDK' }
+          & $windeployqt --release --compiler-runtime --webenginewidgets $testExe
           if ($LASTEXITCODE -ne 0) { throw 'windeployqt failed for core workflow test' }
           Copy-Item $env:MPV_DLL (Split-Path $testExe) -Force
           $env:Path = "$(Split-Path $testExe);$env:Path"

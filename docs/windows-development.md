@@ -12,14 +12,18 @@ the current app. See [Qt WebEngine platform requirements](https://doc.qt.io/qt-6
 Prepare a native MSVC environment with a matching Qt kit and compatible builds
 of SQLite, libmpv, libzip, md4c and FFmpeg. CMake also consumes the pinned Lexbor
 and shadcn sources. The [manual Windows workflow](ci.md) installs a pinned native
-toolchain and builds the required libraries. Its first run compiles Qt WebEngine
-from source, then caches the compiled dependencies for later runs. It does not
-publish an installer. The legacy UCRT64 script checks for the
-required WebEngine module before configuring; it is not a qualified Windows
-build path.
+toolchain and builds the required libraries. It downloads the official Qt 6.11.2
+MSVC SDK, including PDF and WebEngine, with pinned SHA256 checks. Qt is not
+compiled from source. The SDK archives are cached separately before building the
+remaining libraries. The SDK archive cache has a 1 GiB cap and each build has a
+one hour limit. It does not publish an installer. The legacy UCRT64 script checks
+for the required WebEngine module before configuring; it is not a qualified
+Windows build path.
 
-The app and its build tools use the same native Release configuration. This
-avoids a second Debug build of Qt and keeps vcpkg on its native build path.
+The app and its remaining build tools use the same native Release configuration.
+FFmpeg includes the file reading, video decoding and image scaling libraries
+used for thumbnails. Playback uses the separate pinned libmpv SDK. vcpkg does
+not build Qt SQL drivers or PostgreSQL libraries that the application never uses.
 Completed dependency archives are also saved if a later dependency fails, within
 the 4 GiB cache cap. The next manual run restores them instead of rebuilding
 everything. A complete dependency cache takes priority over partial caches.
