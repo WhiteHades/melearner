@@ -20,9 +20,9 @@ one hour limit. It does not publish an installer. The legacy UCRT64 script check
 for the required WebEngine module before configuring; it is not a qualified
 Windows build path.
 
-The video renderer links the Windows system OpenGL import library explicitly.
-The official Qt kit resolves its own OpenGL calls dynamically and does not
-provide that import library for the app's direct desktop OpenGL calls.
+The video renderer resolves OpenGL calls through the active Qt context. Qt can
+select the system driver or its bundled software renderer without mixing the
+two implementations. See [Qt Windows graphics](https://doc.qt.io/qt-6/windows-graphics.html).
 
 The app and its remaining build tools use the same native Release configuration.
 FFmpeg includes the file reading, video decoding and image scaling libraries
@@ -32,6 +32,9 @@ The pinned player DLL also imports vulkan-1.dll. The manual workflow builds the
 Vulkan loader from the pinned vcpkg baseline and deploys it beside the test app,
 then checks application and local DLL imports before starting the test. A missing
 loader must not silently depend on an optional graphics driver installation.
+The workflow also probes native DLL loading and sends Qt startup logs to stderr.
+Windows system error dialogs are suppressed in CI so loader errors cannot wait
+for an unseen confirmation button.
 Completed dependency archives are also saved if a later dependency fails, within
 the 4 GiB cache cap. The next manual run restores them instead of rebuilding
 everything. A complete dependency cache takes priority over partial caches.

@@ -202,6 +202,7 @@ jobs:
         env:
           QT_QPA_PLATFORM: windows
           QT_LOGGING_RULES: qt.qpa.plugin.debug=true
+          QT_FORCE_STDERR_LOGGING: '1'
         run: |
           $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
           $vs = & $vswhere -latest -products '*' -property installationPath
@@ -253,5 +254,32 @@ jobs:
             }
           }
           $env:Path = "$(Split-Path $testExe);$env:Path"
+          Add-Type @'
+          using System.Runtime.InteropServices;
+          public static class StartupErrors {
+            [DllImport("kernel32.dll")]
+            public static extern uint SetErrorMode(uint mode);
+          }
+          '@
+          # Child processes inherit this mode. Missing DLLs and crashes must
+          # return errors, not wait in an unseen Windows system message box.
+          [void][StartupErrors]::SetErrorMode(0x8003)
+          $loadJob = Start-Job -ArgumentList (Split-Path $testExe) -ScriptBlock {
+            param($directory)
+            foreach ($name in @('Qt6Core.dll', 'libmpv-2.dll', 'Qt6WebEngineWidgets.dll')) {
+              Write-Output "Checking native DLL load: $name"
+              $handle = [System.Runtime.InteropServices.NativeLibrary]::Load((Join-Path $directory $name))
+              [System.Runtime.InteropServices.NativeLibrary]::Free($handle)
+              Write-Output "Native DLL loaded successfully: $name"
+            }
+          }
+          try {
+            $loadJob | Wait-Job -Timeout 20 | Out-Null
+            Receive-Job $loadJob -ErrorAction Stop
+            if ($loadJob.State -ne 'Completed') { throw 'Native DLL load probe did not finish within 20 seconds' }
+          } finally {
+            if ($loadJob.State -eq 'Running') { Stop-Job $loadJob }
+            Remove-Job $loadJob -Force
+          }
           & $env:MELEARNER_CTEST --test-dir build\manual-windows --verbose --output-on-failure -R '^core_workflow$'
           if ($LASTEXITCODE -ne 0) { throw 'core workflow test failed' }
