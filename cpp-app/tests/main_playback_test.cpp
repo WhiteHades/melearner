@@ -363,7 +363,10 @@ private slots:
           if (width == 1280) {
             QVERIFY(controls->width() <= 820 * fontScale);
             QVERIFY(qAbs(controls->geometry().center().x() - surface->rect().center().x()) <= 1);
-            QVERIFY(surface->width() <= 1600);
+            auto* courseViewport = window.findChild<QScrollArea*>("lessonScroll"); QVERIFY(courseViewport);
+            const int viewportGap = window.findChild<QWidget*>("courseOutline")->isVisible() ? 20 : 0;
+            QCOMPARE(surface->width(), courseViewport->viewport()->width() - viewportGap);
+            QCOMPARE(surface->height(), surface->width() * 9 / 16);
             const auto* fullscreen = window.findChild<QPushButton*>("fullscreen");
             const auto* capture = window.findChild<QPushButton*>("screenshot");
             QVERIFY(fullscreen->x() > capture->x());
@@ -439,7 +442,9 @@ private slots:
         QTRY_COMPARE(surface->height(), window.findChild<QWidget*>("mediaFrame")->height());
         QTRY_VERIFY(surface->mapTo(scroll->widget(), QPoint()).y() <= 1);
         QTRY_VERIFY(lessonTitle->mapTo(scroll->widget(), QPoint()).y() >= surface->height());
-        QTRY_VERIFY(surface->height() <= 1600 * 9 / 16);
+        const int viewportGap = outlinePane->isVisible() ? 20 : 0;
+        QTRY_COMPARE(surface->width(), scroll->viewport()->width() - viewportGap);
+        QTRY_COMPARE(surface->height(), surface->width() * 9 / 16);
         if (!captureDirectory.isEmpty()) QVERIFY(window.grab().save(captureDirectory + QString("/player-wide-%1x.png").arg(fontScale)));
         window.resize(std::max(1280, window.fontMetrics().height() * 40), 720);
         if (fontScale == 1 && mediaFile == QStringLiteral("Systems 日本語/01 H264 AAC.mp4")) {
@@ -513,6 +518,25 @@ private slots:
         .arg(previewVideo->isVisible()).arg(window.isActiveWindow())
         .arg(window.findChild<QLabel*>("coursePreviewHint")->text())
         .arg(previewVideo->width()).arg(previewVideo->height()).arg(previewVideo->context() != nullptr)));
+    auto* resumePanel = window.findChild<QWidget*>("resumePanel"); QVERIFY(resumePanel);
+    auto* coursePreview = window.findChild<QWidget*>("coursePreview"); QVERIFY(coursePreview);
+    const auto layoutCaptures = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
+    if (!layoutCaptures.isEmpty()) QVERIFY(QDir().mkpath(layoutCaptures));
+    window.resize(1440, 900);
+    QTRY_VERIFY(resumePanel->isVisible() && coursePreview->isVisible());
+    QTRY_VERIFY(window.width() >= 1440);
+    const QRect previewRect(coursePreview->mapTo(resumePanel, QPoint()), coursePreview->size());
+    const auto expectedPreviewWidth = resumePanel->width() * 58 / 100;
+    QVERIFY(qAbs(coursePreview->width() - expectedPreviewWidth) <= 2);
+    QVERIFY(qAbs(previewRect.right() - (resumePanel->width() - 1)) <= 2);
+    QVERIFY(qAbs(previewRect.top()) <= 2);
+    QVERIFY(qAbs(previewRect.bottom() - (resumePanel->height() - 1)) <= 2);
+    if (!layoutCaptures.isEmpty()) QVERIFY(window.grab().save(layoutCaptures + "/layout-refine-home-wide.png"));
+    window.resize(1024, 780); QTest::qWait(100);
+    if (!layoutCaptures.isEmpty()) QVERIFY(window.grab().save(layoutCaptures + "/layout-refine-home-normal.png"));
+    window.resize(560, 720); QTest::qWait(100);
+    if (!layoutCaptures.isEmpty()) QVERIFY(window.grab().save(layoutCaptures + "/layout-refine-home-narrow.png"));
+    window.resize(1200, 780); QTest::qWait(100);
     QTRY_VERIFY(hasValidVideoFrame(previewVideo->grabFramebuffer()));
     auto* previewMute = window.findChild<QPushButton*>("previewMute"); QVERIFY(previewMute);
     QCOMPARE(previewMute->accessibleName(), QString("Unmute preview"));
@@ -536,9 +560,45 @@ private slots:
     QSignalSpy loaded(player, &melearner::Player::fileLoaded);
     QSignalSpy positions(player, &melearner::Player::positionChanged);
     QSignalSpy ended(player, &melearner::Player::playbackEnded);
+    auto* lessons = window.findChild<QTreeView*>("lessons"); QVERIFY(lessons);
+    const auto* retainedPreviewPlayer = previewPlayer.data();
+    QElapsedTimer heartbeatClock;
+    qint64 previousHeartbeat = 0, worstHeartbeatGap = 0;
+    int heartbeatSamples = 0;
+    QTimer routeHeartbeat;
+    connect(&routeHeartbeat, &QTimer::timeout, &window, [&] {
+      const auto now = heartbeatClock.elapsed();
+      if (previousHeartbeat > 0) worstHeartbeatGap = std::max(worstHeartbeatGap, now - previousHeartbeat);
+      previousHeartbeat = now; ++heartbeatSamples;
+    });
+    routeHeartbeat.setInterval(10);
+    QElapsedTimer courseOpen;
+    courseOpen.start(); heartbeatClock.start(); routeHeartbeat.start();
     courses->setCurrentIndex(courses->model()->index(0, 0)); QTest::keyClick(courses, Qt::Key_Return);
+    QTRY_VERIFY(lessons->isVisible());
+    const auto courseRouteVisibleMs = courseOpen.elapsed();
     QTRY_COMPARE_WITH_TIMEOUT(loaded.size(), 1, 10000);
-    QVERIFY(previewPlayer.isNull());
+    routeHeartbeat.stop();
+    qInfo("Course click to route visible: %lld ms; video loaded: %lld ms; GUI heartbeat: %d samples, longest gap %lld ms",
+      courseRouteVisibleMs, courseOpen.elapsed(), heartbeatSamples, worstHeartbeatGap);
+    QTRY_VERIFY(!previewPaused.empty() && previewPaused.last()[0].toBool());
+    QVERIFY(!previewVideo->isVisible());
+    QCOMPARE(window.findChild<melearner::Player*>("previewPlayer"), retainedPreviewPlayer);
+
+    auto* backToLibrary = window.findChild<QPushButton*>("backToLibrary"); QVERIFY(backToLibrary);
+    QElapsedTimer libraryReturn;
+    libraryReturn.start(); backToLibrary->click();
+    QTRY_VERIFY(courses->isVisible());
+    qInfo("Course to Library route visible: %lld ms", libraryReturn.elapsed());
+    QTRY_VERIFY(previewVideo->isVisible());
+    QCOMPARE(window.findChild<melearner::Player*>("previewPlayer"), retainedPreviewPlayer);
+    QTRY_VERIFY(!previewPaused.empty() && !previewPaused.last()[0].toBool());
+
+    loaded.clear(); courseOpen.restart();
+    courses->setCurrentIndex(courses->model()->index(0, 0)); QTest::keyClick(courses, Qt::Key_Return);
+    QTRY_VERIFY(lessons->isVisible());
+    QTRY_COMPARE_WITH_TIMEOUT(loaded.size(), 1, 10000);
+    qInfo("Re-entered Course route and loaded video: %lld ms", courseOpen.elapsed());
     auto* play = window.findChild<QPushButton*>("playPause");
     auto* autoplay = window.findChild<shadcn::Switch*>("autoplay");
     autoplay->setChecked(false);
@@ -586,7 +646,6 @@ private slots:
     QVERIFY(!indicator->isVisible());
     QVERIFY(!window.findChild<QTimer*>("autoplayCountdown")->isActive());
     QCOMPARE(loaded.size(), 1);
-    auto* lessons = window.findChild<QTreeView*>("lessons");
     QTest::keyClick(lessons, Qt::Key_Return);
     QTRY_COMPARE_WITH_TIMEOUT(loaded.size(), 2, 10000);
     QTRY_COMPARE(play->text(), QString("Play"));

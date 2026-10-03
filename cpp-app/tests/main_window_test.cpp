@@ -84,6 +84,7 @@ private slots:
     window.chooseRoot(root);
     auto* courses = window.findChild<shadcn::ListView*>("courses");
     QTRY_COMPARE(courses->model()->rowCount(), 12);
+    QCOMPARE(courses->verticalScrollBar()->width(), 4);
     const auto copyIndex = courses->model()->index(0, 0);
     courses->setCurrentIndex(copyIndex);
     courses->setFocus();
@@ -119,13 +120,19 @@ private slots:
     QVERIFY(rects.size() >= 3);
     QVERIFY(rects[1].left() > rects[0].left());
     QVERIFY(rects[0].right() < rects[1].left());
+    int firstRowRight = 0;
     for (const auto& rect : rects) {
       QVERIFY(rect.left() >= 0);
       QVERIFY(rect.right() < courses->viewport()->width());
+      if (rect.top() == rects.first().top()) firstRowRight = std::max(firstRowRight, rect.right());
     }
+    QVERIFY2(courses->viewport()->width() - 1 - firstRowRight <= 4,
+      qPrintable(QString("Viewport %1, grid %2, first row end %3, rectangles %4")
+        .arg(courses->viewport()->width()).arg(courses->gridSize().width()).arg(firstRowRight).arg(rects.size())));
     QVERIFY(window.findChild<QWidget*>("libraryCanvas")->width() <= 1120);
     QVERIFY(capture("library-cards"));
     window.resize(560, 720); QTest::qWait(100);
+    QCOMPARE(courses->verticalScrollBar()->width(), 4);
     const auto narrowCards = courses->visibleRowRects();
     QVERIFY(!narrowCards.isEmpty());
     for (const auto& rect : narrowCards) {
