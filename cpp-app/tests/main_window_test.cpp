@@ -4,6 +4,7 @@
 #include "theme.hpp"
 
 #include <QDir>
+#include <QAccessible>
 #include <QComboBox>
 #include <QClipboard>
 #include <QContextMenuEvent>
@@ -279,6 +280,9 @@ private slots:
     window.activateWindow();
     QVERIFY(QTest::qWaitForWindowActive(&window));
     browser->setFocus();
+    auto* browserAccessibility = QAccessible::queryAccessibleInterface(browser);
+    QVERIFY(browserAccessibility);
+    QVERIFY(browserAccessibility->role() != QAccessible::Animation);
     browserValue(browser, "(()=>{const r=document.createRange();r.selectNodeContents(document.querySelector('strong'));const s=getSelection();s.removeAllRanges();s.addRange(r)})()");
     QTRY_COMPARE(browser->page()->selectedText(), QString("in the app"));
     QApplication::clipboard()->clear();
@@ -310,6 +314,7 @@ private slots:
     QVERIFY(capture("reader-markdown"));
     const QStringList expected{"HTML lesson", "A, B", "Register", "v3.0 hex words"};
     for (int item = 0; item < expected.size(); ++item) {
+      QTRY_VERIFY(next->isEnabled());
       QTest::mouseClick(next, Qt::LeftButton);
       if (item == 0) {
         QTRY_VERIFY(!browser);
@@ -327,7 +332,8 @@ private slots:
         QVERIFY(denied.isEmpty() || denied == "blocked");
         QTRY_COMPARE(browserValue(browser, "document.body.dataset.network").toString(), QString("blocked"));
         QVERIFY(!offlineProbe.hasPendingConnections());
-      } else QTRY_VERIFY(document->toPlainText().contains(expected[item]));
+      } else QTRY_VERIFY2(document->toPlainText().contains(expected[item]),
+                         qPrintable(QString("Expected %1; displayed %2").arg(expected[item], document->toPlainText())));
       QVERIFY(capture(QString("reader-%1").arg(item)));
     }
     QTest::mouseClick(window.findChild<QPushButton*>("backToLibrary"), Qt::LeftButton);

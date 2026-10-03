@@ -37,7 +37,10 @@ public:
     QPoint imagePosition() const override { return widget()->mapToGlobal(QPoint()); }
 };
 
-QAccessibleInterface* accessibleVideo(const QString&, QObject* object) {
+QAccessibleInterface* accessibleVideo(const QString& className, QObject* object) {
+    // Factories also see browser-internal objects during focus changes. Only
+    // inspect our own class, rather than casting every global accessibility query.
+    if (className != QLatin1String(MpvVideoWidget::staticMetaObject.className())) return nullptr;
     if (auto* video = qobject_cast<MpvVideoWidget*>(object)) return new AccessibleVideo(video);
     return nullptr;
 }
