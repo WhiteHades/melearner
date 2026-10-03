@@ -1852,6 +1852,48 @@ void upgradeLibrary(sqlite3* database, const QByteArray& ddl, const QString& dat
     return result;
 }
 
+[[nodiscard]] Lesson readPreviewVideo(sqlite3* db, const QString& courseId) {
+    Statement course(
+        db,
+        QStringLiteral("SELECT missing_since FROM courses WHERE id = ?1"));
+    course.bind(1, courseId);
+    if (course.step() != SQLITE_ROW || sqlite3_column_type(course.get(), 0) != SQLITE_NULL) {
+        throw DbError(ErrorCode::invalid_request, QStringLiteral("Course does not exist or is not available"));
+    }
+
+    Statement statement(
+        db,
+        QStringLiteral(
+            "SELECT l.id, l.course_id, l.section_id, s.name, l.name, l.path, l.relative_path, "
+            "l.type, l.duration, l.watched_time, l.last_position, l.file_size, l.order_index, l.completed "
+            "FROM lessons l JOIN sections s ON s.id = l.section_id AND s.course_id = l.course_id "
+            "WHERE l.course_id = ?1 AND l.type = 'video' AND l.completed = 0 "
+            "ORDER BY CASE WHEN l.last_position > 0 THEN 0 ELSE 1 END, "
+            "CASE WHEN l.last_position > 0 THEN l.updated_at ELSE 0 END DESC, "
+            "s.order_index, s.name COLLATE MELEARNER_NATURAL, s.id, l.order_index, "
+            "l.name COLLATE MELEARNER_NATURAL, l.id LIMIT 1"));
+    statement.bind(1, courseId);
+    return statement.step() == SQLITE_ROW ? readLesson(statement.get()) : Lesson{};
+}
+
+[[nodiscard]] Lesson readThumbnailVideo(sqlite3* db, const QString& courseId) {
+    Statement course(db, QStringLiteral("SELECT missing_since FROM courses WHERE id = ?1"));
+    course.bind(1, courseId);
+    if (course.step() != SQLITE_ROW || sqlite3_column_type(course.get(), 0) != SQLITE_NULL) {
+        throw DbError(ErrorCode::invalid_request, QStringLiteral("Course does not exist or is not available"));
+    }
+
+    Statement statement(
+        db,
+        QStringLiteral(
+            "SELECT l.id, l.course_id, l.section_id, s.name, l.name, l.path, l.relative_path, "
+            "l.type, l.duration, l.watched_time, l.last_position, l.file_size, l.order_index, l.completed "
+            "FROM lessons l JOIN sections s ON s.id = l.section_id AND s.course_id = l.course_id "
+            "WHERE l.course_id = ?1 AND l.type = 'video' ORDER BY RANDOM() LIMIT 1"));
+    statement.bind(1, courseId);
+    return statement.step() == SQLITE_ROW ? readLesson(statement.get()) : Lesson{};
+}
+
 [[nodiscard]] LibraryStats readLibraryStats(sqlite3* db, std::uint64_t revision) {
     const auto scope = readCourseScope(db);
     const auto courseSource = scopedCoursesSql(scope);
@@ -2975,6 +3017,46 @@ RequestId Library::resume(std::uint64_t offset, std::uint64_t limit) {
         const auto page = readResumePage(worker_->database_, offset, limit, worker_->revision_);
         worker_->terminal(id, [owner = this, id, page]() mutable { emit owner->resumeReady(id, std::move(page)); });
     });
+    if (requestId == 0) {
+        worker_->reject(0, ErrorCode::busy, QStringLiteral("Library request queue is full or closing"));
+    }
+    return requestId;
+}
+
+RequestId Library::previewVideo(QString courseId) {
+    const auto requestId = worker_->enqueue(
+        [this, courseId = std::move(courseId)](sqlite3*, RequestId id) mutable {
+            if (!validId(courseId)) {
+                throw DbError(ErrorCode::invalid_request, QStringLiteral("Course ID is invalid"));
+            }
+            if (worker_->database_ == nullptr) {
+                throw DbError(ErrorCode::database, QStringLiteral("Library database is not open"));
+            }
+            const auto lesson = readPreviewVideo(worker_->database_, courseId);
+            worker_->terminal(id, [owner = this, id, lesson]() mutable {
+                emit owner->previewVideoReady(id, std::move(lesson));
+            });
+        });
+    if (requestId == 0) {
+        worker_->reject(0, ErrorCode::busy, QStringLiteral("Library request queue is full or closing"));
+    }
+    return requestId;
+}
+
+RequestId Library::thumbnailVideo(QString courseId) {
+    const auto requestId = worker_->enqueue(
+        [this, courseId = std::move(courseId)](sqlite3*, RequestId id) mutable {
+            if (!validId(courseId)) {
+                throw DbError(ErrorCode::invalid_request, QStringLiteral("Course ID is invalid"));
+            }
+            if (worker_->database_ == nullptr) {
+                throw DbError(ErrorCode::database, QStringLiteral("Library database is not open"));
+            }
+            const auto lesson = readThumbnailVideo(worker_->database_, courseId);
+            worker_->terminal(id, [owner = this, id, lesson]() mutable {
+                emit owner->thumbnailVideoReady(id, std::move(lesson));
+            });
+        });
     if (requestId == 0) {
         worker_->reject(0, ErrorCode::busy, QStringLiteral("Library request queue is full or closing"));
     }

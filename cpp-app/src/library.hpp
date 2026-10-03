@@ -284,6 +284,8 @@ public:
         std::uint64_t limit = 256);
     [[nodiscard]] RequestId enterCourse(QString courseId, QString requestedLessonId = {});
     [[nodiscard]] RequestId resume(std::uint64_t offset = 0, std::uint64_t limit = 4);
+    [[nodiscard]] RequestId previewVideo(QString courseId);
+    [[nodiscard]] RequestId thumbnailVideo(QString courseId);
     [[nodiscard]] RequestId stats(std::uint64_t expectedRevision);
     [[nodiscard]] RequestId activity(
         std::uint64_t expectedRevision,
@@ -316,6 +318,8 @@ signals:
     void lessonsReady(RequestId requestId, LessonPage result);
     void courseEntered(RequestId requestId, CourseEntry result);
     void resumeReady(RequestId requestId, ResumePage result);
+    void previewVideoReady(RequestId requestId, Lesson result);
+    void thumbnailVideoReady(RequestId requestId, Lesson result);
     void statsReady(RequestId requestId, LibraryStats result);
     void activityReady(RequestId requestId, ActivityDayPage result);
     void searchReady(RequestId requestId, SearchPage result);
