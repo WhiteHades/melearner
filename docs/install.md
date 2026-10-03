@@ -54,4 +54,6 @@ installer above. Older release downloads contain an earlier application.
 ## Other platforms
 
 Windows and macOS packages are not available. Contributors can use the
-[Windows build guide](windows-development.md) to build and test on Windows.
+[Windows requirements](windows-development.md) to see the remaining native
+toolchain and installer work. The earlier MSYS2 build instructions do not cover
+the current document engine.
