@@ -166,14 +166,6 @@ jobs:
           restore-keys: |
             windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v6
             windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v6-partial-
-            windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v5
-            windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v5-partial-
-            windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v4
-            windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v4-partial-
-            windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v3
-            windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v3-partial-
-            windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v2-partial-
-            windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v1
       - name: bootstrap pinned vcpkg and install dependencies
         id: dependencies
         shell: pwsh

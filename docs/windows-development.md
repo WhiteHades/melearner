@@ -53,6 +53,8 @@ for an unseen confirmation button.
 Completed dependency archives are also saved if a later dependency fails, within
 the 4 GiB cache cap. The next manual run restores them instead of rebuilding
 everything. A complete dependency cache takes priority over partial caches.
+The workflow retains only the latest compatible fallback cache keys so the
+restore request stays within GitHub's ten key limit.
 The workflow uses the runner's larger work drive for vcpkg and removes completed
 build trees and staging packages between dependencies. Installed libraries,
 downloaded sources, build logs and binary archives remain available.
