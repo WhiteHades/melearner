@@ -198,7 +198,8 @@ jobs:
       - name: build and run the core workflow test
         shell: pwsh
         env:
-          QT_QPA_PLATFORM: offscreen
+          QT_QPA_PLATFORM: windows
+          QT_LOGGING_RULES: qt.qpa.plugin.debug=true
         run: |
           $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
           $vs = & $vswhere -latest -products '*' -property installationPath
@@ -227,7 +228,9 @@ jobs:
           if (-not (Test-Path $windeployqt)) { throw 'windeployqt.exe not found in the official Qt SDK' }
           & $windeployqt --release --compiler-runtime --webenginewidgets $testExe
           if ($LASTEXITCODE -ne 0) { throw 'windeployqt failed for core workflow test' }
+          $platformPlugin = Join-Path (Split-Path $testExe) 'platforms\qwindows.dll'
+          if (-not (Test-Path $platformPlugin)) { throw 'Windows platform plugin was not deployed' }
           Copy-Item $env:MPV_DLL (Split-Path $testExe) -Force
           $env:Path = "$(Split-Path $testExe);$env:Path"
-          & $env:MELEARNER_CTEST --test-dir build\manual-windows --output-on-failure -R '^core_workflow$'
+          & $env:MELEARNER_CTEST --test-dir build\manual-windows --verbose --output-on-failure -R '^core_workflow$'
           if ($LASTEXITCODE -ne 0) { throw 'core workflow test failed' }

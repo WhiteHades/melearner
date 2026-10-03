@@ -106,6 +106,8 @@ if(BUILD_TESTING)
   set(_core_workflow_platform offscreen)
   if(APPLE)
     set(_core_workflow_platform cocoa)
+  elseif(WIN32)
+    set(_core_workflow_platform windows)
   endif()
   set_tests_properties(core_workflow PROPERTIES ENVIRONMENT
     "QT_QPA_PLATFORM=${_core_workflow_platform};LC_ALL=C;TMPDIR=${CMAKE_CURRENT_SOURCE_DIR}/.tmp/cpp-tests" TIMEOUT 60)
