@@ -276,6 +276,14 @@ private slots:
     QCOMPARE(browserValue(browser, "document.querySelector('strong').textContent").toString(), QString("in the app"));
     QTRY_VERIFY(browserValue(browser, "document.querySelector('img').complete && document.querySelector('img').naturalWidth===8").toBool());
     QCOMPARE(browserValue(browser, "document.querySelectorAll('table').length").toInt(), 1);
+    window.activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(&window));
+    browser->setFocus();
+    browserValue(browser, "(()=>{const r=document.createRange();r.selectNodeContents(document.querySelector('strong'));const s=getSelection();s.removeAllRanges();s.addRange(r)})()");
+    QTRY_COMPARE(browser->page()->selectedText(), QString("in the app"));
+    QApplication::clipboard()->clear();
+    QTest::keyClick(browser->focusProxy() ? browser->focusProxy() : browser.data(), Qt::Key_C, Qt::ControlModifier);
+    QTRY_COMPARE(QApplication::clipboard()->text(), QString("in the app"));
     QTRY_VERIFY(next->isEnabled());
     QVERIFY(!next->accessibleDescription().isEmpty());
     auto* previous = window.findChild<QPushButton*>("previousLesson");
