@@ -63,6 +63,9 @@ jobs:
           linux_sha="$(validate_run "$LINUX_RUN" .github/workflows/linux-build.yml "linux-diagnostic-${linux_head}" .tmp/release-delivery/linux)"
           windows_sha="$(validate_run "$WINDOWS_RUN" .github/workflows/windows-build.yml melearner-windows-diagnostic-installer .tmp/release-delivery/windows)"
           macos_sha="$(validate_run "$MACOS_RUN" .github/workflows/macos-build.yml melearner-0.1.9-macos-arm64-diagnostic .tmp/release-delivery/macos)"
+          windows_profile="$(find .tmp/release-delivery/windows -type f -name reference-profiles-v1.json -print -quit)"
+          [[ -n "$windows_profile" ]] || { echo "Windows notice evidence is missing" >&2; exit 1; }
+          jq '.missingEvidence' "$windows_profile"
           for head in "$linux_sha" "$windows_sha" "$macos_sha"; do
             [[ "$(git ls-tree "$head" -- cpp-app cmake CMakeLists.txt)" == "$(git ls-tree "$GITHUB_SHA" -- cpp-app cmake CMakeLists.txt)" ]] || {
               echo "run commit $head has a different C++ application source tree" >&2; exit 1;
@@ -106,13 +109,12 @@ jobs:
           package_dir="$root/arch-package"
           mkdir -p "$package_dir"
           cp packaging/arch/PKGBUILD "$package_dir/PKGBUILD"
-          chmod -R a+rwX "$package_dir"
           docker run --rm --platform linux/amd64 \
             -v "$GITHUB_WORKSPACE/$package_dir:/work/package" \
             -v "$GITHUB_WORKSPACE/$stage:/work/appdir:ro" \
             -e MELEARNER_CPP_STAGE=/work/appdir \
             archlinux:base-devel@sha256:8edb44f40a0cb5d3e44ef474f02780098ce0084e591c8641bdc01f02f185cc40 \
-            bash -euc 'useradd --create-home builder; chown -R builder:builder /work/package; su - builder -c "cd /work/package && MELEARNER_CPP_STAGE=/work/appdir makepkg --nodeps --noconfirm"'
+            bash -euc 'stat -c "%a %u %g %n" /work/appdir /work/appdir/usr; stage_uid=$(stat -c %u /work/appdir); test "$stage_uid" -gt 0; useradd --uid "$stage_uid" --create-home builder; chown -R builder:builder /work/package; su - builder -c "test -d /work/appdir/usr && cd /work/package && MELEARNER_CPP_STAGE=/work/appdir makepkg --nodeps --noconfirm"'
           arch_pkg="$package_dir/melearner-bin-0.1.9-1-x86_64.pkg.tar.zst"
           [[ -s "$arch_pkg" && ! -L "$arch_pkg" ]] || { echo "makepkg did not produce expected Arch package" >&2; exit 1; }
           cp -- "$arch_pkg" "$out/"

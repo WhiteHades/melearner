@@ -37,3 +37,8 @@ Artifacts remain diagnostic until the package checks and corresponding dependenc
 The manual `Draft release delivery` workflow accepts the successful Linux, Windows, and macOS build run IDs. It only downloads the named diagnostic artifacts; it does not rebuild platform packages. It rejects runs from another repository, the wrong workflow, unsuccessful runs, or commits whose C++ app source tree differs from the delivery workflow commit. Run artifacts expire after three days, so deliver promptly.
 
 The workflow verifies the Windows and macOS supplied SHA-256 files, computes Linux and Arch checksums, extracts the AppImage without launching the app, and builds the Arch package from its `usr` tree using the repository PKGBUILD. It retains all four installers, per-asset checksums, a combined `SHA256SUMS`, source-head provenance, and the Windows source archive/patch/manifest bundle. It creates or adds assets only to the fixed `v0.1.9` draft release. Published releases and name collisions are refused; assets are never overwritten. Review the draft assets, provenance, checksums, and platform limitations before publishing it manually. The DMG is ad hoc signed but not notarized, the EXE is unsigned, and no trusted publisher signature is provided.
+
+The Arch container uses an unprivileged builder with the extracted bundle's
+owner UID so private extraction permissions remain readable without opening
+the bundle to other users. Windows notice evidence gaps are printed in the
+delivery log for review before publication.
