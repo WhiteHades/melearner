@@ -11,6 +11,7 @@ class QShowEvent;
 class QHideEvent;
 class QFrame;
 class QWindow;
+class QTimer;
 
 namespace melearner { class MpvVideoWidget; class Player; }
 namespace shadcn { class Button; }
@@ -57,6 +58,7 @@ private:
     bool active_ = false;
     bool loadRequested_ = false;
     bool loaded_ = false;
+    QTimer* startupTimer_ = nullptr;
     LayoutMode layoutMode_ = LayoutMode::Standalone;
     quint64 initialMuteRequest_ = 0;
     QString approvedRoot_;

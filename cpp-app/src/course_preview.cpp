@@ -17,6 +17,7 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QWindow>
+#include <QTimer>
 #include <algorithm>
 
 namespace melearner {
@@ -25,6 +26,18 @@ CoursePreview::CoursePreview(QWidget* parent, bool softwareDecoding)
     : QWidget(parent), softwareDecoding_(softwareDecoding) {
     setObjectName("coursePreview");
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+
+    startupTimer_ = new QTimer(this);
+    startupTimer_->setObjectName("previewStartupDelay");
+    startupTimer_->setSingleShot(true);
+    startupTimer_->setInterval(900);
+    connect(startupTimer_, &QTimer::timeout, this, [this] {
+        auto* window = this->window()->windowHandle();
+        if (!active_ || !hasPreview_ || !isVisible() || !window || !window->isActive() ||
+            window->windowState() == Qt::WindowMinimized ||
+            qApp->applicationState() != Qt::ApplicationActive) return;
+        startPreview();
+    });
 
     surface_ = new QFrame(this);
     surface_->setObjectName("coursePreviewSurface");
@@ -101,6 +114,7 @@ void CoursePreview::setLayoutMode(LayoutMode mode) {
 
 void CoursePreview::suspend() {
     active_ = false;
+    startupTimer_->stop();
     if (!player_) return;
     (void)player_->pause();
     if (!muted_ && loaded_) {
@@ -158,6 +172,7 @@ void CoursePreview::loadWhenReady() {
 }
 
 void CoursePreview::clear() {
+    startupTimer_->stop();
     hasPreview_ = false;
     active_ = false; loadRequested_ = false; loaded_ = false; initialMuteRequest_ = 0;
     hint_->setText(tr("No video preview available"));
@@ -199,10 +214,14 @@ void CoursePreview::syncPlayback() {
         && window->windowState() != Qt::WindowMinimized
         && qApp->applicationState() == Qt::ApplicationActive;
     if (active_) {
-        startPreview();
-        if (loaded_) (void)player_->play();
-    } else if (player_) {
-        (void)player_->pause();
+        if (player_) {
+            if (loaded_) (void)player_->play();
+        } else if (!startupTimer_->isActive()) {
+            startupTimer_->start();
+        }
+    } else {
+        startupTimer_->stop();
+        if (player_) (void)player_->pause();
     }
 }
 
@@ -236,6 +255,7 @@ void CoursePreview::showEvent(QShowEvent* event) {
 
 void CoursePreview::hideEvent(QHideEvent* event) {
     active_ = false;
+    startupTimer_->stop();
     if (player_) {
         (void)player_->pause();
         if (!muted_ && loaded_) {
