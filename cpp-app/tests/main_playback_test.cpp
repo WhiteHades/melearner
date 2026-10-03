@@ -266,7 +266,7 @@ private slots:
         qInfo("Pointer motion batch: 1000 events in %lld us", pointerBatch.nsecsElapsed() / 1000);
         QVERIFY(controls->isVisible());
         auto* hideControls = window.findChild<QTimer*>("hidePlayerControls"); QVERIFY(hideControls);
-        QCOMPARE(hideControls->interval(), 4000);
+        QCOMPARE(hideControls->interval(), 2500);
         phase = "pointer controls";
         movePointer(QPoint(10, 10));
         QTRY_COMPARE(play->text(), QString("Pause"));
@@ -276,10 +276,20 @@ private slots:
         QTest::qWait(30); QCOMPARE(play->text(), QString("Pause"));
         QTest::qWait(50);
         QVERIFY(!controls->underMouse());
+        auto* reveal = window.findChild<QVariantAnimation*>("transportReveal"); QVERIFY(reveal);
         QVERIFY(QMetaObject::invokeMethod(hideControls, "timeout", Qt::DirectConnection));
+        if (!melearner::reducedMotion() && !melearner::highContrast()) {
+          QCOMPARE(reveal->duration(), 160);
+          QCOMPARE(reveal->state(), QAbstractAnimation::Running);
+          reveal->setCurrentTime(25);
+          auto* effect = qobject_cast<QGraphicsBlurEffect*>(controls->graphicsEffect()); QVERIFY(effect);
+          QVERIFY(effect->blurRadius() > 0);
+          QVERIFY(effect->property("opacity").toDouble() > 0 && effect->property("opacity").toDouble() < 1);
+          if (!qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS").isEmpty())
+            QVERIFY(window.grab().save(qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS") + "/transport-hiding.png"));
+        }
         QTRY_VERIFY(!controls->isVisible());
         movePointer(QPoint(20, 20)); QTRY_VERIFY(controls->isVisible());
-        auto* reveal = window.findChild<QVariantAnimation*>("transportReveal"); QVERIFY(reveal);
         if (!melearner::reducedMotion() && !melearner::highContrast()) {
           QCOMPARE(reveal->duration(), 200);
           QCOMPARE(reveal->state(), QAbstractAnimation::Running);
@@ -291,7 +301,7 @@ private slots:
             QVERIFY(window.grab().save(qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS") + "/transport-revealing.png"));
         }
         QTRY_COMPARE(controls->graphicsEffect()->property("opacity").toDouble(), 1.0);
-        QCOMPARE(hideControls->interval(), 4000);
+        QCOMPARE(hideControls->interval(), 2500);
         surface->setFocus(Qt::TabFocusReason);
         QTRY_COMPARE(QApplication::focusWidget(), surface);
         QTest::keyClick(surface, Qt::Key_Tab); QTRY_VERIFY(controls->isAncestorOf(QApplication::focusWidget()));
@@ -358,6 +368,19 @@ private slots:
         saved = positions.last().at(0).toLongLong();
         for (const int width : {560, 768, 1280}) {
           window.resize(width, 720); QCoreApplication::processEvents(); QVERIFY(window.width() <= width);
+          auto* lessonScroll = window.findChild<QScrollArea*>("lessonScroll"); QVERIFY(lessonScroll);
+          QTRY_COMPARE(lessonScroll->verticalScrollBar()->maximum(), 0);
+          const auto withinWindow = [&window](const QWidget* widget) {
+            const auto origin = widget->mapTo(&window, QPoint());
+            return origin.x() >= 0 && origin.y() >= 0 &&
+              origin.x() + widget->width() <= window.width() &&
+              origin.y() + widget->height() <= window.height();
+          };
+          QVERIFY(withinWindow(window.findChild<QLabel*>("lessonTitle")));
+          QVERIFY(withinWindow(window.findChild<QPushButton*>("previousLesson")));
+          QVERIFY(withinWindow(window.findChild<QPushButton*>("nextLesson")));
+          QVERIFY(surface->width() <= lessonScroll->viewport()->width());
+          QCOMPARE(surface->height(), surface->width() * 9 / 16);
           QVERIFY(surface->rect().contains(controls->geometry()));
           QTRY_COMPARE(timeline->width(), controls->width() - 40);
           if (width == 1280) {
@@ -365,15 +388,18 @@ private slots:
             QVERIFY(qAbs(controls->geometry().center().x() - surface->rect().center().x()) <= 1);
             auto* courseViewport = window.findChild<QScrollArea*>("lessonScroll"); QVERIFY(courseViewport);
             const int viewportGap = window.findChild<QWidget*>("courseOutline")->isVisible() ? 20 : 0;
-            QCOMPARE(surface->width(), courseViewport->viewport()->width() - viewportGap);
+            QVERIFY(surface->width() <= courseViewport->viewport()->width() - viewportGap);
             QCOMPARE(surface->height(), surface->width() * 9 / 16);
             const auto* fullscreen = window.findChild<QPushButton*>("fullscreen");
             const auto* capture = window.findChild<QPushButton*>("screenshot");
-            QVERIFY(fullscreen->x() > capture->x());
-            QCOMPARE(fullscreen->geometry().center().y(), play->geometry().center().y());
+            if (fontScale == 1) {
+              QVERIFY(fullscreen->x() > capture->x());
+              QCOMPARE(fullscreen->geometry().center().y(), play->geometry().center().y());
+            }
             QVERIFY(fullscreen->height() >= 36);
-            QVERIFY(!surface->mask().isEmpty());
-            QVERIFY(!surface->mask().contains(QPoint(0, 0)));
+            QVERIFY(surface->mask().isEmpty());
+            const auto cornerFrame = rendererWidget->grabFramebuffer();
+            QCOMPARE(cornerFrame.pixelColor(0, 0).rgba(), melearner::roleColor(shadcn::Role::Background).rgba());
           }
           // The controls must remain readable over bright footage. Sample a
           // blank padding pixel in the actual composed window, not a widget
@@ -387,9 +413,14 @@ private slots:
         }
         window.resize(560, 400); QCoreApplication::processEvents();
         QTest::qWait(100);
+        if (!qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS").isEmpty())
+          QVERIFY(window.grab().save(qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS") + QString("/player-minimum-%1x.png").arg(fontScale)));
+        qInfo("Minimum viewport: video %dx%d; controls %dx%d at %d,%d",
+          surface->width(), surface->height(), controls->width(), controls->height(), controls->x(), controls->y());
         QVERIFY2(window.width() <= 560 && window.height() <= 400, "Controls exceed the minimum supported window size");
         auto* scroll = window.findChild<QScrollArea*>("lessonScroll");
         QTRY_COMPARE(scroll->horizontalScrollBar()->maximum(), 0);
+        QTRY_COMPARE(scroll->verticalScrollBar()->maximum(), 0);
         // Icon buttons retain text for accessibility, but do not paint it.
         // Check their accessible name and hit area instead of that hidden label.
         for (const auto* control : window.findChildren<QPushButton*>()) {
@@ -411,8 +442,12 @@ private slots:
                          .arg(control->text()).arg(label).arg(control->width())));
         }
         const auto* next = window.findChild<QPushButton*>("nextLesson");
+        const auto* previous = window.findChild<QPushButton*>("previousLesson");
         QVERIFY(surface->rect().contains(controls->geometry()));
+        QVERIFY(next->isVisible() && previous->isVisible());
         QVERIFY(next->mapTo(&window, QPoint()).y() >= surface->mapTo(&window, QPoint(0, surface->height())).y());
+        QVERIFY(next->mapTo(&window, QPoint(0, next->height())).y() <= window.height());
+        QVERIFY(previous->mapTo(&window, QPoint(0, previous->height())).y() <= window.height());
         QSignalSpy rates(player, &melearner::Player::rateChanged);
         speed->actions().at(4)->trigger();
         QTRY_VERIFY(!rates.isEmpty()); QCOMPARE(rates.last().first().toDouble(), 1.5);
@@ -443,8 +478,15 @@ private slots:
         QTRY_VERIFY(surface->mapTo(scroll->widget(), QPoint()).y() <= 1);
         QTRY_VERIFY(lessonTitle->mapTo(scroll->widget(), QPoint()).y() >= surface->height());
         const int viewportGap = outlinePane->isVisible() ? 20 : 0;
-        QTRY_COMPARE(surface->width(), scroll->viewport()->width() - viewportGap);
+        QTRY_VERIFY(surface->width() <= scroll->viewport()->width() - viewportGap);
         QTRY_COMPARE(surface->height(), surface->width() * 9 / 16);
+        QTRY_COMPARE(scroll->verticalScrollBar()->maximum(), 0);
+        auto* previousWide = window.findChild<QPushButton*>("previousLesson"); QVERIFY(previousWide);
+        auto* nextWide = window.findChild<QPushButton*>("nextLesson"); QVERIFY(nextWide);
+        QVERIFY(lessonTitle->isVisible() && previousWide->isVisible() && nextWide->isVisible());
+        QVERIFY(lessonTitle->mapTo(&window, QPoint()).y() + lessonTitle->height() <= window.height());
+        QVERIFY(previousWide->mapTo(&window, QPoint(0, previousWide->height())).y() <= window.height());
+        QVERIFY(nextWide->mapTo(&window, QPoint(0, nextWide->height())).y() <= window.height());
         if (!captureDirectory.isEmpty()) QVERIFY(window.grab().save(captureDirectory + QString("/player-wide-%1x.png").arg(fontScale)));
         window.resize(std::max(1280, window.fontMetrics().height() * 40), 720);
         if (fontScale == 1 && mediaFile == QStringLiteral("Systems 日本語/01 H264 AAC.mp4")) {

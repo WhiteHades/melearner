@@ -30,6 +30,7 @@
 #include <QTemporaryDir>
 #include <QTextEdit>
 #include <QTreeView>
+#include <QWheelEvent>
 #include <shadcn/widgets.hpp>
 #include <shadcn/data.hpp>
 #include <shadcn/overlays.hpp>
@@ -141,6 +142,19 @@ private slots:
       QCOMPARE(rect.left(), narrowCards.first().left());
     }
     QVERIFY(capture("library-cards-narrow"));
+    auto* scroll = courses->verticalScrollBar();
+    scroll->setValue(0);
+    const int wheelTarget = std::min(scroll->maximum(), scroll->singleStep() * QApplication::wheelScrollLines());
+    QVERIFY(wheelTarget > 0);
+    const auto wheelPoint = courses->viewport()->rect().center();
+    QWheelEvent wheel(wheelPoint, courses->viewport()->mapToGlobal(wheelPoint),
+      QPoint(), QPoint(0, -120), Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+    QApplication::sendEvent(courses->viewport(), &wheel);
+    QCOMPARE(scroll->value(), 0);
+    QTest::qWait(35);
+    QVERIFY(scroll->value() > 0 && scroll->value() < wheelTarget);
+    QTRY_COMPARE(scroll->value(), wheelTarget);
+    scroll->setValue(0);
     window.resize(1440, 900); QTest::qWait(100);
     QTest::mouseClick(list, Qt::LeftButton);
     QTRY_COMPARE(courses->presentation(), shadcn::ListPresentation::List);
@@ -275,10 +289,17 @@ private slots:
       window.chooseRoot(root);
       auto* courses = window.findChild<QListView*>("courses");
       QTRY_COMPARE(courses->model()->rowCount(), 1);
+      auto* greeting = window.findChild<QLabel*>("learnerGreeting"); QVERIFY(greeting);
+      auto* listMode = window.findChild<QPushButton*>("listView"); QVERIFY(listMode);
+      auto* cardsMode = window.findChild<QPushButton*>("cardsView"); QVERIFY(cardsMode);
+      QCOMPARE(listMode->mapTo(&window, QPoint(0, listMode->height() / 2)).y(),
+               greeting->mapTo(&window, QPoint(0, greeting->height() / 2)).y());
+      QCOMPARE(cardsMode->mapTo(&window, QPoint(0, cardsMode->height() / 2)).y(),
+               greeting->mapTo(&window, QPoint(0, greeting->height() / 2)).y());
 
       // The library's search result is a real route: select it and read the file.
       window.activateWindow();
-      QTest::keyClick(&window, Qt::Key_Slash);
+      QTest::keyClick(&window, Qt::Key_K, Qt::ControlModifier);
       auto* search = window.findChild<SearchDialog*>();
       QTRY_VERIFY(search && search->isVisible());
       auto* query = search->findChild<QLineEdit*>("searchQuery");
@@ -358,7 +379,13 @@ private slots:
         if (const auto captures = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS"); !captures.isEmpty())
           QVERIFY(window.grab().save(captures + QString("/course-%1.png").arg(width)));
       }
-      QVERIFY(!window.findChild<QLineEdit*>("searchButton")->isVisible());
+      auto* searchButton = window.findChild<QPushButton*>("searchButton");
+      QVERIFY(searchButton);
+      QVERIFY(searchButton->isVisible());
+      QTest::mouseClick(searchButton, Qt::LeftButton);
+      search = window.findChild<SearchDialog*>();
+      QTRY_VERIFY(search && search->isVisible());
+      search->reject();
 
       auto* complete = window.findChild<QPushButton*>("markComplete");
       QTRY_VERIFY(complete && complete->isEnabled());
@@ -429,6 +456,8 @@ private slots:
     }
     MainWindow window(files.path() + "/library.sqlite3");
     window.show();
+    auto* homeTitle = window.findChild<QLabel*>("routeTitle"); QVERIFY(homeTitle);
+    QCOMPARE(homeTitle->text(), QString("meLearner"));
     QTRY_VERIFY(window.findChild<QPushButton*>("chooseRoot")->isEnabled());
     window.chooseRoot(root);
     auto* courses = window.findChild<QListView*>("courses");
@@ -492,7 +521,7 @@ private slots:
     QVERIFY(shortcutList);
     for (int row = 0; row < shortcutList->count(); ++row) {
       const auto text = shortcutList->item(row)->text();
-      QVERIFY(!text.contains("F1") && !text.contains("Ctrl+K") && !text.contains("Ctrl+Space"));
+      QVERIFY(!text.contains("F1") && !text.contains("Ctrl+Space"));
     }
     const auto capturePath = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
     if (!capturePath.isEmpty()) {
