@@ -1,13 +1,13 @@
 # Windows development
 
-The Windows EXE installer is planned, not available. A native Windows build and
-clean machine playback and document tests are still required.
+The manual workflow builds the app with native MSVC. The Windows EXE installer
+is planned, not available. Clean machine installation checks are still required.
 
 ## Required toolchain
 
-The current app requires Qt 6.11.2 WebEngine for HTML and Markdown. Qt WebEngine
-does not build with MinGW, so the previous MSYS2 UCRT64 instructions do not cover
-the current app. See [Qt WebEngine platform requirements](https://doc.qt.io/qt-6.11/qtwebengine-platform-notes.html#windows).
+The current app requires Qt 6.11.2 WebEngine for HTML and Markdown. Use the MSVC
+Qt kit. Qt WebEngine does not support MinGW.
+See [Qt WebEngine platform requirements](https://doc.qt.io/qt-6.11/qtwebengine-platform-notes.html#windows).
 
 Prepare a native MSVC environment with a matching Qt kit and compatible builds
 of SQLite, libmpv, libzip, md4c and FFmpeg. CMake also consumes the pinned Lexbor
@@ -19,9 +19,10 @@ toolchain and builds the required libraries. It downloads the official Qt 6.11.2
 MSVC SDK, including PDF and WebEngine, with pinned SHA256 checks. Qt is not
 compiled from source. The SDK archives are cached separately before building the
 remaining libraries. The SDK archive cache has a 1 GiB cap and each build has a
-one hour limit. It does not publish an installer. The legacy UCRT64 script checks
-for the required WebEngine module before configuring; it is not a qualified
-Windows build path.
+one hour limit. Use that workflow for the current Windows build. It does not
+publish an installer. Its optional `run_playback` input runs the existing video,
+controls, layout and saved progress checks with software OpenGL. Leave it off
+unless playback verification is needed.
 
 The video renderer resolves OpenGL calls through the active Qt context. Qt can
 select the system driver or its bundled software renderer without mixing the
