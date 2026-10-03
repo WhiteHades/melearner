@@ -16,8 +16,8 @@ jobs:
     runs-on: windows-2025
     timeout-minutes: 180
     env:
-      VCPKG_ROOT: C:\v
-      VCPKG_DEFAULT_BINARY_CACHE: C:\vcache\archives
+      VCPKG_ROOT: D:\v
+      VCPKG_DEFAULT_BINARY_CACHE: D:\vcache\archives
       VCPKG_MAX_CONCURRENCY: 2
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -42,7 +42,7 @@ jobs:
         id: vcpkg-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
-          path: C:\vcache\archives
+          path: D:\vcache\archives
           key: windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v2
           restore-keys: |
             windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v2-partial-
@@ -51,9 +51,9 @@ jobs:
         id: dependencies
         shell: pwsh
         run: |
-          git clone --filter=blob:none https://github.com/microsoft/vcpkg.git C:\v
-          git -C C:\v checkout 3cbc1db4d867ec83c89fba4c461321c11f78b5e3
-          $tripletDir = 'C:\vcache\triplets'
+          git clone --filter=blob:none https://github.com/microsoft/vcpkg.git D:\v
+          git -C D:\v checkout 3cbc1db4d867ec83c89fba4c461321c11f78b5e3
+          $tripletDir = 'D:\vcache\triplets'
           New-Item -ItemType Directory -Force $tripletDir | Out-Null
           New-Item -ItemType Directory -Force $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
           @"
@@ -67,17 +67,18 @@ jobs:
           if (-not $vs) { throw 'Visual Studio installation was not found' }
           Import-Module (Join-Path $vs 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
           Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
-          & C:\v\bootstrap-vcpkg.bat -disableMetrics
+          & D:\v\bootstrap-vcpkg.bat -disableMetrics
           if ($LASTEXITCODE -ne 0) { throw 'vcpkg bootstrap failed' }
-          & C:\v\vcpkg.exe install qtbase qtwebengine qttools sqlite3 libzip md4c ffmpeg pkgconf `
-            --triplet x64-windows-release --host-triplet x64-windows-release --overlay-triplets=$tripletDir
+          & D:\v\vcpkg.exe install qtbase qtwebengine qttools sqlite3 libzip md4c ffmpeg pkgconf `
+            --triplet x64-windows-release --host-triplet x64-windows-release --overlay-triplets=$tripletDir `
+            --clean-buildtrees-after-build --clean-packages-after-build
           if ($LASTEXITCODE -ne 0) { throw 'vcpkg dependency installation failed' }
       - name: measure binary archive cache size
         if: ${{ !cancelled() && steps.dependencies.outcome != 'skipped' && steps.vcpkg-cache.outputs.cache-hit != 'true' }}
         id: cache-budget
         shell: pwsh
         run: |
-          $bytes = (Get-ChildItem C:\vcache\archives -File -Recurse -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
+          $bytes = (Get-ChildItem D:\vcache\archives -File -Recurse -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
           if ($null -eq $bytes) { $bytes = 0 }
           Write-Host "Compressed vcpkg archive cache size: $bytes bytes"
           if ($bytes -gt 0 -and $bytes -le 4294967296) {
@@ -90,7 +91,7 @@ jobs:
         if: ${{ !cancelled() && steps.cache-budget.outputs.cacheable == 'true' }}
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
-          path: C:\vcache\archives
+          path: D:\vcache\archives
           key: windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-${{ steps.dependencies.outcome == 'success' && 'v2' || format('v2-partial-{0}', github.run_id) }}
       - name: fetch and prepare the pinned mpv development SDK
         shell: pwsh
@@ -101,8 +102,8 @@ jobs:
           Import-Module (Join-Path $vs 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
           Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
           $sdkUrl = 'https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20261003/mpv-dev-x86_64-20261003-git-3186d369f9.7z'
-          $sdkArchive = 'C:\v\mpv-dev.7z'
-          $sdkRoot = 'C:\v\mpv-sdk'
+          $sdkArchive = 'D:\v\mpv-dev.7z'
+          $sdkRoot = 'D:\v\mpv-sdk'
           Invoke-WebRequest -Uri $sdkUrl -OutFile $sdkArchive
           $actualHash = (Get-FileHash -Algorithm SHA256 $sdkArchive).Hash.ToLowerInvariant()
           $expectedHash = 'b8c2d656c1584d5f08196fcee5c2d0783d1f76021897c4e0b3cc30f94c79522e'
@@ -154,7 +155,7 @@ jobs:
           if (-not $vs) { throw 'Visual Studio installation was not found' }
           Import-Module (Join-Path $vs 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
           Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
-          $vcpkgInstalled = 'C:\v\installed\x64-windows-release'
+          $vcpkgInstalled = 'D:\v\installed\x64-windows-release'
           $pkgconf = Join-Path $vcpkgInstalled 'tools\pkgconf\pkgconf.exe'
           if (-not (Test-Path $pkgconf)) { throw "pkgconf not found at $pkgconf" }
           $env:PKG_CONFIG_PATH = "$env:MPV_SDK\lib\pkgconfig;$vcpkgInstalled\lib\pkgconfig;$vcpkgInstalled\share\pkgconfig"
@@ -162,10 +163,10 @@ jobs:
           & $pkgconf --exists mpv libzip md4c md4c-html libavformat libavcodec libavutil libswscale
           if ($LASTEXITCODE -ne 0) { throw 'pkgconf dependency validation failed' }
           & $env:MELEARNER_CMAKE -S . -B build\manual-windows -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON `
-            -DCMAKE_TOOLCHAIN_FILE=C:\v\scripts\buildsystems\vcpkg.cmake `
+            -DCMAKE_TOOLCHAIN_FILE=D:\v\scripts\buildsystems\vcpkg.cmake `
             -DVCPKG_TARGET_TRIPLET=x64-windows-release `
             -DVCPKG_HOST_TRIPLET=x64-windows-release `
-            -DVCPKG_OVERLAY_TRIPLETS=C:\vcache\triplets `
+            -DVCPKG_OVERLAY_TRIPLETS=D:\vcache\triplets `
             -DPKG_CONFIG_EXECUTABLE="$pkgconf"
           if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed' }
           & $env:MELEARNER_CMAKE --build build\manual-windows --parallel 2

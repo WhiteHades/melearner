@@ -23,6 +23,9 @@ avoids a second Debug build of Qt and keeps vcpkg on its native build path.
 Completed dependency archives are also saved if a later dependency fails, within
 the 4 GiB cache cap. The next manual run restores them instead of rebuilding
 everything. A complete dependency cache takes priority over partial caches.
+The workflow uses the runner's larger work drive for vcpkg and removes completed
+build trees and staging packages between dependencies. Installed libraries,
+downloaded sources, build logs and binary archives remain available.
 
 Choose a folder on a local drive. URLs, network shares and symlinked paths are
 not accepted as course roots.
