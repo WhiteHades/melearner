@@ -64,7 +64,7 @@ QSet<QString> validateInventory(const QString& stage, const QString& usrRoot) {
     }
     const auto files = inventory.value(QStringLiteral("files"));
     if (!files.isArray() || files.toArray().isEmpty()) fail(QStringLiteral("runtime binary inventory files must be a nonempty array"));
-    const QStringList sourceKinds{QStringLiteral("application-build"), QStringLiteral("mpv-build"), QStringLiteral("library-provider"), QStringLiteral("qt-plugin-provider")};
+    const QStringList sourceKinds{QStringLiteral("application-build"), QStringLiteral("mpv-build"), QStringLiteral("library-provider"), QStringLiteral("qt-plugin-provider"), QStringLiteral("webengine-helper")};
     QSet<QString> paths;
     for (const auto& value : files.toArray()) {
         if (!value.isObject()) fail(QStringLiteral("runtime binary inventory entry must be an object"));
@@ -113,6 +113,15 @@ void validate(const QString& stage, bool appImage) {
     if (!binary.isExecutable()) {
         fail(QStringLiteral("staged melearner is not executable: %1").arg(binary.filePath()));
     }
+    const auto webengineHelper = requireFile(stage, QStringLiteral("usr/libexec/QtWebEngineProcess"), QStringLiteral("QtWebEngineProcess helper"));
+    requireFile(stage, QStringLiteral("usr/share/doc/melearner/qtwebengine/LICENSE.chromium"), QStringLiteral("Qt WebEngine provider notice"));
+    if (!webengineHelper.isExecutable()) fail(QStringLiteral("staged QtWebEngineProcess is not executable: %1").arg(webengineHelper.filePath()));
+    for (const auto& resource : {QStringLiteral("qtwebengine_resources.pak"), QStringLiteral("qtwebengine_resources_100p.pak"), QStringLiteral("qtwebengine_resources_200p.pak"), QStringLiteral("v8_context_snapshot.bin")}) {
+        requireFile(stage, QStringLiteral("usr/share/qt6/resources/") + resource, QStringLiteral("Qt WebEngine resource"));
+    }
+    const auto localeDir = path(stage, QStringLiteral("usr/share/qt6/translations/qtwebengine_locales"));
+    const auto locales = QDir(localeDir).entryInfoList({QStringLiteral("*.pak")}, QDir::Files | QDir::NoSymLinks);
+    if (locales.isEmpty()) fail(QStringLiteral("staged Qt WebEngine locales are missing or empty: %1").arg(localeDir));
     const auto binPath = QFileInfo(binary.filePath()).absolutePath();
     const auto binEntries = QDir(binPath).entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
     for (const auto& candidate : binEntries) {
@@ -160,6 +169,23 @@ void validate(const QString& stage, bool appImage) {
     if (!metadata.value(QStringLiteral("releaseQualified")).isBool() || metadata.value(QStringLiteral("releaseQualified")).toBool()) fail(QStringLiteral("runtime-stage.json must keep releaseQualified false"));
     if (metadata.value(QStringLiteral("binaryInventory")).toString() != QStringLiteral("runtime-binaries.json")) fail(QStringLiteral("runtime-stage.json must name runtime-binaries.json"));
     auto inventoriedPaths = validateInventory(stage, usrRoot);
+    if (!inventoriedPaths.contains(QStringLiteral("usr/libexec/QtWebEngineProcess"))) fail(QStringLiteral("runtime inventory omits QtWebEngineProcess"));
+    QJsonArray expectedWebEngineResources{
+        QStringLiteral("usr/share/qt6/resources/qtwebengine_resources.pak"),
+        QStringLiteral("usr/share/qt6/resources/qtwebengine_resources_100p.pak"),
+        QStringLiteral("usr/share/qt6/resources/qtwebengine_resources_200p.pak"),
+        QStringLiteral("usr/share/qt6/resources/v8_context_snapshot.bin")};
+    const auto icuProvider = metadata.value(QStringLiteral("qtWebEngineIcuProvider")).toString();
+    if (icuProvider == QStringLiteral("bundled-data")) {
+        expectedWebEngineResources.insert(3, QStringLiteral("usr/share/qt6/resources/icudtl.dat"));
+        requireFile(stage, QStringLiteral("usr/share/qt6/resources/icudtl.dat"), QStringLiteral("Qt WebEngine ICU data"));
+    } else if (icuProvider != QStringLiteral("private-libraries")) {
+        fail(QStringLiteral("runtime-stage.json has an invalid Qt WebEngine ICU provider"));
+    }
+    if (!metadata.value(QStringLiteral("qtWebEngineResources")).isArray()
+        || metadata.value(QStringLiteral("qtWebEngineResources")).toArray() != expectedWebEngineResources) {
+        fail(QStringLiteral("runtime-stage.json Qt WebEngine resource list is incorrect"));
+    }
     const QStringList expectedLegal{QStringLiteral("LICENSE"), QStringLiteral("THIRD_PARTY_NOTICES"), QStringLiteral("melearner.spdx.json"), QStringLiteral("runtime-lock.json"), QStringLiteral("reference-profiles-v1.json")};
     QStringList actualLegal;
     if (metadata.value(QStringLiteral("legalInputs")).isArray()) {
@@ -235,12 +261,22 @@ void validate(const QString& stage, bool appImage) {
     const auto runtimeEntries = QDir(privateDir).entryInfoList(QDir::Files | QDir::System | QDir::Hidden);
     bool hasMpv = false;
     bool hasQtPdf = false;
+    bool hasQtWebEngine = false;
+    bool hasIcuUc = false;
+    bool hasIcuI18n = false;
+    bool hasIcuData = false;
     for (const auto& entry : runtimeEntries) {
         hasMpv |= entry.fileName().startsWith(QStringLiteral("libmpv.so"));
         hasQtPdf |= entry.fileName().startsWith(QStringLiteral("libQt6Pdf.so"));
+        hasQtWebEngine |= entry.fileName().startsWith(QStringLiteral("libQt6WebEngineCore.so"));
+        hasIcuUc |= entry.fileName().startsWith(QStringLiteral("libicuuc.so"));
+        hasIcuI18n |= entry.fileName().startsWith(QStringLiteral("libicui18n.so"));
+        hasIcuData |= entry.fileName().startsWith(QStringLiteral("libicudata.so"));
     }
     if (!hasMpv) fail(QStringLiteral("private runtime closure does not contain libmpv"));
     if (!hasQtPdf) fail(QStringLiteral("private runtime closure does not contain Qt6Pdf"));
+    if (!hasQtWebEngine) fail(QStringLiteral("private runtime closure does not contain Qt6WebEngineCore"));
+    if (icuProvider == QStringLiteral("private-libraries") && !(hasIcuUc && hasIcuI18n && hasIcuData)) fail(QStringLiteral("private runtime closure does not contain all required ICU libraries"));
 }
 
 } // namespace

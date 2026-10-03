@@ -217,6 +217,82 @@ if(NOT IS_DIRECTORY "${_qt_plugin_dir}")
   message(FATAL_ERROR "Qt plugin directory is missing: ${_qt_plugin_dir}")
 endif()
 
+if(DEFINED MELEARNER_QTPATHS AND NOT "${MELEARNER_QTPATHS}" STREQUAL "")
+  set(_qtpaths_tool "${MELEARNER_QTPATHS}")
+else()
+  find_program(_qtpaths_tool NAMES qtpaths6 qtpaths
+    PATHS /usr/lib/qt6/bin /usr/lib/x86_64-linux-gnu/qt6/bin)
+endif()
+if(NOT _qtpaths_tool)
+  message(FATAL_ERROR "qtpaths6 or qtpaths is required to locate Qt WebEngine runtime files")
+endif()
+execute_process(COMMAND "${_qtpaths_tool}" --query
+  RESULT_VARIABLE _qtpaths_query_result OUTPUT_VARIABLE _qtpaths_query
+  ERROR_VARIABLE _qtpaths_query_error)
+if(NOT _qtpaths_query_result EQUAL 0)
+  message(FATAL_ERROR "could not query Qt installation paths: ${_qtpaths_query_error}")
+endif()
+string(REPLACE "\r" "" _qtpaths_query "${_qtpaths_query}")
+string(REPLACE "\n" ";" _qtpaths_lines "${_qtpaths_query}")
+foreach(_qt_path_key IN ITEMS QT_INSTALL_PREFIX QT_INSTALL_LIBEXECS QT_INSTALL_DATA QT_INSTALL_TRANSLATIONS)
+  set(_qt_path_value "")
+  foreach(_qtpaths_line IN LISTS _qtpaths_lines)
+    if(_qtpaths_line MATCHES "^${_qt_path_key}:(.+)$")
+      set(_qt_path_value "${CMAKE_MATCH_1}")
+      break()
+    endif()
+  endforeach()
+  if(_qt_path_value STREQUAL "")
+    message(FATAL_ERROR "qtpaths did not report ${_qt_path_key}")
+  endif()
+  set("_${_qt_path_key}" "${_qt_path_value}")
+endforeach()
+set(_webengine_helper "${_QT_INSTALL_LIBEXECS}/QtWebEngineProcess")
+set(_webengine_resource_dir "${_QT_INSTALL_DATA}/resources")
+set(_webengine_locale_dir "${_QT_INSTALL_TRANSLATIONS}/qtwebengine_locales")
+set(_webengine_notice_candidates
+  "${_QT_INSTALL_PREFIX}/licenses/QtWebEngine/LICENSE.chromium"
+  "${_QT_INSTALL_PREFIX}/share/licenses/qt6-webengine/LICENSE.chromium"
+  "${_QT_INSTALL_PREFIX}/share/licenses/qtwebengine/LICENSE.chromium"
+  "${_QT_INSTALL_DATA}/../licenses/qt6-webengine/LICENSE.chromium")
+set(_webengine_notice "")
+foreach(_candidate IN LISTS _webengine_notice_candidates)
+  if(EXISTS "${_candidate}" AND NOT IS_DIRECTORY "${_candidate}" AND NOT IS_SYMLINK "${_candidate}")
+    file(SIZE "${_candidate}" _candidate_size)
+    if(_candidate_size GREATER 0)
+      set(_webengine_notice "${_candidate}")
+      break()
+    endif()
+  endif()
+endforeach()
+if(_webengine_notice STREQUAL "")
+  message(FATAL_ERROR "Qt WebEngine provider notice LICENSE.chromium is missing below Qt prefix ${_QT_INSTALL_PREFIX}")
+endif()
+set(_webengine_doc_dir "${_doc_dir}/qtwebengine")
+file(MAKE_DIRECTORY "${_webengine_doc_dir}")
+file(COPY_FILE "${_webengine_notice}" "${_webengine_doc_dir}/LICENSE.chromium")
+_require_file("${_webengine_doc_dir}/LICENSE.chromium" "Qt WebEngine provider notice")
+foreach(_webengine_file IN ITEMS
+    "${_webengine_resource_dir}/qtwebengine_resources.pak"
+    "${_webengine_resource_dir}/qtwebengine_resources_100p.pak"
+    "${_webengine_resource_dir}/qtwebengine_resources_200p.pak"
+    "${_webengine_resource_dir}/v8_context_snapshot.bin")
+  _require_file("${_webengine_file}" "Qt WebEngine resource")
+endforeach()
+set(_webengine_has_icudtl FALSE)
+if(EXISTS "${_webengine_resource_dir}/icudtl.dat")
+  _require_file("${_webengine_resource_dir}/icudtl.dat" "Qt WebEngine ICU data")
+  set(_webengine_has_icudtl TRUE)
+endif()
+if(NOT IS_DIRECTORY "${_webengine_locale_dir}")
+  message(FATAL_ERROR "Qt WebEngine locales are missing: ${_webengine_locale_dir}")
+endif()
+file(GLOB _webengine_locale_files "${_webengine_locale_dir}/*.pak")
+if(NOT _webengine_locale_files)
+  message(FATAL_ERROR "Qt WebEngine locales are empty: ${_webengine_locale_dir}")
+endif()
+_require_file("${_webengine_helper}" "QtWebEngineProcess helper")
+
 set(_plugin_root "${_install_prefix}/lib/qt6/plugins")
 
 # Keep the input hash before RPATH changes so a bundled file can be matched to
@@ -298,7 +374,20 @@ foreach(_plugin_spec IN LISTS _required_qt_plugins)
 endforeach()
 
 file(WRITE "${_install_prefix}/bin/qt.conf"
-  "[Paths]\nPrefix=..\nPlugins=lib/qt6/plugins\n")
+  "[Paths]\nPrefix=..\nPlugins=lib/qt6/plugins\nLibraries=lib\nLibraryExecutables=libexec\nData=share/qt6\nTranslations=share/qt6/translations\n")
+file(MAKE_DIRECTORY "${_install_prefix}/libexec" "${_install_prefix}/share/qt6/resources" "${_install_prefix}/share/qt6/translations/qtwebengine_locales")
+file(COPY_FILE "${_webengine_helper}" "${_install_prefix}/libexec/QtWebEngineProcess")
+file(CHMOD "${_install_prefix}/libexec/QtWebEngineProcess" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+file(WRITE "${_install_prefix}/libexec/qt.conf"
+  "[Paths]\nPrefix=..\nPlugins=lib/qt6/plugins\nLibraries=lib\nLibraryExecutables=libexec\nData=share/qt6\nTranslations=share/qt6/translations\n")
+foreach(_webengine_name IN ITEMS qtwebengine_resources.pak qtwebengine_resources_100p.pak qtwebengine_resources_200p.pak v8_context_snapshot.bin)
+  file(COPY_FILE "${_webengine_resource_dir}/${_webengine_name}" "${_install_prefix}/share/qt6/resources/${_webengine_name}")
+endforeach()
+if(_webengine_has_icudtl)
+  file(COPY_FILE "${_webengine_resource_dir}/icudtl.dat" "${_install_prefix}/share/qt6/resources/icudtl.dat")
+endif()
+file(COPY ${_webengine_locale_files} DESTINATION "${_install_prefix}/share/qt6/translations/qtwebengine_locales")
+_remember_runtime_origin("${_webengine_helper}" "${_install_prefix}/libexec/QtWebEngineProcess" "webengine-helper")
 
 set(_runtime_dir "${_install_prefix}/lib/melearner")
 file(MAKE_DIRECTORY "${_runtime_dir}")
@@ -353,7 +442,7 @@ function(_require_patched_mpv_runtime _build_dir _runtime_dir _resolved)
 endfunction()
 
 file(GET_RUNTIME_DEPENDENCIES
-  EXECUTABLES "${_binary}"
+  EXECUTABLES "${_binary}" "${_install_prefix}/libexec/QtWebEngineProcess"
   MODULES ${_plugin_sources}
   DIRECTORIES "${_qt_plugin_dir}" "${_runtime_dir}" "${_install_prefix}/lib"
   PRE_EXCLUDE_REGEXES ${_runtime_pre_exclude_regexes}
@@ -481,6 +570,7 @@ endforeach()
 
 set(_has_libmpv FALSE)
 set(_has_qt_pdf FALSE)
+set(_has_qt_webengine FALSE)
 foreach(_dependency_name IN LISTS _private_dependency_names)
   if(_dependency_name MATCHES "^libmpv\\.so")
     set(_has_libmpv TRUE)
@@ -488,12 +578,34 @@ foreach(_dependency_name IN LISTS _private_dependency_names)
   if(_dependency_name MATCHES "^libQt6Pdf\\.so")
     set(_has_qt_pdf TRUE)
   endif()
+  if(_dependency_name MATCHES "^libQt6WebEngineCore\\.so")
+    set(_has_qt_webengine TRUE)
+  endif()
 endforeach()
 if(NOT _has_libmpv)
   message(FATAL_ERROR "runtime closure does not contain libmpv")
 endif()
 if(NOT _has_qt_pdf)
   message(FATAL_ERROR "runtime closure does not contain Qt6Pdf")
+endif()
+if(NOT _has_qt_webengine)
+  message(FATAL_ERROR "runtime closure does not contain Qt6WebEngineCore")
+endif()
+if(_webengine_has_icudtl)
+  set(_webengine_icu_provider "bundled-data")
+else()
+  foreach(_icu_library IN ITEMS libicuuc.so libicui18n.so libicudata.so)
+    set(_icu_found FALSE)
+    foreach(_dependency_name IN LISTS _private_dependency_names)
+      if(_dependency_name MATCHES "^${_icu_library}([.].*)?$")
+        set(_icu_found TRUE)
+      endif()
+    endforeach()
+    if(NOT _icu_found)
+      message(FATAL_ERROR "Qt WebEngine uses system ICU but its private runtime closure is missing ${_icu_library}")
+    endif()
+  endforeach()
+  set(_webengine_icu_provider "private-libraries")
 endif()
 
 function(_run_patchelf _path _rpath)
@@ -508,6 +620,7 @@ function(_run_patchelf _path _rpath)
 endfunction()
 
 _run_patchelf("${_binary}" "$ORIGIN/../lib/melearner")
+_run_patchelf("${_install_prefix}/libexec/QtWebEngineProcess" "$ORIGIN/../lib/melearner")
 
 file(GLOB _staged_plugin_files LIST_DIRECTORIES false "${_plugin_root}/*/*.so*")
 foreach(_plugin IN LISTS _staged_plugin_files)
@@ -540,7 +653,7 @@ function(_audit_elf _path _label)
     message(FATAL_ERROR "readelf failed for ${_label}: ${_readelf_error}")
   endif()
   string(TOLOWER "${_readelf_output}" _readelf_lower)
-  if(_readelf_lower MATCHES "\\((needed|soname)\\)[^\n]*\\[[^]]*(webkit|javascriptcore|webview2|cef|electron|tauri|qwebengine|qt6webengine|qt6qml|qt6quick)")
+  if(_readelf_lower MATCHES "\\((needed|soname)\\)[^\n]*\\[[^]]*(webkit|javascriptcore|webview2|cef|electron|tauri)")
     message(FATAL_ERROR "superseded browser/runtime import in ${_label}")
   endif()
   if(_readelf_output MATCHES "(RPATH|RUNPATH).*(/home/|/opt/|/usr/local/|/nix/store/)")
@@ -549,6 +662,7 @@ function(_audit_elf _path _label)
 endfunction()
 
 _audit_elf("${_binary}" "melearner")
+_audit_elf("${_install_prefix}/libexec/QtWebEngineProcess" "QtWebEngineProcess")
 foreach(_plugin IN LISTS _staged_plugin_files)
   if(_plugin MATCHES "\\.so(\\.|$)" AND NOT IS_SYMLINK "${_plugin}")
     _audit_elf("${_plugin}" "Qt plugin ${_plugin}")
@@ -603,6 +717,15 @@ endfunction()
 _json_array(_private_json ${_private_dependency_names})
 _json_array(_system_json ${_system_boundary_names})
 _json_array(_plugin_groups_json ${_plugin_group_names})
+set(_webengine_resource_paths
+  "usr/share/qt6/resources/qtwebengine_resources.pak"
+  "usr/share/qt6/resources/qtwebengine_resources_100p.pak"
+  "usr/share/qt6/resources/qtwebengine_resources_200p.pak"
+  "usr/share/qt6/resources/v8_context_snapshot.bin")
+if(_webengine_has_icudtl)
+  list(INSERT _webengine_resource_paths 3 "usr/share/qt6/resources/icudtl.dat")
+endif()
+_json_array(_webengine_resources_json ${_webengine_resource_paths})
 get_property(_inventory_paths GLOBAL PROPERTY _runtime_origin_paths)
 list(SORT _inventory_paths)
 set(_binary_inventory "{\n  \"schemaVersion\": 1,\n  \"version\": \"${MELEARNER_VERSION}\",\n  \"files\": [")
@@ -638,6 +761,8 @@ file(WRITE "${_doc_dir}/runtime-stage.json"
   "  \"privateLibraries\": ${_private_json},\n"
   "  \"systemRuntimeBoundary\": ${_system_json},\n"
   "  \"qtPluginGroups\": ${_plugin_groups_json},\n"
+  "  \"qtWebEngineResources\": ${_webengine_resources_json},\n"
+  "  \"qtWebEngineIcuProvider\": \"${_webengine_icu_provider}\",\n"
   "  \"legalInputs\": [\"LICENSE\", \"THIRD_PARTY_NOTICES\", \"melearner.spdx.json\", \"runtime-lock.json\", \"reference-profiles-v1.json\"]\n"
   "}\n")
 
