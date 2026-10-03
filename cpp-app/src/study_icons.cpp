@@ -162,6 +162,15 @@ void drawIcon(QPainter& painter, StudyIcon icon) {
     case StudyIcon::Pause: drawPause(painter); break;
     case StudyIcon::Fullscreen: drawFullscreen(painter); break;
     case StudyIcon::Check: drawCheck(painter); break;
+    case StudyIcon::Circle:
+    case StudyIcon::CircleCheck:
+      painter.drawEllipse(QRectF(3.5, 3.5, 17, 17));
+      if (icon == StudyIcon::CircleCheck) {
+        QPainterPath check;
+        check.moveTo(7.5, 12); check.lineTo(10.5, 15); check.lineTo(16.5, 9);
+        painter.drawPath(check);
+      }
+      break;
     case StudyIcon::Folder: drawFolder(painter); break;
     case StudyIcon::Volume:
     case StudyIcon::Muted: {

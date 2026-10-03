@@ -17,6 +17,8 @@ enum class StudyIcon {
   Pause,
   Fullscreen,
   Check,
+  Circle,
+  CircleCheck,
   Folder,
   Volume,
   Muted,
