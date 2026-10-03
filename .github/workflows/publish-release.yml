@@ -1,0 +1,155 @@
+name: Draft release delivery
+
+on:
+  workflow_dispatch:
+    inputs:
+      linux_run:
+        description: Successful Linux build run ID with diagnostic package enabled
+        type: string
+        required: true
+      windows_run:
+        description: Successful Windows build run ID with diagnostic package enabled
+        type: string
+        required: true
+      macos_run:
+        description: Successful macOS build run ID with diagnostic package enabled
+        type: string
+        required: true
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: draft-release-delivery
+  cancel-in-progress: false
+
+jobs:
+  draft:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out workflow source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: true
+
+      - name: Validate source runs and download their artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LINUX_RUN: ${{ inputs.linux_run }}
+          WINDOWS_RUN: ${{ inputs.windows_run }}
+          MACOS_RUN: ${{ inputs.macos_run }}
+        run: |
+          set -euo pipefail
+          for run_id in "$LINUX_RUN" "$WINDOWS_RUN" "$MACOS_RUN"; do
+            [[ "$run_id" =~ ^[0-9]+$ ]] || { echo "run IDs must contain digits only" >&2; exit 1; }
+          done
+          mkdir -p .tmp/release-delivery/{linux,windows,macos,out}
+          validate_run() {
+            local id="$1" expected="$2" artifact="$3" destination="$4" metadata workflow_path head
+            metadata="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${id}")"
+            [[ "$(jq -r .repository.full_name <<<"$metadata")" == "$GITHUB_REPOSITORY" ]] || { echo "run $id belongs to another repository" >&2; return 1; }
+            [[ "$(jq -r .status <<<"$metadata")" == completed && "$(jq -r .conclusion <<<"$metadata")" == success ]] || { echo "run $id is not successful and completed" >&2; return 1; }
+            workflow="$(jq -r .workflow_id <<<"$metadata")"
+            workflow_path="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}" --jq .path)"
+            [[ "$workflow_path" == "$expected" ]] || { echo "run $id uses unexpected workflow: $workflow_path" >&2; return 1; }
+            head="$(jq -r .head_sha <<<"$metadata")"
+            git fetch --no-tags origin "$head"
+            gh run download "$id" --name "$artifact" --dir "$destination" >&2
+            printf '%s\n' "$head"
+          }
+          linux_head="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${LINUX_RUN}" --jq .head_sha)"
+          linux_sha="$(validate_run "$LINUX_RUN" .github/workflows/linux-build.yml "linux-diagnostic-${linux_head}" .tmp/release-delivery/linux)"
+          windows_sha="$(validate_run "$WINDOWS_RUN" .github/workflows/windows-build.yml melearner-windows-diagnostic-installer .tmp/release-delivery/windows)"
+          macos_sha="$(validate_run "$MACOS_RUN" .github/workflows/macos-build.yml melearner-0.1.9-macos-arm64-diagnostic .tmp/release-delivery/macos)"
+          for head in "$linux_sha" "$windows_sha" "$macos_sha"; do
+            [[ "$(git ls-tree "$head" -- cpp-app cmake CMakeLists.txt)" == "$(git ls-tree "$GITHUB_SHA" -- cpp-app cmake CMakeLists.txt)" ]] || {
+              echo "run commit $head has a different C++ application source tree" >&2; exit 1;
+            }
+          done
+          jq -n --arg linux "$linux_sha" --arg windows "$windows_sha" --arg macos "$macos_sha" \
+            '{linux_head_sha:$linux,windows_head_sha:$windows,macos_head_sha:$macos}' \
+            > .tmp/release-delivery/out/source-heads.json
+
+      - name: Assemble release assets and package Arch from the validated AppImage tree
+        run: |
+          set -euo pipefail
+          root=.tmp/release-delivery
+          linux_file="$(find "$root/linux" -type f -name melearner_0.1.9_amd64.AppImage -print -quit)"
+          windows_file="$(find "$root/windows" -type f -name melearner-0.1.9-setup.exe -print -quit)"
+          macos_file="$(find "$root/macos" -type f -name melearner-0.1.9-macos-arm64.dmg -print -quit)"
+          [[ -n "$linux_file" && -n "$windows_file" && -n "$macos_file" ]] || { echo "one or more expected platform assets were not found" >&2; exit 1; }
+          windows_sum="$windows_file.sha256"
+          macos_sum="$macos_file.sha256"
+          for file in "$linux_file" "$windows_file" "$windows_sum" "$macos_file" "$macos_sum"; do
+            [[ -s "$file" && ! -L "$file" ]] || { echo "expected artifact missing: $file" >&2; exit 1; }
+          done
+          (cd "$(dirname "$windows_file")" && sha256sum --check "$(basename "$windows_sum")")
+          (cd "$(dirname "$macos_file")" && sha256sum --check "$(basename "$macos_sum")")
+
+          out="$root/out"
+          cp -- "$linux_file" "$out/"
+          cp -- "$windows_file" "$out/"
+          cp -- "$macos_file" "$out/"
+          chmod +x "$out/$(basename "$linux_file")"
+          (cd "$out" && sha256sum "$(basename "$linux_file")" > "$(basename "$linux_file").sha256")
+          cp -- "$windows_sum" "$out/$(basename "$windows_file").sha256"
+          cp -- "$macos_sum" "$out/$(basename "$macos_file").sha256"
+
+          extract="$root/appimage"
+          mkdir -p "$extract"
+          (cd "$extract" && "$GITHUB_WORKSPACE/$out/$(basename "$linux_file")" --appimage-extract)
+          stage="$extract/squashfs-root"
+          [[ -d "$stage/usr" && ! -L "$stage/usr" ]] || { echo "AppImage extraction lacks a real usr tree" >&2; exit 1; }
+
+          package_dir="$root/arch-package"
+          mkdir -p "$package_dir"
+          cp packaging/arch/PKGBUILD "$package_dir/PKGBUILD"
+          chmod -R a+rwX "$package_dir"
+          docker run --rm --platform linux/amd64 \
+            -v "$GITHUB_WORKSPACE/$package_dir:/work/package" \
+            -v "$GITHUB_WORKSPACE/$stage:/work/appdir:ro" \
+            -e MELEARNER_CPP_STAGE=/work/appdir \
+            archlinux:base-devel@sha256:8edb44f40a0cb5d3e44ef474f02780098ce0084e591c8641bdc01f02f185cc40 \
+            bash -euc 'useradd --create-home builder; chown -R builder:builder /work/package; su - builder -c "cd /work/package && MELEARNER_CPP_STAGE=/work/appdir makepkg --nodeps --noconfirm"'
+          arch_pkg="$package_dir/melearner-bin-0.1.9-1-x86_64.pkg.tar.zst"
+          [[ -s "$arch_pkg" && ! -L "$arch_pkg" ]] || { echo "makepkg did not produce expected Arch package" >&2; exit 1; }
+          cp -- "$arch_pkg" "$out/"
+          (cd "$out" && sha256sum melearner-bin-0.1.9-1-x86_64.pkg.tar.zst > melearner-bin-0.1.9-1-x86_64.pkg.tar.zst.sha256)
+
+          sources="$(find "$root/windows" -type d -path '*/windows-legal/sources' -print -quit)"
+          [[ -n "$sources" && -d "$sources" && ! -L "$sources" ]] || { echo "Windows artifact lacks source archive, patch, and manifest directory" >&2; exit 1; }
+          legal_dir="$(dirname "$sources")"
+          [[ -s "$legal_dir/player-source-manifest.json" && ! -L "$legal_dir/player-source-manifest.json" ]] || { echo "Windows player source manifest is missing" >&2; exit 1; }
+          find "$sources" -type f -name '*.tar.gz' -print -quit | grep -q . || { echo "Windows source archive is missing" >&2; exit 1; }
+          find "$sources" -type f -name '*.patch' -print -quit | grep -q . || { echo "Windows source patch is missing" >&2; exit 1; }
+          tar -C "$legal_dir" -czf "$out/melearner-0.1.9-windows-sources.tar.gz" sources player-source-manifest.json
+          (cd "$out" && sha256sum \
+            melearner_0.1.9_amd64.AppImage \
+            melearner-0.1.9-setup.exe \
+            melearner-0.1.9-macos-arm64.dmg \
+            melearner-bin-0.1.9-1-x86_64.pkg.tar.zst \
+            melearner-0.1.9-windows-sources.tar.gz > SHA256SUMS)
+
+      - name: Create or update draft release without overwriting assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag=v0.1.9
+          if gh release view "$tag" --json isDraft,assets >.tmp/release-delivery/release.json 2>/dev/null; then
+            [[ "$(jq -r .isDraft .tmp/release-delivery/release.json)" == true ]] || { echo "refusing to modify a published release" >&2; exit 1; }
+            existing="$(jq -r '.assets[].name' .tmp/release-delivery/release.json)"
+            while IFS= read -r asset; do
+              [[ -z "$asset" ]] && continue
+              if grep -Fxq "$asset" <<<"$existing"; then
+                echo "release already contains asset $asset; refusing overwrite" >&2
+                exit 1
+              fi
+            done < <(find .tmp/release-delivery/out -maxdepth 1 -type f -printf '%f\n')
+          else
+            gh release create "$tag" --draft --target "$GITHUB_SHA" --title 'meLearner 0.1.9' \
+              --notes 'Unsigned diagnostic installers assembled from successful platform build artifacts. The macOS DMG is ad hoc signed only and not notarized; the Windows installer is unsigned. Review source provenance and checksums before publishing.'
+          fi
+          gh release upload "$tag" .tmp/release-delivery/out/* --repo "$GITHUB_REPOSITORY"

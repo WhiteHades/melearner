@@ -31,3 +31,9 @@ macOS packaging creates an Apple silicon DMG with an Applications shortcut. It c
 Windows packaging uses Inno Setup for a contained, per user EXE. It checks runtime DLL imports and includes the compiler runtime, WebEngine helper and resources. It has no publisher signature.
 
 Artifacts remain diagnostic until the package checks and corresponding dependency source and notice records are complete. Their presence in Actions is not a public release announcement. Review the generated evidence and missing source records before publishing; do not replace missing records with empty manifests.
+
+## Draft release delivery
+
+The manual `Draft release delivery` workflow accepts the successful Linux, Windows, and macOS build run IDs. It only downloads the named diagnostic artifacts; it does not rebuild platform packages. It rejects runs from another repository, the wrong workflow, unsuccessful runs, or commits whose C++ app source tree differs from the delivery workflow commit. Run artifacts expire after three days, so deliver promptly.
+
+The workflow verifies the Windows and macOS supplied SHA-256 files, computes Linux and Arch checksums, extracts the AppImage without launching the app, and builds the Arch package from its `usr` tree using the repository PKGBUILD. It retains all four installers, per-asset checksums, a combined `SHA256SUMS`, source-head provenance, and the Windows source archive/patch/manifest bundle. It creates or adds assets only to the fixed `v0.1.9` draft release. Published releases and name collisions are refused; assets are never overwritten. Review the draft assets, provenance, checksums, and platform limitations before publishing it manually. The DMG is ad hoc signed but not notarized, the EXE is unsigned, and no trusted publisher signature is provided.
