@@ -126,15 +126,21 @@ protected:
     painter->restore();
   }
 };
-class RouteTextEffect final : public QGraphicsEffect {
+class RouteTextEffect final : public QGraphicsBlurEffect {
 public:
-  using QGraphicsEffect::QGraphicsEffect;
+  explicit RouteTextEffect(QObject* parent) : QGraphicsBlurEffect(parent) {
+    setBlurRadius(0); setBlurHints(QGraphicsBlurEffect::AnimationHint);
+  }
   qreal progress = 1;
 protected:
-  QRectF boundingRectFor(const QRectF& source) const override { return source.adjusted(0, 0, 0, 4); }
+  QRectF boundingRectFor(const QRectF& source) const override {
+    return QGraphicsBlurEffect::boundingRectFor(source).adjusted(0, 0, 0, 4);
+  }
   void draw(QPainter* painter) override {
     painter->save(); painter->setOpacity(progress);
-    painter->translate(0, 4 * (1 - progress)); drawSource(painter); painter->restore();
+    painter->translate(0, 4 * (1 - progress));
+    if (blurRadius() > 0) QGraphicsBlurEffect::draw(painter); else drawSource(painter);
+    painter->restore();
   }
 };
 QEasingCurve revealCurve() {
@@ -519,7 +525,9 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   lessonLinksLayout_ = new QHBoxLayout(lessonLinks_); lessonLinksLayout_->setContentsMargins(0, 0, 0, 0); lessonLinksLayout_->setSpacing(16);
   auto* previous = new LessonLink(tr("Previous"), false); previous->setObjectName("previousLesson");
   auto* next = new LessonLink(tr("Next"), true); next->setObjectName("nextLesson");
-  lessonLinksLayout_->addWidget(previous, 1); lessonLinksLayout_->addWidget(next, 1);
+  previous->setMaximumWidth(320); next->setMaximumWidth(320);
+  lessonLinksLayout_->addWidget(previous); lessonLinksLayout_->addWidget(next);
+  lessonLinksLayout_->setAlignment(Qt::AlignHCenter);
   complete_ = button(tr("Mark complete"), "markComplete", shadcn::Variant::Ghost);
   complete_->setEnabled(false); lessonNavigation_->addWidget(complete_);
   toolbar->addWidget(lessonActions_);
@@ -539,6 +547,13 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
       if (videoClickPaused_) (void)player_->pause(); else (void)player_->play();
     }
     seekVideo(delta);
+  });
+  connect(video_, &melearner::MpvVideoWidget::fullscreenRequested, this, [this](bool revertSingleClick) {
+    if (!playerLoaded_) return;
+    if (revertSingleClick) {
+      if (videoClickPaused_) (void)player_->pause(); else (void)player_->play();
+    }
+    toggleVideoFullscreen();
   });
   media_->addWidget(video_);
   auto* documentPane = new QWidget;
@@ -744,6 +759,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     for (int index = 0; index < groups.size(); ++index) {
       auto* effect = static_cast<RouteTextEffect*>(groups[index]->graphicsEffect());
       effect->progress = revealCurve().valueForProgress(std::clamp((value.toDouble() - index * 30) / 150, 0.0, 1.0));
+      effect->setBlurRadius(4 * (1 - effect->progress));
       effect->update();
     }
   });
@@ -1420,6 +1436,9 @@ void MainWindow::installKeyboardFilters() {
     widget->installEventFilter(this);
     if (auto* scrollArea = qobject_cast<QAbstractScrollArea*>(widget)) scrollArea->viewport()->installEventFilter(this);
   }
+  // Navigation buttons also reset keyboard modality on a pointer press. Without
+  // this, mouse navigation after using a shortcut silently skips its transition.
+  for (auto* button : findChildren<QAbstractButton*>()) button->installEventFilter(this);
 }
 bool MainWindow::handleKeyboardEvent(QObject* watched, QKeyEvent* event) {
   if (event && event->type() == QEvent::KeyPress) {
@@ -1523,7 +1542,7 @@ void MainWindow::chooseRootWhenOpen(const QString& path) {
 void MainWindow::showLibrary() {
   browserDocument_->clear();
   routePointerMotion_ = !keyboardNavigation_;
-  routeReveal_->stop();
+  resetRouteReveal();
   thumbnails_->cancelPending(); thumbnailRequests_.clear();
   outlineFade_->stop();
   cancelAutoplay(); neighborResolveId_ = 0; neighborReadId_ = 0;
@@ -1559,7 +1578,7 @@ void MainWindow::refreshResume() {
 }
 void MainWindow::showCourse(const lib::Course& course, const QString& requestedLesson) {
   routePointerMotion_ = !keyboardNavigation_;
-  routeReveal_->stop();
+  resetRouteReveal();
   if (course.missing) { showError(tr("Course folder missing: %1. Choose its root folder, then Rescan.").arg(course.path)); return; }
   browserDocument_->clear();
   cancelAutoplay(); neighborResolveId_ = 0; neighborReadId_ = 0;
@@ -1625,26 +1644,31 @@ void MainWindow::showLesson(const lib::Lesson& lesson) {
   } else if (lesson.path.endsWith(".pdf", Qt::CaseInsensitive)) {
     media_->setCurrentIndex(2); pdf_->open(rootPath_, lesson.path);
   } else {
-    media_->setCurrentIndex(1); documentStatus_->setText(tr("Opening document…")); documentStatus_->show(); documentView_->hide();
+    media_->setCurrentIndex(1); documentStatus_->clear(); documentStatus_->hide(); documentView_->hide();
     documentRequestId_ = documents_.open({rootPath_, lesson.path});
-    if (!documentRequestId_) documentStatus_->setText(tr("Document reader is busy. Select the lesson again to retry."));
+    if (!documentRequestId_) {
+      documentStatus_->setText(tr("Document reader is busy. Select the lesson again to retry.")); documentStatus_->show();
+    }
   }
   revealRoute();
 }
 void MainWindow::revealRoute() {
   if (!routeReveal_) return;
-  routeReveal_->stop();
-  for (auto* group : {resumeHeading_, resumeCopy_, lessonHeader_, lessonLinks_}) {
-    auto* effect = static_cast<RouteTextEffect*>(group->graphicsEffect());
-    effect->progress = 1; effect->update();
-  }
+  resetRouteReveal();
   if (routePointerMotion_ && !melearner::reducedMotion() && !melearner::highContrast()) {
     for (auto* group : course_ ? QList<QWidget*>{lessonHeader_, lessonLinks_}
                               : QList<QWidget*>{resumeHeading_, resumeCopy_}) {
       auto* effect = static_cast<RouteTextEffect*>(group->graphicsEffect());
-      effect->progress = 0; effect->update();
+      effect->progress = 0; effect->setBlurRadius(4); effect->update();
     }
     routeReveal_->start();
+  }
+}
+void MainWindow::resetRouteReveal() {
+  routeReveal_->stop();
+  for (auto* group : {resumeHeading_, resumeCopy_, lessonHeader_, lessonLinks_}) {
+    auto* effect = static_cast<RouteTextEffect*>(group->graphicsEffect());
+    effect->progress = 1; effect->setBlurRadius(0); effect->update();
   }
 }
 void MainWindow::requestDocumentPage(qsizetype offset) {
@@ -1886,7 +1910,8 @@ void MainWindow::updateMediaLayout() {
   const int width = content_->viewport()->width() - layout->contentsMargins().left();
   auto* heading = static_cast<QHBoxLayout*>(lessonHeader_->layout());
   heading->setDirection(!video && width < 520 ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight);
-  for (auto* widget : {lessonHeader_, lessonLinks_}) widget->setFixedWidth(std::max(1, width));
+  if (!video || videoFullscreen_)
+    for (auto* widget : {lessonHeader_, lessonLinks_}) widget->setFixedWidth(std::max(1, width));
   lessonHeader_->layout()->activate(); lessonLinks_->layout()->activate();
   if (video && !videoFullscreen_) {
     // Reserve real text/action heights before fitting the video to both axes.

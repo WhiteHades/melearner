@@ -96,6 +96,7 @@ private:
   QVariantAnimation* routeReveal_ = nullptr;
   bool routePointerMotion_ = false;
   void revealRoute();
+  void resetRouteReveal();
   void positionPlayerOverlays();
   QLabel* resumeCompletion_ = nullptr;
   quint64 previewRequestId_ = 0;
