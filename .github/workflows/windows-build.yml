@@ -2,6 +2,12 @@ name: manual Windows C++ build
 
 on:
   workflow_dispatch:
+    inputs:
+      run_playback:
+        description: Run the existing native video playback checks
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -22,6 +28,65 @@ jobs:
       MELEARNER_QT_ROOT: D:\qt\6.11.2\msvc2022_64
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: prepare the native playback display
+        if: inputs.run_playback
+        timeout-minutes: 1
+        shell: pwsh
+        run: |
+          Add-Type @'
+          using System;
+          using System.Runtime.InteropServices;
+          public static class PlaybackDisplay {
+            [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+            private struct Mode {
+              [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string DeviceName;
+              public ushort SpecVersion, DriverVersion, Size, DriverExtra;
+              public uint Fields;
+              public int PositionX, PositionY;
+              public uint DisplayOrientation, DisplayFixedOutput;
+              public short Color, Duplex, YResolution, TTOption, Collate;
+              [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string FormName;
+              public ushort LogPixels;
+              public uint BitsPerPel, PelsWidth, PelsHeight, DisplayFlags, DisplayFrequency;
+              public uint ICMMethod, ICMIntent, MediaType, DitherType, Reserved1, Reserved2;
+              public uint PanningWidth, PanningHeight;
+            }
+            [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            private static extern bool EnumDisplaySettings(string device, int index, ref Mode mode);
+            [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+            private static extern int ChangeDisplaySettings(ref Mode mode, uint flags);
+            private static Mode Current() {
+              var mode = new Mode { Size = (ushort)Marshal.SizeOf<Mode>(), DeviceName = "", FormName = "" };
+              if (!EnumDisplaySettings(null, -1, ref mode)) throw new Exception("Cannot read the runner display mode");
+              return mode;
+            }
+            public static void Prepare() {
+              var mode = Current();
+              Console.WriteLine("Runner display before playback: {0}x{1}", mode.PelsWidth, mode.PelsHeight);
+              if (mode.PelsWidth < 1920 || mode.PelsHeight < 1080) {
+                mode.Fields = 0x00080000 | 0x00100000; // DM_PELSWIDTH | DM_PELSHEIGHT
+                mode.PelsWidth = 1920;
+                mode.PelsHeight = 1080;
+                int result = ChangeDisplaySettings(ref mode, 2); // CDS_TEST, no registry changes
+                if (result != 0) throw new Exception("Runner cannot provide the wide playback display; mode test returned " + result);
+                result = ChangeDisplaySettings(ref mode, 0);
+                if (result != 0) throw new Exception("Runner display change failed with code " + result);
+              }
+              mode = Current();
+              Console.WriteLine("Runner display after playback setup: {0}x{1}", mode.PelsWidth, mode.PelsHeight);
+              if (mode.PelsWidth < 1920 || mode.PelsHeight < 1080)
+                throw new Exception("Runner did not apply the required playback display mode");
+            }
+          }
+          '@
+          [PlaybackDisplay]::Prepare()
+          Add-Type -AssemblyName System.Windows.Forms
+          $area = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+          Write-Host "Playback desktop working area: $area"
+          if ($area.Width -lt 1920 -or $area.Height -lt 1000) {
+            throw 'Runner desktop cannot fit the existing wide playback checks'
+          }
       - name: install pinned CMake
         shell: pwsh
         run: |
@@ -285,3 +350,38 @@ jobs:
           }
           & $env:MELEARNER_CTEST --test-dir build\manual-windows --verbose --output-on-failure -R '^core_workflow$'
           if ($LASTEXITCODE -ne 0) { throw 'core workflow test failed' }
+      - name: run the existing native playback checks
+        if: inputs.run_playback
+        timeout-minutes: 4
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: windows
+          QT_OPENGL: software
+          QT_FORCE_STDERR_LOGGING: '1'
+        run: |
+          $testExe = (Resolve-Path 'build\manual-windows\main_playback_test.exe').Path
+          $directory = Split-Path $testExe
+          $env:Path = "$directory;$env:MELEARNER_QT_ROOT\bin;D:\v\installed\x64-windows-release\bin;$env:Path"
+          Add-Type @'
+          using System.Runtime.InteropServices;
+          public static class PlaybackErrors {
+            [DllImport("kernel32.dll")]
+            public static extern uint SetErrorMode(uint mode);
+          }
+          '@
+          [void][PlaybackErrors]::SetErrorMode(0x8003)
+          $stdout = Join-Path $env:RUNNER_TEMP 'playback.stdout.log'
+          $stderr = Join-Path $env:RUNNER_TEMP 'playback.stderr.log'
+          $process = Start-Process $testExe -ArgumentList 'playsPausesAndRestoresPosition', '-v1' `
+            -WorkingDirectory $directory -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
+          try {
+            if (-not $process.WaitForExit(180000)) {
+              & taskkill.exe /PID $process.Id /T /F
+              throw 'Native playback checks exceeded 180 seconds'
+            }
+            if ($process.ExitCode -ne 0) { throw "Native playback checks failed with exit code $($process.ExitCode)" }
+          } finally {
+            Get-Content $stdout -ErrorAction SilentlyContinue
+            Get-Content $stderr -ErrorAction SilentlyContinue
+            $process.Dispose()
+          }

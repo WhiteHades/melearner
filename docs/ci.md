@@ -10,6 +10,14 @@ UI tests focus a field before typing and wait for queued commands to complete, r
 Document fixtures use `.lnk` shortcuts on Windows and symbolic links on Unix.
 The viewer must reject either type when it points outside the course folder.
 
+The Windows workflow has an optional `run_playback` input, disabled by default.
+Enable it when Windows video changes need verification. It runs the existing
+playback and saved progress checks for H.264, HEVC, multiple audio tracks and
+enlarged text, using Qt's software OpenGL renderer. The runner display must fit
+the wide layout checks. The display preflight fails before dependency setup if
+the runner cannot provide that space. Playback has a three minute process limit.
+This check does not replace clean machine installer or graphics driver testing.
+
 Dependency caches reduce repeated downloads and compilation. Save them before the application build so an application failure does not discard the dependencies. Use standard runners and keep cache storage within the included allowance. Do not enable paid runners or raise storage limits without approval.
 
 Linux builds target an Ubuntu baseline. macOS builds target Apple silicon and use Xcode 26 for standard C++ thread support. Windows builds use the native Microsoft toolchain. Each platform still needs package deployment and clean machine playback checks before its download is offered.
