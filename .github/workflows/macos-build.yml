@@ -37,7 +37,7 @@ jobs:
 
       - name: install build dependencies
         run: |
-          brew install cmake ninja pkgconf qtbase qttools qtwebengine \
+          brew install cmake ninja pkgconf qtbase qttools qtwebengine qtsvg \
             sqlite mpv libzip md4c ffmpeg
 
       - name: measure download cache

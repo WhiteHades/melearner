@@ -59,7 +59,14 @@ install_root="$work_dir/install"
 cmake --install "$build_dir" --prefix "$install_root" --config Release
 [[ -d "$install_root/melearner.app" ]] || { echo "CMake install did not produce melearner.app" >&2; exit 1; }
 ditto "$install_root/melearner.app" "$stage/melearner.app"
-macdeployqt "$stage/melearner.app" -always-overwrite -codesign=-
+# Homebrew splits Qt modules into separate prefixes. Plugins can load modules
+# that the main executable never linked, so its original RPATHs are insufficient.
+deploy_paths=()
+while IFS= read -r formula; do
+  prefix="$(brew --prefix "$formula")"
+  [[ ! -d "$prefix/lib" ]] || deploy_paths+=("-libpath=$prefix/lib")
+done < <(brew list --formula)
+macdeployqt "$stage/melearner.app" -always-overwrite -codesign=- "${deploy_paths[@]}"
 
 # CMake installs Lexbor and shadcn-cpp's original notices alongside the app.
 installed_licenses="$install_root/share/licenses/melearner"
@@ -80,7 +87,7 @@ ditto "$installed_licenses" "$license_root/cmake-installed"
 formula_list="$work_dir/formulas"
 {
   printf '%s\n' qtbase qttools qtwebengine sqlite mpv libzip md4c ffmpeg
-  brew deps --installed --recursive qtbase qttools qtwebengine sqlite mpv libzip md4c ffmpeg
+  brew deps --installed --union qtbase qttools qtwebengine sqlite mpv libzip md4c ffmpeg
 } | sort -u > "$formula_list"
 notices="$stage/melearner.app/Contents/Resources/THIRD_PARTY_NOTICES.txt"
 {
@@ -124,6 +131,11 @@ notices="$stage/melearner.app/Contents/Resources/THIRD_PARTY_NOTICES.txt"
       -iname 'LICENSE' -o -iname 'LICENSE.*' -o -iname 'COPYING' -o \
       -iname 'COPYING.*' -o -iname 'NOTICE' -o -iname 'NOTICE.*' -o \
       -iname 'COPYRIGHT*' -o -path '*/licenses/*' -o -path '*/LICENSES/*' \) -print0)
+    if (( copied == 0 )) && [[ "$formula" == sqlite && -s "$keg/include/sqlite3.h" ]]; then
+      # SQLite's original installed header carries its public domain statement.
+      cp -p "$keg/include/sqlite3.h" "$formula_license_dir/sqlite3.h"
+      copied=1
+    fi
     if (( copied == 0 )); then
       case "$formula" in
         qtbase|qttools|qtwebengine|sqlite|mpv|libzip|md4c|ffmpeg)
@@ -204,7 +216,7 @@ while IFS= read -r -d '' binary; do
 done < <(find "$stage/melearner.app" -type f -print0)
 # macdeployqt signs before this script adds legal resources. Re-seal the root
 # app ad hoc while preserving the deployment signature's entitlements/metadata.
-codesign --force --sign - --preserve-metadata=entitlements,requirements,flags,runtime \
+codesign --force --deep --sign - --preserve-metadata=entitlements,requirements,flags,runtime \
   --timestamp=none "$stage/melearner.app"
 codesign --verify --deep --strict --verbose=2 "$stage/melearner.app"
 
