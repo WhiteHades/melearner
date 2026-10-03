@@ -5,6 +5,7 @@
 #include "theme.hpp"
 #include <QDir>
 #include <QAccessible>
+#include <QClipboard>
 #include <shadcn/navigation.hpp>
 #include <shadcn/widgets.hpp>
 #include <QMenu>
@@ -92,6 +93,7 @@ private slots:
       auto* player = window.findChild<melearner::Player*>(); QVERIFY(player);
       QSignalSpy loaded(player, &melearner::Player::fileLoaded);
       QSignalSpy positions(player, &melearner::Player::positionChanged);
+      QSignalSpy tracksChanged(player, &melearner::Player::tracksChanged);
       QSignalSpy ended(player, &melearner::Player::playbackEnded);
       courses->setCurrentIndex(courses->model()->index(0, 0)); QTest::keyClick(courses, Qt::Key_Return);
       auto* lessons = window.findChild<QTreeView*>("lessons");
@@ -112,9 +114,13 @@ private slots:
       QCOMPARE(play->text(), QString("Play"));
       if (mediaFile == QStringLiteral("Systems 日本語/01 H264 AAC.mp4")) {
         auto* surface = window.findChild<QWidget*>("videoSurface"); QVERIFY(surface);
+        QSignalSpy clicks(rendererWidget, &melearner::MpvVideoWidget::clicked);
+        QElapsedTimer clickLatency; clickLatency.start();
         const auto videoCenter = surface->rect().center();
         QTest::mouseClick(surface, Qt::LeftButton, Qt::NoModifier, videoCenter);
+        QCOMPARE(clicks.count(), 1); // Dispatched on release, with no double-click wait.
         QTRY_COMPARE_WITH_TIMEOUT(play->text(), QString("Pause"), 5000);
+        qInfo("Video click to playback acknowledgement: %lld ms", clickLatency.elapsed());
         QTest::mouseClick(surface, Qt::LeftButton, Qt::NoModifier, videoCenter);
         QTRY_COMPARE_WITH_TIMEOUT(play->text(), QString("Play"), 5000);
       }
@@ -122,12 +128,9 @@ private slots:
       QVERIFY(!window.findChild<QPushButton*>("playbackOptions"));
       QVERIFY(!window.findChild<QMenu*>("videoSettings"));
       auto* speed = window.findChild<QMenu*>("playbackSpeed"); QVERIFY(speed);
-      auto* audio = window.findChild<QMenu*>("audioTrack"); QVERIFY(audio);
-      QTRY_COMPARE(audio->actions().size(), audioTracks);
       auto* timeline = window.findChild<shadcn::Slider*>("playbackPosition"); QVERIFY(timeline);
       QVERIFY(controls->isAncestorOf(timeline));
-      for (const auto* name : {"mute", "volumeButton", "playbackRate", "audioTrackButton",
-                               "subtitleTrackButton", "chapterButton",
+      for (const auto* name : {"volumeButton", "playbackRate", "subtitleTrackButton",
                                "frameStep", "addSubtitle", "screenshot", "fullscreen"}) {
         auto* directControl = window.findChild<QPushButton*>(name);
         QVERIFY2(directControl, name);
@@ -135,28 +138,54 @@ private slots:
       }
       QVERIFY(!window.findChild<QPushButton*>("rewind"));
       QVERIFY(!window.findChild<QPushButton*>("forward"));
+      QVERIFY(!window.findChild<QPushButton*>("mute"));
+      QVERIFY(!window.findChild<QPushButton*>("audioTrackButton"));
+      QVERIFY(!window.findChild<QPushButton*>("chapterButton"));
       QVERIFY(controls->isAncestorOf(window.findChild<shadcn::Switch*>("autoplay")));
       auto* volumeButton = window.findChild<QPushButton*>("volumeButton"); QVERIFY(volumeButton);
-      auto* volumeMenu = window.findChild<QMenu*>("volumeMenu"); QVERIFY(volumeMenu);
       auto* volume = window.findChild<shadcn::Slider*>("volume"); QVERIFY(volume);
-      QCOMPARE(volume->orientation(), Qt::Vertical);
-      QCOMPARE(volumeButton->menu(), volumeMenu);
-      volumeMenu->popup(volumeButton->mapToGlobal(QPoint(0, volumeButton->height())));
-      QTRY_VERIFY(volumeMenu->isVisible());
-      QVERIFY(volume->isVisible());
+      QCOMPARE(volume->orientation(), Qt::Horizontal);
+      QCOMPARE(volume->size(), QSize(92, 36));
+      QVERIFY(controls->isAncestorOf(volume));
+      QVERIFY(!window.findChild<QWidget*>("volumeMenu"));
+      QTRY_COMPARE(volume->values().first(), 0.0);
+      volume->setValues({100});
+      QTRY_VERIFY_WITH_TIMEOUT(!volumes.isEmpty() && qAbs(volumes.last().first().toDouble() - 100.0) <= 1.0, 3000);
+      QTRY_VERIFY(!tracksChanged.isEmpty());
+      const auto loadedTracks = tracksChanged.last().first().value<QVector<melearner::PlayerTrack>>();
+      QCOMPARE(std::count_if(loadedTracks.cbegin(), loadedTracks.cend(),
+                             [](const auto& track) { return track.type == QStringLiteral("audio"); }), audioTracks);
       if (fontScale == 1 && mediaFile == QStringLiteral("Systems 日本語/01 H264 AAC.mp4")) {
-        // Mute the player, then change the actual vertical slider. A positive
-        // slider value must remain a percentage and restore audible playback.
-        auto* muteButton = window.findChild<QPushButton*>("mute"); QVERIFY(muteButton);
-        muteButton->click();
+        // The volume control is inline; its neighboring button toggles mute.
+        volumeButton->click();
         QTRY_VERIFY(!muted.isEmpty() && muted.last().first().toBool());
-        QTest::mouseClick(volume, Qt::LeftButton, Qt::NoModifier,
-                          QPoint(volume->width() / 2, volume->height() / 2));
+        QTest::mouseClick(volume, Qt::LeftButton, Qt::NoModifier, volume->rect().center());
         QTRY_VERIFY_WITH_TIMEOUT(!volumes.isEmpty(), 3000);
         QTRY_VERIFY_WITH_TIMEOUT(qAbs(volumes.last().first().toDouble() - 50.0) <= 1.0, 3000);
         QTRY_VERIFY_WITH_TIMEOUT(!muted.isEmpty() && !muted.last().first().toBool(), 3000);
+        volume->setValues({0});
+        QCOMPARE(volumeButton->accessibleName(), QString("Unmute"));
+        QTRY_VERIFY_WITH_TIMEOUT(!muted.isEmpty() && muted.last().first().toBool(), 3000);
+        volumeButton->click();
+        QCOMPARE(volumeButton->accessibleName(), QString("Mute"));
+        QVERIFY(volume->values().first() > 0);
+        QTRY_VERIFY_WITH_TIMEOUT(!muted.isEmpty() && !muted.last().first().toBool(), 3000);
+        QTRY_VERIFY_WITH_TIMEOUT(volume->values().first() > 0, 3000);
+        // Rapid edits must retain the last choice while the worker catches up.
+        for (const double value : {0.0, 75.0, 0.0, 75.0}) volume->setValues({value});
+        QCOMPARE(volume->values().first(), 75.0);
+        QCOMPARE(volumeButton->accessibleName(), QString("Mute"));
+        QTRY_VERIFY_WITH_TIMEOUT(qAbs(volumes.last().first().toDouble() - 75.0) < 0.01, 3000);
+        QTRY_VERIFY_WITH_TIMEOUT(!muted.last().first().toBool(), 3000);
+        QCOMPARE(volume->values().first(), 75.0);
+        volumeButton->click(); volumeButton->click();
+        QCOMPARE(volumeButton->accessibleName(), QString("Mute"));
+        QTRY_VERIFY_WITH_TIMEOUT(!muted.last().first().toBool(), 3000);
       }
-      volumeMenu->hide();
+      auto* screenshot = window.findChild<QPushButton*>("screenshot"); QVERIFY(screenshot);
+      screenshot->click();
+      QTRY_VERIFY(!QApplication::clipboard()->image().isNull());
+      QCOMPARE(QApplication::clipboard()->image().size(), rendererWidget->grabFramebuffer().size());
       auto* accessibleVideo = QAccessible::queryAccessibleInterface(window.findChild<melearner::MpvVideoWidget*>());
       QVERIFY(accessibleVideo); QCOMPARE(accessibleVideo->role(), QAccessible::Animation);
       QVERIFY(accessibleVideo->imageInterface());
@@ -223,13 +252,11 @@ private slots:
         QVERIFY(QMetaObject::invokeMethod(hideControls, "timeout", Qt::DirectConnection));
         QVERIFY(controls->isVisible());
         // Every frequently used operation is now a visible shadcn button. The
-        // only popups are focused choices such as volume and playback speed.
+        // only popups are focused choices such as playback speed.
         phase = "player controls";
-        QTRY_VERIFY(!volumeMenu->isVisible());
         auto* speedButton = window.findChild<QPushButton*>("playbackRate"); QVERIFY(speedButton);
         QVERIFY(speedButton->menu() == speed);
-        auto* muteButton = window.findChild<QPushButton*>("mute"); QVERIFY(muteButton);
-        QVERIFY(controls->isAncestorOf(muteButton));
+        QVERIFY(controls->isAncestorOf(volumeButton));
         surface->setFocus();
         phase = "resize";
         window.resize(560, 720); QCoreApplication::processEvents();
@@ -238,7 +265,7 @@ private slots:
         QTest::mouseClick(outline, Qt::LeftButton); QVERIFY(!surface->isVisible());
         QTRY_VERIFY_WITH_TIMEOUT(!positions.isEmpty() && positions.last().at(0).toLongLong() >= 1100, 5000);
         QCOMPARE(ended.count(), 0);
-        QTest::mouseClick(outline, Qt::LeftButton); QVERIFY(surface->isVisible());
+        QTest::mouseClick(outline, Qt::LeftButton); QTRY_VERIFY(surface->isVisible());
         phase = "frame capture";
         auto* video = window.findChild<melearner::MpvVideoWidget*>();
         const auto previousFrame = video->grabFramebuffer();
@@ -286,17 +313,24 @@ private slots:
         for (const int width : {560, 768, 1280}) {
           window.resize(width, 720); QCoreApplication::processEvents(); QVERIFY(window.width() <= width);
           QVERIFY(surface->rect().contains(controls->geometry()));
-          QTRY_COMPARE(timeline->width(), controls->width() - 32);
+          QTRY_COMPARE(timeline->width(), controls->width() - 40);
           if (width == 1280) {
-            QVERIFY(controls->width() <= 820);
+            QVERIFY(controls->width() <= 820 * fontScale);
             QVERIFY(qAbs(controls->geometry().center().x() - surface->rect().center().x()) <= 1);
-            QVERIFY(surface->width() <= 1100);
+            QVERIFY(surface->width() <= 1240);
+            const auto* fullscreen = window.findChild<QPushButton*>("fullscreen");
+            const auto* capture = window.findChild<QPushButton*>("screenshot");
+            QVERIFY(fullscreen->x() > capture->x());
+            QCOMPARE(fullscreen->geometry().center().y(), play->geometry().center().y());
+            QVERIFY(fullscreen->height() >= 36);
+            QVERIFY(!surface->mask().isEmpty());
+            QVERIFY(!surface->mask().contains(QPoint(0, 0)));
           }
           // The controls must remain readable over bright footage. Sample a
           // blank padding pixel in the actual composed window, not a widget
           // palette or a standalone grab that could hide transparency.
           const auto backdrop = controls->mapTo(&window,
-            QPoint(controls->width() / 2, controls->height() / 2));
+            QPoint(controls->width() / 2, controls->height() - 5));
           QTRY_COMPARE(window.grab().toImage().pixelColor(backdrop).rgba(),
                        melearner::roleColor(shadcn::Role::Popover).rgba());
           const auto captures = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
@@ -351,6 +385,7 @@ private slots:
         // Qt applies the split layout on the next event pass after a resize.
         // Wait for the actual viewer geometry before capturing the wide page.
         QTRY_VERIFY(outlinePane->isVisible() && scroll->isVisible());
+        QTRY_COMPARE(outlinePane->graphicsEffect()->property("opacity").toDouble(), 1.0);
         QTRY_VERIFY(outlinePane->mapTo(&window, QPoint(outlinePane->width(), 0)).x() <=
                     scroll->mapTo(&window, QPoint()).x());
         window.resize(1920, 1080);
@@ -358,7 +393,7 @@ private slots:
         QTRY_COMPARE(surface->height(), window.findChild<QWidget*>("mediaFrame")->height());
         QTRY_VERIFY(surface->mapTo(scroll->widget(), QPoint()).y() <= 1);
         QTRY_VERIFY(lessonTitle->mapTo(scroll->widget(), QPoint()).y() >= surface->height());
-        QTRY_VERIFY(surface->height() <= 620);
+        QTRY_VERIFY(surface->height() <= 1240 * 9 / 16);
         if (!captureDirectory.isEmpty()) QVERIFY(window.grab().save(captureDirectory + QString("/player-wide-%1x.png").arg(fontScale)));
         window.resize(std::max(1280, window.fontMetrics().height() * 40), 720);
         if (fontScale == 1 && mediaFile == QStringLiteral("Systems 日本語/01 H264 AAC.mp4")) {
@@ -424,15 +459,24 @@ private slots:
     auto* autoplay = window.findChild<shadcn::Switch*>("autoplay");
     autoplay->setChecked(false);
     auto* surface = window.findChild<QWidget*>("videoSurface");
-    auto* time = window.findChild<QLabel*>("playbackTime"); const auto clockWidth = time->width();
+    auto* time = window.findChild<QLabel*>("playbackTime");
+    auto* duration = window.findChild<QLabel*>("playbackDuration");
+    auto* readout = window.findChild<QWidget*>("timeReadout");
+    QVERIFY(time && duration && readout);
+    QCOMPARE(time->parentWidget(), duration->parentWidget());
+    QVERIFY(readout->isAncestorOf(time) && readout->isAncestorOf(duration));
+    const auto clockWidth = time->width(); const auto durationWidth = duration->width();
+    QVERIFY(!time->text().contains(' ') && !duration->text().contains(' '));
     QVERIFY(player->seek(7000)); QTRY_VERIFY(!positions.empty() && positions.last()[0].toLongLong() >= 6800);
     QTest::mouseClick(surface, Qt::LeftButton, Qt::NoModifier, QPoint(surface->width() / 4, 20));
     QTest::mouseDClick(surface, Qt::LeftButton, Qt::NoModifier, QPoint(surface->width() / 4, 20));
     QTRY_VERIFY(positions.last()[0].toLongLong() < 2500);
+    QCOMPARE(time->width(), clockWidth); QCOMPARE(duration->width(), durationWidth);
     QTest::qWait(QApplication::doubleClickInterval() + 30); QCOMPARE(play->text(), QString("Play"));
     QTest::mouseDClick(surface, Qt::LeftButton, Qt::NoModifier, QPoint(surface->width() * 3 / 4, 20));
     QTRY_VERIFY(positions.last()[0].toLongLong() >= 6800);
     QCOMPARE(time->width(), clockWidth);
+    QCOMPARE(duration->width(), durationWidth);
     auto* next = window.findChild<QPushButton*>("nextLesson");
     QTRY_COMPARE(next->accessibleDescription(), QString("02 Reading"));
     autoplay->setChecked(true);

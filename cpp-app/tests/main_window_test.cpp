@@ -10,6 +10,7 @@
 #include <QDialog>
 #include <QFile>
 #include <QGraphicsOpacityEffect>
+#include <QPropertyAnimation>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListView>
@@ -294,9 +295,11 @@ private slots:
         } else {
           const auto* outline = window.findChild<QWidget*>("courseOutline");
           const auto* viewer = window.findChild<QScrollArea*>("lessonScroll");
+          QVERIFY(outline->minimumWidth() >= 240);
           QTRY_VERIFY(toggle->isVisible());
           if (!lessons->isVisible()) QTest::mouseClick(toggle, Qt::LeftButton);
           QTRY_VERIFY(lessons->isVisible());
+          QTRY_COMPARE(outline->width(), 320);
           QTRY_VERIFY(document->isVisible());
           QTRY_VERIFY(outline->mapTo(&window, QPoint(outline->width(), 0)).x() <=
                       viewer->mapTo(&window, QPoint()).x());
@@ -306,6 +309,30 @@ private slots:
           QTest::mouseClick(toggle, Qt::LeftButton);
           QTRY_VERIFY(outline->isVisible());
           QTRY_VERIFY(document->isVisible());
+          auto* transition = window.findChild<QPropertyAnimation*>("outlineReveal"); QVERIFY(transition);
+          if (!melearner::reducedMotion() && !melearner::highContrast()) {
+            QCOMPARE(transition->duration(), 180);
+            QCOMPARE(transition->startValue().toDouble(), 0.0);
+          }
+          QTRY_COMPARE(transition->state(), QAbstractAnimation::Stopped);
+          QCOMPARE(outline->graphicsEffect()->property("opacity").toDouble(), 1.0);
+          lessons->setFocus();
+          QTest::keyClick(&window, Qt::Key_Space); QTest::keyClick(&window, Qt::Key_O);
+          QVERIFY(!outline->isVisible());
+          QCOMPARE(transition->state(), QAbstractAnimation::Stopped);
+          document->setFocus();
+          QTest::keyClick(&window, Qt::Key_Space); QTest::keyClick(&window, Qt::Key_O);
+          QVERIFY(outline->isVisible());
+          {
+            const int flashTime = QApplication::cursorFlashTime();
+            const auto restore = qScopeGuard([flashTime] { QApplication::setCursorFlashTime(flashTime); });
+            QApplication::setCursorFlashTime(0);
+            QTest::mouseClick(toggle, Qt::LeftButton); QVERIFY(!outline->isVisible());
+            QTest::mouseClick(toggle, Qt::LeftButton); QVERIFY(outline->isVisible());
+            QCOMPARE(transition->state(), QAbstractAnimation::Stopped);
+          }
+          const auto* outlineScroll = lessons->verticalScrollBar();
+          QCOMPARE(outlineScroll->width(), 4);
         }
         if (const auto captures = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS"); !captures.isEmpty())
           QVERIFY(window.grab().save(captures + QString("/course-%1.png").arg(width)));
