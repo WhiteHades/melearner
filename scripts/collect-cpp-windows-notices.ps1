@@ -177,6 +177,14 @@ try {
   $sourcesDir = Join-Path $outputRoot 'sources'
   New-Item -ItemType Directory -Force $sourcesDir | Out-Null
   Copy-Item -LiteralPath $mpvArchivePath -Destination (Join-Path $sourcesDir 'mpv-0.41.0.tar.gz')
+  if (@($playerManifest.sourcePatches).Count -ne 1 -or $playerManifest.sourcePatches[0].path -ne 'mpv-msvc-resources.patch') {
+    throw 'Expected the recorded native resource compiler patch for mpv.'
+  }
+  $sourcePatch = Join-Path $mpvRoot $playerManifest.sourcePatches[0].path
+  Require-File $sourcePatch 'mpv native resource compiler patch'
+  $sourcePatchHash = (Get-FileHash -LiteralPath $sourcePatch -Algorithm SHA256).Hash.ToLowerInvariant()
+  if ($sourcePatchHash -ne $playerManifest.sourcePatches[0].sha256) { throw 'mpv source patch SHA-256 mismatch.' }
+  Copy-Item -LiteralPath $sourcePatch -Destination $sourcesDir
   foreach ($name in @('Copyright', 'LICENSE.GPL', 'LICENSE.LGPL')) {
     $file = Join-Path $mpvRoot "source-notices\$name"
     Require-File $file "mpv upstream $name"

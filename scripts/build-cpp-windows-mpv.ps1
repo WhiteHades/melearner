@@ -56,10 +56,22 @@ $env:CXX = 'clang++'
 $env:CFLAGS = '--target=x86_64-pc-windows-msvc'
 $env:CXXFLAGS = '--target=x86_64-pc-windows-msvc'
 $env:LDFLAGS = '--target=x86_64-pc-windows-msvc'
-# mpv's resource arguments use GNU windres syntax, including --codepage.
-# Meson otherwise selects Microsoft's rc.exe for a clang/MSVC target.
-$env:RC = (Get-Command llvm-windres.exe -ErrorAction Stop).Source
+# Use the SDK resource compiler with its native UTF-8 codepage option.
+# Preserve the small build-only adaptation alongside the original source.
+$env:RC = (Get-Command rc.exe -ErrorAction Stop).Source
 $env:WINDRES = $env:RC
+$mesonFile = Join-Path $sourceRoot 'meson.build'
+$mesonText = [IO.File]::ReadAllText($mesonFile)
+$gnuResourceFlags = "    res_flags = ['--codepage=65001']"
+$msvcResourceFlags = "    res_flags = ['/c65001']"
+if ([regex]::Matches($mesonText, [regex]::Escape($gnuResourceFlags)).Count -ne 1) {
+  throw 'Pinned mpv source has an unexpected resource compiler definition'
+}
+[IO.File]::WriteAllText($mesonFile, $mesonText.Replace($gnuResourceFlags, $msvcResourceFlags), [Text.UTF8Encoding]::new($false))
+$sourcePatchName = 'mpv-msvc-resources.patch'
+$sourcePatch = Join-Path $sdkRoot $sourcePatchName
+$patchText = @('--- a/meson.build', '+++ b/meson.build', '@@ -1765 +1765 @@', "-$gnuResourceFlags", "+$msvcResourceFlags", '') -join "`n"
+[IO.File]::WriteAllText($sourcePatch, $patchText, [Text.UTF8Encoding]::new($false))
 $libplaceboBuildOptions = @(
   '-Dauto_features=disabled', '-Ddefault_library=shared', '-Dopengl=enabled',
   '-Dgl-proc-addr=enabled', '-Dvulkan=disabled', '-Ddemos=false', '-Dtests=false'
@@ -182,6 +194,10 @@ $manifest = [ordered]@{
   sourceSHA256 = $actualArchiveSha256
   buildOptions = $buildOptions
   sourceArchive = $archiveName
+  sourcePatches = @([ordered]@{
+    path = $sourcePatchName
+    sha256 = (Get-FileHash -LiteralPath $sourcePatch -Algorithm SHA256).Hash.ToLowerInvariant()
+  })
   noticeRoot = 'source-notices'
   dependencies = $dependencyMetadata
 }
