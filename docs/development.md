@@ -12,6 +12,9 @@ libraries on a bounded background worker. Linux also needs Meson 1.3 or newer,
 patch, and the media development
 libraries listed in the [Arch Linux installation commands](install.md).
 Windows instructions are in [Windows builds](windows-development.md).
+The [manual platform workflows](ci.md) build on native GitHub machines. macOS
+requires Xcode 26 or newer for standard C++ thread support. The workflows do not
+publish installers or replace clean machine playback checks.
 
 On Arch, `qt6-webengine` supplies Qt PDF and Qt WebEngine. PDF pages are rendered
 on a worker thread into a bounded tile cache. HTML and Markdown use a lazy,

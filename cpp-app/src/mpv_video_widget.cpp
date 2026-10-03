@@ -162,6 +162,14 @@ struct MpvVideoWidget::CallbackState {
     QPointer<MpvVideoWidget> widget;
 };
 
+struct MpvVideoWidget::BackdropResources {
+    std::unique_ptr<QOpenGLFramebufferObject> crop;
+    std::unique_ptr<QOpenGLShaderProgram> program;
+    std::unique_ptr<QOpenGLVertexArrayObject> vao;
+    std::unique_ptr<QOpenGLBuffer> vertices;
+    QSize cropSize;
+};
+
 MpvVideoWidget::MpvVideoWidget(Player* player, QWidget* parent)
     : QOpenGLWidget(parent) {
     static const bool registered = [] { QAccessible::installFactory(accessibleVideo); return true; }();
@@ -316,14 +324,6 @@ void MpvVideoWidget::paintGL() {
     paintTransportBackdrop();
     painter.endNativePainting();
 }
-
-struct MpvVideoWidget::BackdropResources {
-    std::unique_ptr<QOpenGLFramebufferObject> crop;
-    std::unique_ptr<QOpenGLShaderProgram> program;
-    std::unique_ptr<QOpenGLVertexArrayObject> vao;
-    std::unique_ptr<QOpenGLBuffer> vertices;
-    QSize cropSize;
-};
 
 bool MpvVideoWidget::paintTransportBackdrop() {
     if (transportBackdropVisibility_ <= 0.0 || transportBackdropRect_.isEmpty()) return false;
