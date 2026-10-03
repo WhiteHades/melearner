@@ -31,7 +31,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ "$(uname -s)" == Darwin ]] || { echo "macOS packaging requires macOS" >&2; exit 1; }
-for tool in macdeployqt hdiutil codesign otool install_name_tool file shasum jq brew lipo ditto cmake awk sort find cp curl tar; do
+for tool in macdeployqt hdiutil codesign otool install_name_tool file shasum jq brew lipo ditto cmake awk sort find cp curl tar git; do
   command -v "$tool" >/dev/null 2>&1 || { echo "required packaging tool is missing: $tool" >&2; exit 1; }
 done
 
@@ -118,13 +118,32 @@ notices="$stage/melearner.app/Contents/Resources/THIRD_PARTY_NOTICES.txt"
     }
     source_url="$(jq -r '.urls.stable.url // empty' <<<"$formula_record")"
     source_hash="$(jq -r '.urls.stable.checksum // empty' <<<"$formula_record")"
-    [[ -n "$source_url" && -n "$source_hash" ]] || { echo "missing source URL/hash for $formula $installed_version" >&2; exit 1; }
+    source_revision="$(jq -r '.urls.stable.revision // empty' <<<"$formula_record")"
+    [[ -n "$source_url" ]] || { echo "missing source URL for $formula $installed_version" >&2; exit 1; }
+    if [[ -n "$source_hash" ]]; then
+      [[ "$source_hash" =~ ^[[:xdigit:]]{64}$ ]] || { echo "invalid SHA-256 source checksum for $formula $installed_version" >&2; exit 1; }
+      source_kind="archive-sha256"
+      source_identity="$(tr '[:upper:]' '[:lower:]' <<<"$source_hash" | tr -d '\n')"
+    elif [[ "$source_revision" =~ ^[[:xdigit:]]{40}$ ]]; then
+      source_kind="git-commit"
+      source_identity="$(tr '[:upper:]' '[:lower:]' <<<"$source_revision" | tr -d '\n')"
+    else
+      echo "missing SHA-256 or immutable 40-character Git revision for $formula $installed_version" >&2
+      exit 1
+    fi
     license="$(jq -r '.license // "unspecified"' <<<"$formula_record")"
-    printf '%s %s | license: %s | source: %s | source sha256: %s\n' \
-      "$formula" "$installed_version" "$license" "$source_url" "$source_hash"
+    printf '%s %s | license: %s | source: %s | source %s: %s\n' \
+      "$formula" "$installed_version" "$license" "$source_url" "$source_kind" "$source_identity"
 
     formula_license_dir="$license_root/homebrew/$formula"
     mkdir -p "$formula_license_dir"
+    mkdir -p "$formula_license_dir/.brew"
+    cp -p "$receipt" "$formula_license_dir/.brew/INSTALL_RECEIPT.json"
+    if [[ -s "$keg/.brew/$formula.rb" ]]; then
+      cp -p "$keg/.brew/$formula.rb" "$formula_license_dir/.brew/formula.rb"
+    else
+      brew cat "$formula" > "$formula_license_dir/.brew/formula.rb"
+    fi
     copied=0
     while IFS= read -r -d '' license_file; do
       relative="${license_file#"$keg"/}"
@@ -135,27 +154,45 @@ notices="$stage/melearner.app/Contents/Resources/THIRD_PARTY_NOTICES.txt"
       -iname 'LICENSE' -o -iname 'LICENSE.*' -o -iname 'COPYING' -o \
       -iname 'COPYING.*' -o -iname 'NOTICE' -o -iname 'NOTICE.*' -o \
       -iname 'COPYRIGHT*' -o -path '*/licenses/*' -o -path '*/LICENSES/*' \) -print0)
-    if (( copied == 0 )) && [[ "$formula" == qt* ]]; then
-      # Homebrew bottles can omit Qt's source license tree. Retrieve the exact
-      # formula source recorded above, verify its checksum, and copy its notices.
+    if (( copied == 0 )) && [[ "$formula" == sqlite && -s "$keg/include/sqlite3.h" ]]; then
+      # SQLite's original installed header carries its public domain statement.
+      cp -p "$keg/include/sqlite3.h" "$formula_license_dir/sqlite3.h"
+      copied=1
+    fi
+    if (( copied == 0 )); then
+      # Some bottles omit their license tree. Retrieve the exact source from
+      # matching formula metadata; checksummed archives and immutable Git
+      # commits use separate, explicit verification paths.
       source_archive="$work_dir/$formula-$installed_version-source"
       source_tree="$work_dir/$formula-$installed_version-source-tree"
       source_manifest="$work_dir/$formula-$installed_version-source-manifest"
       mkdir -p "$source_tree"
-      curl --fail --location --silent --show-error "$source_url" -o "$source_archive"
-      actual_source_hash="$(shasum -a 256 "$source_archive" | awk '{print $1}')"
-      [[ "$actual_source_hash" == "$source_hash" ]] || {
-        echo "source checksum mismatch for $formula $installed_version: expected $source_hash, got $actual_source_hash" >&2
-        exit 1
-      }
-      # QtWebEngine's full source archive is very large. Extract only legal
-      # files while retaining the verified archive as provenance evidence.
-      tar -tf "$source_archive" | awk '
-        { path=tolower($0); n=split(path, part, "/"); leaf=part[n]
-          if (leaf ~ /^(license|copying|notice|copyright)([._-].*)?$/ || path ~ /(^|\/)license[s]?\// || path ~ /(^|\/)license[s]?$/) print $0
-        }' > "$source_manifest"
-      [[ -s "$source_manifest" ]] || { echo "no license paths in verified source archive for $formula $installed_version" >&2; exit 1; }
-      tar -xf "$source_archive" -C "$source_tree" --strip-components=1 -T "$source_manifest"
+      if [[ "$source_kind" == archive-sha256 ]]; then
+        curl --fail --location --silent --show-error "$source_url" -o "$source_archive"
+        actual_source_hash="$(shasum -a 256 "$source_archive" | awk '{print $1}')"
+        [[ "$actual_source_hash" == "$source_identity" ]] || {
+          echo "source checksum mismatch for $formula $installed_version: expected $source_identity, got $actual_source_hash" >&2
+          exit 1
+        }
+        # Source archives such as QtWebEngine are large; extract only legal
+        # paths while retaining the verified archive as provenance evidence.
+        tar -tf "$source_archive" | awk '
+          { path=tolower($0); n=split(path, part, "/"); leaf=part[n]
+            if (leaf ~ /^(license|copying|notice|copyright)([._-].*)?$/ || path ~ /(^|\/)license[s]?\// || path ~ /(^|\/)license[s]?$/) print $0
+          }' > "$source_manifest"
+        [[ -s "$source_manifest" ]] || { echo "no license paths in verified source archive for $formula $installed_version" >&2; exit 1; }
+        tar -xf "$source_archive" -C "$source_tree" --strip-components=1 -T "$source_manifest"
+      else
+        git init -q "$source_tree"
+        git -C "$source_tree" remote add origin "$source_url"
+        git -C "$source_tree" fetch --quiet --depth 1 origin "$source_revision"
+        git -C "$source_tree" checkout --quiet --detach FETCH_HEAD
+        actual_source_revision="$(git -C "$source_tree" rev-parse HEAD)"
+        [[ "$actual_source_revision" == "$source_identity" ]] || {
+          echo "source revision mismatch for $formula $installed_version: expected $source_identity, got $actual_source_revision" >&2
+          exit 1
+        }
+      fi
       while IFS= read -r -d '' license_file; do
         relative="${license_file#"$source_tree"/}"
         mkdir -p "$formula_license_dir/$(dirname -- "$relative")"
@@ -165,11 +202,6 @@ notices="$stage/melearner.app/Contents/Resources/THIRD_PARTY_NOTICES.txt"
         -iname 'LICENSE' -o -iname 'LICENSE.*' -o -iname 'COPYING' -o \
         -iname 'COPYING.*' -o -iname 'NOTICE' -o -iname 'NOTICE.*' -o \
         -iname 'COPYRIGHT*' -o -path '*/licenses/*' -o -path '*/LICENSES/*' \) -print0)
-    fi
-    if (( copied == 0 )) && [[ "$formula" == sqlite && -s "$keg/include/sqlite3.h" ]]; then
-      # SQLite's original installed header carries its public domain statement.
-      cp -p "$keg/include/sqlite3.h" "$formula_license_dir/sqlite3.h"
-      copied=1
     fi
     if (( copied == 0 )); then
       case "$formula" in
