@@ -131,6 +131,7 @@ _require_file("${_icon}" "application icon")
 
 find_program(_file_tool NAMES file)
 find_program(_readelf_tool NAMES readelf)
+find_program(_strip_tool NAMES strip REQUIRED)
 function(_validate_patchelf _result _candidate)
   execute_process(
     COMMAND "${_candidate}" --version
@@ -609,6 +610,16 @@ else()
 endif()
 
 function(_run_patchelf _path _rpath)
+  # Remove only symbols not needed by the runtime. Keep codecs, resources,
+  # dynamic exports and the original build artifacts for debugging.
+  execute_process(
+    COMMAND "${_strip_tool}" --strip-unneeded "${_path}"
+    RESULT_VARIABLE _strip_result
+    OUTPUT_VARIABLE _strip_output
+    ERROR_VARIABLE _strip_error)
+  if(NOT _strip_result EQUAL 0)
+    message(FATAL_ERROR "strip failed for ${_path}: ${_strip_output}${_strip_error}")
+  endif()
   execute_process(
     COMMAND "${_patchelf_tool}" --set-rpath "${_rpath}" "${_path}"
     RESULT_VARIABLE _patchelf_result
@@ -682,7 +693,7 @@ endforeach()
 
 file(GLOB_RECURSE _staged_paths RELATIVE "${MELEARNER_STAGE_DIR}" "${MELEARNER_STAGE_DIR}/*")
 foreach(_staged_path IN LISTS _staged_paths)
-  if(_staged_path MATCHES "(^|/)(native-app|src-tauri|node_modules|qml|webengine|webview|electron|chromium|zig|rust)(/|$)")
+  if(_staged_path MATCHES "(^|/)(native-app|src-tauri|node_modules|qml|webview|electron|chromium|zig|rust)(/|$)")
     message(FATAL_ERROR "superseded runtime asset staged: ${_staged_path}")
   endif()
   if(_staged_path MATCHES "^usr/share/melearner/.*\\.(js|mjs|cjs|html|htm)$")

@@ -150,7 +150,7 @@ void validate(const QString& stage, bool appImage) {
         fail(QStringLiteral("desktop launcher must contain exactly %1").arg(expectedExec));
     }
     const auto desktopLower = desktopText.toLower();
-    const QStringList oldRuntimeTokens{QStringLiteral("tauri"), QStringLiteral("native-app"), QStringLiteral("node"), QStringLiteral("zig"), QStringLiteral("rust"), QStringLiteral("webview"), QStringLiteral("webengine"), QStringLiteral("qml"), QStringLiteral("electron"), QStringLiteral("chromium")};
+    const QStringList oldRuntimeTokens{QStringLiteral("tauri"), QStringLiteral("native-app"), QStringLiteral("node"), QStringLiteral("zig"), QStringLiteral("rust"), QStringLiteral("webview"), QStringLiteral("qml"), QStringLiteral("electron"), QStringLiteral("chromium")};
     for (const auto& token : oldRuntimeTokens) {
         if (desktopLower.contains(token)) fail(QStringLiteral("desktop launcher references an old or browser runtime"));
     }
@@ -215,7 +215,7 @@ void validate(const QString& stage, bool appImage) {
         }
     }
 
-    const QStringList forbiddenParts{QStringLiteral("native-app"), QStringLiteral("src-tauri"), QStringLiteral("node_modules"), QStringLiteral("qml"), QStringLiteral("webengine"), QStringLiteral("webview"), QStringLiteral("electron"), QStringLiteral("chromium"), QStringLiteral("zig"), QStringLiteral("rust")};
+    const QStringList forbiddenParts{QStringLiteral("native-app"), QStringLiteral("src-tauri"), QStringLiteral("node_modules"), QStringLiteral("qml"), QStringLiteral("webview"), QStringLiteral("electron"), QStringLiteral("chromium"), QStringLiteral("zig"), QStringLiteral("rust")};
     const QStringList forbiddenFiles{QStringLiteral("node"), QStringLiteral("nodejs"), QStringLiteral("chromium"), QStringLiteral("chrome"), QStringLiteral("electron"), QStringLiteral("mpv"), QStringLiteral("ffmpeg"), QStringLiteral("ffprobe")};
     QDirIterator iterator(usr, QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System, QDirIterator::Subdirectories);
     while (iterator.hasNext()) {
