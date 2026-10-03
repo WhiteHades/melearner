@@ -1803,27 +1803,35 @@ void MainWindow::updateControlsLayout() {
   };
   constexpr int slotWidth = 4;
   int naturalWidth = 40;
-  for (const auto* widget : playbackWidgets_)
-    naturalWidth += ((controlWidth(widget) + 8 + slotWidth - 1) / slotWidth) * slotWidth;
-  const int controlsWidth = std::max(1, std::min(naturalWidth, video_->width() - 32));
-  for (auto* widget : playbackWidgets_) playbackLayout_->removeWidget(widget);
-  // Small grid slots let rows wrap without sharing unrelated column widths.
-  // A conventional grid otherwise widens every row to its longest cell above.
-  const int gridSlots = std::max(1, (controlsWidth - 40) / slotWidth);
-  playbackLayout_->setHorizontalSpacing(0);
-  for (int col = 0; col < std::max(gridSlots, playbackLayout_->columnCount()); ++col)
-    playbackLayout_->setColumnMinimumWidth(col, col < gridSlots ? slotWidth : 0);
-  int row = 0, column = 0;
-  for (auto* widget : playbackWidgets_) {
-    const int span = std::min(gridSlots, (controlWidth(widget) + 8 + slotWidth - 1) / slotWidth);
-    if (column > 0 && column + span > gridSlots) { ++row; column = 0; }
-    playbackLayout_->addWidget(widget, row, column, 1, span, Qt::AlignCenter);
-    column += span;
+  QList<QSize> metrics;
+  for (const auto* widget : playbackWidgets_) {
+    metrics.append(QSize(controlWidth(widget), widget->sizeHint().height()));
+    naturalWidth += ((metrics.last().width() + 8 + slotWidth - 1) / slotWidth) * slotWidth;
   }
-  playerControls_->setFixedWidth(controlsWidth);
-  playerControls_->layout()->activate();
-  const int controlsHeight = playerControls_->sizeHint().height();
-  playerControls_->resize(controlsWidth, controlsHeight);
+  const int controlsWidth = std::max(1, std::min(naturalWidth, video_->width() - 32));
+  // Drawer frames frequently resize the video without changing the transport.
+  // Reflowing its buttons every frame invalidates the whole layout.
+  if (controlsWidth != playbackLayoutWidth_ || metrics != playbackMetrics_) {
+    playbackLayoutWidth_ = controlsWidth; playbackMetrics_ = metrics;
+    for (auto* widget : playbackWidgets_) playbackLayout_->removeWidget(widget);
+    // Small grid slots let rows wrap without sharing unrelated column widths.
+    // A conventional grid otherwise widens every row to its longest cell above.
+    const int gridSlots = std::max(1, (controlsWidth - 40) / slotWidth);
+    playbackLayout_->setHorizontalSpacing(0);
+    for (int col = 0; col < std::max(gridSlots, playbackLayout_->columnCount()); ++col)
+      playbackLayout_->setColumnMinimumWidth(col, col < gridSlots ? slotWidth : 0);
+    int row = 0, column = 0;
+    for (auto* widget : playbackWidgets_) {
+      const int span = std::min(gridSlots, (controlWidth(widget) + 8 + slotWidth - 1) / slotWidth);
+      if (column > 0 && column + span > gridSlots) { ++row; column = 0; }
+      playbackLayout_->addWidget(widget, row, column, 1, span, Qt::AlignCenter);
+      column += span;
+    }
+    playerControls_->setFixedWidth(controlsWidth);
+    playerControls_->layout()->activate();
+    const int controlsHeight = playerControls_->sizeHint().height();
+    playerControls_->resize(controlsWidth, controlsHeight);
+  }
   positionPlayerOverlays();
   video_->clearMask();
   const auto radius = videoFullscreen_ ? 0.0 : melearner::themeFor(this).radius() * 1.4;

@@ -144,6 +144,8 @@ private:
   QWidget* playerControls_ = nullptr;
   QGridLayout* playbackLayout_;
   QList<QWidget*> playbackWidgets_;
+  QList<QSize> playbackMetrics_;
+  int playbackLayoutWidth_ = -1;
   void updateControlsLayout();
   void revealPlayerControls(bool animate = false);
   void updatePlaybackTime(qint64 position, qint64 duration);
