@@ -35,6 +35,7 @@ pacman -S --needed \
   mingw-w64-ucrt-x86_64-qt6-pdf \
   mingw-w64-ucrt-x86_64-sqlite3 \
   mingw-w64-ucrt-x86_64-mpv \
+  mingw-w64-ucrt-x86_64-ffmpeg \
   mingw-w64-ucrt-x86_64-libzip \
   mingw-w64-ucrt-x86_64-md4c
 ```

@@ -6,7 +6,10 @@ melearner uses C++23 and Qt Widgets. The application source is in `cpp-app/src`.
 
 Install C and C++23 compilers, CMake 4.4 or newer, Ninja, pkg-config, Qt 6.11.2 or
 newer with Widgets, OpenGLWidgets, Network, Pdf and Test, SQLite, libzip, and
-md4c. Linux also needs Meson 1.3 or newer, patch, and the media development
+md4c, and FFmpeg development libraries for libavformat, libavcodec, libavutil and
+libswscale. Course thumbnails decode a single video frame through those native
+libraries on a bounded background worker. Linux also needs Meson 1.3 or newer,
+patch, and the media development
 libraries listed in the [Arch Linux installation commands](install.md).
 Windows instructions are in [Windows builds](windows-development.md).
 
