@@ -31,7 +31,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ "$(uname -s)" == Darwin ]] || { echo "macOS packaging requires macOS" >&2; exit 1; }
-for tool in macdeployqt hdiutil codesign otool file shasum jq brew lipo ditto cmake awk sort find cp; do
+for tool in macdeployqt hdiutil codesign otool install_name_tool file shasum jq brew lipo ditto cmake awk sort find cp curl tar; do
   command -v "$tool" >/dev/null 2>&1 || { echo "required packaging tool is missing: $tool" >&2; exit 1; }
 done
 
@@ -62,9 +62,13 @@ ditto "$install_root/melearner.app" "$stage/melearner.app"
 # Homebrew splits Qt modules into separate prefixes. Plugins can load modules
 # that the main executable never linked, so its original RPATHs are insufficient.
 deploy_paths=()
+brew_lib_paths=()
 while IFS= read -r formula; do
   prefix="$(brew --prefix "$formula")"
-  [[ ! -d "$prefix/lib" ]] || deploy_paths+=("-libpath=$prefix/lib")
+  if [[ -d "$prefix/lib" ]]; then
+    deploy_paths+=("-libpath=$prefix/lib")
+    brew_lib_paths+=("$prefix/lib")
+  fi
 done < <(brew list --formula)
 macdeployqt "$stage/melearner.app" -always-overwrite -codesign=- "${deploy_paths[@]}"
 
@@ -131,6 +135,37 @@ notices="$stage/melearner.app/Contents/Resources/THIRD_PARTY_NOTICES.txt"
       -iname 'LICENSE' -o -iname 'LICENSE.*' -o -iname 'COPYING' -o \
       -iname 'COPYING.*' -o -iname 'NOTICE' -o -iname 'NOTICE.*' -o \
       -iname 'COPYRIGHT*' -o -path '*/licenses/*' -o -path '*/LICENSES/*' \) -print0)
+    if (( copied == 0 )) && [[ "$formula" == qt* ]]; then
+      # Homebrew bottles can omit Qt's source license tree. Retrieve the exact
+      # formula source recorded above, verify its checksum, and copy its notices.
+      source_archive="$work_dir/$formula-$installed_version-source"
+      source_tree="$work_dir/$formula-$installed_version-source-tree"
+      source_manifest="$work_dir/$formula-$installed_version-source-manifest"
+      mkdir -p "$source_tree"
+      curl --fail --location --silent --show-error "$source_url" -o "$source_archive"
+      actual_source_hash="$(shasum -a 256 "$source_archive" | awk '{print $1}')"
+      [[ "$actual_source_hash" == "$source_hash" ]] || {
+        echo "source checksum mismatch for $formula $installed_version: expected $source_hash, got $actual_source_hash" >&2
+        exit 1
+      }
+      # QtWebEngine's full source archive is very large. Extract only legal
+      # files while retaining the verified archive as provenance evidence.
+      tar -tf "$source_archive" | awk '
+        { path=tolower($0); n=split(path, part, "/"); leaf=part[n]
+          if (leaf ~ /^(license|copying|notice|copyright)([._-].*)?$/ || path ~ /(^|\/)license[s]?\// || path ~ /(^|\/)license[s]?$/) print $0
+        }' > "$source_manifest"
+      [[ -s "$source_manifest" ]] || { echo "no license paths in verified source archive for $formula $installed_version" >&2; exit 1; }
+      tar -xf "$source_archive" -C "$source_tree" --strip-components=1 -T "$source_manifest"
+      while IFS= read -r -d '' license_file; do
+        relative="${license_file#"$source_tree"/}"
+        mkdir -p "$formula_license_dir/$(dirname -- "$relative")"
+        cp -p "$license_file" "$formula_license_dir/$relative"
+        copied=$((copied + 1))
+      done < <(find "$source_tree" -type f \( \
+        -iname 'LICENSE' -o -iname 'LICENSE.*' -o -iname 'COPYING' -o \
+        -iname 'COPYING.*' -o -iname 'NOTICE' -o -iname 'NOTICE.*' -o \
+        -iname 'COPYRIGHT*' -o -path '*/licenses/*' -o -path '*/LICENSES/*' \) -print0)
+    fi
     if (( copied == 0 )) && [[ "$formula" == sqlite && -s "$keg/include/sqlite3.h" ]]; then
       # SQLite's original installed header carries its public domain statement.
       cp -p "$keg/include/sqlite3.h" "$formula_license_dir/sqlite3.h"
@@ -167,6 +202,153 @@ resolve_rpath_dependency() {
   done <<<"$rpaths"
   return 1
 }
+
+bundle_executable_for() {
+  local binary="$1" cursor executable_name
+  cursor="$(dirname -- "$binary")"
+  while [[ "$cursor" == "$stage/melearner.app" || "$cursor" == "$stage/melearner.app/"* ]]; do
+    if [[ "$cursor" == *.app && -f "$cursor/Contents/Info.plist" ]]; then
+      executable_name="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$cursor/Contents/Info.plist" 2>/dev/null || true)"
+      if [[ -n "$executable_name" && -x "$cursor/Contents/MacOS/$executable_name" ]]; then
+        printf '%s\n' "$cursor/Contents/MacOS/$executable_name"
+        return 0
+      fi
+    fi
+    [[ "$cursor" == "$stage/melearner.app" ]] && break
+    cursor="$(dirname -- "$cursor")"
+  done
+  printf '%s\n' "$stage/melearner.app/Contents/MacOS/melearner"
+}
+
+dependency_from_homebrew() {
+  local dependency="$1" rpaths="$2" loader_dir="$3" executable_dir="$4" rpath candidate suffix
+  brew_dependency_source=""
+  brew_dependency_suffix=""
+  case "$dependency" in
+    @rpath/*) suffix="${dependency#@rpath/}" ;;
+    /opt/homebrew/*|/usr/local/*)
+      [[ -f "$dependency" ]] || return 1
+      brew_dependency_source="$dependency"
+      case "$dependency" in
+        *.framework/*) brew_dependency_suffix="${dependency#*/lib/}" ;;
+        *) brew_dependency_suffix="$(basename -- "$dependency")" ;;
+      esac
+      return 0
+      ;;
+    *) return 1 ;;
+  esac
+  while IFS= read -r rpath; do
+    [[ -n "$rpath" ]] || continue
+    case "$rpath" in
+      @loader_path/*) candidate="$loader_dir/${rpath#@loader_path/}/$suffix" ;;
+      @executable_path/*) candidate="$executable_dir/${rpath#@executable_path/}/$suffix" ;;
+      /*) candidate="$rpath/$suffix" ;;
+      *) continue ;;
+    esac
+    if [[ -f "$candidate" && "$candidate" != "$stage/melearner.app"/* ]]; then
+      case "$candidate" in
+        /opt/homebrew/*|/usr/local/*)
+          brew_dependency_source="$candidate"
+          brew_dependency_suffix="$suffix"
+          return 0
+          ;;
+      esac
+    fi
+  done <<<"$rpaths"
+  for lib_dir in "${brew_lib_paths[@]}"; do
+    if [[ -f "$lib_dir/$suffix" ]]; then
+      brew_dependency_source="$lib_dir/$suffix"
+      brew_dependency_suffix="$suffix"
+      return 0
+    fi
+  done
+  return 1
+}
+
+framework_rpath_for() {
+  local binary_dir="$1" framework_dir="$stage/melearner.app/Contents/Frameworks"
+  awk -v from="$binary_dir" -v to="$framework_dir" 'BEGIN {
+    n=split(from, a, "/"); m=split(to, b, "/"); i=1
+    while (i<=n && i<=m && a[i]==b[i]) i++
+    path=""
+    for (j=i; j<=n; j++) if (a[j]!="") path=path "../"
+    for (j=i; j<=m; j++) if (b[j]!="") path=path b[j] "/"
+    sub(/\/$/, "", path)
+    if (path=="") path="."
+    print "@loader_path/" path
+  }'
+}
+
+# macdeployqt can miss non-Qt transitive dependencies (and split Qt modules
+# loaded only by plugins). Copy those exact Homebrew files into Frameworks,
+# rewrite their install names, and give each image a relocatable Frameworks
+# search path. Repeat because a copied dylib can itself have Homebrew loads.
+while :; do
+  copied_dependency=false
+  while IFS= read -r -d '' binary; do
+    file -b "$binary" | grep -q 'Mach-O' || continue
+    main_executable="$(bundle_executable_for "$binary")"
+    main_rpaths="$(otool -l "$main_executable" | awk '$1 == "cmd" && $2 == "LC_RPATH" { nextline = 1; next } nextline && $1 == "path" { print $2; nextline = 0 }')"
+    rpaths="$(otool -l "$binary" | awk '$1 == "cmd" && $2 == "LC_RPATH" { nextline = 1; next } nextline && $1 == "path" { print $2; nextline = 0 }')"
+    framework_rpath="$(framework_rpath_for "$(dirname -- "$binary")")"
+    if ! grep -Fxq "$framework_rpath" <<<"$rpaths"; then
+      install_name_tool -add_rpath "$framework_rpath" "$binary"
+      copied_dependency=true
+    fi
+    while IFS= read -r dependency; do
+      if [[ "$dependency" == @rpath/* ]]; then
+        suffix="${dependency#@rpath/}"
+        if resolve_rpath_dependency "$suffix" "$rpaths" "$(dirname -- "$binary")" "$(dirname -- "$main_executable")" || \
+           resolve_rpath_dependency "$suffix" "$main_rpaths" "$(dirname -- "$main_executable")" "$(dirname -- "$main_executable")"; then
+          continue
+        fi
+      fi
+      search_rpaths="$rpaths
+$main_rpaths"
+      dependency_from_homebrew "$dependency" "$search_rpaths" "$(dirname -- "$binary")" "$(dirname -- "$main_executable")" || continue
+      source="$brew_dependency_source"
+      suffix="$brew_dependency_suffix"
+
+      framework_path=""
+      case "$suffix" in
+        *.framework/*) framework_path="${suffix%%.framework/*}.framework" ;;
+      esac
+      if [[ -n "$framework_path" ]]; then
+        framework_name="$(basename -- "$framework_path")"
+        framework_source="${source%%.framework/*}.framework"
+        framework_target="$stage/melearner.app/Contents/Frameworks/$framework_name"
+        if [[ ! -e "$framework_target" ]]; then
+          ditto "$framework_source" "$framework_target"
+          copied_dependency=true
+        fi
+        target_suffix="$framework_name/${suffix#"${framework_path}"/}"
+        install_name_tool -id "@rpath/$target_suffix" "$framework_target/${suffix#"${framework_path}"/}"
+      else
+        target_name="$(basename -- "$suffix")"
+        target="$stage/melearner.app/Contents/Frameworks/$target_name"
+        if [[ ! -e "$target" ]]; then
+          cp -pL "$source" "$target"
+          copied_dependency=true
+        fi
+        target_suffix="$target_name"
+        install_name_tool -id "@rpath/$target_suffix" "$target"
+      fi
+      if [[ "$dependency" != "@rpath/$target_suffix" ]]; then
+        install_name_tool -change "$dependency" "@rpath/$target_suffix" "$binary"
+        copied_dependency=true
+      fi
+    done < <(otool -L "$binary" | awk 'NR > 1 { sub(/^[[:space:]]+/, ""); sub(/[[:space:]]+\(compatibility version.*/, ""); print }')
+    while IFS= read -r rpath; do
+      case "$rpath" in
+        /opt/homebrew/*|/usr/local/*)
+          install_name_tool -delete_rpath "$rpath" "$binary"
+          copied_dependency=true
+          ;;
+      esac
+    done <<<"$rpaths"
+  done < <(find "$stage/melearner.app" -type f -print0)
+  [[ "$copied_dependency" == true ]] || break
+done
 
 while IFS= read -r -d '' binary; do
   if file -b "$binary" | grep -q 'Mach-O'; then

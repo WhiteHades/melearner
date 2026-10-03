@@ -74,13 +74,16 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$(brew --prefix qtbase)/bin:$(brew --prefix qttools)/bin:$PATH"
-          scripts/package-cpp-macos.sh
+          mkdir -p dist
+          scripts/package-cpp-macos.sh 2>&1 | tee dist/macos-package.log
 
       - name: Upload diagnostic DMG
-        if: inputs.package
+        if: ${{ always() && inputs.package }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: melearner-0.1.9-macos-arm64-diagnostic
-          path: dist/melearner-0.1.9-macos-arm64.dmg*
-          if-no-files-found: error
+          path: |
+            dist/melearner-0.1.9-macos-arm64.dmg*
+            dist/macos-package.log
+          if-no-files-found: warn
           retention-days: 3
