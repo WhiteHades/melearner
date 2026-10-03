@@ -30,6 +30,9 @@ The C++ AppImage packager rejects bundled ELF files requiring newer than glibc 2
 
 Use optimized release builds, remove unused symbols from packaged binaries, keep one copy of each runtime file and compress the installer. Keep codecs, document readers, language resources, accessibility and license notices. Measure the final package and retest playback and documents after each change.
 
+The Linux stager makes its copied binaries writable before stripping and
+updating their library paths. Installed provider libraries remain unchanged.
+
 The Linux packaging scripts share a dependency inventory and validator. Diagnostic packages are not public releases. Publishing is authorized, but each offered download must have its runtime dependencies, source records and required notices in place.
 
 When a Qt provider omits its Chromium notice, the Linux notice collector retrieves

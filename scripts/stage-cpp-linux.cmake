@@ -691,6 +691,9 @@ else()
 endif()
 
 function(_run_patchelf _path _rpath)
+  # Bottles can install read-only libraries. Only the staged copy is changed.
+  file(CHMOD "${_path}" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
+    GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
   # Remove only symbols not needed by the runtime. Keep codecs, resources,
   # dynamic exports and the original build artifacts for debugging.
   execute_process(
