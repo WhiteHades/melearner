@@ -18,6 +18,9 @@ publish an installer. The legacy UCRT64 script checks for the
 required WebEngine module before configuring; it is not a qualified Windows
 build path.
 
+The app and its build tools use the same native Release configuration. This
+avoids a second Debug build of Qt and keeps vcpkg on its native build path.
+
 Choose a folder on a local drive. URLs, network shares and symlinked paths are
 not accepted as course roots.
 

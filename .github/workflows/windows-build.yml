@@ -43,7 +43,8 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: C:\vcache\archives
-          key: windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v1
+          key: windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v2
+          restore-keys: windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v1
       - name: bootstrap pinned vcpkg and install dependencies
         id: dependencies
         shell: pwsh
@@ -67,7 +68,7 @@ jobs:
           & C:\v\bootstrap-vcpkg.bat -disableMetrics
           if ($LASTEXITCODE -ne 0) { throw 'vcpkg bootstrap failed' }
           & C:\v\vcpkg.exe install qtbase qtwebengine qttools sqlite3 libzip md4c ffmpeg pkgconf `
-            --triplet x64-windows-release --overlay-triplets=$tripletDir
+            --triplet x64-windows-release --host-triplet x64-windows-release --overlay-triplets=$tripletDir
           if ($LASTEXITCODE -ne 0) { throw 'vcpkg dependency installation failed' }
       - name: measure binary archive cache size
         if: success() && steps.vcpkg-cache.outputs.cache-hit != 'true'
@@ -88,7 +89,7 @@ jobs:
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: C:\vcache\archives
-          key: windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v1
+          key: windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v2
       - name: fetch and prepare the pinned mpv development SDK
         shell: pwsh
         run: |
@@ -161,6 +162,7 @@ jobs:
           & $env:MELEARNER_CMAKE -S . -B build\manual-windows -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON `
             -DCMAKE_TOOLCHAIN_FILE=C:\v\scripts\buildsystems\vcpkg.cmake `
             -DVCPKG_TARGET_TRIPLET=x64-windows-release `
+            -DVCPKG_HOST_TRIPLET=x64-windows-release `
             -DVCPKG_OVERLAY_TRIPLETS=C:\vcache\triplets `
             -DPKG_CONFIG_EXECUTABLE="$pkgconf"
           if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed' }
