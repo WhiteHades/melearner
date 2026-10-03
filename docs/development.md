@@ -5,17 +5,26 @@ melearner uses C++23 and Qt Widgets. The application source is in `cpp-app/src`.
 ## Requirements
 
 Install C and C++23 compilers, CMake 4.4 or newer, Ninja, pkg-config, Qt 6.11.2 or
-newer with Widgets, OpenGLWidgets, Network, Pdf and Test, SQLite, libzip, and
-md4c, and FFmpeg development libraries for libavformat, libavcodec, libavutil and
+newer with Widgets, OpenGLWidgets, Network, Pdf, WebEngineWidgets, Concurrent and
+Test, SQLite, libzip, md4c with md4c-html, and FFmpeg development libraries for libavformat, libavcodec, libavutil and
 libswscale. Course thumbnails decode a single video frame through those native
 libraries on a bounded background worker. Linux also needs Meson 1.3 or newer,
 patch, and the media development
 libraries listed in the [Arch Linux installation commands](install.md).
 Windows instructions are in [Windows builds](windows-development.md).
 
-On Arch, `qt6-webengine` supplies Qt PDF. melearner links the native Qt PDF
-library and does not embed a browser or QML runtime. PDF pages are rendered
-on a worker thread into a bounded tile cache.
+On Arch, `qt6-webengine` supplies Qt PDF and Qt WebEngine. PDF pages are rendered
+on a worker thread into a bounded tile cache. HTML and Markdown use a lazy,
+off-the-record WebEngine profile and the bundled sandboxed QtWebEngineProcess.
+The application itself remains Qt Widgets; it has no QML interface.
+
+`course_document_view.cpp` serves validated course-local files through a custom
+URL scheme. Network requests, downloads, popups and permissions are blocked.
+Markdown uses md4c-html with app typography; authored HTML keeps its CSS and
+canvas behavior. Reads and Markdown conversion run on bounded background pools.
+Each file is limited to 32 MiB, with 128 MiB and 512 requests per document.
+The Linux diagnostic stage includes WebEngine libraries, helper, packs, locales
+and ICU dependencies. Windows and macOS package deployment remains unqualified.
 
 The first configure downloads two SHA-256-pinned source archives. Lexbor 3.0.0
 supplies HTML parsing, and the pinned shadcn-cpp commit supplies every interface
