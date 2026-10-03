@@ -173,7 +173,7 @@ private slots:
       QVERIFY(!window.findChild<QPushButton*>("mute"));
       QVERIFY(!window.findChild<QPushButton*>("audioTrackButton"));
       QVERIFY(!window.findChild<QPushButton*>("chapterButton"));
-      QVERIFY(controls->isAncestorOf(window.findChild<shadcn::Switch*>("autoplay")));
+        QVERIFY(!controls->isAncestorOf(window.findChild<shadcn::Switch*>("autoplay")));
       auto* volumeButton = window.findChild<QPushButton*>("volumeButton"); QVERIFY(volumeButton);
       auto* volume = window.findChild<shadcn::Slider*>("volume"); QVERIFY(volume);
       QCOMPARE(volume->orientation(), Qt::Horizontal);
@@ -406,8 +406,18 @@ private slots:
           // palette or a standalone grab that could hide transparency.
           const auto backdrop = controls->mapTo(&window,
             QPoint(controls->width() / 2, controls->height() - 5));
-          QTRY_COMPARE(window.grab().toImage().pixelColor(backdrop).rgba(),
-                       melearner::roleColor(shadcn::Role::Popover).rgba());
+          movePointer(QPoint(30, 30));
+          QTRY_VERIFY(controls->isVisible());
+          QTRY_COMPARE(controls->graphicsEffect()->property("opacity").toDouble(), 1.0);
+          hideControls->stop();
+          const auto composed = window.grab().toImage().pixelColor(backdrop);
+          if (melearner::highContrast()) {
+            QCOMPARE(composed.rgba(), melearner::roleColor(shadcn::Role::Popover).rgba());
+          } else {
+            QVERIFY2(std::max({composed.red(), composed.green(), composed.blue()}) < 100,
+                     qPrintable(QString("Transport tint is too faint: %1").arg(composed.name())));
+            QVERIFY(composed.rgba() != melearner::roleColor(shadcn::Role::Popover).rgba());
+          }
           const auto captures = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
           if (!captures.isEmpty()) QVERIFY(window.grab().save(captures + QString("/player-%1-%2x.png").arg(width).arg(fontScale)));
         }
@@ -484,6 +494,17 @@ private slots:
         auto* previousWide = window.findChild<QPushButton*>("previousLesson"); QVERIFY(previousWide);
         auto* nextWide = window.findChild<QPushButton*>("nextLesson"); QVERIFY(nextWide);
         QVERIFY(lessonTitle->isVisible() && previousWide->isVisible() && nextWide->isVisible());
+        auto* links = window.findChild<QWidget*>("lessonLinks"); QVERIFY(links);
+        auto* heading = window.findChild<QWidget*>("lessonHeader"); QVERIFY(heading);
+        QTRY_COMPARE(links->mapTo(&window, QPoint()).x(), surface->mapTo(&window, QPoint()).x());
+        QCOMPARE(links->width(), surface->width());
+        QCOMPARE(heading->width(), surface->width());
+        QVERIFY(!window.findChild<QWidget*>("headerActions")->isVisible());
+        auto* courseActions = window.findChild<QWidget*>("lessonActions"); QVERIFY(courseActions);
+        QVERIFY(window.findChild<QWidget*>("headerHost")->isAncestorOf(courseActions));
+        QVERIFY(courseActions->isAncestorOf(window.findChild<QWidget*>("autoplay")));
+        QVERIFY(!controls->isAncestorOf(window.findChild<QWidget*>("autoplay")));
+        QVERIFY(!window.findChild<QWidget*>("statusHost")->isVisible());
         QVERIFY(lessonTitle->mapTo(&window, QPoint()).y() + lessonTitle->height() <= window.height());
         QVERIFY(previousWide->mapTo(&window, QPoint(0, previousWide->height())).y() <= window.height());
         QVERIFY(nextWide->mapTo(&window, QPoint(0, nextWide->height())).y() <= window.height());
@@ -542,6 +563,17 @@ private slots:
     window.chooseRoot(data.path() + "/Courses");
     auto* courses = window.findChild<QListView*>("courses");
     QTRY_COMPARE_WITH_TIMEOUT(courses->model()->rowCount(), 1, 10000);
+    auto* preview = window.findChild<QWidget*>("coursePreview"); QVERIFY(preview);
+    auto* previewDelay = preview->findChild<QTimer*>("previewStartupDelay"); QVERIFY(previewDelay);
+    QTRY_VERIFY(previewDelay->isActive());
+    QVERIFY(!window.findChild<melearner::Player*>("previewPlayer"));
+    QCOMPARE(previewDelay->interval(), 900);
+    window.hide();
+    QVERIFY(!previewDelay->isActive());
+    QTest::qWait(950);
+    QVERIFY(!window.findChild<melearner::Player*>("previewPlayer"));
+    window.show(); window.activateWindow(); QVERIFY(QTest::qWaitForWindowActive(&window));
+    QTRY_VERIFY(previewDelay->isActive());
     QPointer<melearner::Player> previewPlayer;
     QTRY_VERIFY((previewPlayer = window.findChild<melearner::Player*>("previewPlayer")));
     QSignalSpy previewPositions(previewPlayer, &melearner::Player::positionChanged);
@@ -582,8 +614,7 @@ private slots:
     QTRY_VERIFY(hasValidVideoFrame(previewVideo->grabFramebuffer()));
     auto* previewMute = window.findChild<QPushButton*>("previewMute"); QVERIFY(previewMute);
     QCOMPARE(previewMute->accessibleName(), QString("Unmute preview"));
-    QVERIFY(!previewMuted.empty() && previewMuted.last()[0].toBool());
-    previewMute->click(); QTRY_VERIFY(!previewMuted.last()[0].toBool());
+    previewMute->click(); QTRY_VERIFY(!previewMuted.empty() && !previewMuted.last()[0].toBool());
     previewMute->click(); QTRY_VERIFY(previewMuted.last()[0].toBool());
     QCOMPARE(previewSaves.count(), 0);
     const auto captures = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
@@ -645,6 +676,24 @@ private slots:
     auto* autoplay = window.findChild<shadcn::Switch*>("autoplay");
     autoplay->setChecked(false);
     auto* surface = window.findChild<QWidget*>("videoSurface");
+    auto* rail = window.findChild<QWidget*>("courseOutline"); QVERIFY(rail);
+    auto* railToggle = window.findChild<QPushButton*>("toggleOutline"); QVERIFY(railToggle);
+    auto* drawer = window.findChild<QVariantAnimation*>("outlineReveal"); QVERIFY(drawer);
+    QTest::mouseClick(play, Qt::LeftButton); QTRY_COMPARE(play->text(), QString("Pause"));
+    heartbeatSamples = 0; previousHeartbeat = 0; worstHeartbeatGap = 0;
+    heartbeatClock.restart(); routeHeartbeat.start();
+    QTest::mouseClick(railToggle, Qt::LeftButton);
+    QTRY_COMPARE(drawer->state(), QAbstractAnimation::Stopped);
+    QVERIFY(!rail->isVisible());
+    QTest::mouseClick(railToggle, Qt::LeftButton);
+    QTRY_COMPARE(drawer->state(), QAbstractAnimation::Stopped);
+    QVERIFY(rail->isVisible());
+    routeHeartbeat.stop();
+    qInfo("Playing-video sidebar toggle: %d heartbeat samples, longest gap %lld ms",
+          heartbeatSamples, worstHeartbeatGap);
+    QVERIFY(heartbeatSamples >= 5);
+    QVERIFY2(worstHeartbeatGap < 150, "Sidebar transition stalled the playing-video GUI");
+    QTest::mouseClick(play, Qt::LeftButton); QTRY_COMPARE(play->text(), QString("Play"));
     auto* time = window.findChild<QLabel*>("playbackTime");
     auto* duration = window.findChild<QLabel*>("playbackDuration");
     auto* readout = window.findChild<QWidget*>("timeReadout");
@@ -659,6 +708,7 @@ private slots:
     auto* feedback = window.findChild<QWidget*>("seekFeedback"); QVERIFY(feedback);
     QCOMPARE(feedback->property("deltaMs").toLongLong(), 3000);
     QVERIFY(feedback->isVisible());
+    QCOMPARE(feedback->width(), 138);
     QTRY_VERIFY(positions.last()[0].toLongLong() >= 9800 && positions.last()[0].toLongLong() <= 10200);
     QTest::keyClick(surface, Qt::Key_Left);
     QCOMPARE(feedback->property("deltaMs").toLongLong(), -3000);

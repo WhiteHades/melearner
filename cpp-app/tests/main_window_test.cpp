@@ -11,6 +11,14 @@
 #include <QFile>
 #include <QGraphicsOpacityEffect>
 #include <QPropertyAnimation>
+#include <QVariantAnimation>
+#include <QWebEnginePage>
+#include <QWebEngineView>
+#include <QTcpServer>
+#include <QBuffer>
+#include <QImage>
+#include <QEventLoop>
+#include <memory>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListView>
@@ -35,7 +43,25 @@
 #include <shadcn/data.hpp>
 #include <shadcn/overlays.hpp>
 #include <QtTest>
+#include "course_document_view.hpp"
+#include <QWebEngineProfile>
 #include <zip.h>
+
+namespace {
+QVariant browserValue(QWebEngineView* view, const QString& script) {
+  if (!view) return {};
+  auto result = std::make_shared<QVariant>();
+  QEventLoop loop;
+  const QPointer<QEventLoop> waiting(&loop);
+  view->page()->runJavaScript(script, [result, waiting](const QVariant& value) {
+    *result = value;
+    if (waiting) waiting->quit();
+  });
+  QTimer::singleShot(1500, &loop, &QEventLoop::quit);
+  loop.exec();
+  return *result;
+}
+}
 
 class MainWindowTest final : public QObject {
   Q_OBJECT
@@ -48,9 +74,19 @@ private slots:
     const auto root = files.path() + "/Courses";
     const auto section = root + "/Native Readers/Section";
     QVERIFY(QDir().mkpath(section));
+    QVERIFY(QDir().mkpath(section + "/.assets"));
+    QTcpServer offlineProbe; QVERIFY(offlineProbe.listen(QHostAddress::LocalHost));
+    const auto probeUrl = QString("http://127.0.0.1:%1/probe").arg(offlineProbe.serverPort());
+    QFile style(section + "/.assets/layout.css"); QVERIFY(style.open(QIODevice::WriteOnly));
+    QVERIFY(style.write("#layout{display:grid;grid-template-columns:120px 1fr}#layout strong{color:rgb(12,34,56)}") > 0); style.close();
+    QImage localImage(8, 8, QImage::Format_RGB32); localImage.fill(QColor(10, 190, 220));
+    QVERIFY(localImage.save(section + "/.assets/local.png"));
+    QFile outside(files.path() + "/outside.txt"); QVERIFY(outside.open(QIODevice::WriteOnly));
+    outside.write("private-outside-course"); outside.close();
+    QVERIFY(QFile::link(outside.fileName(), section + "/.assets/outside.txt"));
     const QList<QPair<QString, QByteArray>> lessons{
-      {"01 Reading.md", "# Markdown lesson\n\nRead this in the app.\n\n- First idea\n- Second idea\n"},
-      {"02 Reading.html", "<html><body><h1>HTML lesson</h1><p>Read this here too.</p></body></html>"},
+      {"01 Reading.md", "# Markdown lesson\n\nRead this **in the app** with *emphasis*.\n\n- First idea\n- Second idea\n\n![Local image](.assets/local.png)\n\n| Name | Value |\n| --- | --- |\n| Data | **Strong** |\n"},
+      {"02 Reading.html", QByteArray("<!doctype html><html><head><link rel=\"stylesheet\" href=\".assets/layout.css?cache=1\"></head><body><h1>HTML lesson</h1><div id=\"layout\"><strong>Read this here too.</strong><img src=\".assets/local.png\"></div><canvas id=\"paint\" width=\"8\" height=\"8\"></canvas><script>const c=document.getElementById('paint').getContext('2d');c.fillStyle='#0abedc';c.fillRect(0,0,8,8);document.body.dataset.canvas=c.getImageData(0,0,1,1).data.join(',');fetch('.assets/outside.txt').then(r=>r.text()).then(t=>document.body.dataset.outside=t).catch(()=>document.body.dataset.outside='blocked');fetch('") + probeUrl.toUtf8() + "').catch(()=>document.body.dataset.network='blocked');</script></body></html>"},
       {"03 rom-cu.csv", "Address,Value\r\n0,\"A, B\"\r\n1,\"C\"\"D\"\r\n"},
       {"05 output.hex.txt", "v3.0 hex words addressed\n0000: 01 02 03"}};
     for (const auto& [name, bytes] : lessons) {
@@ -232,7 +268,14 @@ private slots:
     auto* document = window.findChild<QTextEdit*>("documentText");
     auto* next = window.findChild<QPushButton*>("nextLesson");
     auto* actions = window.findChild<QWidget*>("lessonActions");
-    QTRY_VERIFY(document->toPlainText().contains("Markdown lesson"));
+    QTRY_VERIFY(window.findChild<QWebEngineView*>("documentBrowser"));
+    QPointer<QWebEngineView> browser = window.findChild<QWebEngineView*>("documentBrowser");
+    QSignalSpy deniedResources(window.findChild<melearner::CourseDocumentView*>(),
+                              &melearner::CourseDocumentView::resourceDenied);
+    QTRY_VERIFY(browserValue(browser, "document.body?.innerText ?? ''").toString().contains("Markdown lesson"));
+    QCOMPARE(browserValue(browser, "document.querySelector('strong').textContent").toString(), QString("in the app"));
+    QTRY_VERIFY(browserValue(browser, "document.querySelector('img').complete && document.querySelector('img').naturalWidth===8").toBool());
+    QCOMPARE(browserValue(browser, "document.querySelectorAll('table').length").toInt(), 1);
     QTRY_VERIFY(next->isEnabled());
     QVERIFY(!next->accessibleDescription().isEmpty());
     auto* previous = window.findChild<QPushButton*>("previousLesson");
@@ -251,20 +294,38 @@ private slots:
     QVERIFY(!lessonIndex.data(Qt::AccessibleDescriptionRole).toString().isEmpty());
     QCOMPARE(window.findChild<QWidget*>("courseOutline")->layout()->contentsMargins(), QMargins());
     QVERIFY(!window.findChild<QWidget*>("documentTools")->isVisible());
-    QVERIFY(actions->mapTo(&window, QPoint()).y() < document->mapTo(&window, QPoint()).y());
+    QVERIFY(actions->mapTo(&window, QPoint()).y() < browser->mapTo(&window, QPoint()).y());
     auto* routeTitle = window.findChild<QLabel*>("routeTitle"); QVERIFY(routeTitle);
     QVERIFY(routeTitle->textInteractionFlags().testFlag(Qt::TextSelectableByMouse));
     QVERIFY(routeTitle->textInteractionFlags().testFlag(Qt::TextSelectableByKeyboard));
-    QVERIFY(document->width() <= 900);
+    QVERIFY(browser->isVisible());
     QVERIFY(capture("reader-markdown"));
     const QStringList expected{"HTML lesson", "A, B", "Register", "v3.0 hex words"};
     for (int item = 0; item < expected.size(); ++item) {
       QTest::mouseClick(next, Qt::LeftButton);
-      QTRY_VERIFY(document->toPlainText().contains(expected[item]));
+      if (item == 0) {
+        QTRY_VERIFY(!browser);
+        QTRY_VERIFY(window.findChild<QWebEngineView*>("documentBrowser"));
+        browser = window.findChild<QWebEngineView*>("documentBrowser");
+        QTRY_VERIFY(browserValue(browser, "document.body?.innerText ?? ''").toString().contains(expected[item]));
+        QTRY_COMPARE(browserValue(browser, "getComputedStyle(document.getElementById('layout')).display").toString(), QString("grid"));
+        QCOMPARE(browserValue(browser, "getComputedStyle(document.querySelector('strong')).color").toString(), QString("rgb(12, 34, 56)"));
+        QCOMPARE(browserValue(browser, "document.body.dataset.canvas").toString(), QString("10,190,220,255"));
+        browserValue(browser, "fetch('.assets/layout.css').then(r=>r.text()).then(t=>document.body.dataset.localfetch=t.includes('grid')?'ok':'wrong').catch(()=>document.body.dataset.localfetch='failed')");
+        QTRY_COMPARE(browserValue(browser, "document.body.dataset.localfetch").toString(), QString("ok"));
+        QTRY_VERIFY(!deniedResources.isEmpty());
+        QVERIFY(deniedResources.first().first().toString().endsWith("/.assets/outside.txt"));
+        const auto denied = browserValue(browser, "document.body.dataset.outside").toString();
+        QVERIFY(denied.isEmpty() || denied == "blocked");
+        QTRY_COMPARE(browserValue(browser, "document.body.dataset.network").toString(), QString("blocked"));
+        QVERIFY(!offlineProbe.hasPendingConnections());
+      } else QTRY_VERIFY(document->toPlainText().contains(expected[item]));
       QVERIFY(capture(QString("reader-%1").arg(item)));
     }
     QTest::mouseClick(window.findChild<QPushButton*>("backToLibrary"), Qt::LeftButton);
     QTRY_VERIFY(courses->isVisible());
+    QTRY_VERIFY(!window.findChild<QWebEngineView*>("documentBrowser"));
+    QVERIFY(window.findChildren<QWebEngineProfile*>().isEmpty());
     QVERIFY(!window.findChild<QWidget*>("appStatus")->isVisible());
   }
 
@@ -337,7 +398,7 @@ private slots:
         } else {
           const auto* outline = window.findChild<QWidget*>("courseOutline");
           const auto* viewer = window.findChild<QScrollArea*>("lessonScroll");
-          QVERIFY(outline->minimumWidth() >= 240);
+          QCOMPARE(outline->minimumWidth(), 0);
           QTRY_VERIFY(toggle->isVisible());
           if (!lessons->isVisible()) QTest::mouseClick(toggle, Qt::LeftButton);
           QTRY_VERIFY(lessons->isVisible());
@@ -351,10 +412,13 @@ private slots:
           QTest::mouseClick(toggle, Qt::LeftButton);
           QTRY_VERIFY(outline->isVisible());
           QTRY_VERIFY(document->isVisible());
-          auto* transition = window.findChild<QPropertyAnimation*>("outlineReveal"); QVERIFY(transition);
+          auto* transition = window.findChild<QVariantAnimation*>("outlineReveal"); QVERIFY(transition);
           if (!melearner::reducedMotion() && !melearner::highContrast()) {
-            QCOMPARE(transition->duration(), 180);
+            QCOMPARE(transition->duration(), 220);
             QCOMPARE(transition->startValue().toDouble(), 0.0);
+            transition->setCurrentTime(40);
+            QVERIFY(outline->width() > 0 && outline->width() < 320);
+            QVERIFY(document->isVisible());
           }
           QTRY_COMPARE(transition->state(), QAbstractAnimation::Stopped);
           QCOMPARE(outline->graphicsEffect()->property("opacity").toDouble(), 1.0);
@@ -381,8 +445,10 @@ private slots:
       }
       auto* searchButton = window.findChild<QPushButton*>("searchButton");
       QVERIFY(searchButton);
-      QVERIFY(searchButton->isVisible());
-      QTest::mouseClick(searchButton, Qt::LeftButton);
+      QVERIFY(!searchButton->isVisible());
+      window.activateWindow();
+      QVERIFY(QTest::qWaitForWindowActive(&window));
+      QTest::keyClick(&window, Qt::Key_K, Qt::ControlModifier);
       search = window.findChild<SearchDialog*>();
       QTRY_VERIFY(search && search->isVisible());
       search->reject();
@@ -437,7 +503,7 @@ private slots:
     results->setCurrentIndex(results->model()->index(0, 0));
     QTest::keyClick(results, Qt::Key_Return);
     QTRY_COMPARE(document->toPlainText(), QString("Introduction text."));
-    QTRY_COMPARE(complete->text(), QString("Mark incomplete"));
+    QTRY_COMPARE(complete->accessibleName(), QString("Mark incomplete"));
   }
 
   void openPdfFromCourseOutline() {
