@@ -119,8 +119,22 @@ private slots:
     QVERIFY(rects.size() >= 3);
     QVERIFY(rects[1].left() > rects[0].left());
     QVERIFY(rects[0].right() < rects[1].left());
+    for (const auto& rect : rects) {
+      QVERIFY(rect.left() >= 0);
+      QVERIFY(rect.right() < courses->viewport()->width());
+    }
     QVERIFY(window.findChild<QWidget*>("libraryCanvas")->width() <= 1120);
     QVERIFY(capture("library-cards"));
+    window.resize(560, 720); QTest::qWait(100);
+    const auto narrowCards = courses->visibleRowRects();
+    QVERIFY(!narrowCards.isEmpty());
+    for (const auto& rect : narrowCards) {
+      QVERIFY(rect.left() >= 0);
+      QVERIFY(rect.right() < courses->viewport()->width());
+      QCOMPARE(rect.left(), narrowCards.first().left());
+    }
+    QVERIFY(capture("library-cards-narrow"));
+    window.resize(1440, 900); QTest::qWait(100);
     QTest::mouseClick(list, Qt::LeftButton);
     QTRY_COMPARE(courses->presentation(), shadcn::ListPresentation::List);
     QVERIFY(capture("library-list"));
@@ -212,7 +226,7 @@ private slots:
     QVERIFY(!sectionIndex.data(melearner::shadcnRowTrailingText).toString().isEmpty());
     QTRY_VERIFY(outline->currentIndex().isValid());
     const auto lessonIndex = outline->currentIndex();
-    QCOMPARE(lessonIndex.data(melearner::shadcnRowDescription).toString(), QString());
+    QCOMPARE(lessonIndex.data(melearner::shadcnRowDescription).toString(), QString("Reading"));
     QVERIFY(!lessonIndex.data(Qt::AccessibleDescriptionRole).toString().isEmpty());
     QCOMPARE(window.findChild<QWidget*>("courseOutline")->layout()->contentsMargins(), QMargins());
     QVERIFY(!window.findChild<QWidget*>("documentTools")->isVisible());
@@ -317,11 +331,11 @@ private slots:
           QTRY_COMPARE(transition->state(), QAbstractAnimation::Stopped);
           QCOMPARE(outline->graphicsEffect()->property("opacity").toDouble(), 1.0);
           lessons->setFocus();
-          QTest::keyClick(&window, Qt::Key_Space); QTest::keyClick(&window, Qt::Key_O);
+          QTest::keyClick(&window, Qt::Key_Comma); QTest::keyClick(&window, Qt::Key_O);
           QVERIFY(!outline->isVisible());
           QCOMPARE(transition->state(), QAbstractAnimation::Stopped);
           document->setFocus();
-          QTest::keyClick(&window, Qt::Key_Space); QTest::keyClick(&window, Qt::Key_O);
+          QTest::keyClick(&window, Qt::Key_Comma); QTest::keyClick(&window, Qt::Key_O);
           QVERIFY(outline->isVisible());
           {
             const int flashTime = QApplication::cursorFlashTime();
@@ -525,7 +539,7 @@ private slots:
     QTRY_VERIFY(window.findChild<QWidget*>("courseOutline")->isVisible());
     auto* courseOutline = window.findChild<shadcn::TreeView*>("lessons");
     courseOutline->setFocus();
-    QTest::keyClick(courseOutline, Qt::Key_Space);
+    QTest::keyClick(courseOutline, Qt::Key_Comma);
     QTest::keyClick(courseOutline, Qt::Key_B);
     QTRY_VERIFY(courses->isVisible());
   }
