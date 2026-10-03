@@ -56,6 +56,10 @@ $env:CXX = 'clang++'
 $env:CFLAGS = '--target=x86_64-pc-windows-msvc'
 $env:CXXFLAGS = '--target=x86_64-pc-windows-msvc'
 $env:LDFLAGS = '--target=x86_64-pc-windows-msvc'
+# mpv's resource arguments use GNU windres syntax, including --codepage.
+# Meson otherwise selects Microsoft's rc.exe for a clang/MSVC target.
+$env:RC = (Get-Command llvm-windres.exe -ErrorAction Stop).Source
+$env:WINDRES = $env:RC
 $libplaceboBuildOptions = @(
   '-Dauto_features=disabled', '-Ddefault_library=shared', '-Dopengl=enabled',
   '-Dgl-proc-addr=enabled', '-Dvulkan=disabled', '-Ddemos=false', '-Dtests=false'
