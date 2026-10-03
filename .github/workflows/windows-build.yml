@@ -162,8 +162,10 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: D:\vcache\archives
-          key: windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v5
+          key: windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v6
           restore-keys: |
+            windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v6-partial-
+            windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v5
             windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v5-partial-
             windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v4
             windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-v4-partial-
@@ -193,7 +195,7 @@ jobs:
           Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
           & D:\v\bootstrap-vcpkg.bat -disableMetrics
           if ($LASTEXITCODE -ne 0) { throw 'vcpkg bootstrap failed' }
-          & D:\v\vcpkg.exe install 'sqlite3[fts5]' libzip md4c 'ffmpeg[core,avcodec,avformat,swscale]' vulkan-loader pkgconf `
+          & D:\v\vcpkg.exe install 'sqlite3[fts5]' libzip md4c 'ffmpeg[core,avcodec,avformat,avfilter,swscale,swresample]' libass vulkan-loader pkgconf `
             --triplet x64-windows-release --host-triplet x64-windows-release --overlay-triplets=$tripletDir `
             --clean-buildtrees-after-build --clean-packages-after-build
           if ($LASTEXITCODE -ne 0) { throw 'vcpkg dependency installation failed' }
@@ -216,8 +218,14 @@ jobs:
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: D:\vcache\archives
-          key: windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-${{ steps.dependencies.outcome == 'success' && 'v5' || format('v5-partial-{0}', github.run_id) }}
-      - name: fetch and prepare the pinned mpv development SDK
+          key: windows-2025-x64-release-vcpkg-3cbc1db4d867ec83c89fba4c461321c11f78b5e3-${{ steps.dependencies.outcome == 'success' && 'v6' || format('v6-partial-{0}', github.run_id) }}
+      - name: install pinned Meson build tools
+        shell: pwsh
+        run: |
+          py -3 -m pip install --disable-pip-version-check meson==1.9.1 ninja==1.13.0
+          py -3 -m mesonbuild.mesonmain --version
+          ninja --version
+      - name: build the pinned mpv source SDK
         shell: pwsh
         run: |
           $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
@@ -225,50 +233,9 @@ jobs:
           if (-not $vs) { throw 'Visual Studio installation was not found' }
           Import-Module (Join-Path $vs 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
           Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
-          $sdkUrl = 'https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20261003/mpv-dev-x86_64-20261003-git-3186d369f9.7z'
-          $sdkArchive = 'D:\v\mpv-dev.7z'
-          $sdkRoot = 'D:\v\mpv-sdk'
-          Invoke-WebRequest -Uri $sdkUrl -OutFile $sdkArchive
-          $actualHash = (Get-FileHash -Algorithm SHA256 $sdkArchive).Hash.ToLowerInvariant()
-          $expectedHash = 'b8c2d656c1584d5f08196fcee5c2d0783d1f76021897c4e0b3cc30f94c79522e'
-          if ($actualHash -ne $expectedHash) { throw "mpv SDK SHA-256 mismatch: $actualHash" }
-          $sevenZip = Get-Command 7z.exe -ErrorAction Stop
-          & $sevenZip.Source x $sdkArchive "-o$sdkRoot" -y
-          if ($LASTEXITCODE -ne 0) { throw 'mpv SDK extraction failed' }
-          $header = Get-ChildItem $sdkRoot -Filter client.h -Recurse | Where-Object { $_.FullName -match '[\\/]include[\\/]mpv[\\/]client\.h$' } | Select-Object -First 1
-          $dll = Get-ChildItem $sdkRoot -Filter libmpv-2.dll -Recurse | Select-Object -First 1
-          if (-not $header -or -not $dll) { throw 'mpv SDK is missing include/mpv/client.h or libmpv-2.dll' }
-          $sdkDir = $header.Directory.Parent.Parent.FullName
-          $libDir = Join-Path $sdkDir 'lib'
-          New-Item -ItemType Directory -Force $libDir | Out-Null
-          $exports = & dumpbin /nologo /exports $dll.FullName
-          if ($LASTEXITCODE -ne 0) { throw 'dumpbin could not read mpv DLL exports' }
-          $names = foreach ($line in $exports) {
-            if ($line -match '^\s+\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]+\s+(\S+)') { $Matches[1] }
-          }
-          if (-not $names) { throw 'mpv DLL export list was empty' }
-          $defFile = Join-Path $libDir 'libmpv.def'
-          @('LIBRARY libmpv-2.dll', 'EXPORTS') + $names | Set-Content -Encoding ascii $defFile
-          $importLibrary = Join-Path $libDir 'mpv.lib'
-          & lib.exe /nologo "/def:$defFile" /machine:x64 "/out:$importLibrary"
-          if ($LASTEXITCODE -ne 0) { throw 'MSVC mpv import library generation failed' }
-          $pcDir = Join-Path $libDir 'pkgconfig'
-          New-Item -ItemType Directory -Force $pcDir | Out-Null
-          $prefix = $sdkDir.Replace('\', '/')
-          @"
-          prefix=$prefix
-          exec_prefix=`${prefix}
-          libdir=`${prefix}/lib
-          includedir=`${prefix}/include
-
-          Name: mpv
-          Description: libmpv Windows SDK
-          Version: 2.5.0
-          Libs: -L`${libdir} -lmpv
-          Cflags: -I`${includedir}
-          "@ | Set-Content -Encoding ascii (Join-Path $pcDir 'mpv.pc')
-          "MPV_SDK=$sdkDir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "MPV_DLL=$($dll.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          & pwsh -NoProfile -File scripts/build-cpp-windows-mpv.ps1 `
+            -VcpkgInstalled D:\v\installed\x64-windows-release -OutputDir D:\v\mpv-sdk
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned mpv source build failed' }
       - name: build and run the core workflow test
         shell: pwsh
         env:
@@ -412,7 +379,7 @@ jobs:
           $env:Path = "$(Split-Path $iscc);$env:MELEARNER_QT_ROOT\bin;$mpvBin;D:\v\installed\x64-windows-release\bin;$env:Path"
           & pwsh -NoProfile -File scripts/collect-cpp-windows-notices.ps1 `
             -BuildDir build/manual-windows -VcpkgRoot D:\v -MpvSdk D:\v\mpv-sdk `
-            -MpvArchive D:\v\mpv-dev.7z -QtRoot $env:MELEARNER_QT_ROOT `
+            -MpvArchive $env:MPV_SOURCE_ARCHIVE -QtRoot $env:MELEARNER_QT_ROOT `
             -OutputDir .tmp/manual-ci/windows-legal
           if ($LASTEXITCODE -ne 0) { throw 'Windows legal notices collection failed' }
           $versionMatch = [regex]::Match((Get-Content CMakeLists.txt -Raw), 'project\(melearner VERSION ([0-9]+\.[0-9]+\.[0-9]+)')
