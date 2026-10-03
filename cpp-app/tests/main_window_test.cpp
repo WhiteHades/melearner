@@ -565,6 +565,8 @@ private slots:
     QTRY_VERIFY(pdf->cachedTiles() > 0);
     auto* page = window.findChild<QLineEdit*>("pdfPage");
     QVERIFY(page);
+    page->setFocus();
+    QTRY_VERIFY(page->hasFocus());
     page->setText("3");
     QTest::keyClick(page, Qt::Key_Return);
     QTRY_COMPARE(page->text(), QString("3"));
@@ -651,7 +653,7 @@ private slots:
     paletteSearch->setText("last item");
     QTest::keyClick(paletteSearch, Qt::Key_Return);
     QTRY_VERIFY(palette.isNull() || !palette->isVisible());
-    QCOMPARE(courses->currentIndex().row(), 1);
+    QTRY_COMPARE(courses->currentIndex().row(), 1);
     courses->setFocus();
     QTest::keyClick(courses, Qt::Key_Return);
     QTRY_VERIFY(window.findChild<QWidget*>("courseOutline")->isVisible());
