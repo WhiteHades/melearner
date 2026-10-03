@@ -13,12 +13,17 @@ find_package(PkgConfig REQUIRED)
 include(cpp-app/cmake/mpv.cmake)
 pkg_check_modules(LIBZIP REQUIRED IMPORTED_TARGET libzip)
 pkg_check_modules(MD4C REQUIRED IMPORTED_TARGET md4c)
+pkg_check_modules(THUMBNAIL_MEDIA REQUIRED IMPORTED_TARGET libavformat libavcodec libavutil libswscale)
 include(cpp-app/cmake/lexbor.cmake)
 include(cpp-app/cmake/shadcn.cmake)
 
 add_library(melearner_app STATIC
   cpp-app/src/single_instance.cpp
   cpp-app/src/main_window.cpp
+  cpp-app/src/course_preview.cpp
+  cpp-app/src/seek_feedback.cpp
+  cpp-app/src/course_rows.cpp
+  cpp-app/src/thumbnail_store.cpp
   cpp-app/src/study_icons.cpp
   cpp-app/src/text_interaction.cpp
   cpp-app/src/paged_list_model.cpp
@@ -37,7 +42,7 @@ target_include_directories(melearner_app PUBLIC cpp-app/src)
 target_link_libraries(melearner_app PUBLIC
   Qt6::Widgets Qt6::OpenGLWidgets Qt6::Network Qt6::Pdf SQLite3::SQLite3
   melearner::mpv PkgConfig::LIBZIP PkgConfig::MD4C melearner::lexbor
-  shadcn::widgets)
+  shadcn::widgets PkgConfig::THUMBNAIL_MEDIA)
 target_compile_options(melearner_app PRIVATE
   $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic>)
 set_source_files_properties(cpp-app/schema/library-v1.sql PROPERTIES QT_RESOURCE_ALIAS "schema/library-v1.sql")

@@ -20,13 +20,27 @@ Choose **List** or **Cards** above the library to change its layout. The choice 
 saved on your computer. Search is available in the library or with `/` outside a
 text field.
 
+Cards show locally generated video stills, and list rows show smaller thumbnails.
+A random video and frame are chosen once and cached on this computer. Images
+refresh when their source file changes. Courses without a video keep a quiet
+placeholder. Thumbnails are generated in the background without playing audio.
+
+The dashboard greets you as learner and shows your most recently viewed course.
+Its up-next video preview starts muted, with a sound toggle in the corner. Choose
+**Resume learning** or click the preview to open that lesson. Previews pause when
+you leave the dashboard or switch away from the app, and never record progress.
+Courses without an unfinished video keep a reading resume card.
+
 The course outline stays to the left of the lesson. Video titles and completion
-controls sit below the player. Previous and next cards show adjacent lesson names.
+controls sit together below the player, with completion beside the lesson title.
+In documents, completion is beside the title above the reader.
+Previous and next cards show adjacent lesson names.
 Use **Lessons** or
 **Hide lessons** to toggle the outline at any window size. On narrow windows,
 the outline and reader share the same space.
-Section headings show compact completion counts. Lesson rows show titles and a
-check for completed lessons. Hover for the full title and file details.
+Section headings show compact completion counts. Lesson rows show completion
+marks and a quiet media-type line, including duration when known. Hover for the
+full title and file details.
 
 Markdown and HTML are read inside the app without running scripts or loading
 remote content. CSV and XLSX display cell values as tables. XLSX formatting,
@@ -42,15 +56,16 @@ appear above long text documents only when the document spans multiple pages.
 
 | Key | Action |
 | --- | --- |
-| `Space p` | Play or pause |
-| `h` / `l` | Seek back / forward 10 seconds when the player is focused |
-| `Space f` | Toggle fullscreen |
-| `Space m` | Mute or unmute |
-| `Space ,` / `Space .` | Seek back one second / advance one frame |
+| `Space` | Play or pause |
+| `Left` / `Right`, `h` / `l` | Seek back / forward 3 seconds when the player is focused |
+| `, f` | Toggle fullscreen |
+| `, m` | Mute or unmute |
+| `, ,` / `, .` | Seek back one second / advance one frame |
 | `K` / `J` | Previous / next lesson |
 
 Click the video to play or pause. A centered floating control bar appears when
-you move the pointer over the video and hides after inactivity. Keyboard focus
+you move the pointer over the video and hides after four seconds of inactivity,
+with a short blur fade. Keyboard focus
 keeps it available. Speed, subtitles, frame stepping and capture have direct
 controls. The inline volume slider mutes at zero and unmutes when raised. Click
 the sound icon to mute or restore sound. **Capture** copies the current frame to
@@ -60,6 +75,8 @@ Double-click the left half to go back five seconds, or the right half to go forw
 five seconds. **Autoplay** is off by default. When enabled, the next video starts
 after a five-second countdown, skipping documents. **Cancel** stops that countdown.
 The autoplay choice is saved on your computer.
+Arrow-key and double-click seeking show a brief directional acknowledgement.
+Reduced-motion preferences keep the feedback static.
 
 The ordinary player stays centered at a bounded size. Hide the outline for more
 room, or use fullscreen for an uninterrupted view.
@@ -76,16 +93,16 @@ read-only lesson view has focus; editable fields keep their native bindings.
 | `gg` / `G` | Jump to the first / last focused item |
 | `Ctrl+D` / `Ctrl+U` | Scroll down / up one page |
 | `h` / `l` | Collapse / expand the selected outline section |
-| `Space c` | Mark the current lesson complete or incomplete |
-| `Space o` | Toggle the course outline |
-| `Space b` | Return to the library |
+| `, c` | Mark the current lesson complete or incomplete |
+| `, o` | Toggle the course outline |
+| `, b` | Return to the library |
 | `/` | Search the library |
 | `:` | Open the searchable command palette |
 | `?` | Open the searchable shortcut list |
 | `Escape` | Cancel a key sequence, dismiss a popup, or leave fullscreen |
 
-Space is the leader key. Press the next key within two seconds, without holding
-Space. Start leader commands outside editable fields and ordinary buttons.
+Comma is the leader key. Press the next key within two seconds, without holding
+Comma. Start leader commands outside editable fields.
 Focused buttons keep their usual Space activation.
 
 The shortcut popup is searchable by command name, key or context. It is
