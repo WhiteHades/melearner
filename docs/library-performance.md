@@ -18,7 +18,7 @@ Measured 2026-10-04: Linux 7.2.5, Ryzen 7 4800H (8C/16T), 32 GiB, Qt 6.11.2,
 GCC 16.2.1, Debug. HTML files are 256 bytes; automatic update checks are off.
 The initial renderer warned GBM was unsupported and fell back to Vulkan.
 
-Pending 0.1.2 absolute observations (single run; times ms, RSS KiB):
+Version 0.1.2 observations (single run; times ms, RSS KiB):
 
 | Lessons | UI ready | Scan/list | Search/open median (5) | Cached list | Peak RSS | Reader open late | Closed after 30 s |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -47,8 +47,8 @@ measurement was 83 ms; it does not remove the roughly 1.2 s first cold reader
 path. Full search timings are workload observations only: the early baseline
 used Ctrl+K, while 0.1.2 clicks the visible Search button.
 
-Artifacts: `.tmp/012/performance/results/` (`signal-before-*` and
-`signal-final-*` contain controlled logs and per-process `rss.csv`). RSS sums
+The harness writes logs and per-process `rss.csv` under
+`.tmp/012/performance/results/`. RSS sums
 per-process resident memory and can double-count shared pages; allocator
 retention can keep RSS high, and 500 ms polling can miss short-lived children.
 Reader-closed samples still showed the app and three WebEngine processes; this

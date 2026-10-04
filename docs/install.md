@@ -2,14 +2,14 @@
 
 ## Desktop downloads
 
-Download version `0.1.1` for your system:
+Download version `0.1.2` for your system:
 
 | System | Download |
 | --- | --- |
-| Linux | [AppImage](https://github.com/WhiteHades/melearner/releases/download/v0.1.1/melearner_0.1.1_amd64.AppImage) |
-| Linux (Arch) | [Package](https://github.com/WhiteHades/melearner/releases/download/v0.1.1/melearner-bin-0.1.1-1-x86_64.pkg.tar.zst) |
-| Windows | [Setup installer](https://github.com/WhiteHades/melearner/releases/download/v0.1.1/melearner-0.1.1-setup.exe) |
-| macOS | [Disk image](https://github.com/WhiteHades/melearner/releases/download/v0.1.1/melearner-0.1.1-macos-arm64.dmg) |
+| Linux | [AppImage](https://github.com/WhiteHades/melearner/releases/download/v0.1.2/melearner_0.1.2_amd64.AppImage) |
+| Linux (Arch) | [Package](https://github.com/WhiteHades/melearner/releases/download/v0.1.2/melearner-bin-0.1.2-1-x86_64.pkg.tar.zst) |
+| Windows | [Setup installer](https://github.com/WhiteHades/melearner/releases/download/v0.1.2/melearner-0.1.2-setup.exe) |
+| macOS | [Disk image](https://github.com/WhiteHades/melearner/releases/download/v0.1.2/melearner-0.1.2-macos-arm64.dmg) |
 
 Linux needs x86_64 and glibc 2.39 or newer. Windows needs x64. macOS needs Apple silicon and macOS 15 or newer. The Linux minimum does not guarantee support for every distribution or graphics driver.
 
@@ -37,8 +37,8 @@ For manual installation, download the AppImage above.
 Make the AppImage executable and open it:
 
 ```bash
-chmod +x melearner_0.1.1_amd64.AppImage
-./melearner_0.1.1_amd64.AppImage
+chmod +x melearner_0.1.2_amd64.AppImage
+./melearner_0.1.2_amd64.AppImage
 ```
 
 If FUSE is unavailable, run it with `--appimage-extract-and-run`.
@@ -56,7 +56,7 @@ The command asks for administrator access and package confirmation.
 Install the downloaded package:
 
 ```bash
-sudo pacman -U melearner-bin-0.1.1-1-x86_64.pkg.tar.zst
+sudo pacman -U melearner-bin-0.1.2-1-x86_64.pkg.tar.zst
 ```
 
 ## Linux from source

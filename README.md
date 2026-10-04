@@ -17,14 +17,14 @@ https://github.com/user-attachments/assets/672a65f5-9c69-45f6-bcbd-17ecec261f7e
 
 ## Install or download
 
-Choose your system for version 0.1.1. On Linux, paste the command into a terminal to download, verify and install the app.
+Choose your system for version 0.1.2. On Linux, paste the command into a terminal to download, verify and install the app.
 
 | Platform | Download | Install |
 | --- | --- | --- |
-| Linux | [AppImage](https://github.com/WhiteHades/melearner/releases/download/v0.1.1/melearner_0.1.1_amd64.AppImage) | `curl -fsSL https://raw.githubusercontent.com/WhiteHades/melearner/main/scripts/install-linux.sh \| bash` |
-| Linux (Arch) | [Package](https://github.com/WhiteHades/melearner/releases/download/v0.1.1/melearner-bin-0.1.1-1-x86_64.pkg.tar.zst) | `bash -c "$(curl -fsSL https://raw.githubusercontent.com/WhiteHades/melearner/main/scripts/install-linux.sh)" -- --arch` |
-| Windows | [Setup installer](https://github.com/WhiteHades/melearner/releases/download/v0.1.1/melearner-0.1.1-setup.exe) | Open the installer. |
-| macOS | [Disk image](https://github.com/WhiteHades/melearner/releases/download/v0.1.1/melearner-0.1.1-macos-arm64.dmg) | Open the disk image and drag the app to Applications. |
+| Linux | [AppImage](https://github.com/WhiteHades/melearner/releases/download/v0.1.2/melearner_0.1.2_amd64.AppImage) | `curl -fsSL https://raw.githubusercontent.com/WhiteHades/melearner/main/scripts/install-linux.sh \| bash` |
+| Linux (Arch) | [Package](https://github.com/WhiteHades/melearner/releases/download/v0.1.2/melearner-bin-0.1.2-1-x86_64.pkg.tar.zst) | `bash -c "$(curl -fsSL https://raw.githubusercontent.com/WhiteHades/melearner/main/scripts/install-linux.sh)" -- --arch` |
+| Windows | [Setup installer](https://github.com/WhiteHades/melearner/releases/download/v0.1.2/melearner-0.1.2-setup.exe) | Open the installer. |
+| macOS | [Disk image](https://github.com/WhiteHades/melearner/releases/download/v0.1.2/melearner-0.1.2-macos-arm64.dmg) | Open the disk image and drag the app to Applications. |
 
 The AppImage command installs for your user and adds an app menu entry. The Arch command uses `pacman` and asks for administrator access. [Requirements and manual installation](docs/install.md).
 
