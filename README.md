@@ -36,4 +36,4 @@ Screenshots show sample courses.
 
 For technical details and more ways to install, see [Advanced setup](docs/advanced.md).
 
-[Install](docs/install.md) · [Help](docs/usage.md) · [License](LICENSE)
+[Install](docs/install.md) · [Help](docs/usage.md) · [Contribute](CONTRIBUTING.md) · [License](LICENSE)

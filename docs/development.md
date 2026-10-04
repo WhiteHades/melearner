@@ -1,90 +1,29 @@
 # Build from source
 
-melearner uses C++23 and Qt Widgets. The application source is in `cpp-app/src`.
+meLearner uses C++23 and Qt Widgets. Application code lives in `cpp-app/src`.
 
 ## Requirements
 
-Install C and C++23 compilers, CMake 4.4 or newer, Ninja, pkg-config, Qt 6.11.2 or
-newer with Widgets, OpenGLWidgets, Network, Pdf, WebEngineWidgets, Concurrent and
-Test, SQLite, libzip, md4c with md4c-html, and FFmpeg development libraries for libavformat, libavcodec, libavutil and
-libswscale. Course thumbnails decode a single video frame through those native
-libraries on a bounded background worker. Linux also needs Meson 1.3 or newer,
-patch, and the media development
-libraries listed in the [Arch Linux installation commands](install.md).
-Use LuaJIT for the pinned Linux player. Its build does not support Lua 5.5.
-Windows instructions are in [Windows builds](windows-development.md).
-The [manual platform workflows](ci.md) build on native GitHub machines. macOS
-requires Xcode 26 or newer for standard C++ thread support. The workflows do not
-publish installers or replace clean machine playback checks.
+Install C and C++23 compilers, CMake 4.4 or newer, Ninja, pkg-config, Qt 6.11.2
+or newer with Widgets, OpenGLWidgets, Network, Pdf, WebEngineWidgets, Concurrent
+and Test, SQLite, libzip, md4c with md4c-html, and FFmpeg development libraries
+for libavformat, libavcodec, libavutil and libswscale. Linux also needs Meson
+1.3 or newer, patch, and the [Linux media development libraries](install.md#linux-from-source).
+Use LuaJIT for the pinned Linux player;
+its build does not support Lua 5.5. See [Windows builds](windows-development.md)
+for the Windows toolchain. macOS builds require Xcode 26 or newer and target
+Apple silicon with macOS 15 or newer.
 
-On Arch, `qt6-webengine` supplies Qt PDF and Qt WebEngine. PDF pages are rendered
-on a worker thread into a bounded tile cache. HTML and Markdown use a lazy,
-off-the-record WebEngine profile and the bundled sandboxed QtWebEngineProcess.
-The application itself remains Qt Widgets; it has no QML interface.
+The first configure downloads source archives verified with SHA-256 for Lexbor and
+shadcn-cpp. Linux also builds pinned mpv 0.41.0 with an upstream PipeWire fix.
+These dependencies retain their license notices. Linux package maintainers
+must also include the complete dependency inventory and required source files.
 
-On macOS, a native source build installs a versioned `.app` bundle with the
-`io.github.whitehades.melearner` identity. This does not qualify the bundle as a
-standalone app or DMG; macOS dependency deployment remains unqualified.
-
-`course_document_view.cpp` serves validated course-local files through a custom
-URL scheme. Network requests, downloads, popups and permissions are blocked.
-Markdown uses md4c-html with app typography; authored HTML keeps its CSS and
-canvas behavior. Reads and Markdown conversion run on bounded background pools.
-Each file is limited to 32 MiB, with 128 MiB and 512 requests per document.
-The Linux diagnostic stage includes WebEngine libraries, helper, packs, locales
-and ICU dependencies. Windows and macOS package deployment remains unqualified.
-
-The first configure downloads two SHA-256-pinned source archives. Lexbor 3.0.0
-supplies HTML parsing, and the pinned shadcn-cpp commit supplies every interface
-component, its theme and its font. Both licenses are included in the
-installation. Linux builds also download mpv 0.41.0 and an upstream PipeWire
-startup patch, each verified by SHA-256. The application itself is local only.
-
-`cpp-app/cmake/mpv.cmake` builds the Linux player runtime and installs it under
-`lib/melearner`. The installed executable uses a relative runtime path to load
-that copy. PipeWire, PulseAudio, OpenGL, VAAPI and VDPAU support are required
-at build time; x86_64 also requires the NVDEC headers. The selected decoder
-still depends on the hardware, driver and media. Windows continues to use its
-native libmpv package.
-
-The mpv build retains GPL-enabled hardware paths. Its source archive, upstream
-patch, build recipe, copyright information and license texts are installed
-under `share/doc/melearner/sources/mpv` and `share/licenses/melearner/mpv`.
-Third-party libraries retain their own licenses. These files do not replace
-the complete dependency inventory required when publishing a binary package.
-
-Linux package staging writes `runtime-binaries.json` alongside the notices.
-It records each bundled executable, library and Qt plugin, its input SHA-256,
-its final SHA-256 after ELF relocation, and its size. The input hashes allow
-comparison with the original build or distribution package payloads. The
-inventory contains no workstation paths and does not replace license notices.
-The native Arch stage validator checks the final sizes and hashes and requires
-every bundled ELF file to appear exactly once before packaging proceeds.
-
-Outline grouping uses an indexed exact title lookup before checking longer
-attachment titles. Duplicate video titles retain the earliest video order,
-and attached readings retain the longest matching title at a word boundary.
-This avoids scanning every video again for ordinary video rows. In a synthetic
-section of 6,000 videos, the grouping query fell from 4.54 seconds to 11 milliseconds
-with identical output. This measurement covers the query, not total course loading.
-
-## Interface
-
-The interface uses shadcn-cpp widgets, composed into melearner's own library,
-lesson, and player views. The dependency also supplies the theme and font, and
-is pinned in `cpp-app/cmake/shadcn.cmake`. The application currently installs
-the neutral dark theme only. The core application tests use that same theme.
-
-`cpp-app/src/theme.hpp` is the bridge. It reads the installed theme for the
-widgets the application still paints itself, such as the list rows, and it
-supplies the two answers the theme does not: the system's high contrast palette
-mapped onto the theme's roles, and the platform's reduced motion signal, which
-Qt 6.11 exposes as the widget animation duration.
-
-One component came from melearner rather than from the shadcn/ui catalogue:
-the Stats activity grid, added to shadcn-cpp as a `Heatmap` because the pinned
-upstream registry has no equivalent. That addition is recorded in the
-component library, not here.
+The document viewer serves files from the selected course only. It blocks
+network requests, downloads, popups and permissions. A document is limited to
+32 MiB, with a 128 MiB cache and 512 requests per document. Linux packaging
+bundles Qt WebEngine's helper, resources and locales. Windows packages include
+the helper and resources. The macOS packager stages the renderer inside the app.
 
 ## Build and test
 
@@ -96,34 +35,47 @@ cmake --build --preset linux-dev --parallel 4
 ctest --preset linux-dev --no-tests=error
 ```
 
-For a release build:
-
-```bash
-cmake --preset linux-release
-cmake --build --preset linux-release --parallel 4
-ctest --preset linux-release --no-tests=error
-```
-
-CTest runs the `main_window_test` end-to-end test with Qt's offscreen
-platform. The playback end-to-end test needs an X11 display because the
-libmpv OpenGL surface cannot be created by the offscreen plugin. Run both
-end-to-end tests under private Xvfb sessions with a null PulseAudio sink:
+For a release build, replace `linux-dev` with `linux-release` in each command.
+CTest runs the core window test with Qt's offscreen plugin. The playback
+E2E test needs a private X11 display and PulseAudio null sink, provided
+by the runner script. It runs both E2E tests:
 
 ```bash
 bash scripts/test-cpp-playback.sh
 bash scripts/test-cpp-playback.sh --build-dir build/cpp-release
 ```
 
-The playback test also requires the FFmpeg command-line tool. Its recovery
-check remuxes the checked-in clip into a longer temporary file without
-encoding new media, then checks error recovery, closing and resuming a lesson.
+The playback test also needs FFmpeg. It remuxes the checked-in clip to test
+recovery, closing and resuming. The fixtures are project-authored H.264 and
+HEVC clips. Regenerate them with FFmpeg 8.1.2 using
+`bash scripts/generate-media-corpus.sh`; this replaces the three clips.
 
-The playback fixtures are small, project-authored H.264 and HEVC clips. To
-regenerate them, run `bash scripts/generate-media-corpus.sh` with FFmpeg 8.1.2.
-The script replaces the three fixture clips and prints their SHA-256 hashes.
+The runner starts separate Xvfb, D-Bus and PulseAudio sessions, uses a null
+audio sink and Mesa software OpenGL, and stores temporary XDG data under
+`.tmp/cpp-playback`. It leaves `HOME` unchanged. Logs remain in that run
+directory. The default build directory is `build/cpp-dev`; use
+`MELEARNER_BUILD_DIR` or `--build-dir` to select another. Tests time out after
+90 seconds by default; set `MELEARNER_PLAYBACK_TIMEOUT_SECONDS` to change it.
+Required tools include `pulseaudio`, Xvfb, `xvfb-run`, `xauth`, Openbox,
+`dbus-daemon`, `pactl` and `timeout`. The checkout path must fit the platform's
+Unix socket path limit.
 
-The window tests use the application's font and check normal and doubled text.
-To save their screenshots, create a destination and pass it to the test process:
+Pass a command after `--` to run it in the same private environment instead of
+the two default tests. For example, use this to run an existing nested Wayland
+check. The runner does not start a Wayland compositor, and synthetic pointer
+movement does not verify native compositor input.
+
+To use an extracted PulseAudio package, set its executable and module paths:
+
+```bash
+PULSEAUDIO_BIN=/path/to/pulseaudio/usr/bin/pulseaudio \
+PULSEAUDIO_MODULE_DIR=/path/to/pulseaudio/usr/lib/pulseaudio/modules \
+PULSEAUDIO_LIBRARY_PATH=/path/to/pulseaudio/usr/lib/pulseaudio:/path/to/pulseaudio/usr/lib/pulseaudio/modules \
+bash scripts/test-cpp-playback.sh
+```
+
+To save test screenshots, create a destination and set
+`MELEARNER_TEST_SCREENSHOTS` for the test process:
 
 ```bash
 mkdir -p .tmp/ui-captures
@@ -133,54 +85,17 @@ bash scripts/test-cpp-playback.sh -- env MELEARNER_TEST_SCREENSHOTS="$PWD/.tmp/u
   build/cpp-release/main_playback_test
 ```
 
-Inspect the images as well as the test result; geometry checks alone do not
-establish visual correctness.
+Inspect screenshots; geometry checks do not prove visual correctness. The
+optional `documentationShowcase` case creates sample courses and lesson slides
+for README screenshots. Set `MELEARNER_SHOWCASE_DIR` to a private output
+directory and run that case with the playback runner. It writes `home.png` and
+`course.png` from the app and skips when the variable is unset.
 
-For README screenshots, the optional `documentationShowcase` case creates
-sample courses and original lesson slides. Set `MELEARNER_SHOWCASE_DIR` to a
-private output directory and run that case with the playback runner. It writes
-`home.png` and `course.png` from the actual application windows and never uses
-personal course files or saved progress. The case skips when the variable is unset.
+### Sanitizers
 
-Keep the centered logo and status badges above the sample screenshots when
-updating the README.
-
-The default build directory is `build/cpp-dev`; set `MELEARNER_BUILD_DIR` or
-pass `--build-dir` to select another. By default, the runner runs
-`main_window_test` and `main_playback_test`. It requires `pulseaudio`, Xvfb,
-`xvfb-run`, `xauth`, Openbox, `dbus-daemon`, `pactl`, and `timeout`. It starts a
-separate Xvfb, private D-Bus, and PulseAudio null sink for each suite, redirects XDG and
-temporary data into a private `.tmp/cpp-playback` run directory, runs the test
-process with `LC_ALL=C`, and leaves `HOME` unchanged. It selects Mesa software
-OpenGL and the Qt portal theme so desktop GTK styles and proprietary GLX
-overrides do not change the test environment.
-Each command has a 90 second limit, configurable with
-`MELEARNER_PLAYBACK_TIMEOUT_SECONDS`. Logs are retained under the run directory
-and the script prints their path. The private Unix sockets live under `.tmp`,
-so the checkout path must fit the platform's socket-path limit; the runner
-reports a clear error if it is too long.
-
-For an externally extracted PulseAudio package, set the server executable,
-module directory, and (if needed) server-only library search path:
-
-```bash
-PULSEAUDIO_BIN=/path/to/pulseaudio/usr/bin/pulseaudio \
-PULSEAUDIO_MODULE_DIR=/path/to/pulseaudio/usr/lib/pulseaudio/modules \
-PULSEAUDIO_LIBRARY_PATH=/path/to/pulseaudio/usr/lib/pulseaudio:/path/to/pulseaudio/usr/lib/pulseaudio/modules \
-bash scripts/test-cpp-playback.sh
-```
-
-An explicit command after `--` runs instead of the two default suites, using
-the same private X11/audio environment. This can be used to launch an existing
-nested Wayland check; the script does not provide or start a Wayland compositor.
-Nested Wayland popup checks need input delivered by the compositor. Synthetic
-pointer movement does not certify native compositor pointer input.
-
-### Memory and undefined behavior checks
-
-The Linux sanitizer preset instruments the application, native components and
-Lexbor with AddressSanitizer and UndefinedBehaviorSanitizer. Qt, libmpv and the
-system media libraries remain uninstrumented. Use GCC or Clang:
+The Linux sanitizer preset instruments the app, native components and Lexbor
+with AddressSanitizer and UndefinedBehaviorSanitizer. Qt, libmpv and system
+media libraries are not instrumented. Use GCC or Clang:
 
 ```bash
 cmake --preset linux-sanitize
@@ -192,91 +107,41 @@ bash scripts/test-cpp-playback.sh -- ctest --preset linux-sanitize --no-tests=er
 bash scripts/test-cpp-playback.sh -- build/cpp-sanitize/main_playback_test
 ```
 
-The private runner keeps these checks off the desktop and audio devices.
-Leak detection stays enabled. Investigate reported allocations before adding
-suppressions; a passing run covers only the paths exercised by the tests.
-Use the source installer for the complete local check and installation:
+Leak detection stays enabled. A passing run covers only the paths exercised by
+the tests.
 
-```bash
-bash scripts/install-cpp-linux.sh "$HOME/.local"
-```
+## Architecture and compatibility
 
-## Architecture
-
-Qt owns the single application window, widgets, models, focus, keyboard input,
-and accessibility. C++ modules own the current SQLite schema, course scan,
-search, progress, documents, PDF rendering, and embedded libmpv player.
-Tests use isolated temporary libraries. Application data paths are listed in
+Qt owns the application window, widgets, input and accessibility. C++ modules
+handle the SQLite library, course scanning, search, progress, documents, PDF
+rendering and embedded libmpv playback. Application data paths are listed in
 [Privacy](privacy-and-legal.md).
 
-The Linux player uses libmpv in process and does not launch an external player
-or codec helper. Media files are opened from the selected course root after
-path validation. On `llvmpipe` or `softpipe`, libmpv uses its software render API
-to render into a CPU image, which Qt presents in the `QOpenGLWidget`. This path
-still needs a functioning Qt OpenGL context. Other OpenGL renderers keep the
-direct libmpv OpenGL presentation path. The `--software-decoding` option
-controls decoding separately: it skips hardware decoder probes, but does not
-select the software render API. The transport is built from shadcn components,
-but the decode and presentation are not: the component library's optional media
-player takes a URL and owns its own transport, and this application needs to
-drive a path it has already validated, seek to a saved position, add a subtitle
-file and report progress.
+Linux playback uses the bundled in-process libmpv. It opens media only after
+validating its path under the selected course root. On `llvmpipe` or
+`softpipe`, it renders to a CPU image that Qt presents in a `QOpenGLWidget`;
+this still requires a working Qt OpenGL context. Other renderers use direct
+libmpv OpenGL presentation. `--software-decoding` selects software decoding,
+not software rendering.
 
-## Measured work
+Release 0.1.9 is public. The native Linux, Windows and macOS core workflow
+passes, and Windows playback passes. Linux AppImage and Arch packages require
+glibc 2.39 or newer. The Windows EXE is unsigned. The Apple silicon macOS 15+
+DMG is ad hoc signed, not notarized. These checks do not establish compatibility
+with every distribution, graphics driver or clean machine.
 
-The statements that run often are held to measured numbers rather than assumed
-ones. On a synthetic 400-course, 48,000-lesson library:
+## Install for the current user
 
-| Path | Before | After |
-| --- | --- | --- |
-| Library stats, one scan instead of five | 12.8 ms | 6.5 ms |
-| Resume, ranking only the page's lessons | 151 ms | 16 ms |
-
-Stats runs every few seconds while video plays, and resume runs on every return
-to the Library, which is why both are worth measuring. Other repeated work was
-removed rather than measured: a PDF tile cache that survived a resize, a
-position label that redrew once a second instead of once a frame, and HTML and
-Markdown files that were decoded twice.
-
-## Packaging
-
-Installing for the current user puts the application in the session's `PATH`,
-registers a desktop entry, and installs the icon into the hicolor theme at the
-sizes a shell asks for. The desktop database is refreshed so the entry appears
-without a logout.
+The Linux source installer adds the app to `PATH`, registers a desktop entry
+and installs its icons. It accepts an absolute prefix:
 
 ```bash
 bash scripts/install-cpp-linux.sh "$HOME/.local"
 ```
 
-The icon set lives in `cpp-app/assets/icons/hicolor`. Every installed size uses
-the same monochrome book-and-play mark, rasterized at that size.
-
-A folder can be passed on the command line, and that is what the desktop entry
-hands over:
+The desktop entry passes the selected course folder to the app. To launch from
+a terminal:
 
 ```bash
 melearner ~/Courses
 ```
-
-A file is refused rather than resolved. A library is built from the folders under
-a root, so the folder holding a lesson file is a course or a section and never a
-root, and any ancestor the application picked would be a guess.
-
-The Linux archive can be staged with:
-
-```bash
-bash scripts/package-cpp-linux.sh --build-dir build/cpp-release
-```
-
-`scripts/package-cpp-appimage.sh` and `scripts/package-cpp-arch.sh` use the
-same release build. Packaging requires third-party notices, an SPDX inventory,
-and runtime dependency records. The scripts report missing inputs before
-creating a package. No `0.1.9` binary package is currently published.
-
-Linux staging strips unused symbols from copied binaries before setting their
-runtime paths. Original build artifacts stay intact for debugging. The runtime
-inventory records the final packaged hashes and sizes after both changes.
-
-The manual Ubuntu build installs `libdisplay-info-dev` for mpv's DRM output.
-Finding `libdrm` alone does not enable DRM or the required VAAPI DRM path.

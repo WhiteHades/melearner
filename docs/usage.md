@@ -1,180 +1,76 @@
 # Usage
 
-Choose your course folder to organize its videos, audio and readings into one
-library. Your place is saved as you learn.
+Choose a folder that contains your course folders. meLearner groups scanned files
+into courses, sections, and lessons. Open a course, then choose a lesson.
 
-## First run
+## Supported files
 
-1. Open melearner.
-2. Click **Choose root folder**.
-3. Choose the folder that contains your course folders.
-4. Open a course and select a lesson.
+meLearner reads video, audio, subtitle, text, Markdown, HTML, PDF, DOCX, CSV, and
+XLSX files. Subtitle files must sit beside playable lessons. CSV and XLSX show
+cell values. XLSX formulas show stored values; formatting, charts, and macros do
+not appear. Other indexed files show readable text when possible, or a limited
+hex preview. Use **Open in default app** for formats that need another reader.
 
-melearner groups files into courses, sections, and lessons based on the folder structure it scans.
+PDF controls appear above the page. Long text documents have page controls when
+they span multiple pages. HTML scripts can run, but remote content is blocked
+and local resources are limited to the open course.
 
-## Supported learning items
+## Library and lessons
 
-- Video files
-- Audio files
-- Documents including text, Markdown, HTML, PDF, DOCX, CSV, and XLSX
-- Subtitle tracks next to playable lessons
+Use **List** or **Cards** to change the library layout. Search the library with
+the search field or `/` outside a text field. Cards may show a cached still from
+a video. The dashboard shows a course to resume and a muted video preview when
+available. The preview starts after three seconds, pauses when you leave the
+dashboard or switch apps, and does not save progress.
 
-Choose **List** or **Cards** above the library to change its layout. The choice is
-saved on your computer. Search is available in the library or with `/` outside a
-text field.
+The course outline sits beside the lesson. Use **Lessons** to show or hide it.
+Lesson rows show completion and media type. Video titles appear below the player;
+document titles appear above the reader.
 
-Cards show locally generated video stills, and list rows show smaller thumbnails.
-A random video and frame are chosen once and cached on this computer. Images
-refresh when their source file changes. Courses without a video keep a quiet
-placeholder. Thumbnails are generated in the background without playing audio.
-
-The dashboard greets you as learner and shows your most recently viewed course.
-Its preview starts muted after three seconds while the app is active, with a
-sound toggle in the corner. Choose
-**Resume learning** or click the preview to open that lesson. Previews pause when
-you leave the dashboard or switch away from the app, and never record progress.
-Courses without an unfinished video keep a reading resume card.
-
-The course outline stays to the left of the lesson. Completion and Autoplay
-controls sit in the app header. Video titles appear below the player; document
-titles appear above the reader.
-Previous and next cards show adjacent lesson names.
-Use **Lessons** or
-**Hide lessons** to toggle the outline at any window size. On narrow windows,
-the outline and reader share the same space.
-Section headings show compact completion counts. Lesson rows show completion
-marks and a quiet media-type line, including duration when known. Hover for the
-full title and file details.
-
-Markdown and HTML are read inside the app. HTML scripts can run, but remote
-content is blocked and local resources are limited to the open course.
-CSV and XLSX display cell values as tables. XLSX formatting,
-charts, and macros are not rendered, and formulas show their stored values.
-Other indexed files show readable text when possible, or a bounded hexadecimal
-preview for unrecognized binary content. **Open in default app** is available
-for document formats that need a dedicated application.
-
-PDF zoom and page controls sit directly above the PDF. Reading-page controls
-appear above long text documents only when the document spans multiple pages.
-
-## Playback shortcuts
+## Playback
 
 | Key | Action |
 | --- | --- |
 | `Space` | Play or pause |
-| `Left` / `Right`, `h` / `l` | Seek back / forward 3 seconds when the player is focused |
+| `Left` / `Right`, `h` / `l` | Seek back or forward 3 seconds when the player is focused |
 | `, f` | Toggle fullscreen |
 | `, m` | Mute or unmute |
-| `, ,` / `, .` | Seek back one second / advance one frame |
-| `K` / `J` | Previous / next lesson |
+| `, ,` / `, .` | Seek back one second or advance one frame |
+| `K` / `J` | Previous or next lesson |
 
-Click the video to play or pause. A centered floating control bar appears when
-you move the pointer over the video and hides after four seconds of inactivity,
-with a short blur fade. Keyboard focus
-keeps it available. Speed, subtitles, frame stepping and capture have direct
-controls. The inline volume slider mutes at zero and unmutes when raised. Click
-the sound icon to mute or restore sound. **Capture** copies the current frame to
-your clipboard. Fullscreen is the last control and shows only the video and its
-controls. Escape exits.
-Double click the left third to go back three seconds, or the right third to go
-forward three seconds. Double click the center third to enter or leave fullscreen.
-**Autoplay** is off by default. When enabled, the next video starts
-after a five-second countdown, skipping documents. **Cancel** stops that countdown.
-The autoplay choice is saved on your computer.
-Arrow-key and double-click seeking show a brief directional acknowledgement.
-Reduced-motion preferences keep the feedback static.
+Click the video to play or pause. Double click its left or right third to seek
+3 seconds, or its middle third to toggle fullscreen. Autoplay is off by default.
+When enabled, the next video starts after a five second countdown. Choose
+**Cancel** to stop it. The autoplay setting is saved on this computer.
 
-The ordinary player stays centered at a bounded size. Hide the outline for more
-room, or use fullscreen for an uninterrupted view.
+The sound icon toggles mute. The volume slider mutes at zero and restores sound
+when raised. **Capture** copies the current frame to the clipboard. Fullscreen
+shows only the video and controls; press `Escape` to leave it.
 
-## Keyboard-first navigation
+The shortcut list is searchable with `?`. The comma is the leader key. Press the
+next key within two seconds. Leader commands do not work in editable fields.
+Other useful commands include `/` to search, `:` for the command palette, `, o`
+to toggle the outline, `, b` to return to the library, and `, c` to change lesson
+completion. Lists and read only lessons also support `j` and `k` to move, `gg`
+and `G` to jump to the start or end, and `Ctrl+D` and `Ctrl+U` to scroll a page.
+Editable fields keep their normal keyboard behavior.
 
-The app keeps Qt's normal Tab, Shift+Tab, arrows, Enter, Space, text selection,
-IME, and editing behavior. Vim-style motions apply when a library, outline, or
-read-only lesson view has focus; editable fields keep their native bindings.
+## Progress and playback support
 
-| Key | Action |
-| --- | --- |
-| `j` / `k` | Move down / up in the focused list or scroll a read-only lesson |
-| `gg` / `G` | Jump to the first / last focused item |
-| `Ctrl+D` / `Ctrl+U` | Scroll down / up one page |
-| `h` / `l` | Collapse / expand the selected outline section |
-| `, c` | Mark the current lesson complete or incomplete |
-| `, o` | Toggle the course outline |
-| `, b` | Return to the library |
-| `/` | Search the library |
-| `:` | Open the searchable command palette |
-| `?` | Open the searchable shortcut list |
-| `Escape` | Cancel a key sequence, dismiss a popup, or leave fullscreen |
+Progress saves automatically in the local library database. meLearner remembers
+each lesson's last position and completion. Continue learning opens the saved
+unfinished lesson when available, otherwise the first unfinished lesson. If you
+move or rename a course, scan its folder again to reconnect it with saved
+progress. A missing course stays listed until its folder is scanned again.
 
-Comma is the leader key. Press the next key within two seconds, without holding
-Comma. Start leader commands outside editable fields.
-Focused buttons keep their usual Space activation.
-
-The shortcut popup is searchable by command name, key or context. It is
-the source of truth for the commands currently implemented; melearner does not
-embed a Vim or Neovim editor runtime.
-
-Informational labels and documents support text selection. Selected list and
-table entries can be copied with Ctrl+C. Right-click a control label or entry
-for **Copy text** or **Select text**, without changing its normal activation.
+The player opens original local files without making converted copies. Supported
+codecs depend on the bundled media libraries and graphics drivers. If playback
+fails, the status message reports the error. For decoder problems, close the app
+and run `melearner --software-decoding` from a terminal. This does not repair a
+damaged file or a broken Qt OpenGL context.
 
 ## Stats
 
-**Stats** shows course availability, completion, recorded progress time and
-storage. The activity chart covers twelve weeks, grouping adjacent weeks when
-the window is narrow so dates remain readable. The media chart and tables use
-your scanned files and saved progress. Progress time is based on lesson position,
-not elapsed study sessions. Total duration includes only lessons with known
-durations. Right-click a chart to copy or select its underlying values.
-
-## Playback Compatibility
-
-Playable lessons use the in-app native player. It opens the original local file
-without creating a converted playback copy. Hardware decoding is selected
-automatically when the codec and driver support it; software decoding handles
-the fallback. Supported formats depend on the bundled media libraries and the
-available graphics drivers.
-
-When Qt reports `llvmpipe` or `softpipe` as the OpenGL renderer, melearner asks
-libmpv to render each frame into a CPU image, then Qt presents that image in
-the video widget. This fallback still requires a functioning Qt OpenGL
-context. It does not promise support for every software OpenGL driver.
-
-If a file cannot be opened, the status message reports the error. Select another
-lesson from the outline to continue using the library.
-
-For a blank video or a decoder problem, close melearner and launch it from a
-terminal with `melearner --software-decoding`. This skips hardware decoder probes
-and selects software decoding. Decode mode is separate from presentation: on
-`llvmpipe` or `softpipe`, the CPU-image presentation path is still used; other
-renderers use the OpenGL presentation path. The fallback does not bypass a
-broken Qt OpenGL context or repair a damaged media file.
-
-## Progress
-
-Progress saves automatically to local SQLite. The app keeps the last position and completion state for each lesson.
-
-Continue learning prefers an unfinished lesson with saved progress. When no
-unfinished lesson has progress, it opens the first unfinished lesson in course
-order. A course with every lesson completed opens from the beginning.
-
-Course identity uses local database IDs and content fingerprints, not just absolute paths. If you rename or move a course folder and scan it again, melearner tries to reconnect the course and its lessons to the existing progress.
-
-If a course folder is missing during a refresh, melearner keeps its progress, subtitles, and lesson records in SQLite. The course stays visible with a missing-folder label and cannot be opened until the folder is scanned again.
-
-If two existing courses look identical, melearner does not guess. It leaves progress on the existing records and shows a scan warning instead of assigning progress to the wrong course.
-
-## Stats and Activity
-
-The library dashboard shows local stats for courses, completion, watched progress, storage, media type mix, top courses, and recent activity. The activity heatmap is built from local `lesson_activity` rows written when lesson progress changes.
-
-## Identity Markers
-
-melearner writes `.melearner-course.json` into available course folders automatically after scans and after loading existing libraries. Future scans use that marker ID before fingerprint matching.
-
-Marker files are local metadata only. They are not telemetry, sync, or remote identifiers. Existing marker files with a different identity are not overwritten, duplicate marker IDs are ignored with warnings, and missing courses are skipped.
-
-## Search
-
-Use the search field or `/` to search across courses and lessons.
+**Stats** shows completion, storage, media types and twelve weeks of activity.
+Progress time comes from saved lesson positions, rather than elapsed study time.
+Total duration includes only lessons with known durations.

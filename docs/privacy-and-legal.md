@@ -1,46 +1,27 @@
-# Privacy and Legal
+# Privacy and legal
 
 ## Privacy
 
-melearner is local only.
+meLearner stores its library and progress on your computer. It has no accounts,
+telemetry, analytics, remote sync, update checks, or hosted course catalog.
 
-- No account
-- No telemetry
-- No analytics
-- No remote sync
-- No update check
-- No hosted course catalog
+The database is `library-v1.sqlite3` in Qt's `AppLocalDataLocation` for
+organization `WhiteHades` and application `melearner-cpp-v1`. On Linux, this is
+typically `$HOME/.local/share/WhiteHades/melearner-cpp-v1/library-v1.sqlite3`.
+Course files remain wherever you keep them.
 
-Local data paths:
+The database stores course identity, scan state, progress, and activity. When
+upgrading an older database, meLearner creates a SQLite backup beside it named
+`library-v1.sqlite3.before-schema-2-*`. Course folders may also contain
+`.melearner-course.json`, a local identity marker used to match courses on later
+scans. The marker holds a local course ID. The app does not send database
+contents, course files, paths, or markers anywhere.
 
-- Database: Qt's `AppLocalDataLocation` for organization `WhiteHades` and application `melearner-cpp-v1`, with the file name `library-v1.sqlite3` (typically `$HOME/.local/share/WhiteHades/melearner-cpp-v1/library-v1.sqlite3` on Linux).
-- User course files: wherever you keep them
+## Copyright and responsibility
 
-The database upgrade that removes lesson notes keeps courses, progress and
-activity. Before changing an existing database, the app creates a private SQLite
-backup beside it named `library-v1.sqlite3.before-schema-2-*`. The active database
-then uses schema version 2. The backup stays on your machine for recovery.
+meLearner organises and plays files stored on your device. It does not provide
+courses or media, connect to course platforms, bypass access controls, or
+download, scrape, mirror, or host third party content.
 
-Course identity data, fingerprints, missing-folder state, progress, and lesson activity stay in the local SQLite database. Fingerprints are derived from local course structure and learning-item metadata so renamed or moved folders can reconnect to existing progress.
-
-melearner also writes `.melearner-course.json` into available course folders so later scans can match by marker ID before weaker fingerprint matching. These marker files stay on disk with the course folders, contain only the local course identity value, and are never sent anywhere by the app.
-
-A second launch activates the existing window for the same library. On Linux,
-activation uses a local kernel socket and verifies that both processes belong
-to the same user. It sends no course paths or executable commands.
-
-## Legal Disclaimer
-
-melearner is a local media player and file organizer. It does not distribute, stream, download, host, or facilitate access to any content.
-
-melearner does not:
-
-- Provide courses, videos, audio, or documents
-- Include a built-in course collection or content source
-- Connect to Udemy, Coursera, Skillshare, Pluralsight, or similar platforms
-- Bypass DRM, paywalls, licenses, or terms of service
-- Download, scrape, mirror, or index third-party content
-
-You are responsible for the legality of the files on your machine. Use melearner only with files you own, have a valid license or subscription for, or are allowed to view.
-
-melearner is provided as-is without warranty. The developers are not liable for user actions that violate copyright law, terms of service, or local regulations.
+You are responsible for having the rights or permission to use your files and
+for following applicable licenses, service terms, and local law.
