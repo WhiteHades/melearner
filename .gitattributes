@@ -1,11 +1,1 @@
-.gitattributes text eol=lf
-.gitignore text eol=lf
-
-cpp-app/tests/*.cpp text eol=lf
-cpp-app/schema/*.sql text eol=lf
-scripts/*.sh text eol=lf
-
-fixtures/parity/documents/** -text
-
-fixtures/parity/media/** -text
-fixtures/parity/media/*.ffmeta text eol=lf
+cpp-app/patches/*.patch text eol=lf
