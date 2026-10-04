@@ -32,7 +32,9 @@ run delivery soon after the builds.
 
 It checks Windows and macOS SHA-256 files, calculates Linux and Arch
 checksums, extracts the AppImage without launching it, then builds the Arch
-package from its `usr` tree. It puts four installers, checksums, dependency
-records and the Windows player source files in a `v0.1.0` draft. It will not
-change a published release or replace assets. Review the draft before manual
-publication. No workflow publishes a public release automatically.
+package from its `usr` tree. The draft contains only the four installers.
+Checksums and source records stay in the Actions artifacts.
+
+Use `prepare_only` to retain a replacement bundle for one day without changing
+the release. Review it before replacing published downloads. No workflow
+publishes a public release automatically.

@@ -118,7 +118,7 @@ desktop_exec+='"'
 if [[ -e "$app_path" || -L "$app_path" ]]; then
   [[ -f "$app_path" && ! -L "$app_path" ]] || fail "Refusing to replace non-file install target: $app_path"
   existing_hash="$(sha256sum -- "$app_path" | cut -d ' ' -f 1)"
-  [[ "$existing_hash" == "$expected_hash" ]] || fail "Refusing to replace an unrecognized AppImage: $app_path"
+  [[ "$existing_hash" == "$expected_hash" || "$existing_hash" == 8428e78c80a287f021e5cc8852c7d2c2fdd0c3cc0975feafe61aedf410d54bd6 ]] || fail "Refusing to replace an unrecognized AppImage: $app_path"
 fi
 
 if [[ -e "$launcher_path" || -L "$launcher_path" ]]; then

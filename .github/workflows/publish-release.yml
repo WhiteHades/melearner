@@ -3,6 +3,11 @@ name: Draft release delivery
 on:
   workflow_dispatch:
     inputs:
+      prepare_only:
+        description: Retain installers for review without changing the public release
+        type: boolean
+        required: false
+        default: false
       linux_run:
         description: Successful Linux build run ID with diagnostic package enabled
         type: string
@@ -135,6 +140,7 @@ jobs:
             melearner-0.1.0-windows-sources.tar.gz > SHA256SUMS)
 
       - name: Create or update draft release without overwriting assets
+        if: ${{ !inputs.prepare_only }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -171,3 +177,12 @@ jobs:
             .tmp/release-delivery/out/source-heads.json
             .tmp/release-delivery/out/*-sources.tar.gz
           if-no-files-found: error
+
+      - name: Retain prepared installers for an approved release replacement
+        if: ${{ inputs.prepare_only }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: melearner-prepared-release
+          path: .tmp/release-delivery/out/
+          if-no-files-found: error
+          retention-days: 1
