@@ -1,55 +1,38 @@
-# Manual platform builds
+# CI builds and draft delivery
 
-The native Linux, Windows and macOS build workflows run only when dispatched
-from the repository's Actions tab. Select a platform workflow and choose Run
-workflow. They do not run on every push or pull request. A separate Linux
-tooling and application check workflow runs on pushes and pull requests.
+Start the Linux, Windows or macOS native build workflows from the repository
+Actions tab. The separate Linux tooling and app workflow runs on pushes and
+pull requests.
 
-Each native workflow builds the app and runs its core course and document
-workflow. Start the platform affected by a change and inspect its logs. The
-optional `package` input creates a diagnostic installer and retains it for
-three days. Packaging is off by default. A successful build does not certify
-playback, graphics drivers or installer behavior on a user's machine.
+Each native workflow builds the app and tests the core course and document
+flow. Run the platform affected by your change and review its logs. The
+optional `package` input builds a diagnostic installer, kept for three days.
+It is off by default. Passing tests do not prove playback or installation on a
+user's computer.
 
-The macOS UI test uses the runner's display because Qt's offscreen plugin cannot
-provide window activation and a graphics context. The Windows workflow has an
-optional `run_playback` input. Enable it for Windows playback changes. It checks
-H.264, HEVC, multiple audio tracks, saved progress and enlarged text with Qt's
-software OpenGL renderer. The runner needs enough display space for the wide
-layout checks. The test has a three minute limit. Neither platform test replaces
-checks on a clean machine.
+Enable Windows `run_playback` for playback changes. It checks H.264, HEVC,
+multiple audio tracks, saved progress and large text with Qt software OpenGL.
+It needs a wide display and stops after three minutes. The macOS UI test uses
+the runner display because Qt offscreen mode cannot activate windows or create
+a graphics context.
 
-## Package checks
+## Package limits
 
-Linux packaging runs on Ubuntu 24.04. The AppImage bundles the document
-renderer and player runtime, but not glibc. It requires glibc 2.39 or newer.
-The Arch package is built from the validated AppImage tree and has the same
-runtime requirement.
+See [installation notes](install.md) for operating system floors and signing.
+Package checks gather license notices and source records. Do not publish
+packages with missing required evidence. Build artifacts are diagnostic until
+those checks finish.
 
-The Windows package is a contained per user EXE. It includes the compiler
-runtime, WebEngine helper and resources. It is unsigned.
+## Draft delivery
 
-The macOS package is an Apple silicon DMG for macOS 15 or newer. It includes
-dependency notices and is ad hoc signed, but it is not notarized. No Intel or
-universal package is produced.
+The manual `Draft release delivery` workflow takes successful Linux, Windows
+and macOS build run IDs. It checks each run and source tree, then reuses the
+artifacts without rebuilding packages. Artifacts expire after three days, so
+run delivery soon after the builds.
 
-Package checks collect notices and source provenance for bundled dependencies.
-Do not publish a package with missing required notices or source records.
-Artifacts from build workflows are diagnostic until the package checks and
-dependency evidence are complete.
-
-## Draft release delivery
-
-The manual `Draft release delivery` workflow accepts successful Linux, Windows
-and macOS build run IDs. It validates their workflow, result and source tree,
-then reuses their artifacts. It does not rebuild the native packages. Artifacts
-expire after three days.
-
-The workflow checks the Windows and macOS SHA-256 files, calculates Linux and
-Arch checksums, extracts the AppImage without launching it, and builds the Arch
-package from its `usr` tree. It assembles the four installers, checksums,
-provenance and the Windows player source archive, patch and manifest into the
-fixed `v0.1.9` draft release. It refuses to modify a published release or
-overwrite existing assets. Review the assets, dependency evidence and platform
-limits before publishing manually. The Windows EXE is unsigned; the macOS DMG
-is ad hoc signed and not notarized.
+It checks Windows and macOS SHA-256 files, calculates Linux and Arch
+checksums, extracts the AppImage without launching it, then builds the Arch
+package from its `usr` tree. It puts four installers, checksums, dependency
+records and the Windows player source files in a `v0.1.9` draft. It will not
+change a published release or replace assets. Review the draft before manual
+publication. No workflow publishes a public release automatically.

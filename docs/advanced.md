@@ -1,21 +1,13 @@
 # Advanced setup
 
-[Install](install.md) · [Build from source](development.md) · [Platform builds](ci.md)
+[Installation](install.md) covers desktop downloads and Linux source installation, including system requirements and security warnings.
 
-## Runtime and compatibility
+## Build and contribute
 
-Desktop downloads bundle the player, document renderer, SQLite, fonts and required libraries. Course files and saved progress stay on your computer. Source builds need the development packages listed in the installation guide.
+[Development](development.md) covers local builds, tests and sample screenshots. See [Windows development](windows-development.md) for its toolchain and [Contributing](../CONTRIBUTING.md) for issues and pull requests.
 
-Linux requires x86_64 and glibc 2.39 or newer. Windows requires x64. macOS requires Apple silicon and macOS 15 or newer. The operating system supplies graphics drivers and desktop services. See [platform checks](ci.md) for what has been tested. Every distribution, driver and clean machine installation has not been verified.
+## Packages and storage
 
-The Windows installer is unsigned. The macOS app has an ad hoc signature and is not notarized. Your system may ask for approval. Do not disable system security protections globally.
+[Platform builds](ci.md) explains GitHub builds, package checks and draft releases. Packages bundle the required app libraries; the operating system supplies graphics drivers and desktop services.
 
-## Packaging
-
-Build Linux packages against the oldest supported runtime. The AppImage packager checks every bundled ELF file against the glibc 2.39 limit. Bundling glibc is not a compatibility fix.
-
-Use release builds, strip unused symbols from copied binaries, keep one copy of each runtime file and compress installers. Retain codecs, document readers, accessibility resources and license notices. Measure package size and check playback and documents after changing a bundle.
-
-Release assets include checksums and source revisions. Packages include dependency notices and source records. The Windows player source bundle also contains its build patch and manifest.
-
-For README screenshots, use the `documentationShowcase` case described in the [development guide](development.md). It captures the app with sample courses rather than personal files.
+[Privacy and legal](privacy-and-legal.md) explains local storage and course file responsibilities. Playback and supported documents are covered in [Usage](usage.md).

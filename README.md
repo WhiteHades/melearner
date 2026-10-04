@@ -30,8 +30,10 @@ Screenshots show sample courses.
 
 ## Get started
 
+For easier setup, keep all course folders in one directory, with a separate folder for each course.
+
 1. Open meLearner.
-2. Choose your course folder.
+2. Choose that parent directory.
 3. Pick a lesson.
 
 For technical details and more ways to install, see [Advanced setup](docs/advanced.md).
