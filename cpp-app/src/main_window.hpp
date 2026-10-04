@@ -69,6 +69,7 @@ private:
   QString requestedRoot_;
   melearner::library::Settings settings_;
   quint64 libraryRevision_ = 0;
+  bool libraryRowsDirty_ = true;
   shadcn::Tabs* libraryStack_ = nullptr;
   // The rail's items for the library's two pages. They and the stack are two views
   // of one value, so a change from either side keeps the other in step.
@@ -96,6 +97,10 @@ private:
   QWidget* resumeCopy_ = nullptr;
   QBoxLayout* resumeLayout_ = nullptr;
   QVariantAnimation* routeReveal_ = nullptr;
+  QWidget* canvasReveal_ = nullptr;
+  QWidget* previewReveal_ = nullptr;
+  QWidget* catalogueReveal_ = nullptr;
+  QWidget* outlineReveal_ = nullptr;
   bool routePointerMotion_ = false;
   void revealRoute();
   void resetRouteReveal();

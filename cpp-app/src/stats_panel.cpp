@@ -115,11 +115,11 @@ QWidget* metricBox(
     titleLabel->setWordWrap(false);
     titleLabel->setFont(headingFont(QApplication::font(), 0.9));
     layout->addWidget(titleLabel);
-    *value = plainLabel(valueName, title + QObject::tr(" value"));
+    *value = plainLabel(valueName, {});
     (*value)->setFont(headingFont(QApplication::font(), 1.2));
     (*value)->setWordWrap(false);
     layout->addWidget(*value);
-    *detail = plainLabel(detailName, title + QObject::tr(" detail"));
+    *detail = plainLabel(detailName, {});
     layout->addWidget(*detail);
     return group;
 }

@@ -1,4 +1,5 @@
 #include "main_window.hpp"
+#include "corner_cover.hpp"
 #include "course_document_view.hpp"
 #include "course_preview.hpp"
 #include "seek_feedback.hpp"
@@ -147,11 +148,11 @@ public:
   qreal progress = 1;
 protected:
   QRectF boundingRectFor(const QRectF& source) const override {
-    return QGraphicsBlurEffect::boundingRectFor(source).adjusted(0, 0, 0, 4);
+    return QGraphicsBlurEffect::boundingRectFor(source).adjusted(0, 0, 0, 8);
   }
   void draw(QPainter* painter) override {
     painter->save(); painter->setOpacity(progress);
-    painter->translate(0, 4 * (1 - progress));
+    painter->translate(0, 8 * (1 - progress));
     if (blurRadius() > 0) QGraphicsBlurEffect::draw(painter); else drawSource(painter);
     painter->restore();
   }
@@ -161,6 +162,61 @@ QEasingCurve revealCurve() {
   curve.addCubicBezierSegment(QPointF(.23, 1), QPointF(.32, 1), QPointF(1, 1));
   return curve;
 }
+// Native GL and WebEngine surfaces cannot use QGraphicsEffect. A composited
+// background veil fades instead, without GPU readbacks or per-frame layout.
+class RouteCover final : public QWidget {
+public:
+  RouteCover(QWidget* target, const QString& name) : QWidget(target) {
+    setObjectName(name); setAttribute(Qt::WA_TransparentForMouseEvents);
+    setFocusPolicy(Qt::NoFocus); target->installEventFilter(this);
+    delay_.setSingleShot(true);
+    animation_.setDuration(180); animation_.setEasingCurve(revealCurve());
+    connect(&delay_, &QTimer::timeout, this, [this] {
+      animation_.setStartValue(property("revealProgress")); animation_.setEndValue(1.0);
+      animation_.start();
+    });
+    connect(&animation_, &QVariantAnimation::valueChanged, this,
+            [this](const QVariant& value) { setProgress(value.toDouble()); });
+    setProgress(1);
+  }
+  void prepare(bool animated) {
+    delay_.stop(); animation_.stop(); setProgress(animated ? 0 : 1);
+  }
+  void reveal(int delay = 0) {
+    if (property("revealProgress").toDouble() >= 1 || delay_.isActive() ||
+        animation_.state() == QAbstractAnimation::Running) return;
+    delay_.start(delay);
+  }
+protected:
+  bool eventFilter(QObject* watched, QEvent* event) override {
+    if (watched == parentWidget() && event->type() == QEvent::Resize)
+      setGeometry(parentWidget()->rect());
+    return QWidget::eventFilter(watched, event);
+  }
+  void paintEvent(QPaintEvent*) override {
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing);
+    auto color = melearner::roleColor(this, shadcn::Role::Background);
+    color.setAlphaF(1 - property("revealProgress").toDouble());
+    painter.fillRect(rect(), color);
+    if (objectName() == QLatin1String("courseCanvasReveal") ||
+        objectName() == QLatin1String("previewCanvasReveal")) {
+      auto ghost = melearner::roleColor(this, shadcn::Role::MutedForeground);
+      ghost.setAlphaF(.07 * (1 - property("revealProgress").toDouble()));
+      painter.setPen(Qt::NoPen); painter.setBrush(ghost);
+      const qreal radius = melearner::canvasCornerRadius(this);
+      painter.drawRoundedRect(QRectF(rect()).adjusted(1, 1, -1, -1), radius, radius);
+    }
+  }
+private:
+  QTimer delay_;
+  QVariantAnimation animation_;
+  void setProgress(qreal progress) {
+    setProperty("revealProgress", progress);
+    setGeometry(parentWidget()->rect());
+    if (progress < 1) { show(); raise(); update(); } else hide();
+  }
+};
 class LessonLink final : public shadcn::Button {
 public:
   explicit LessonLink(const QString& direction, bool right) : shadcn::Button() {
@@ -337,7 +393,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   checkUpdate.setObjectName("checkForUpdates");
   auto& automaticUpdates = appearanceMenu->addItem(tr("Notify me about updates"));
   automaticUpdates.setObjectName("automaticUpdates"); automaticUpdates.setCheckable(true);
-  automaticUpdates.setChecked(QSettings().value("updates/automatic", false).toBool());
+  automaticUpdates.setChecked(QSettings().value("updates/automatic", true).toBool());
   auto* updateNotice = button({}, "updateAvailable", shadcn::Variant::Outline);
   actionsLayout->addWidget(updateNotice); updateNotice->hide();
   connect(&automaticUpdates, &QAction::toggled, this, [updates, updateNotice](bool enabled) {
@@ -366,7 +422,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   });
   connect(updates, &UpdateChecker::updateAvailable, this,
     [updateNotice, updateVersion, updateInstaller, updates, showUpdate](const QString& version, const QUrl& installer, const QUrl&) {
-      if (!updates->property("manualCheck").toBool() && !QSettings().value("updates/automatic", false).toBool()) return;
+      if (!updates->property("manualCheck").toBool() && !QSettings().value("updates/automatic", true).toBool()) return;
       *updateVersion = version; *updateInstaller = installer;
       updateNotice->setText(QObject::tr("Update %1").arg(version)); updateNotice->show();
       if (updates->property("manualCheck").toBool()) showUpdate();
@@ -388,7 +444,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   });
   const auto checkAutomatically = [updates] {
     const QSettings preferences;
-    if (preferences.value("updates/automatic", false).toBool()
+    if (preferences.value("updates/automatic", true).toBool()
         && QDateTime::currentSecsSinceEpoch() - preferences.value("updates/lastCheck", 0).toLongLong() >= 86400)
       updates->check();
   };
@@ -660,7 +716,10 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   // scale come from.
   documentView_ = new shadcn::Prose; documentView_->setObjectName("documentText");
   documentView_->setAccessibleName(tr("Lesson document"));
+  documentView_->document()->setDocumentMargin(melearner::canvasCornerRadius(documentView_));
   documentView_->setMaximumWidth(900); documentView_->hide(); documentLayout->addWidget(documentView_, 1);
+  auto* proseCornerCover = new melearner::CornerCover(documentView_->viewport());
+  proseCornerCover->setObjectName("proseCornerCover");
   documentTools_ = new QWidget; documentTools_->setObjectName("documentTools");
   documentNavigation_ = new QHBoxLayout(documentTools_); documentNavigation_->setContentsMargins(0, 0, 0, 0); documentNavigation_->setSpacing(8);
   documentPrevious_ = button(tr("Previous page"), "previousDocumentPage"); documentPrevious_->setEnabled(false);
@@ -692,7 +751,11 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   pdfControls->addWidget(pdfPage); pdfControls->addWidget(pdfCount); pdfControls->addStretch();
   pdfLayout->addLayout(pdfControls);
   pdf_ = new PdfView; pdfLayout->addWidget(pdf_, 1); media_->addWidget(pdfPane);
+  auto* pdfCornerCover = new melearner::CornerCover(pdf_->viewport());
+  pdfCornerCover->setObjectName("pdfCornerCover");
   browserDocument_ = new melearner::CourseDocumentView; media_->addWidget(browserDocument_);
+  auto* browserCornerCover = new melearner::CornerCover(browserDocument_);
+  browserCornerCover->setObjectName("browserCornerCover");
   connect(browserDocument_, &melearner::CourseDocumentView::error, this, &MainWindow::showError);
   connect(fit, &QPushButton::clicked, pdf_, &PdfView::fitWidth);
   connect(pdfZoom, &QComboBox::activated, this, [this, pdfZoom](int index) { pdf_->setZoom(pdfZoom->itemData(index).toDouble()); });
@@ -709,7 +772,9 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     pdfCount->setText(tr("of %1").arg(total));
   });
   connect(pdf_, &PdfView::errorOccurred, this, [this](const QString& message) {
-    if (lesson_ && lesson_->path.endsWith(".pdf", Qt::CaseInsensitive)) showError(message);
+    if (lesson_ && lesson_->path.endsWith(".pdf", Qt::CaseInsensitive)) {
+      static_cast<RouteCover*>(canvasReveal_)->reveal(); showError(message);
+    }
   });
   connect(pdf_, &PdfView::pageChanged, this, [this](int, int total) {
     if (total <= 0 || pendingPdfScroll_ < 0) return;
@@ -874,7 +939,11 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     controlsFade_->setEndValue(0.0); controlsFade_->start();
   });
   routeReveal_ = new QVariantAnimation(this); routeReveal_->setObjectName("routeReveal");
-  routeReveal_->setDuration(180); routeReveal_->setStartValue(0.0); routeReveal_->setEndValue(180.0);
+  routeReveal_->setDuration(300); routeReveal_->setStartValue(0.0); routeReveal_->setEndValue(300.0);
+  canvasReveal_ = new RouteCover(media_, "courseCanvasReveal");
+  previewReveal_ = new RouteCover(preview_, "previewCanvasReveal");
+  catalogueReveal_ = new RouteCover(courses_->viewport(), "catalogueReveal");
+  outlineReveal_ = new RouteCover(outline_, "outlineRouteReveal");
   for (auto* group : {resumeHeading_, resumeCopy_, lessonHeader_, lessonLinks_})
     group->setGraphicsEffect(new RouteTextEffect(group));
   connect(routeReveal_, &QVariantAnimation::valueChanged, this, [this](const QVariant& value) {
@@ -882,10 +951,24 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
                                          : QList<QWidget*>{resumeHeading_, resumeCopy_};
     for (int index = 0; index < groups.size(); ++index) {
       auto* effect = static_cast<RouteTextEffect*>(groups[index]->graphicsEffect());
-      effect->progress = revealCurve().valueForProgress(std::clamp((value.toDouble() - index * 30) / 150, 0.0, 1.0));
+      const int delay = course_ ? 60 + index * 45 : index * 45;
+      effect->progress = revealCurve().valueForProgress(std::clamp((value.toDouble() - delay) / 180, 0.0, 1.0));
       effect->setBlurRadius(4 * (1 - effect->progress));
       effect->update();
     }
+  });
+  connect(video_, &QOpenGLWidget::frameSwapped, this, [this] {
+    if (course_ && playerLoaded_ && media_->currentIndex() == 0)
+      static_cast<RouteCover*>(canvasReveal_)->reveal();
+  });
+  connect(browserDocument_, &melearner::CourseDocumentView::loaded, this, [this](bool) {
+    if (course_ && media_->currentIndex() == 3) static_cast<RouteCover*>(canvasReveal_)->reveal();
+  });
+  connect(pdf_, &PdfView::pageChanged, this, [this](int, int total) {
+    if (course_ && total && media_->currentIndex() == 2) static_cast<RouteCover*>(canvasReveal_)->reveal();
+  });
+  connect(preview_, &melearner::CoursePreview::frameReady, this, [this] {
+    if (!course_) static_cast<RouteCover*>(previewReveal_)->reveal(45);
   });
   for (auto* widget : playbackWidgets_) widget->setParent(playerControls_);
   for (auto* widget : playerControls_->findChildren<QWidget*>() + QList<QWidget*>{video_, playerControls_}) {
@@ -1012,12 +1095,14 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     if (!resumeEntry_) { preview_->clear(); preview_->hide(); }
     updateLayout();
     restoreLibraryScroll();
-    revealRoute();
   });
   connect(&library_, &lib::Library::previewVideoReady, this, [this](auto id, const lib::Lesson& item) {
     if (id != previewRequestId_ || resumeGeneration_ != routeGeneration_ || course_ || !resumeEntry_) return;
     previewRequestId_ = 0;
-    if (item.id.isEmpty()) { preview_->clear(); preview_->hide(); return; }
+    if (item.id.isEmpty()) {
+      preview_->clear(); preview_->hide();
+      static_cast<RouteCover*>(previewReveal_)->prepare(false); return;
+    }
     resumeEntry_->lesson = item;
     resumeLesson_->setText(item.name); resumeLesson_->setToolTip(tooltip(item.name));
     resume_->setAccessibleDescription(tr("%1, %2").arg(resumeEntry_->course.name, item.name));
@@ -1027,15 +1112,24 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     observeRevision(entry.revision);
     if (id != entryRequestId_ || entryGeneration_ != routeGeneration_ || !course_ || course_->id != entry.course.id) return;
     entryRequestId_ = 0; course_ = entry.course;
-    if (entry.course.missing) { showError(tr("Course folder missing: %1. Choose its root folder, then Rescan.").arg(entry.course.path)); return; }
-    if (!entry.hasLesson) { documentStatus_->setText(tr("This course has no lessons yet. Add files, then rescan.")); documentStatus_->show(); return; }
+    if (entry.course.missing) {
+      static_cast<RouteCover*>(canvasReveal_)->reveal();
+      showError(tr("Course folder missing: %1. Choose its root folder, then Rescan.").arg(entry.course.path)); return;
+    }
+    if (!entry.hasLesson) {
+      documentStatus_->setText(tr("This course has no lessons yet. Add files, then rescan."));
+      documentStatus_->show(); static_cast<RouteCover*>(canvasReveal_)->reveal(); return;
+    }
     showLesson(entry.lesson);
   });
   connect(&documents_, &melearner::documents::Documents::opened, this,
     [this](quint64 id, const melearner::documents::PageResult& result) {
       if (id != documentRequestId_ || !lesson_) return;
       documentRequestId_ = 0;
-      if (result.error) { documentStatus_->setText(result.error->message); documentStatus_->show(); return; }
+      if (result.error) {
+        documentStatus_->setText(result.error->message); documentStatus_->show();
+        static_cast<RouteCover*>(canvasReveal_)->reveal(); return;
+      }
       if (!result.page || result.page->path != lesson_->path) return;
       const auto& page = *result.page;
       documentGeneration_ = page.generation; documentNextOffset_ = page.offset + page.blocks.size();
@@ -1051,6 +1145,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
       // which is where a document becomes markup.
       documentView_->setHtml(melearner::documents::toHtml(page.blocks));
       documentView_->moveCursor(QTextCursor::Start); documentView_->show();
+      static_cast<RouteCover*>(canvasReveal_)->reveal();
       documentStatus_->setText(page.warnings.isEmpty() ? QString() : page.warnings.first());
       documentStatus_->setVisible(!page.warnings.isEmpty());
       const QString selected = lesson_->id;
@@ -1108,8 +1203,6 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
       empty_->setDescription(tr("Each Course should be a folder inside your root folder."));
     }
     empty_->setVisible(page.total == 0); courses_->setVisible(page.total != 0);
-    if (request.offset == 0 && !restoreCourseSelection_)
-      QTimer::singleShot(0, courses_, [this] { courses_->revealItems(!keyboardNavigation_); });
   });
   connect(&library_, &lib::Library::lessonsReady, this, [this](auto id, const lib::LessonPage& page) {
     if (id == neighborReadId_ && id) {
@@ -1157,6 +1250,11 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
       resumeEntry_.reset(); resumePanel_->hide(); resumeHeading_->hide(); resumeGroup_->hide();
       pendingLibraryScroll_ = 0; // Do not save the outgoing library under the new root.
     }
+    libraryRowsDirty_ = true;
+    if (rootPath_ != state.rootPath) {
+      browserDocument_->clear(); resumeEntry_.reset(); preview_->clear();
+      returnCourseRow_ = -1; returnCourseId_.clear();
+    }
     rootPath_ = state.rootPath; rootLabel_->setText(QFileInfo(rootPath_).fileName()); rootLabel_->setToolTip(tooltip(rootPath_));
     rootLabel_->setAccessibleDescription(rootPath_);
     choose_->setEnabled(true); rescan_->setEnabled(true); showLibrary();
@@ -1179,6 +1277,10 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     owned = owned || (id == searchResolveId_ && searchResolveGeneration_ == routeGeneration_);
     if (!owned) return;
     if (id == startupId_) startupId_ = 0;
+    if (id == entryRequestId_) {
+      entryRequestId_ = 0;
+      static_cast<RouteCover*>(canvasReveal_)->reveal();
+    }
     if (courseRequests_.contains(id)) courseModel_->failedPage(courseRequests_.take(id).offset);
     if (id == stepResolveId_) stepResolveId_ = 0;
     if (id == stepReadId_) stepReadId_ = 0;
@@ -1221,6 +1323,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     observeRevision(result.revision);
     if (!lesson_ || lesson_->id != result.lessonId) return;
     lesson_->completed = result.completed;
+    lesson_->duration = result.duration;
     lesson_->lastPosition = result.lastPosition; lesson_->watchedTime = result.watchedTime;
     const auto label = result.completed ? tr("Mark incomplete") : tr("Mark complete");
     complete_->setText(compactLayout_ ? QString{} : label);
@@ -1307,6 +1410,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     playerLoaded_ = true; durationMs_ = duration; positionMs_ = position;
     shownPositionSeconds_ = -1; shownDurationSeconds_ = -1;
     play_->setEnabled(true); seek_->setEnabled(duration > 0); status_->clear(); status_->hide();
+    video_->update();
     if (autoplayStartPath_ == path) { autoplayStartPath_.clear(); (void)player_->play(); }
   });
   connect(player_, &melearner::Player::positionChanged, this, [this](qint64 position, qint64 duration) {
@@ -1370,13 +1474,16 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     if (code == "superseded") return;
     if (id == volumeRequestId_) { requestedVolume_.reset(); volumeRequestId_ = 0; }
     if (id == muteRequestId_) { requestedMuted_.reset(); muteRequestId_ = 0; }
+    if (id == playerLoadId_) static_cast<RouteCover*>(canvasReveal_)->reveal();
     showError(message);
   });
   connect(player_, &melearner::Player::commandFinished, this, [this](auto id) {
     if (id == restoreVolumeId_ && id == volumeRequestId_) requestedVolume_.reset();
     if (id == restoreMuteId_ && id == muteRequestId_) requestedMuted_.reset();
   });
-  connect(player_, &melearner::Player::fatalError, this, [this](const QString&, const QString& message) { showError(message); });
+  connect(player_, &melearner::Player::fatalError, this, [this](const QString&, const QString& message) {
+    static_cast<RouteCover*>(canvasReveal_)->reveal(); showError(message);
+  });
   // Keep the command list as the single source for keyboard help.
   // Single-letter Vim motions are dispatched from keyPressEvent/eventFilter so
   // native editors never lose their text input semantics.
@@ -1725,7 +1832,7 @@ void MainWindow::chooseRootWhenOpen(const QString& path) {
 }
 void MainWindow::showLibrary() {
   saveScrollState();
-  browserDocument_->clear();
+  browserDocument_->suspend();
   routePointerMotion_ = !keyboardNavigation_;
   resetRouteReveal();
   thumbnails_->cancelPending(); thumbnailRequests_.clear();
@@ -1745,9 +1852,13 @@ void MainWindow::showLibrary() {
   choose_->show(); rescan_->show();
   restoreCourseSelection_ = returnCourseRow_ >= 0;
   pendingLibraryScroll_ = QSettings().value(scrollKey("library", rootPath_ + settings_.libraryPresentation), 0).toInt();
-  courseModel_->reset(); refreshResume();
+  if (libraryRowsDirty_) { courseModel_->reset(); libraryRowsDirty_ = false; }
+  else courseModel_->refresh();
+  refreshResume();
   if (libraryStack_->currentValue() == QLatin1String("courses")) courses_->setFocus(); else libraryStack_->setFocus();
   updateLayout();
+  restoreLibraryScroll();
+  revealRoute();
 }
 void MainWindow::saveScrollState() {
   QSettings preferences;
@@ -1795,7 +1906,7 @@ void MainWindow::showCourse(const lib::Course& course, const QString& requestedL
   routePointerMotion_ = !keyboardNavigation_;
   resetRouteReveal();
   if (course.missing) { showError(tr("Course folder missing: %1. Choose its root folder, then Rescan.").arg(course.path)); return; }
-  browserDocument_->clear();
+  browserDocument_->suspend(course.path);
   cancelAutoplay(); neighborResolveId_ = 0; neighborReadId_ = 0;
   previewRequestId_ = 0; preview_->suspend(); preview_->hide();
   thumbnails_->cancelPending(); thumbnailRequests_.clear();
@@ -1817,13 +1928,22 @@ void MainWindow::showCourse(const lib::Course& course, const QString& requestedL
   if (!compactLayout_) split_->setSizes({outlineWidth_, std::max(1, split_->width() - outlineWidth_)});
   entryGeneration_ = routeGeneration_;
   const auto target = requestedLesson.isEmpty() && rememberedCourse_ == course.id ? rememberedLesson_ : requestedLesson;
-  entryRequestId_ = library_.enterCourse(course.id, target);
   outlineModel_->setCourse(course.id);
-  if (!entryRequestId_) showError(tr("Library is busy. Open the Course again to retry."));
+  // Populate navigation before opening the first lesson. Cold browser startup
+  // can block the GUI briefly, so its queued result must not precede the outline.
+  entryRequestId_ = library_.enterCourse(course.id, target);
+  revealRoute();
+  if (!entryRequestId_) {
+    static_cast<RouteCover*>(canvasReveal_)->reveal();
+    showError(tr("Library is busy. Open the Course again to retry."));
+  }
 }
 void MainWindow::showLesson(const lib::Lesson& lesson) {
   saveScrollState();
-  browserDocument_->clear();
+  const auto documentSuffix = QFileInfo(lesson.path).suffix().toLower();
+  const bool browserLesson = documentSuffix == "html" || documentSuffix == "htm" ||
+                            documentSuffix == "md" || documentSuffix == "markdown";
+  if (!browserLesson) browserDocument_->suspend();
   cancelAutoplay();
   seekFeedback_->hide();
   if (videoFullscreen_ && lesson.type != "video" && lesson.type != "audio") toggleVideoFullscreen();
@@ -1852,11 +1972,11 @@ void MainWindow::showLesson(const lib::Lesson& lesson) {
   if (width() < std::max(768, fontMetrics().height() * 40)) compactOutline_ = false;
   updateLayout();
   revealPlayerControls();
+  revealRoute();
   if (lesson.type == "video" || lesson.type == "audio") {
     video_->setAccessibleName(lesson.type == "audio" ? tr("Audio: %1").arg(lesson.name) : tr("Video: %1").arg(lesson.name));
     media_->setCurrentIndex(0); player_->setApprovedRoots({rootPath_}); player_->start(); loadSelectedMedia();
-  } else if (const auto suffix = QFileInfo(lesson.path).suffix().toLower();
-             suffix == "html" || suffix == "htm" || suffix == "md" || suffix == "markdown") {
+  } else if (browserLesson) {
     media_->setCurrentIndex(3);
     browserDocument_->open(course_ ? course_->path : rootPath_, lesson.path);
   } else if (lesson.path.endsWith(".pdf", Qt::CaseInsensitive)) {
@@ -1866,9 +1986,10 @@ void MainWindow::showLesson(const lib::Lesson& lesson) {
     documentRequestId_ = documents_.open({rootPath_, lesson.path});
     if (!documentRequestId_) {
       documentStatus_->setText(tr("Document reader is busy. Select the lesson again to retry.")); documentStatus_->show();
+      static_cast<RouteCover*>(canvasReveal_)->reveal();
     }
   }
-  revealRoute();
+  canvasReveal_->raise();
 }
 void MainWindow::revealRoute() {
   if (!routeReveal_) return;
@@ -1879,11 +2000,28 @@ void MainWindow::revealRoute() {
       auto* effect = static_cast<RouteTextEffect*>(group->graphicsEffect());
       effect->progress = 0; effect->setBlurRadius(4); effect->update();
     }
+    if (course_) {
+      static_cast<RouteCover*>(canvasReveal_)->prepare(true);
+      static_cast<RouteCover*>(outlineReveal_)->prepare(true);
+      static_cast<RouteCover*>(outlineReveal_)->reveal(30);
+    } else {
+      static_cast<RouteCover*>(previewReveal_)->prepare(preview_->isVisible());
+      static_cast<RouteCover*>(catalogueReveal_)->prepare(courses_->isVisible());
+      const auto generation = routeGeneration_;
+      QTimer::singleShot(90, this, [this, generation] {
+        if (course_ || generation != routeGeneration_) return;
+        static_cast<RouteCover*>(catalogueReveal_)->prepare(false);
+        courses_->revealItems(!melearner::reducedMotion() && !melearner::highContrast());
+      });
+    }
     routeReveal_->start();
   }
 }
 void MainWindow::resetRouteReveal() {
   routeReveal_->stop();
+  courses_->revealItems(false);
+  for (auto* cover : {canvasReveal_, previewReveal_, catalogueReveal_, outlineReveal_})
+    static_cast<RouteCover*>(cover)->prepare(false);
   for (auto* group : {resumeHeading_, resumeCopy_, lessonHeader_, lessonLinks_}) {
     auto* effect = static_cast<RouteTextEffect*>(group->graphicsEffect());
     effect->progress = 1; effect->setBlurRadius(0); effect->update();
@@ -1900,7 +2038,7 @@ void MainWindow::loadSelectedMedia() {
       !video_->isRenderContextReady() || playerLoadRequested_) return;
   // At EOF, starting exactly at duration can end the file before the paused
   // frame is presented. Resume on its last frame instead of unloading it.
-  const auto resumeMs = lesson_->completed && durationMs_ > 0 && positionMs_ >= durationMs_
+  const auto resumeMs = durationMs_ > 0 && positionMs_ >= durationMs_
     ? std::max<qint64>(0, durationMs_ - 100) : positionMs_;
   playerLoadId_ = player_->loadFile(lesson_->path, resumeMs);
   playerLoadRequested_ = playerLoadId_ != 0;
@@ -2104,9 +2242,17 @@ void MainWindow::updateControlsLayout() {
   }
   positionPlayerOverlays();
   video_->clearMask();
-  const auto radius = videoFullscreen_ ? 0.0 : melearner::themeFor(this).radius() * 1.4;
-  video_->setCornerRadii(radius, radius, radius, radius,
-    melearner::roleColor(this, shadcn::Role::Background));
+  const auto radius = videoFullscreen_ ? 0.0 : melearner::canvasCornerRadius(this);
+  const auto background = melearner::roleColor(this, shadcn::Role::Background);
+  video_->setCornerRadii(radius, radius, radius, radius, background);
+  const auto setCanvasCorners = [this, radius, background](const char* name) {
+    if (auto* cover = findChild<QWidget*>(name))
+      static_cast<melearner::CornerCover*>(cover)->setRadii(
+        radius, radius, radius, radius, background);
+  };
+  setCanvasCorners("proseCornerCover");
+  setCanvasCorners("pdfCornerCover");
+  setCanvasCorners("browserCornerCover");
 }
 void MainWindow::positionPlayerOverlays() {
   if (!video_ || !playerControls_ || !content_) return;

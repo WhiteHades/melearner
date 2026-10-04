@@ -104,7 +104,7 @@ void CoursePreview::setPreview(const QString& approvedRoot, const melearner::lib
     hasPreview_ = validVideo;
     hint_->setText(hasPreview_ ? QString{} : tr("No video preview available"));
     hint_->setVisible(!hasPreview_);
-    if (!hasPreview_) return;
+    if (!hasPreview_) { emit frameReady(); return; }
     syncPlayback();
 }
 
@@ -124,6 +124,7 @@ void CoursePreview::suspend() {
     else (void)player_->pause();
     if (!muted_) (void)player_->setMuted(true);
     loaded_ = false; loadRequested_ = false; initialMuteRequest_ = 0;
+    presented_ = false;
     muteButton_->setEnabled(false);
 }
 
@@ -138,10 +139,14 @@ void CoursePreview::startPreview() {
     video_->setMinimumSize(0, 0);
     video_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     video_->lower();
+    connect(video_, &QOpenGLWidget::frameSwapped, this, [this] {
+        if (loaded_ && !presented_) { presented_ = true; emit frameReady(); }
+    });
     connect(video_, &melearner::MpvVideoWidget::clicked, this, &CoursePreview::activated);
     connect(video_, &melearner::MpvVideoWidget::renderError, this, [this](const QString&, const QString&) {
         if (!hasPreview_) return;
         hint_->setText(tr("Video preview unavailable")); hint_->show(); hint_->raise(); muteButton_->raise();
+        emit frameReady();
     });
     video_->installEventFilter(this);
     connect(player_, &Player::initialized, this, &CoursePreview::loadWhenReady);
@@ -150,6 +155,7 @@ void CoursePreview::startPreview() {
     connect(player_, &Player::fileLoaded, this, [this, instance] {
         if (!instance || instance != player_ || !active_) return;
         loaded_ = true; muteButton_->setEnabled(true);
+        video_->update();
         hint_->hide();
         // Player emits fileLoaded only after confirming its initial pause. Keep
         // the ready frame visible before starting the active-dashboard delay.
@@ -183,6 +189,7 @@ void CoursePreview::clear() {
     startupTimer_->stop();
     hasPreview_ = false;
     active_ = false; loadRequested_ = false; loaded_ = false; initialMuteRequest_ = 0;
+    presented_ = false;
     hint_->setText(tr("No video preview available"));
     hint_->show();
     continueLabel_->hide();

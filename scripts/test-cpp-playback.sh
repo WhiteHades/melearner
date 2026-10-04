@@ -36,7 +36,8 @@ if [[ ${MELEARNER_PLAYBACK_CHILD-} == 1 ]]; then
   export QT_QPA_PLATFORM=xcb QT_OPENGL=software QT_QUICK_BACKEND=software
   # Do not inherit the desktop's GTK plugin or force-load a proprietary GLX
   # driver before main. The private display uses Mesa's software renderer.
-  export QT_QPA_PLATFORMTHEME=xdgdesktopportal __GLX_VENDOR_LIBRARY_NAME=mesa
+  export QT_QPA_PLATFORMTHEME=generic QT_NO_XDG_DESKTOP_PORTAL=1
+  export XDG_CURRENT_DESKTOP=melearner-test __GLX_VENDOR_LIBRARY_NAME=mesa
   export LIBGL_ALWAYS_SOFTWARE=1 LP_NUM_THREADS=2
   head -c 256 /dev/urandom > "$PULSE_COOKIE"
 
@@ -220,7 +221,7 @@ for executable in Xvfb xvfb-run xauth openbox dbus-daemon pactl timeout; do
   }
 done
 
-run_base="$repo_root/.tmp/cpp-playback"
+run_base=${MELEARNER_PLAYBACK_RUN_BASE:-"$repo_root/.tmp/cpp-playback"}
 socket_label=main_playback_test
 (( explicit_command )) && socket_label=custom
 socket_probe="$run_base/run.XXXXXX/$socket_label/p"

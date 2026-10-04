@@ -445,6 +445,8 @@ public:
   QThreadPool pool;
   QFutureWatcher<PreparedDocument> *watcher = nullptr;
   QTimer *scrollSaveTimer = nullptr;
+  QTimer *idleTimer = nullptr;
+  QString profileRoot;
   QString scrollSettingsKey;
   qreal pendingScrollY = 0;
   qreal savedScrollY = 0;
@@ -464,6 +466,11 @@ CourseDocumentView::CourseDocumentView(QWidget *parent)
   d_->scrollSaveTimer = new QTimer(this);
   d_->scrollSaveTimer->setSingleShot(true);
   d_->scrollSaveTimer->setInterval(300);
+  d_->idleTimer = new QTimer(this);
+  d_->idleTimer->setObjectName(QStringLiteral("documentWarmTimeout"));
+  d_->idleTimer->setSingleShot(true);
+  d_->idleTimer->setInterval(30000);
+  connect(d_->idleTimer, &QTimer::timeout, this, &CourseDocumentView::clear);
   connect(d_->scrollSaveTimer, &QTimer::timeout, this, [this] {
     if (!d_->scrollTrackingEnabled || d_->restoringScroll ||
         d_->scrollSettingsKey.isEmpty())
@@ -478,6 +485,20 @@ CourseDocumentView::~CourseDocumentView() {
 }
 
 void CourseDocumentView::clear() {
+  suspend();
+  d_->idleTimer->stop();
+  if (d_->profile != nullptr) {
+    delete d_->profile;
+    d_->profile = nullptr;
+  }
+  d_->interceptor = nullptr;
+  d_->profileRoot.clear();
+}
+
+void CourseDocumentView::suspend(const QString& courseRoot) {
+  if (!courseRoot.isEmpty() && QFileInfo(courseRoot).canonicalFilePath() != d_->profileRoot) {
+    clear(); return;
+  }
   if (d_->view && d_->scrollTrackingEnabled && !d_->restoringScroll && !d_->scrollSettingsKey.isEmpty())
     QSettings().setValue(d_->scrollSettingsKey, std::max(0.0, d_->view->page()->scrollPosition().y()));
   d_->scrollSaveTimer->stop();
@@ -493,23 +514,34 @@ void CourseDocumentView::clear() {
     delete d_->watcher;
     d_->watcher = nullptr;
   }
+  // Revoke the old origin before disposing its page. Worker asset reads keep
+  // immutable root copies, and their callbacks die with the old handler.
+  if (d_->profile) {
+    auto* blocked = new OfflineInterceptor(freshToken(), d_->profile);
+    d_->profile->setUrlRequestInterceptor(blocked);
+    delete d_->interceptor;
+    d_->interceptor = blocked;
+  }
   if (d_->view != nullptr) {
     d_->layout->removeWidget(d_->view);
     delete d_->view;
     d_->view = nullptr;
   }
-  if (d_->profile != nullptr) {
-    delete d_->profile;
-    d_->profile = nullptr;
+  if (d_->handler) {
+    d_->profile->removeUrlSchemeHandler(d_->handler);
+    delete d_->handler;
   }
   d_->handler = nullptr;
-  d_->interceptor = nullptr;
   d_->token.clear();
+  if (d_->profile) d_->idleTimer->start();
 }
 
 void CourseDocumentView::open(const QString &courseRoot,
                               const QString &filePath) {
-  clear();
+  const QString canonicalRoot = QFileInfo(courseRoot).canonicalFilePath();
+  if (canonicalRoot.isEmpty() || canonicalRoot != d_->profileRoot) clear();
+  else suspend();
+  d_->idleTimer->stop();
   const quint64 generation = d_->generation;
   const QString css = markdownCss(this);
   d_->watcher = new QFutureWatcher<PreparedDocument>(this);
@@ -524,7 +556,14 @@ void CourseDocumentView::open(const QString &courseRoot,
         if (generation != d_->generation)
           return;
         if (!prepared.error.isEmpty()) {
+          clear();
           emit error(prepared.error);
+          emit loaded(false);
+          return;
+        }
+        if (d_->profile && prepared.root.path != d_->profileRoot) {
+          clear();
+          emit error(QStringLiteral("The course folder changed while opening its document."));
           emit loaded(false);
           return;
         }
@@ -544,21 +583,23 @@ void CourseDocumentView::open(const QString &courseRoot,
           if (validSavedPosition && std::isfinite(savedPosition))
             d_->savedScrollY = std::max(0.0, savedPosition);
         }
-        d_->profile =
-            new QWebEngineProfile(this); // unnamed profile is off-the-record
-        d_->profile->setHttpCacheType(QWebEngineProfile::NoCache);
-        d_->profile->setPersistentCookiesPolicy(
-            QWebEngineProfile::NoPersistentCookies);
+        if (!d_->profile) {
+          d_->profile = new QWebEngineProfile(this);
+          d_->profileRoot = prepared.root.path;
+          d_->profile->setHttpCacheType(QWebEngineProfile::NoCache);
+          d_->profile->setPersistentCookiesPolicy(QWebEngineProfile::NoPersistentCookies);
+          connect(d_->profile, &QWebEngineProfile::downloadRequested, d_->profile,
+                  [](QWebEngineDownloadRequest *download) { download->cancel(); });
+        }
         d_->handler = new CourseHandler(prepared.root, d_->token, relative,
                                         prepared.contents,
                                         [this](const QString &path) { emit resourceDenied(path); },
                                         d_->profile);
         d_->profile->installUrlSchemeHandler(QByteArray(kScheme), d_->handler);
-        d_->interceptor = new OfflineInterceptor(d_->token, d_->profile);
-        d_->profile->setUrlRequestInterceptor(d_->interceptor);
-        connect(
-            d_->profile, &QWebEngineProfile::downloadRequested, d_->profile,
-            [](QWebEngineDownloadRequest *download) { download->cancel(); });
+        auto* interceptor = new OfflineInterceptor(d_->token, d_->profile);
+        d_->profile->setUrlRequestInterceptor(interceptor);
+        delete d_->interceptor;
+        d_->interceptor = interceptor;
         d_->view = new QWebEngineView(this);
         d_->view->setObjectName(QStringLiteral("documentBrowser"));
         auto *page = new CoursePage(d_->profile, d_->token, d_->view);

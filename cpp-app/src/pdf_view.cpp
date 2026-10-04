@@ -1,4 +1,7 @@
 #include "pdf_view.hpp"
+#include <QAccessible>
+#include <QAccessibleWidget>
+#include <QAccessibleTextInterface>
 #include <QPainter>
 #include <QResizeEvent>
 #include <QSignalBlocker>
@@ -8,7 +11,129 @@
 #include <cmath>
 
 namespace pdf = melearner::pdf;
+class PdfViewAccessible final : public QAccessibleWidget, public QAccessibleTextInterface {
+public:
+  explicit PdfViewAccessible(PdfView* view) : QAccessibleWidget(view, QAccessible::Document), view_(view) {}
+  void* interface_cast(QAccessible::InterfaceType type) override {
+    if (type == QAccessible::TextInterface) return static_cast<QAccessibleTextInterface*>(this);
+    return QAccessibleWidget::interface_cast(type);
+  }
+  QString text(QAccessible::Text type) const override {
+    if (type == QAccessible::Name) {
+      if (view_->pages_.isEmpty()) return QObject::tr("PDF pages");
+      return QObject::tr("PDF page %1 of %2").arg(view_->accessiblePage_ + 1).arg(view_->pages_.size());
+    }
+    return QAccessibleWidget::text(type);
+  }
+  int selectionCount() const override { return selectionStart_ >= 0 && selectionEnd_ > selectionStart_ ? 1 : 0; }
+  void selection(int index, int* start, int* end) const override {
+    if (index != 0 || !selectionCount()) {
+      if (start) *start = -1;
+      if (end) *end = -1;
+      return;
+    }
+    if (start) *start = selectionStart_;
+    if (end) *end = selectionEnd_;
+  }
+  void addSelection(int start, int end) override { setSelection(0, start, end); }
+  void removeSelection(int index) override {
+    if (index != 0 || !selectionCount()) return;
+    selectionStart_ = selectionEnd_ = -1;
+    QAccessibleTextSelectionEvent event(view_, -1, -1);
+    QAccessible::updateAccessibility(&event);
+  }
+  void setSelection(int index, int start, int end) override {
+    const int count = characterCount();
+    if (index != 0 || count == 0 || start < 0 || end < start || end > count) return;
+    selectionStart_ = start;
+    selectionEnd_ = end;
+    QAccessibleTextSelectionEvent event(view_, start, end);
+    QAccessible::updateAccessibility(&event);
+  }
+  int cursorPosition() const override { return cursorPosition_; }
+  void setCursorPosition(int position) override {
+    if (position < 0 || position > characterCount()) return;
+    cursorPosition_ = position;
+    QAccessibleTextCursorEvent event(view_, position);
+    QAccessible::updateAccessibility(&event);
+  }
+  void resetForPageChange() {
+    const bool hadSelection = selectionCount() != 0;
+    const bool hadCursor = cursorPosition_ != 0;
+    selectionStart_ = selectionEnd_ = -1;
+    cursorPosition_ = 0;
+    if (hadSelection) {
+      QAccessibleTextSelectionEvent event(view_, -1, -1);
+      QAccessible::updateAccessibility(&event);
+    }
+    if (hadCursor) {
+      QAccessibleTextCursorEvent event(view_, 0);
+      QAccessible::updateAccessibility(&event);
+    }
+  }
+  QString text(int start, int end) const override {
+    const int count = characterCount();
+    if (start < 0) start = 0;
+    if (end < 0 || end > count) end = count;
+    if (start >= end || start >= count) return {};
+    return view_->pageText_.mid(start, end - start);
+  }
+  int characterCount() const override { return view_->pageText_.size(); }
+  QRect characterRect(int offset) const override {
+    if (offset < 0 || view_->accessiblePage_ < 0 || view_->accessiblePage_ >= view_->pages_.size() ||
+        offset >= view_->pageText_.size()) return {};
+    const auto* cachedBounds = view_->pageCharacterBounds_.object(offset);
+    if (!cachedBounds) {
+      view_->requestCharacterBounds(offset);
+      return {};
+    }
+    const auto bounds = *cachedBounds;
+    if (!bounds.isValid() || bounds.isEmpty()) return {};
+    const qreal factor = view_->scale_ / 16.0;
+    const qreal pageWidth = view_->pages_[view_->accessiblePage_].width() * factor;
+    const int x = std::max(12, (view_->viewport()->width() - qCeil(pageWidth)) / 2) - view_->horizontalScrollBar()->value();
+    const int y = view_->tops_[view_->accessiblePage_] - view_->verticalScrollBar()->value();
+    const auto localRect = QRectF(bounds.x() * factor + x, bounds.y() * factor + y,
+                                  bounds.width() * factor, bounds.height() * factor).toAlignedRect();
+    return localRect.translated(view_->viewport()->mapToGlobal(QPoint()));
+  }
+  int offsetAtPoint(const QPoint& point) const override {
+    for (const int index : view_->pageCharacterBounds_.keys()) {
+      if (characterRect(index).contains(point)) return index;
+    }
+    return -1;
+  }
+  void scrollToSubstring(int start, int end) override {
+    if (start < 0 || end < start || end > characterCount() || view_->accessiblePage_ < 0) return;
+    view_->jumpToPage(view_->accessiblePage_ + 1);
+  }
+  QString attributes(int offset, int* start, int* end) const override {
+    if (offset < 0 || offset > characterCount()) {
+      if (start) *start = -1;
+      if (end) *end = -1;
+      return {};
+    }
+    if (start) *start = 0;
+    if (end) *end = characterCount();
+    return {};
+  }
+private:
+  PdfView* view_;
+  int cursorPosition_ = -1;
+  int selectionStart_ = -1;
+  int selectionEnd_ = -1;
+};
+
+namespace {
+QAccessibleInterface* pdfViewAccessibleFactory(const QString&, QObject* object) {
+  if (auto* view = qobject_cast<PdfView*>(object)) return new PdfViewAccessible(view);
+  return nullptr;
+}
+}
+
 PdfView::PdfView(QWidget* parent) : shadcn::ScrollArea(parent) {
+  static const bool accessibleFactoryInstalled = [] { QAccessible::installFactory(pdfViewAccessibleFactory); return true; }();
+  Q_UNUSED(accessibleFactoryInstalled);
   setObjectName("pdfPages"); setAccessibleName(tr("PDF pages"));
   setFocusPolicy(Qt::StrongFocus); setFrameShape(QFrame::NoFrame);
   connect(&reader_, &pdf::PdfReader::finished, this, [this](quint64 id, const pdf::Result& result) {
@@ -36,34 +161,98 @@ PdfView::PdfView(QWidget* parent) : shadcn::ScrollArea(parent) {
         cache_.erase(oldest);
       }
       viewport()->update();
+    } else if (const auto* text = std::get_if<pdf::PageText>(&result)) {
+      if (id != pageTextRequest_ || text->generation != generation_ || text->page != accessiblePage_) return;
+      pageTextRequest_ = 0;
+      pageTextPending_ = false;
+      pageTextLoaded_ = true;
+      const auto previous = pageText_;
+      pageText_ = text->text;
+      QAccessibleTextUpdateEvent textEvent(this, 0, previous, pageText_);
+      QAccessible::updateAccessibility(&textEvent);
+      QAccessibleEvent nameEvent(this, QAccessible::NameChanged);
+      QAccessible::updateAccessibility(&nameEvent);
+    } else if (const auto* bounds = std::get_if<pdf::CharacterBounds>(&result)) {
+      if (id != characterBoundsRequest_ || bounds->generation != generation_ || bounds->page != accessiblePage_ ||
+          bounds->offset != characterBoundsRequestOffset_) return;
+      characterBoundsRequest_ = 0;
+      characterBoundsRequestOffset_ = -1;
+      pageCharacterBounds_.insert(bounds->offset, new QRectF(bounds->bounds));
+      QAccessibleEvent locationEvent(this, QAccessible::LocationChanged);
+      QAccessible::updateAccessibility(&locationEvent);
     } else if (const auto* error = std::get_if<pdf::Error>(&result)) {
-      const auto pending = pending_.find(id);
-      if (pending != pending_.end()) {
-        pendingKeys_.remove(pending.value());
-        const auto key = pending.value();
-        pending_.erase(pending);
-        if (error->code != pdf::Error::cancelled) {
-          rememberFailedTile(key);
+      if (id == pageTextRequest_) {
+        pageTextRequest_ = 0;
+        pageTextPending_ = false;
+        pageTextLoaded_ = true;
+      } else {
+        if (id == characterBoundsRequest_) {
+          characterBoundsRequest_ = 0;
+          characterBoundsRequestOffset_ = -1;
         }
-      } else if (id != openId_) {
-        return;
-      }
-      if (error->code != pdf::Error::stale && error->code != pdf::Error::cancelled) {
-        emit errorOccurred(error->message);
-        viewport()->update();
+        const auto pending = pending_.find(id);
+        if (pending != pending_.end()) {
+          pendingKeys_.remove(pending.value());
+          const auto key = pending.value();
+          pending_.erase(pending);
+          if (error->code != pdf::Error::cancelled) rememberFailedTile(key);
+        } else if (id != openId_) {
+          return;
+        }
+        if (error->code != pdf::Error::stale && error->code != pdf::Error::cancelled) {
+          emit errorOccurred(error->message);
+          viewport()->update();
+        }
       }
     }
+    if (accessiblePage_ >= 0 && generation_ && !pageTextPending_ && !pageTextLoaded_) requestAccessiblePageText();
   });
   connect(verticalScrollBar(), &QScrollBar::valueChanged, this, [this] {
+    updateAccessiblePage(currentPage());
     emit pageChanged(currentPage() + 1, pages_.size()); viewport()->update();
   });
   connect(horizontalScrollBar(), &QScrollBar::valueChanged, viewport(), qOverload<>(&QWidget::update));
 }
 void PdfView::clear() {
+  updateAccessiblePage(-1);
   openId_ = 0; generation_ = 0; pages_.clear(); tops_.clear(); cache_.clear(); pending_.clear(); pendingKeys_.clear();
   failedTiles_.clear();
   verticalScrollBar()->setRange(0, 0); horizontalScrollBar()->setRange(0, 0); viewport()->update();
   reader_.clear();
+}
+void PdfView::updateAccessiblePage(int page) {
+  if (page == accessiblePage_) return;
+  const auto previous = pageText_;
+  reader_.cancelPageText(generation_);
+  accessiblePage_ = page;
+  pageTextRequest_ = 0;
+  pageTextPending_ = false;
+  pageTextLoaded_ = false;
+  pageText_.clear();
+  pageCharacterBounds_.clear();
+  characterBoundsRequest_ = 0;
+  characterBoundsRequestOffset_ = -1;
+  if (auto* accessible = dynamic_cast<PdfViewAccessible*>(QAccessible::queryAccessibleInterface(this)))
+    accessible->resetForPageChange();
+  QAccessibleEvent nameEvent(this, QAccessible::NameChanged);
+  QAccessible::updateAccessibility(&nameEvent);
+  if (!previous.isEmpty()) {
+    QAccessibleTextUpdateEvent textEvent(this, 0, previous, QString());
+    QAccessible::updateAccessibility(&textEvent);
+  }
+  if (page >= 0 && generation_) requestAccessiblePageText();
+}
+void PdfView::requestAccessiblePageText() {
+  if (pageTextPending_ || pageTextLoaded_ || accessiblePage_ < 0 || !generation_) return;
+  pageTextRequest_ = reader_.pageText(generation_, accessiblePage_);
+  pageTextPending_ = pageTextRequest_ != 0;
+}
+void PdfView::requestCharacterBounds(int offset) {
+  if (characterBoundsRequest_ || !pageTextLoaded_ || accessiblePage_ < 0 || offset < 0 || offset >= pageText_.size() ||
+      pageCharacterBounds_.contains(offset)) return;
+  characterBoundsRequestOffset_ = offset;
+  characterBoundsRequest_ = reader_.characterBounds(generation_, accessiblePage_, offset);
+  if (!characterBoundsRequest_) characterBoundsRequestOffset_ = -1;
 }
 void PdfView::open(const QString& root, const QString& path) {
   clear(); fit_ = true; openId_ = reader_.open(root, path);
@@ -126,6 +315,8 @@ void PdfView::layoutPages(int previousScaleOverride) {
     reader_.cancelTiles(generation_);
   }
   viewport()->update();
+  updateAccessiblePage(currentPage());
+  requestAccessiblePageText();
   emit pageChanged(currentPage() + 1, pages_.size());
 }
 void PdfView::fitWidth() { fit_ = true; layoutPages(); }

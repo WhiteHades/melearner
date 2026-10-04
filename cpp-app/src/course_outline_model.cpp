@@ -164,6 +164,7 @@ void CourseOutlineModel::updateProgress(const library::ProgressResult& progress)
             }
             const auto oldCompleted = lesson.completed;
             const auto oldWatched = lesson.watchedTime;
+            lesson.duration = progress.duration;
             lesson.watchedTime = progress.watchedTime;
             lesson.lastPosition = progress.lastPosition;
             lesson.completed = progress.completed;

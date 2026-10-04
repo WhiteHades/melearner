@@ -34,6 +34,7 @@ public:
 
 signals:
     void activated();
+    void frameReady();
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -59,6 +60,7 @@ private:
     bool active_ = false;
     bool loadRequested_ = false;
     bool loaded_ = false;
+    bool presented_ = false;
     QTimer* startupTimer_ = nullptr;
     LayoutMode layoutMode_ = LayoutMode::Standalone;
     quint64 initialMuteRequest_ = 0;

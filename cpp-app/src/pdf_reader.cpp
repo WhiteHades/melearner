@@ -4,6 +4,7 @@
 #include <QPdfDocument>
 #include <QPdfDocumentRenderOptions>
 #include <QtMath>
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <condition_variable>
@@ -15,13 +16,21 @@
 namespace melearner::pdf {
 class PdfReader::Worker {
 public:
-  struct Request { quint64 id = 0; quint64 generation = 0; QString root; QString path; TileKey key; };
+  enum class Operation { tile, pageText, characterBounds };
+  struct Request { quint64 id = 0; quint64 generation = 0; QString root; QString path; TileKey key; Operation operation = Operation::tile; int offset = 0; };
   explicit Worker(PdfReader* owner) : owner_(owner) { thread_ = std::thread([this] { run(); }); }
   ~Worker() { close(); }
   quint64 submit(Request request) {
     std::lock_guard lock(mutex_);
     if (closing_ || credits_->load() >= 64) return 0;
-    request.id = ++nextId_; ++*credits_; queue_.push_back(request); condition_.notify_one();
+    request.id = ++nextId_; ++*credits_;
+    if (request.operation == Operation::pageText) {
+      queue_.push_back(request);
+    } else {
+      const auto nextText = std::find_if(queue_.begin(), queue_.end(), [](const Request& queued) { return queued.operation == Operation::pageText; });
+      queue_.insert(nextText, request);
+    }
+    condition_.notify_one();
     return request.id;
   }
   void cancelQueued() {
@@ -40,7 +49,7 @@ public:
       std::lock_guard lock(mutex_);
       if (closing_) return;
       for (auto iterator = queue_.begin(); iterator != queue_.end();) {
-        if (iterator->path.isEmpty() && iterator->generation == generation) {
+        if (iterator->path.isEmpty() && iterator->operation == Operation::tile && iterator->generation == generation) {
           cancelled.push_back(std::move(*iterator));
           iterator = queue_.erase(iterator);
         } else {
@@ -49,6 +58,23 @@ public:
       }
     }
     publishCancelled(std::move(cancelled), QStringLiteral("PDF tile request superseded."));
+  }
+  void cancelPageText(quint64 generation) {
+    if (generation == 0) return;
+    std::deque<Request> cancelled;
+    {
+      std::lock_guard lock(mutex_);
+      if (closing_) return;
+      for (auto iterator = queue_.begin(); iterator != queue_.end();) {
+        if (iterator->operation != Operation::tile && iterator->generation == generation) {
+          cancelled.push_back(std::move(*iterator));
+          iterator = queue_.erase(iterator);
+        } else {
+          ++iterator;
+        }
+      }
+    }
+    publishCancelled(std::move(cancelled), QStringLiteral("PDF text request superseded."));
   }
   void reset() {
     {
@@ -148,6 +174,20 @@ private:
           }
           if (!valid) { publish(request.id, Error{Error::malformed, "PDF has invalid page dimensions."}); document.close(); file.reset(); pages.clear(); continue; }
           generation = request.id; publish(request.id, Info{generation, pages});
+        } else if (request.operation == Operation::pageText) {
+          const int page = request.key.page;
+          if (!generation || request.generation != generation || page < 0 || page >= pages.size()) {
+            publish(request.id, Error{Error::stale, "PDF selection changed."}); continue;
+          }
+          const auto selection = document.getAllText(page);
+          publish(request.id, PageText{generation, page, selection.text()});
+        } else if (request.operation == Operation::characterBounds) {
+          const int page = request.key.page;
+          if (!generation || request.generation != generation || page < 0 || page >= pages.size() || request.offset < 0) {
+            publish(request.id, Error{Error::stale, "PDF selection changed."}); continue;
+          }
+          const auto character = document.getSelectionAtIndex(page, request.offset, 1);
+          publish(request.id, CharacterBounds{generation, page, request.offset, character.boundingRectangle()});
         } else {
           const auto& key = request.key;
           if (!generation || request.generation != generation) { publish(request.id, Error{Error::stale, "PDF selection changed."}); continue; }
@@ -178,7 +218,17 @@ quint64 PdfReader::open(QString root, QString path) {
 quint64 PdfReader::tile(quint64 generation, TileKey key) {
   Worker::Request request; request.generation = generation; request.key = key; return worker_->submit(std::move(request));
 }
+quint64 PdfReader::pageText(quint64 generation, int page) {
+  Worker::Request request; request.generation = generation; request.key.page = page; request.operation = Worker::Operation::pageText;
+  return worker_->submit(std::move(request));
+}
+quint64 PdfReader::characterBounds(quint64 generation, int page, int offset) {
+  Worker::Request request; request.generation = generation; request.key.page = page;
+  request.operation = Worker::Operation::characterBounds; request.offset = offset;
+  return worker_->submit(std::move(request));
+}
 void PdfReader::cancelTiles(quint64 generation) { worker_->cancelTiles(generation); }
+void PdfReader::cancelPageText(quint64 generation) { worker_->cancelPageText(generation); }
 void PdfReader::clear() {
   worker_->cancelQueued();
   worker_->reset();

@@ -4,10 +4,12 @@
 #include "theme.hpp"
 
 #include <QDir>
+#include <QAction>
 #include <QAccessible>
 #include <QComboBox>
 #include <QClipboard>
 #include <QContextMenuEvent>
+#include <QDateTime>
 #include <QDialog>
 #include <QFile>
 #include <QFileInfo>
@@ -42,6 +44,7 @@
 #include <QTextEdit>
 #include <QTreeView>
 #include <QWheelEvent>
+#include <sqlite3.h>
 #include <shadcn/widgets.hpp>
 #include <shadcn/data.hpp>
 #include <shadcn/overlays.hpp>
@@ -105,6 +108,201 @@ class MainWindowTest final : public QObject {
   Q_OBJECT
 private slots:
   void initTestCase() { Q_INIT_RESOURCE(assets); melearner::installTheme(true, 14); }
+
+  void automaticUpdatePreferenceDefaultsOnAndPersistsOptOut() {
+    QTemporaryDir files;
+    QVERIFY(files.isValid());
+    ScopedTestSettings isolatedSettings(files.path());
+    QSettings preferences;
+    preferences.setValue("updates/lastCheck", QDateTime::currentSecsSinceEpoch());
+    preferences.sync();
+
+    const auto database = files.path() + "/library.sqlite3";
+    {
+      MainWindow window(database);
+      window.show();
+      auto* settings = window.findChild<QPushButton*>("appearance");
+      QVERIFY(settings && settings->menu());
+      auto* automatic = settings->menu()->findChild<QAction*>("automaticUpdates");
+      QVERIFY(automatic);
+      QVERIFY(automatic->isCheckable());
+      QVERIFY(automatic->isChecked());
+
+      automatic->setChecked(false);
+      preferences.sync();
+      QVERIFY(!preferences.value("updates/automatic", true).toBool());
+    }
+
+    {
+      MainWindow reopened(database);
+      reopened.show();
+      auto* settings = reopened.findChild<QPushButton*>("appearance");
+      QVERIFY(settings && settings->menu());
+      auto* automatic = settings->menu()->findChild<QAction*>("automaticUpdates");
+      QVERIFY(automatic);
+      QVERIFY(!automatic->isChecked());
+      QVERIFY(!preferences.value("updates/automatic", true).toBool());
+    }
+  }
+
+  void courseEntryDatabaseFailureRevealsCanvas() {
+    QTemporaryDir files;
+    QVERIFY(files.isValid());
+    const auto root = files.path() + "/Courses";
+    const auto section = root + "/Broken Course/01 Section";
+    QVERIFY(QDir().mkpath(section));
+    QFile lesson(section + "/01 Lesson.txt");
+    QVERIFY(lesson.open(QIODevice::WriteOnly));
+    QCOMPARE(lesson.write("A lesson"), qint64(8));
+    lesson.close();
+
+    const auto database = files.path() + "/library.sqlite3";
+    MainWindow window(database);
+    window.show();
+    auto* choose = window.findChild<QPushButton*>("chooseRoot");
+    QTRY_VERIFY(choose && choose->isEnabled());
+    window.chooseRoot(root);
+    auto* courses = window.findChild<QListView*>("courses");
+    QVERIFY(courses);
+    QTRY_COMPARE(courses->model()->rowCount(), 1);
+    QTRY_VERIFY(choose->isEnabled());
+
+    sqlite3* rawDatabase = nullptr;
+    const QByteArray databasePath = QFile::encodeName(database);
+    QCOMPARE(sqlite3_open(databasePath.constData(), &rawDatabase), SQLITE_OK);
+    const std::unique_ptr<sqlite3, decltype(&sqlite3_close)> databaseHandle(rawDatabase, sqlite3_close);
+    char* rawError = nullptr;
+    const int dropResult = sqlite3_exec(rawDatabase, "DROP TABLE lessons", nullptr, nullptr, &rawError);
+    const QByteArray dropError = rawError ? QByteArray(rawError) : QByteArray();
+    sqlite3_free(rawError);
+    QVERIFY2(dropResult == SQLITE_OK, dropError.constData());
+
+    const auto index = courses->model()->index(0, 0);
+    QTRY_VERIFY(courses->visualRect(index).isValid() && !courses->visualRect(index).isEmpty());
+    const auto rowRect = courses->visualRect(index);
+    QTest::mouseClick(courses->viewport(), Qt::LeftButton, Qt::NoModifier, rowRect.center());
+
+    auto* status = window.findChild<QWidget*>("appStatus");
+    auto* reveal = window.findChild<QWidget*>("courseCanvasReveal");
+    QVERIFY(status && reveal);
+    QTRY_VERIFY(status->isVisible());
+    QTRY_VERIFY(reveal->property("revealProgress").toDouble() < 1.0);
+    QTRY_VERIFY_WITH_TIMEOUT(reveal->property("revealProgress").toDouble() >= 1.0, 1000);
+  }
+
+  void nonVideoReaderCanvasesClipCornersAfterResizeAndSwitch() {
+    QTemporaryDir files;
+    QVERIFY(files.isValid());
+    const auto root = files.path() + "/Courses";
+    const auto section = root + "/Canvas Course/01 Section";
+    QVERIFY(QDir().mkpath(section));
+    QFile html(section + "/01 Browser.html");
+    QVERIFY(html.open(QIODevice::WriteOnly));
+    const QByteArray htmlContents(
+        "<!doctype html><html><head><style>html,body{margin:0;min-height:100%;background:#19e63c}body{min-height:1600px}</style>"
+        "</head><body>Bright browser canvas</body></html>");
+    QCOMPARE(html.write(htmlContents), qint64(htmlContents.size()));
+    html.close();
+    {
+      QPdfWriter writer(section + "/02 PDF.pdf");
+      writer.setResolution(72);
+      QPainter painter(&writer);
+      painter.fillRect(QRect(0, 0, writer.width(), writer.height()), QColor(25, 90, 240));
+      painter.drawText(60, 100, "Bright PDF canvas");
+    }
+    QFile prose(section + "/03 Prose.txt");
+    QVERIFY(prose.open(QIODevice::WriteOnly));
+    QCOMPARE(prose.write("Bright prose canvas"), qint64(19));
+    prose.close();
+
+    MainWindow window(files.path() + "/library.sqlite3");
+    window.resize(1000, 760);
+    window.show();
+    auto* choose = window.findChild<QPushButton*>("chooseRoot");
+    QTRY_VERIFY(choose && choose->isEnabled());
+    window.chooseRoot(root);
+    auto* courses = window.findChild<QListView*>("courses");
+    QTRY_COMPARE(courses->model()->rowCount(), 1);
+    const auto courseIndex = courses->model()->index(0, 0);
+    QTRY_VERIFY(courses->visualRect(courseIndex).isValid());
+    QTest::mouseClick(courses->viewport(), Qt::LeftButton, Qt::NoModifier,
+                      courses->visualRect(courseIndex).center());
+    auto* lessons = window.findChild<QTreeView*>("lessons");
+    QTRY_COMPARE(lessons->model()->rowCount(), 1);
+    const auto sectionIndex = lessons->model()->index(0, 0);
+    lessons->expand(sectionIndex);
+    QTRY_COMPARE(lessons->model()->rowCount(sectionIndex), 3);
+
+    const QColor appBackground = melearner::roleColor(&window, shadcn::Role::Background);
+    const auto captures = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
+    const auto capture = [&window, &captures](const QString& name) {
+      if (!captures.isEmpty()) QVERIFY(window.grab().save(captures + "/" + name + ".png"));
+    };
+    const auto sampleWindow = [&window](QWidget* surface, QPoint localPoint) {
+      const QImage image = window.grab().toImage();
+      const QPoint windowPoint = surface->mapTo(&window, localPoint);
+      const qreal ratio = image.devicePixelRatio();
+      return image.pixelColor(qRound(windowPoint.x() * ratio), qRound(windowPoint.y() * ratio));
+    };
+    const auto checkRoundedSurface = [&](QWidget* surface, QColor bright, QPoint brightPoint) {
+      QTRY_VERIFY(surface && surface->isVisible());
+      QTRY_VERIFY(sampleWindow(surface, brightPoint) == bright);
+      QCOMPARE(sampleWindow(surface, QPoint(1, 1)).rgba(), appBackground.rgba());
+    };
+    const auto openLesson = [&window, lessons](int row) {
+      if (!lessons->isVisible()) {
+        auto* toggle = window.findChild<QPushButton*>("toggleOutline");
+        QVERIFY(toggle && toggle->isVisible());
+        QTest::mouseClick(toggle, Qt::LeftButton);
+        QTRY_VERIFY(lessons->isVisible());
+      }
+      const auto index = lessons->model()->index(row, 0, lessons->model()->index(0, 0));
+      QVERIFY(index.isValid());
+      lessons->scrollTo(index);
+      QTRY_VERIFY(lessons->visualRect(index).isValid());
+      lessons->setCurrentIndex(index);
+      QTest::keyClick(lessons, Qt::Key_Return);
+    };
+
+    openLesson(0);
+    QWebEngineView* browser = nullptr;
+    QTRY_VERIFY((browser = window.findChild<QWebEngineView*>("documentBrowser")) && browser->isVisible());
+    QTRY_COMPARE(browserValue(browser, "document.body && getComputedStyle(document.body).backgroundColor").toString(),
+                 QString("rgb(25, 230, 60)"));
+    checkRoundedSurface(browser, QColor(25, 230, 60), browser->rect().center());
+    capture("reader-browser");
+    browser->page()->runJavaScript("window.scrollTo(0,300)");
+    QTRY_COMPARE(browserValue(browser, "window.scrollY").toInt(), 300);
+    browser->page()->runJavaScript("window.scrollTo(0,0)");
+    QTRY_COMPARE(browserValue(browser, "window.scrollY").toInt(), 0);
+
+    window.resize(560, 720);
+    QTRY_VERIFY(window.width() <= 560);
+    checkRoundedSurface(browser, QColor(25, 230, 60), browser->rect().center());
+    capture("reader-browser-compact");
+
+    openLesson(1);
+    auto* pdf = window.findChild<PdfView*>();
+    QVERIFY(pdf);
+    QTRY_VERIFY(pdf->cachedTiles() > 0);
+    auto pdfPalette = pdf->palette();
+    pdfPalette.setColor(QPalette::Window, QColor(245, 120, 20));
+    pdf->setPalette(pdfPalette);
+    pdf->viewport()->setPalette(pdfPalette);
+    pdf->viewport()->update();
+    checkRoundedSurface(pdf->viewport(), QColor(25, 90, 240), pdf->viewport()->rect().center());
+    capture("reader-pdf");
+
+    openLesson(2);
+    auto* document = window.findChild<QTextEdit*>("documentText");
+    QVERIFY(document);
+    QTRY_VERIFY(document->isVisible());
+    QCOMPARE(document->document()->documentMargin(), melearner::themeFor(document).radius() * 1.4);
+    document->viewport()->setObjectName("proseTestViewport");
+    document->viewport()->setStyleSheet("QWidget#proseTestViewport { background:#f019d2; }");
+    checkRoundedSurface(document->viewport(), QColor(240, 25, 210), document->viewport()->rect().center());
+    capture("reader-prose");
+  }
 
   void nativeReadersAndLibraryPresentation() {
     QTemporaryDir files;
@@ -266,6 +464,14 @@ private slots:
     QTRY_VERIFY(!activityChart->property("melearnerCopyText").toString().isEmpty());
     QTRY_VERIFY(!mediaChart->property("melearnerCopyText").toString().isEmpty());
     QTRY_VERIFY(!window.findChild<QLabel*>("statsStatus")->isVisible());
+    for (const auto* name : {"coursesValue", "coursesDetail", "completionValue", "completionDetail",
+                             "watchedValue", "watchedDetail", "storageValue", "storageDetail"}) {
+      auto* label = window.findChild<QLabel*>(name);
+      QVERIFY(label);
+      auto* accessible = QAccessible::queryAccessibleInterface(label);
+      QVERIFY(accessible);
+      QVERIFY2(accessible->text(QAccessible::Name).contains(label->text()), name);
+    }
     QVERIFY(!window.findChild<QLabel*>("statsHeading"));
     auto* mediaTable = window.findChild<shadcn::Table*>("mediaTable"); QVERIFY(mediaTable);
     const auto countIndex = mediaTable->model()->index(0, 1);
@@ -391,8 +597,60 @@ private slots:
     QTest::mouseClick(window.findChild<QPushButton*>("backToLibrary"), Qt::LeftButton);
     QTRY_VERIFY(courses->isVisible());
     QTRY_VERIFY(!window.findChild<QWebEngineView*>("documentBrowser"));
-    QVERIFY(window.findChildren<QWebEngineProfile*>().isEmpty());
+    auto* warmTimeout = window.findChild<QTimer*>("documentWarmTimeout");
+    QVERIFY(warmTimeout && warmTimeout->isActive());
+    warmTimeout->start(1);
+    QTRY_VERIFY(window.findChildren<QWebEngineProfile*>().isEmpty());
     QVERIFY(!window.findChild<QWidget*>("appStatus")->isVisible());
+  }
+
+  void warmOfflineDocuments() {
+    QTemporaryDir files;
+    QVERIFY(files.isValid());
+    for (int i = 0; i < 2; ++i) {
+      QFile file(files.filePath(QString("%1.html").arg(i)));
+      QVERIFY(file.open(QIODevice::WriteOnly));
+      file.write(QString("<html><body>Reading %1<canvas id='drawing'></canvas>"
+                         "<script>document.body.dataset.ready='yes'</script></body></html>").arg(i).toUtf8());
+    }
+    melearner::CourseDocumentView reader;
+    reader.resize(800, 600); reader.show();
+    QPointer<QWebEngineProfile> profile;
+    QUrl previousUrl;
+    for (int i = 0; i < 6; ++i) {
+      QElapsedTimer elapsed; elapsed.start();
+      reader.open(files.path(), files.filePath(QString("%1.html").arg(i % 2)));
+      QTRY_VERIFY(reader.findChild<QWebEngineView*>("documentBrowser"));
+      auto* browser = reader.findChild<QWebEngineView*>("documentBrowser");
+      QTRY_COMPARE(browserValue(browser, "document.body?.dataset.ready ?? ''").toString(), QString("yes"));
+      QCOMPARE(browserValue(browser, "document.body.innerText").toString(), QString("Reading %1").arg(i % 2));
+      qInfo().noquote() << "HTML_RENDER sample=" << i << "ready_ms=" << elapsed.elapsed();
+      auto* currentProfile = browser->page()->profile();
+      QVERIFY(currentProfile->isOffTheRecord());
+      if (i) {
+        QVERIFY2(profile == currentProfile, "Each reading restarts its private WebEngine profile");
+        QVERIFY(previousUrl.host() != browser->url().host());
+        browserValue(browser, QString("fetch('%1').then(()=>document.body.dataset.stale='allowed')"
+                                     ".catch(()=>document.body.dataset.stale='blocked')").arg(previousUrl.toString()));
+        QTRY_COMPARE(browserValue(browser, "document.body.dataset.stale").toString(), QString("blocked"));
+      }
+      profile = currentProfile; previousUrl = browser->url();
+    }
+    reader.suspend();
+    QVERIFY(profile);
+    QVERIFY(reader.findChildren<QWebEngineView*>().isEmpty());
+    auto* idle = reader.findChild<QTimer*>("documentWarmTimeout");
+    QVERIFY(idle && idle->isActive());
+    idle->start(1);
+    QTRY_VERIFY(!profile);
+    // A pending file preparation must never recreate a hidden document.
+    reader.open(files.path(), files.filePath("0.html"));
+    reader.suspend();
+    QTest::qWait(100);
+    QVERIFY(reader.findChildren<QWebEngineView*>().isEmpty());
+    reader.clear();
+    QVERIFY(!profile);
+    QVERIFY(reader.findChildren<QWebEngineView*>().isEmpty());
   }
 
   void importSearchCompleteAndRestoreProgress() {
@@ -583,7 +841,8 @@ private slots:
       QPainter painter(&writer);
       for (int page = 1; page <= 3; ++page) {
         if (page > 1) QVERIFY(writer.newPage());
-        painter.drawText(50, 50, QString("Local PDF lesson · page %1").arg(page));
+        painter.drawText(50, 50, page == 3 ? QStringLiteral("Short page 東京")
+                                           : QString("Local PDF lesson · page %1 café 東京").arg(page));
       }
     }
     MainWindow window(files.path() + "/library.sqlite3");
@@ -601,6 +860,28 @@ private slots:
     auto* pdf = window.findChild<PdfView*>();
     QVERIFY(pdf);
     QTRY_VERIFY(pdf->cachedTiles() > 0);
+    auto* pdfAccessible = QAccessible::queryAccessibleInterface(pdf);
+    QVERIFY(pdfAccessible);
+    QTRY_VERIFY(pdfAccessible->text(QAccessible::Name).contains("1 of 3"));
+    pdf->setFocus();
+    QTRY_VERIFY(pdf->hasFocus());
+    QVERIFY(pdfAccessible->state().focusable);
+    auto* pdfText = pdfAccessible->textInterface();
+    QVERIFY(pdfText);
+    const QString firstPageText = QStringLiteral("Local PDF lesson · page 1 café 東京");
+    QTRY_VERIFY(pdfText->text(0, pdfText->characterCount()).contains(firstPageText));
+    QVERIFY(pdfText->characterCount() >= firstPageText.size());
+    QTRY_VERIFY(!pdfText->characterRect(0).isEmpty());
+    QVERIFY(pdfText->offsetAtPoint(pdfText->characterRect(0).center()) >= 0);
+    pdfText->setCursorPosition(3);
+    QCOMPARE(pdfText->cursorPosition(), 3);
+    pdfText->setSelection(0, 0, 3);
+    QCOMPARE(pdfText->selectionCount(), 1);
+    int selectionStart = -1;
+    int selectionEnd = -1;
+    pdfText->selection(0, &selectionStart, &selectionEnd);
+    QCOMPARE(selectionStart, 0);
+    QCOMPARE(selectionEnd, 3);
     window.resize(1920, 1080);
     QTRY_VERIFY(pdf->width() <= 1000);
     if (const auto captures = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS"); !captures.isEmpty())
@@ -620,6 +901,11 @@ private slots:
     page->setText("3");
     QTest::keyClick(page, Qt::Key_Return);
     QTRY_COMPARE(page->text(), QString("3"));
+    const QString thirdPageText = QStringLiteral("Short page 東京");
+    QTRY_VERIFY(pdfAccessible->text(QAccessible::Name).contains("3 of 3"));
+    QTRY_VERIFY(pdfText->text(0, pdfText->characterCount()).contains(thirdPageText));
+    QCOMPARE(pdfText->selectionCount(), 0);
+    QCOMPARE(pdfText->cursorPosition(), 0);
     QTRY_VERIFY(pdf->cachedTiles() > 0);
     auto* back = window.findChild<QPushButton*>("backToLibrary");
     QTest::mouseClick(back, Qt::LeftButton);

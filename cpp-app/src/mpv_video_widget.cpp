@@ -1,5 +1,6 @@
 #include "mpv_video_widget.hpp"
 
+#include "corner_cover.hpp"
 #include "player.hpp"
 
 #include <QOpenGLContext>
@@ -24,48 +25,7 @@
 
 namespace melearner {
 namespace {
-
-// Keep rounding in Qt's composited widget layer, like the transport controls.
-// Painting a mask into the video FBO alone is not retained by every widget grab
-// and compositor path. This static, transparent layer never captures the video.
-class VideoCornerCover final : public QWidget {
-public:
-    explicit VideoCornerCover(QWidget* parent) : QWidget(parent) {
-        setAttribute(Qt::WA_TransparentForMouseEvents);
-        setAttribute(Qt::WA_NoSystemBackground);
-    }
-    void setRadii(qreal tl, qreal tr, qreal br, qreal bl, QColor background) {
-        const QList<qreal> radii{qMax<qreal>(0, tl), qMax<qreal>(0, tr),
-                                 qMax<qreal>(0, br), qMax<qreal>(0, bl)};
-        if (radii_ == radii && background_ == background) return;
-        radii_ = radii; background_ = std::move(background);
-        setVisible(tl > 0 || tr > 0 || br > 0 || bl > 0); raise(); update();
-    }
-protected:
-    void paintEvent(QPaintEvent*) override {
-        const QRectF bounds(rect());
-        const qreal maxRadius = qMin(bounds.width(), bounds.height()) / 2.0;
-        const auto tl = qMin(radii_[0], maxRadius), tr = qMin(radii_[1], maxRadius);
-        const auto br = qMin(radii_[2], maxRadius), bl = qMin(radii_[3], maxRadius);
-        QPainterPath cover; cover.setFillRule(Qt::OddEvenFill); cover.addRect(bounds);
-        QPainterPath rounded;
-        rounded.moveTo(bounds.left() + tl, bounds.top());
-        rounded.lineTo(bounds.right() - tr, bounds.top());
-        if (tr > 0) rounded.arcTo(QRectF(bounds.right() - 2 * tr, bounds.top(), 2 * tr, 2 * tr), 90, -90);
-        rounded.lineTo(bounds.right(), bounds.bottom() - br);
-        if (br > 0) rounded.arcTo(QRectF(bounds.right() - 2 * br, bounds.bottom() - 2 * br, 2 * br, 2 * br), 0, -90);
-        rounded.lineTo(bounds.left() + bl, bounds.bottom());
-        if (bl > 0) rounded.arcTo(QRectF(bounds.left(), bounds.bottom() - 2 * bl, 2 * bl, 2 * bl), 270, -90);
-        rounded.lineTo(bounds.left(), bounds.top() + tl);
-        if (tl > 0) rounded.arcTo(QRectF(bounds.left(), bounds.top(), 2 * tl, 2 * tl), 180, -90);
-        rounded.closeSubpath(); cover.addPath(rounded);
-        QPainter painter(this); painter.setRenderHint(QPainter::Antialiasing);
-        painter.setPen(Qt::NoPen); painter.setBrush(background_); painter.drawPath(cover);
-    }
-private:
-    QList<qreal> radii_{0, 0, 0, 0};
-    QColor background_ = Qt::black;
-};
+using VideoCornerCover = CornerCover;
 
 class AccessibleVideo final : public QAccessibleWidget, public QAccessibleImageInterface {
 public:

@@ -37,6 +37,7 @@
 #include <QTimer>
 #include <QtTest>
 #include <algorithm>
+#include <sqlite3.h>
 
 namespace {
 bool hasValidVideoFrame(const QImage& image) {
@@ -71,7 +72,49 @@ private slots:
     settings.setValue("test/writable", true); settings.sync();
     QCOMPARE(settings.status(), QSettings::NoError);
     QVERIFY(settings.value("test/writable").toBool()); settings.remove("test/writable");
+    settings.setValue("updates/automatic", false);
     Q_INIT_RESOURCE(assets); melearner::installTheme(true, 14);
+  }
+  void staggeredRouteEntrances() {
+    QTemporaryDir files;
+    QVERIFY(files.isValid());
+    for (int i = 0; i < 6; ++i) {
+      const auto folder = files.filePath(QString("Courses/Course %1").arg(i));
+      QVERIFY(QDir().mkpath(folder));
+      QFile lesson(folder + "/Lesson.txt");
+      QVERIFY(lesson.open(QIODevice::WriteOnly));
+      lesson.write("A reading that is ready without starting a video decoder.");
+    }
+    MainWindow window(files.filePath("library.sqlite3"), nullptr, true);
+    window.resize(1200, 850); window.show(); window.activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(&window));
+    auto* choose = window.findChild<QPushButton*>("chooseRoot");
+    QTRY_VERIFY(choose->isEnabled());
+    window.chooseRoot(files.filePath("Courses"));
+    auto* courses = window.findChild<shadcn::ListView*>("courses");
+    QTRY_COMPARE(courses->model()->rowCount(), 6);
+    QTest::mouseClick(courses->viewport(), Qt::LeftButton, Qt::NoModifier,
+                      courses->visualRect(courses->model()->index(0, 0)).center());
+    auto* canvas = window.findChild<QWidget*>("courseCanvasReveal");
+    QVERIFY2(canvas, "The course canvas appears immediately without an entrance stage");
+    auto* route = window.findChild<QVariantAnimation*>("routeReveal");
+    QTRY_COMPARE(route->state(), QAbstractAnimation::Running);
+    QTRY_VERIFY(canvas->property("revealProgress").toDouble() > 0);
+    QTRY_VERIFY(canvas->property("revealProgress").toDouble() < 1);
+    QTRY_COMPARE(canvas->property("revealProgress").toDouble(), 1.0);
+    auto* back = window.findChild<QPushButton*>("backToLibrary");
+    QTest::mouseClick(back, Qt::LeftButton);
+    QCOMPARE(courses->model()->rowCount(), 6);
+    QCOMPARE(courses->model()->index(0, 0).data().toString(), QString("Course 0"));
+    QTRY_VERIFY(courses->revealProgress(courses->model()->index(0, 0)) < 1);
+    QTRY_COMPARE(courses->revealProgress(courses->model()->index(0, 0)), 1.0);
+    // Rapid reversal must cancel the old page's delayed stages.
+    QTest::mouseClick(courses->viewport(), Qt::LeftButton, Qt::NoModifier,
+                      courses->visualRect(courses->model()->index(1, 0)).center());
+    QTest::mouseClick(back, Qt::LeftButton);
+    QTRY_VERIFY(courses->isVisible());
+    QTRY_COMPARE(route->state(), QAbstractAnimation::Stopped);
+    QCOMPARE(canvas->property("revealProgress").toDouble(), 1.0);
   }
   void firstPresentedFrameUsesSavedPosition() {
     const QString root = QStringLiteral(MELEARNER_SOURCE_DIR) + "/fixtures/parity/media";
@@ -95,6 +138,42 @@ private slots:
       return colour.blue() > 150 && colour.red() < 80;
     }), "Resume presented the beginning of the video before the saved blue frame");
     player.shutdown();
+  }
+  void incompleteVideoAtEndRestoresPlayableFrame() {
+    QTemporaryDir files;
+    QVERIFY(files.isValid());
+    const auto root = files.filePath("Courses");
+    QVERIFY(QDir().mkpath(root + "/Resume"));
+    QVERIFY(QFile::copy(QStringLiteral(MELEARNER_SOURCE_DIR) + "/fixtures/parity/media/resume-red-blue.mp4",
+                        root + "/Resume/Video.mp4"));
+    const auto database = files.filePath("library.sqlite3");
+    MainWindow window(database, nullptr, true);
+    window.show(); window.activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(&window));
+    auto* choose = window.findChild<QPushButton*>("chooseRoot");
+    QTRY_VERIFY(choose->isEnabled());
+    window.chooseRoot(root);
+    auto* courses = window.findChild<QListView*>("courses");
+    QTRY_COMPARE(courses->model()->rowCount(), 1);
+    QTRY_VERIFY(choose->isEnabled());
+    sqlite3* db = nullptr;
+    QCOMPARE(sqlite3_open(QFile::encodeName(database).constData(), &db), SQLITE_OK);
+    const auto closeDb = qScopeGuard([db] { sqlite3_close(db); });
+    QCOMPARE(sqlite3_exec(db, "UPDATE lessons SET duration=6, last_position=6, completed=0", nullptr, nullptr, nullptr), SQLITE_OK);
+    auto* player = window.findChild<melearner::Player*>("lessonPlayer");
+    QSignalSpy loaded(player, &melearner::Player::fileLoaded);
+    QTest::mouseClick(courses->viewport(), Qt::LeftButton, Qt::NoModifier,
+                      courses->visualRect(courses->model()->index(0, 0)).center());
+    QTRY_COMPARE_WITH_TIMEOUT(loaded.size(), 1, 10000);
+    QCOMPARE(loaded.first()[2].toLongLong(), 5900);
+    auto* play = window.findChild<QPushButton*>("playPause");
+    QTRY_VERIFY(play->isEnabled());
+    QSignalSpy positions(player, &melearner::Player::positionChanged);
+    QVERIFY(player->seek(4000));
+    QTRY_VERIFY(!positions.empty() && positions.last()[0].toLongLong() < 4500);
+    play->click();
+    QTRY_COMPARE(play->text(), QString("Pause"));
+    QTRY_VERIFY(positions.last()[0].toLongLong() > 4100);
   }
   void playsPausesAndRestoresPosition_data() {
     QTest::addColumn<int>("fontScale");
@@ -174,9 +253,13 @@ private slots:
       QSignalSpy ended(player, &melearner::Player::playbackEnded);
       QSignalSpy decoder(player, &melearner::Player::decoderChanged);
       QElapsedTimer courseOpen; courseOpen.start();
-      courses->setCurrentIndex(courses->model()->index(0, 0)); QTest::keyClick(courses, Qt::Key_Return);
+      courses->setCurrentIndex(courses->model()->index(0, 0));
+      QTest::mouseClick(courses->viewport(), Qt::LeftButton, Qt::NoModifier, courses->visualRect(courseIndex).center());
       auto* lessons = window.findChild<QTreeView*>("lessons");
       QTRY_COMPARE_WITH_TIMEOUT(lessons->model()->rowCount(), 1, 5000);
+      auto* canvasReveal = window.findChild<QWidget*>("courseCanvasReveal");
+      QVERIFY(canvasReveal);
+      QTRY_COMPARE_WITH_TIMEOUT(canvasReveal->property("revealProgress").toDouble(), 1.0, 10000);
       QTRY_COMPARE_WITH_TIMEOUT(loaded.count(), 1, 10000);
       qInfo("Course click to native file loaded: %lld ms", courseOpen.elapsed());
       auto* rendererWidget = window.findChild<melearner::MpvVideoWidget*>("videoSurface"); QVERIFY(rendererWidget);
@@ -947,6 +1030,11 @@ private slots:
     QTest::keyClick(lessons, Qt::Key_Return);
     QTRY_COMPARE_WITH_TIMEOUT(loaded.size(), 2, 10000);
     QTRY_COMPARE(play->text(), QString("Play"));
+    // The spy observes the worker signal before the GUI's queued receiver.
+    // Wait for the visible control to acknowledge the new load before clicking.
+    QTRY_VERIFY(play->isEnabled());
+    QVERIFY2(loaded.last()[2].toLongLong() < loaded.last()[1].toLongLong(),
+             "Reopening a finished video must restore a frame before EOF");
     ended.clear(); QVERIFY(player->seek(15000)); play->click();
     QTRY_VERIFY2_WITH_TIMEOUT(!ended.empty(), qPrintable(QString("Replay state: %1, enabled %2, position %3, loaded %4")
       .arg(play->text()).arg(play->isEnabled()).arg(positions.last()[0].toLongLong()).arg(loaded.last()[2].toLongLong())), 5000);

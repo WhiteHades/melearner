@@ -1,6 +1,7 @@
 #pragma once
 #include <QImage>
 #include <QObject>
+#include <QRectF>
 #include <QSizeF>
 #include <QVector>
 #include <compare>
@@ -29,11 +30,13 @@ struct TileKey {
 };
 struct Info { quint64 generation = 0; QVector<QSizeF> pages; };
 struct Tile { quint64 generation = 0; TileKey key; QImage image; };
+struct PageText { quint64 generation = 0; int page = 0; QString text; };
+struct CharacterBounds { quint64 generation = 0; int page = 0; int offset = 0; QRectF bounds; };
 struct Error {
   enum Code { invalid, stale, cancelled, file, malformed, oversized, render } code;
   QString message;
 };
-using Result = std::variant<Info, Tile, Error>;
+using Result = std::variant<Info, Tile, PageText, CharacterBounds, Error>;
 
 // PDFium is supplied by Qt PDF. All PDF and filesystem calls stay on this worker.
 class PdfReader final : public QObject {
@@ -43,9 +46,13 @@ public:
   ~PdfReader() override;
   quint64 open(QString root, QString path);
   quint64 tile(quint64 generation, TileKey key);
+  quint64 pageText(quint64 generation, int page);
+  quint64 characterBounds(quint64 generation, int page, int offset);
   // Cancels queued tiles for a document generation. A tile already in
   // QPdfDocument::render() cannot be interrupted by Qt PDF.
   void cancelTiles(quint64 generation);
+  // Cancels queued page-text extraction for a document generation.
+  void cancelPageText(quint64 generation);
   // Drops queued work and asynchronously unloads the active document after
   // any current Qt PDF call returns.
   void clear();

@@ -1,8 +1,11 @@
 #pragma once
 #include "pdf_reader.hpp"
 #include <shadcn/navigation.hpp>
+#include <QCache>
 #include <QMap>
 #include <QSet>
+
+class PdfViewAccessible;
 
 class PdfView final : public shadcn::ScrollArea {
   Q_OBJECT
@@ -24,6 +27,7 @@ protected:
   void paintEvent(QPaintEvent*) override;
   void resizeEvent(QResizeEvent*) override;
 private:
+  friend class PdfViewAccessible;
   melearner::pdf::PdfReader reader_;
   QVector<QSizeF> pages_;
   QVector<int> tops_;
@@ -39,7 +43,18 @@ private:
   QMap<quint64, melearner::pdf::TileKey> pending_;
   QSet<melearner::pdf::TileKey> pendingKeys_;
   QMap<melearner::pdf::TileKey, quint64> failedTiles_;
+  int accessiblePage_ = -1;
+  quint64 pageTextRequest_ = 0;
+  bool pageTextPending_ = false;
+  bool pageTextLoaded_ = false;
+  QString pageText_;
+  QCache<int, QRectF> pageCharacterBounds_{256};
+  quint64 characterBoundsRequest_ = 0;
+  int characterBoundsRequestOffset_ = -1;
   void layoutPages(int previousScale = -1);
   void rememberFailedTile(const melearner::pdf::TileKey& key);
+  void updateAccessiblePage(int page);
+  void requestAccessiblePageText();
+  void requestCharacterBounds(int offset);
   int currentPage() const;
 };

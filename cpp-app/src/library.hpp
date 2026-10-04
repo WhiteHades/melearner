@@ -212,6 +212,7 @@ struct ScanResult {
 
 struct ProgressResult {
     QString lessonId;
+    std::uint64_t duration = 0;
     std::uint64_t watchedTime = 0;
     double lastPosition = 0.0;
     bool completed = false;

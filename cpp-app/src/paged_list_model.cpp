@@ -130,12 +130,23 @@ void PagedListModel::reset() {
   pending_.insert(0);
   emit pageRequested(0);
 }
+void PagedListModel::refresh() {
+  ++generation_; pending_.clear(); deferred_.reset(); pendingThumbnails_.clear();
+  // Preserve resident rows and images until fresh counts arrive. A route
+  // change does not change the library's order or invalidate its thumbnails.
+  auto offsets = pages_.keys();
+  if (offsets.isEmpty()) offsets.append(0);
+  for (const int offset : offsets) {
+    pending_.insert(offset);
+    emit pageRequested(offset);
+  }
+}
 bool PagedListModel::setPage(int offset, int total, const QList<StudyRow>& rows) {
   if (offset < 0 || offset % pageSize_ || total < 0 || rows.size() > pageSize_ ||
       offset > total || rows.size() != std::min(pageSize_, total - offset)) return false;
   pending_.remove(offset);
   const bool resize = total != total_;
-  if (resize) beginResetModel();
+  if (resize) { beginResetModel(); pages_.clear(); }
   total_ = total;
   pages_.insert(offset, {rows, ++clock_});
   while (pages_.size() > 4) {

@@ -3613,6 +3613,7 @@ RequestId Library::saveProgress(
             ++worker_->revision_;
             const ProgressResult result{
                 .lessonId = lessonId,
+                .duration = durationSeconds,
                 .watchedTime = watchedSeconds,
                 .lastPosition = static_cast<double>(positionMilliseconds) / 1000.0,
                 .completed = completed,
