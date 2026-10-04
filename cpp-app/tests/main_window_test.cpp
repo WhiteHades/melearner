@@ -10,6 +10,7 @@
 #include <QContextMenuEvent>
 #include <QDialog>
 #include <QFile>
+#include <QFileInfo>
 #include <QGraphicsOpacityEffect>
 #include <QPropertyAnimation>
 #include <QVariantAnimation>
@@ -36,6 +37,7 @@
 #include <QScopeGuard>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QSettings>
 #include <QTemporaryDir>
 #include <QTextEdit>
 #include <QTreeView>
@@ -49,6 +51,41 @@
 #include <zip.h>
 
 namespace {
+class ScopedTestSettings final {
+public:
+  explicit ScopedTestSettings(const QString& path)
+      : organization_(QCoreApplication::organizationName()),
+        application_(QCoreApplication::applicationName()),
+        format_(QSettings::defaultFormat()) {
+    QSettings originalIniSettings(QSettings::IniFormat, QSettings::UserScope,
+                                  organization_, application_);
+    QDir originalIniRoot = QFileInfo(originalIniSettings.fileName()).absoluteDir();
+    while ((!application_.isEmpty() && originalIniRoot.dirName() == application_)
+        || (!organization_.isEmpty() && originalIniRoot.dirName() == organization_)) {
+      if (!originalIniRoot.cdUp()) break;
+    }
+    iniPath_ = originalIniRoot.absolutePath();
+    QCoreApplication::setOrganizationName(QStringLiteral("melearner-scroll-tests"));
+    QCoreApplication::setApplicationName(QStringLiteral("main-window"));
+    QSettings::setDefaultFormat(QSettings::IniFormat);
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, path);
+    QSettings settings;
+    settings.clear();
+    settings.sync();
+  }
+  ~ScopedTestSettings() {
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, iniPath_);
+    QCoreApplication::setOrganizationName(organization_);
+    QCoreApplication::setApplicationName(application_);
+    QSettings::setDefaultFormat(format_);
+  }
+private:
+  const QString organization_;
+  const QString application_;
+  const QSettings::Format format_;
+  QString iniPath_;
+};
+
 QVariant browserValue(QWebEngineView* view, const QString& script) {
   if (!view) return {};
   auto result = std::make_shared<QVariant>();
@@ -212,9 +249,9 @@ private slots:
       if (popup->windowType() != Qt::ToolTip || !popup->isVisible()) continue;
       nativeTooltip = true;
       QCOMPARE(popup->palette().color(QPalette::Inactive, QPalette::ToolTipBase),
-               melearner::roleColor(shadcn::Role::Foreground));
+               QColor("#111111"));
       QCOMPARE(popup->palette().color(QPalette::Inactive, QPalette::ToolTipText),
-               melearner::roleColor(shadcn::Role::Background));
+               QColor("#ffffff"));
       const auto path = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
       if (!path.isEmpty()) QVERIFY(popup->grab().save(path + "/native-tooltip.png"));
     }
@@ -254,8 +291,14 @@ private slots:
     QTest::mouseClick(statsButton, Qt::LeftButton);
     auto* settings = window.findChild<QPushButton*>("appearance");
     QVERIFY(settings && settings->menu());
-    QCOMPARE(settings->menu()->actions().size(), 4); // Three choices plus a separator.
-    for (auto* action : settings->menu()->actions()) QVERIFY(!action->menu());
+    bool hasUpdateCheck = false;
+    bool hasAutomaticUpdates = false;
+    for (auto* action : settings->menu()->actions()) {
+      QVERIFY(!action->menu());
+      hasUpdateCheck |= action->objectName() == "checkForUpdates";
+      hasAutomaticUpdates |= action->objectName() == "automaticUpdates";
+    }
+    QVERIFY(hasUpdateCheck && hasAutomaticUpdates);
     bool plainAbout = false;
     bool aboutCaptured = false;
     QTimer::singleShot(200, &window, [&] {
@@ -583,6 +626,180 @@ private slots:
     QTRY_VERIFY(courses->isVisible());
     QCOMPARE(pdf->cachedTiles(), 0);
     QVERIFY(!window.findChild<QWidget*>("appStatus")->isVisible());
+  }
+
+  void libraryScrollPersistsAcrossTabSwitchesAndRestart() {
+    QTemporaryDir files;
+    QVERIFY(files.isValid());
+    ScopedTestSettings isolatedSettings(files.path());
+    const auto root = files.path() + "/Courses";
+    for (int course = 1; course <= 24; ++course) {
+      const auto section = root + QString("/Course %1/Section").arg(course, 2, 10, QChar('0'));
+      QVERIFY(QDir().mkpath(section));
+      QFile lesson(section + "/Reading.txt");
+      QVERIFY(lesson.open(QIODevice::WriteOnly));
+      const QByteArray content("A quiet place to learn.");
+      QCOMPARE(lesson.write(content), qint64(content.size()));
+    }
+    const auto database = files.path() + "/library.sqlite3";
+    int coursesPosition = 0;
+    int statsPosition = 0;
+    {
+      MainWindow window(database);
+      window.resize(560, 620); window.show();
+      QTRY_VERIFY(window.findChild<QPushButton*>("chooseRoot")->isEnabled());
+      window.chooseRoot(root);
+      auto* courses = window.findChild<QListView*>("courses");
+      QTRY_COMPARE(courses->model()->rowCount(), 24);
+      auto* courseScroll = courses->verticalScrollBar();
+      QTRY_VERIFY(courseScroll->maximum() > 0);
+      coursesPosition = courseScroll->maximum() * 2 / 3;
+      QVERIFY(coursesPosition > 0);
+      courseScroll->setValue(coursesPosition);
+
+      auto* statsButton = window.findChild<QPushButton*>("navStats");
+      auto* stack = window.findChild<shadcn::Tabs*>("libraryStack");
+      auto* statsScroll = window.findChild<shadcn::ScrollArea*>("statsScroll");
+      QVERIFY(statsButton && stack && statsScroll);
+      QTest::mouseClick(statsButton, Qt::LeftButton);
+      QTRY_COMPARE(stack->currentValue(), QString("stats"));
+      QTRY_VERIFY(statsScroll->verticalScrollBar()->maximum() > 0);
+      QCOMPARE(courseScroll->value(), coursesPosition);
+      statsPosition = statsScroll->verticalScrollBar()->maximum() / 2;
+      QVERIFY(statsPosition > 0);
+      statsScroll->verticalScrollBar()->setValue(statsPosition);
+
+      QTest::mouseClick(statsButton, Qt::LeftButton);
+      QTRY_COMPARE(stack->currentValue(), QString("courses"));
+      QCOMPARE(courseScroll->value(), coursesPosition);
+      QTest::mouseClick(statsButton, Qt::LeftButton);
+      QTRY_COMPARE(stack->currentValue(), QString("stats"));
+      QCOMPARE(statsScroll->verticalScrollBar()->value(), statsPosition);
+      // Closing on Stats saves its position; switching back above saved Courses.
+    }
+
+    QSettings().sync();
+    MainWindow reopened(database);
+    reopened.resize(560, 620); reopened.show();
+    QTRY_VERIFY(reopened.findChild<QPushButton*>("chooseRoot")->isEnabled());
+    reopened.chooseRoot(root);
+    auto* courses = reopened.findChild<QListView*>("courses");
+    QTRY_COMPARE(courses->model()->rowCount(), 24);
+    QTRY_COMPARE(courses->verticalScrollBar()->value(), coursesPosition);
+    auto* statsButton = reopened.findChild<QPushButton*>("navStats");
+    auto* stack = reopened.findChild<shadcn::Tabs*>("libraryStack");
+    auto* statsScroll = reopened.findChild<shadcn::ScrollArea*>("statsScroll");
+    QVERIFY(statsButton && stack && statsScroll);
+    QTest::mouseClick(statsButton, Qt::LeftButton);
+    QTRY_COMPARE(stack->currentValue(), QString("stats"));
+    QTRY_COMPARE(statsScroll->verticalScrollBar()->value(), statsPosition);
+  }
+
+  void readerScrollPersistsWhenReopened() {
+    QTemporaryDir files;
+    QVERIFY(files.isValid());
+    ScopedTestSettings isolatedSettings(files.path());
+    const auto root = files.path() + "/Courses";
+    const auto section = root + "/Scroll Course/Section";
+    QVERIFY(QDir().mkpath(section));
+    QString html = "<!doctype html><html><body><h1>Long HTML lesson</h1>";
+    for (int paragraph = 0; paragraph < 160; ++paragraph)
+      html += QString("<p>Lesson paragraph %1 contains enough text to make a tall page.</p>").arg(paragraph);
+    html += "</body></html>";
+    QFile htmlLesson(section + "/01 Long HTML.html");
+    QVERIFY(htmlLesson.open(QIODevice::WriteOnly));
+    QCOMPARE(htmlLesson.write(html.toUtf8()), qint64(html.toUtf8().size()));
+    htmlLesson.close();
+    {
+      QPdfWriter writer(section + "/02 Long PDF.pdf");
+      writer.setResolution(72);
+      QPainter painter(&writer);
+      for (int page = 1; page <= 8; ++page) {
+        if (page > 1) QVERIFY(writer.newPage());
+        painter.drawText(50, 50, QString("Scroll PDF page %1").arg(page));
+      }
+    }
+    for (int lesson = 3; lesson <= 42; ++lesson) {
+      QFile extra(section + QString("/%1 Outline item.txt").arg(lesson, 2, 10, QChar('0')));
+      QVERIFY(extra.open(QIODevice::WriteOnly));
+      QVERIFY(extra.write("An outline item.") > 0);
+    }
+
+    MainWindow window(files.path() + "/library.sqlite3");
+    window.resize(1000, 650); window.show();
+    QTRY_VERIFY(window.findChild<QPushButton*>("chooseRoot")->isEnabled());
+    window.chooseRoot(root);
+    auto* courses = window.findChild<QListView*>("courses");
+    QTRY_COMPARE(courses->model()->rowCount(), 1);
+    const auto openCourse = [&] {
+      QTRY_VERIFY(!courses->model()->index(0, 0).data(Qt::UserRole).toString().isEmpty());
+      const auto index = courses->model()->index(0, 0);
+      QTest::mouseClick(courses->viewport(), Qt::LeftButton, Qt::NoModifier,
+                        courses->visualRect(index).center());
+    };
+    openCourse();
+    auto* lessons = window.findChild<QTreeView*>("lessons");
+    QTRY_COMPARE(lessons->model()->rowCount(), 1);
+    auto sectionIndex = lessons->model()->index(0, 0);
+    QTRY_VERIFY(!sectionIndex.data(Qt::DisplayRole).toString().isEmpty());
+    lessons->expand(sectionIndex);
+    QTRY_COMPARE(lessons->model()->rowCount(sectionIndex), 42);
+    auto* outlineScroll = lessons->verticalScrollBar();
+    QTRY_VERIFY(outlineScroll->maximum() > 0);
+    const auto htmlIndex = lessons->model()->index(0, 0, sectionIndex);
+    QTRY_COMPARE(htmlIndex.data(Qt::DisplayRole).toString(), QString("01 Long HTML"));
+    lessons->scrollTo(htmlIndex);
+    QTRY_VERIFY(!lessons->visualRect(htmlIndex).isEmpty());
+    QSignalSpy htmlLoaded(window.findChild<melearner::CourseDocumentView*>(), &melearner::CourseDocumentView::loaded);
+    QTest::mouseClick(lessons->viewport(), Qt::LeftButton, Qt::NoModifier,
+                      lessons->visualRect(htmlIndex).center());
+    QTRY_VERIFY(window.findChild<QWebEngineView*>("documentBrowser"));
+    QPointer<QWebEngineView> browser = window.findChild<QWebEngineView*>("documentBrowser");
+    QTRY_VERIFY2(browserValue(browser, "document.body?.innerText ?? ''").toString().contains("Long HTML lesson"),
+      qPrintable(QString("Lesson: %1; URL: %2; body: %3").arg(window.findChild<QLabel*>("lessonTitle")->text(),
+        browser ? browser->url().toString() : QString("missing"), browserValue(browser, "document.body?.innerText ?? ''").toString().left(300))));
+    QTRY_VERIFY(browserValue(browser, "document.body.scrollHeight > window.innerHeight").toBool());
+    QTRY_VERIFY(!htmlLoaded.isEmpty() && htmlLoaded.last()[0].toBool());
+    const int htmlPosition = 1200;
+    browserValue(browser, QString("window.scrollTo(0, %1); window.scrollY").arg(htmlPosition));
+    QTRY_VERIFY(browserValue(browser, "window.scrollY").toInt() >= htmlPosition - 2);
+    QTRY_VERIFY(browser->page()->scrollPosition().y() >= htmlPosition - 2);
+    QTRY_COMPARE(lessons->currentIndex().data(Qt::DisplayRole).toString(), QString("01 Long HTML"));
+    const int outlinePosition = outlineScroll->maximum() * 2 / 3;
+    outlineScroll->setValue(outlinePosition);
+
+    auto* back = window.findChild<QPushButton*>("backToLibrary");
+    QTest::mouseClick(back, Qt::LeftButton);
+    QTRY_VERIFY(courses->isVisible());
+    openCourse();
+    QTRY_VERIFY(window.findChild<QWebEngineView*>("documentBrowser"));
+    browser = window.findChild<QWebEngineView*>("documentBrowser");
+    QTRY_VERIFY(browserValue(browser, "document.body?.innerText ?? ''").toString().contains("Long HTML lesson"));
+    QTRY_COMPARE(outlineScroll->value(), outlinePosition);
+    QTRY_VERIFY(browserValue(browser, "window.scrollY").toInt() >= htmlPosition - 2);
+
+    sectionIndex = lessons->model()->index(0, 0);
+    const auto pdfIndex = lessons->model()->index(1, 0, sectionIndex);
+    QTRY_COMPARE(pdfIndex.data(Qt::DisplayRole).toString(), QString("02 Long PDF"));
+    lessons->scrollTo(pdfIndex);
+    QTRY_VERIFY(!lessons->visualRect(pdfIndex).isEmpty());
+    QTest::mouseClick(lessons->viewport(), Qt::LeftButton, Qt::NoModifier,
+                      lessons->visualRect(pdfIndex).center());
+    auto* pdf = window.findChild<PdfView*>();
+    QVERIFY(pdf);
+    QTRY_VERIFY(pdf->cachedTiles() > 0);
+    QTRY_VERIFY(pdf->verticalScrollBar()->maximum() > 0);
+    const int pdfPosition = pdf->verticalScrollBar()->maximum() / 2;
+    pdf->verticalScrollBar()->setValue(pdfPosition);
+    outlineScroll->setValue(outlinePosition);
+
+    QTest::mouseClick(back, Qt::LeftButton);
+    QTRY_VERIFY(courses->isVisible());
+    openCourse();
+    pdf = window.findChild<PdfView*>();
+    QTRY_VERIFY(pdf->cachedTiles() > 0);
+    QTRY_COMPARE(pdf->verticalScrollBar()->value(), pdfPosition);
+    QTRY_COMPARE(outlineScroll->value(), outlinePosition);
   }
 
   void keyboardPopupAndTextInputStayScoped() {

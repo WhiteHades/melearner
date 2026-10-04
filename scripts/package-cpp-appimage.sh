@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-version="0.1.0"
+version="0.1.1"
 build_dir="${repo_root}/build/cpp-release"
 legal_root="${repo_root}/packaging"
 output="${repo_root}/dist/melearner_${version}_amd64.AppImage"
@@ -15,12 +15,13 @@ usage: scripts/package-cpp-appimage.sh [options]
 Create the diagnostic C++ Linux AppImage from the configured release build.
 The existing CMake runtime stager owns dependency closure and RPATH auditing;
 the installed linuxdeploy AppImage output plugin only turns the staged AppDir
-into an AppImage. The Qt WebEngine document viewer is bundled. No updater is bundled.
+into an AppImage. The Qt WebEngine document viewer is bundled. Update checks
+offer official downloads; the app never replaces itself in the background.
 
 Options:
   --build-dir <path>  configured CMake release build (default: build/cpp-release)
   --legal-root <path> canonical legal inputs (default: packaging)
-  --output <path>     output AppImage (default: dist/melearner_0.1.0_amd64.AppImage)
+  --output <path>     output AppImage (default: dist/melearner_0.1.1_amd64.AppImage)
   -h, --help          show this help
 EOF
 }

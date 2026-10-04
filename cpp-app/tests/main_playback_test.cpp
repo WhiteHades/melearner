@@ -31,6 +31,8 @@
 #include <QScopeGuard>
 #include <QPointer>
 #include <QVariantAnimation>
+#include <QSettings>
+#include <QWheelEvent>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QtTest>
@@ -59,6 +61,29 @@ class MainPlaybackTest final : public QObject {
   Q_OBJECT
 private slots:
   void initTestCase() { Q_INIT_RESOURCE(assets); melearner::installTheme(true, 14); }
+  void firstPresentedFrameUsesSavedPosition() {
+    const QString root = QStringLiteral(MELEARNER_SOURCE_DIR) + "/fixtures/parity/media";
+    melearner::Player player(nullptr, melearner::Player::DecodeMode::Software);
+    melearner::MpvVideoWidget video(&player);
+    video.resize(320, 180); video.show();
+    player.setApprovedRoots({root}); player.start();
+    QTRY_VERIFY(player.isReady() && video.isRenderContextReady());
+    QSignalSpy loaded(&player, &melearner::Player::fileLoaded);
+    QVector<QColor> presented;
+    connect(&video, &QOpenGLWidget::frameSwapped, &video, [&] {
+      const auto frame = video.grabFramebuffer();
+      if (frame.isNull()) return;
+      const auto colour = frame.pixelColor(frame.width() / 2, frame.height() / 2);
+      if (colour.red() > 100 || colour.blue() > 100) presented.append(colour);
+    });
+    QVERIFY(player.loadFile(root + "/resume-red-blue.mp4", 4000));
+    QTRY_COMPARE(loaded.size(), 1);
+    QTRY_VERIFY(!presented.isEmpty());
+    QVERIFY2(std::all_of(presented.cbegin(), presented.cend(), [](QColor colour) {
+      return colour.blue() > 150 && colour.red() < 80;
+    }), "Resume presented the beginning of the video before the saved blue frame");
+    player.shutdown();
+  }
   void playsPausesAndRestoresPosition_data() {
     QTest::addColumn<int>("fontScale");
     QTest::addColumn<QString>("mediaFile");
@@ -94,6 +119,12 @@ private slots:
     qint64 thumbnailModified = 0;
     for (int launch = 0; launch < 2; ++launch) {
       MainWindow window(database, nullptr, softwareDecoding); window.show(); window.activateWindow();
+      if (launch == 1) {
+        QCOMPARE(window.findChild<shadcn::Slider*>("volume")->values().first(), QSettings().value("playback/volume").toDouble());
+        QCOMPARE(window.findChild<shadcn::Slider*>("speedSlider")->values().first(), QSettings().value("playback/rate", 1).toDouble());
+        QCOMPARE(window.findChild<QPushButton*>("volumeButton")->accessibleName(),
+          QSettings().value("playback/muted", false).toBool() ? QString("Unmute") : QString("Mute"));
+      }
       QVERIFY(QTest::qWaitForWindowActive(&window));
       auto* choose = window.findChild<QPushButton*>("chooseRoot");
       QTRY_VERIFY_WITH_TIMEOUT(choose->isEnabled(), 5000);
@@ -483,13 +514,9 @@ private slots:
         QVERIFY(next->mapTo(&window, QPoint(0, next->height())).y() <= window.height());
         QVERIFY(previous->mapTo(&window, QPoint(0, previous->height())).y() <= window.height());
         QSignalSpy rates(player, &melearner::Player::rateChanged);
-        const QList<double> expectedRates{0.5, 0.75, 1.0, 1.25, 1.5, 1.75,
-                                           2.0, 2.25, 2.5, 2.75, 3.0};
-        QCOMPARE(speed->actions().size(), expectedRates.size());
-        for (qsizetype index = 0; index < expectedRates.size(); ++index) {
-          QCOMPARE(speed->actions().at(index)->data().toDouble(), expectedRates.at(index));
-          QCOMPARE(speed->actions().at(index)->text(), QString::number(expectedRates.at(index)) + QChar(0x00d7));
-        }
+        auto* speedSlider = window.findChild<shadcn::Slider*>("speedSlider"); QVERIFY(speedSlider);
+        QCOMPARE(speedSlider->minimum(), 0.5); QCOMPARE(speedSlider->maximum(), 3.0);
+        QCOMPARE(speedSlider->singleStep(), 0.25);
         QVERIFY(speedButton);
         speed->popup(speedButton->mapToGlobal(QPoint(0, speedButton->height())));
         QTRY_VERIFY(speed->isVisible());
@@ -503,8 +530,18 @@ private slots:
         const auto popupCaptures = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
         if (!popupCaptures.isEmpty()) QVERIFY(speed->grab().save(popupCaptures + "/playback-speed-menu.png"));
         speed->hide();
-        speed->actions().at(4)->trigger();
+        speedSlider->setValues({1.5});
         QTRY_VERIFY(!rates.isEmpty()); QCOMPARE(rates.last().first().toDouble(), 1.5);
+        QWheelEvent speedWheel(speedButton->rect().center(), speedButton->mapToGlobal(speedButton->rect().center()),
+          QPoint(), QPoint(0, 120), Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        QApplication::sendEvent(speedButton, &speedWheel);
+        QTRY_COMPARE(rates.last().first().toDouble(), 1.75);
+        speed->popup(speedButton->mapToGlobal(QPoint(0, speedButton->height())));
+        QTRY_VERIFY(speed->isVisible());
+        QTest::keyClick(speedSlider, Qt::Key_Left); QTRY_COMPARE(rates.last().first().toDouble(), 1.5);
+        QTest::keyClick(speedSlider, Qt::Key_Down); QTRY_COMPARE(rates.last().first().toDouble(), 1.25);
+        QTest::keyClick(speedSlider, Qt::Key_Up); QTRY_COMPARE(rates.last().first().toDouble(), 1.5);
+        speed->hide();
         const auto captureDirectory = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
         movePointer(QPoint(20, 20));
         QTRY_COMPARE(controls->graphicsEffect()->property("opacity").toDouble(), 1.0);
@@ -688,6 +725,9 @@ private slots:
     QSignalSpy ended(player, &melearner::Player::playbackEnded);
     auto* lessons = window.findChild<QTreeView*>("lessons"); QVERIFY(lessons);
     const auto* retainedPreviewPlayer = previewPlayer.data();
+    // A hidden dashboard must release its decoder and load afresh on return,
+    // without creating another player or skipping the preview startup delay.
+    QSignalSpy previewReloads(previewPlayer, &melearner::Player::fileLoaded);
     QElapsedTimer heartbeatClock;
     qint64 previousHeartbeat = 0, worstHeartbeatGap = 0;
     int heartbeatSamples = 0;
@@ -710,6 +750,7 @@ private slots:
     QTRY_VERIFY(!previewPaused.empty() && previewPaused.last()[0].toBool());
     QVERIFY(!previewVideo->isVisible());
     QCOMPARE(window.findChild<melearner::Player*>("previewPlayer"), retainedPreviewPlayer);
+    QCOMPARE(previewReloads.size(), 0);
 
     auto* backToLibrary = window.findChild<QPushButton*>("backToLibrary"); QVERIFY(backToLibrary);
     auto* routeReveal = window.findChild<QVariantAnimation*>("routeReveal"); QVERIFY(routeReveal);
@@ -724,6 +765,7 @@ private slots:
       return state[0].template value<QAbstractAnimation::State>() == QAbstractAnimation::Running;
     }));
     QCOMPARE(window.findChild<melearner::Player*>("previewPlayer"), retainedPreviewPlayer);
+    QTRY_COMPARE(previewReloads.size(), 1);
     QTRY_VERIFY(!previewPaused.empty() && !previewPaused.last()[0].toBool());
 
     loaded.clear(); courseOpen.restart();
@@ -894,7 +936,8 @@ private slots:
     QTRY_COMPARE_WITH_TIMEOUT(loaded.size(), 2, 10000);
     QTRY_COMPARE(play->text(), QString("Play"));
     ended.clear(); QVERIFY(player->seek(15000)); play->click();
-    QTRY_VERIFY_WITH_TIMEOUT(!ended.empty(), 5000);
+    QTRY_VERIFY2_WITH_TIMEOUT(!ended.empty(), qPrintable(QString("Replay state: %1, enabled %2, position %3, loaded %4")
+      .arg(play->text()).arg(play->isEnabled()).arg(positions.last()[0].toLongLong()).arg(loaded.last()[2].toLongLong())), 5000);
     QTRY_VERIFY_WITH_TIMEOUT(indicator->isVisible(), 5000);
     QTRY_COMPARE_WITH_TIMEOUT(loaded.size(), 3, 8000);
     QVERIFY(loaded.last()[0].toString().endsWith("03 Next.mp4"));

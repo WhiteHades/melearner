@@ -65,7 +65,6 @@ struct Command {
 enum class ReplyAction {
     user,
     restorePause,
-    restoreSeek,
 };
 
 struct PendingReply {
@@ -423,14 +422,19 @@ private:
                 if (queued_.empty() && coalesced_.empty() && !stopping_) {
                     commandAvailable_.wait_for(lock, std::chrono::milliseconds(8));
                 }
-                if (!queued_.empty()) {
+                // Replaceable controls still have to precede later commands.
+                // Otherwise Play can overtake a seek, or a lesson load can
+                // overtake the volume/mute change requested before it.
+                auto replaceable = std::min_element(coalesced_.begin(), coalesced_.end(),
+                    [](const auto& left, const auto& right) { return left.second.id < right.second.id; });
+                if (!queued_.empty() && (replaceable == coalesced_.end() ||
+                    queued_.front().id < replaceable->second.id)) {
                     command = std::move(queued_.front());
                     queued_.pop_front();
                     haveCommand = true;
                 } else if (!coalesced_.empty()) {
-                    auto item = coalesced_.begin();
-                    command = std::move(item->second);
-                    coalesced_.erase(item);
+                    command = std::move(replaceable->second);
+                    coalesced_.erase(replaceable);
                     haveCommand = true;
                 }
             }
@@ -645,8 +649,12 @@ private:
         loadCommandInFlight_ = true;
         currentPath_ = *canonical;
         emit owner_->fileLoading(*canonical, command.id);
+        // Seek before decoding/presenting the first frame. Restoring after
+        // FILE_LOADED exposes frame zero and decodes the beginning needlessly.
+        const auto options = QByteArrayLiteral("pause=yes,start=") + QByteArray::number(
+            static_cast<double>(restore_.positionMs) / 1000.0, 'f', 3);
         issueCommand(command.id, {QByteArrayLiteral("loadfile"), canonical->toUtf8(),
-                                  QByteArrayLiteral("replace")});
+                                  QByteArrayLiteral("replace"), QByteArrayLiteral("-1"), options});
         if (!pendingReplies_.contains(command.id)) {
             restore_ = {};
             loadCommandInFlight_ = false;
@@ -837,16 +845,6 @@ private:
         if (reply.action == ReplyAction::user) {
             postCommandFinished(reply.userId);
         } else if (reply.action == ReplyAction::restorePause) {
-            if (restore_.positionMs > 0) {
-                const auto id = nextInternalRequestId();
-                issueCommand(id, {QByteArrayLiteral("seek"), QByteArray::number(
-                                      static_cast<double>(restore_.positionMs) / 1000.0, 'f', 3),
-                                  QByteArrayLiteral("absolute+exact")},
-                             ReplyAction::restoreSeek);
-            } else {
-                finishRestore();
-            }
-        } else if (reply.action == ReplyAction::restoreSeek) {
             finishRestore();
         }
     }

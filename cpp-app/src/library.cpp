@@ -108,19 +108,12 @@ void checkSqlite(int result, sqlite3* db, QString operation) {
 class Statement final {
 public:
     Statement(sqlite3* db, QString sql) : db_(db) {
-        // The text is kept so a failure can name the statement that failed. A
-        // "near X: syntax error" from SQLite names a token and not the query, and a
-        // generated query is long enough that the token alone is not a starting
-        // point for finding the mistake.
-        text_ = std::move(sql);
-        const auto utf8 = text_.toUtf8();
+        const auto utf8 = sql.toUtf8();
         checkSqlite(
             sqlite3_prepare_v2(db_, utf8.constData(), utf8.size(), &statement_, nullptr),
             db_,
-            QStringLiteral("prepare SQL: ") + text_);
+            QStringLiteral("prepare SQL: ") + sql);
     }
-
-    [[nodiscard]] const QString& text() const noexcept { return text_; }
 
     ~Statement() {
         sqlite3_finalize(statement_);
@@ -162,12 +155,16 @@ public:
         return result;
     }
 
+    void reset() {
+        checkSqlite(sqlite3_reset(statement_), db_, QStringLiteral("reset SQL"));
+        checkSqlite(sqlite3_clear_bindings(statement_), db_, QStringLiteral("clear SQL bindings"));
+    }
+
     [[nodiscard]] sqlite3_stmt* get() const noexcept { return statement_; }
 
 private:
     sqlite3* db_ = nullptr;
     sqlite3_stmt* statement_ = nullptr;
-    QString text_;
 };
 
 void exec(sqlite3* db, std::string_view sql) {
@@ -3282,6 +3279,43 @@ RequestId Library::scan(QString rootPath) {
 
         Transaction transaction(worker_->database_);
         const auto commitTime = nowMs();
+        Statement updateCourse(
+            worker_->database_,
+            QStringLiteral(
+                "UPDATE courses SET name = ?1, path = ?2, fingerprint = ?3, last_scanned_at = ?4, "
+                "missing_since = NULL WHERE id = ?5"));
+        Statement insertCourse(
+            worker_->database_,
+            QStringLiteral(
+                "INSERT INTO courses(id, identity_id, name, path, fingerprint, last_scanned_at) "
+                "VALUES (?1, ?2, ?3, ?4, ?5, ?6)"));
+        Statement updateSection(
+            worker_->database_,
+            QStringLiteral("UPDATE sections SET name = ?1, order_index = ?2 WHERE id = ?3 AND course_id = ?4"));
+        Statement insertSection(
+            worker_->database_,
+            QStringLiteral("INSERT INTO sections(id, course_id, name, order_index) VALUES (?1, ?2, ?3, ?4)"));
+        Statement updateLesson(
+            worker_->database_,
+            QStringLiteral(
+                "UPDATE lessons SET section_id = ?1, name = ?2, path = ?3, relative_path = ?4, "
+                "type = ?5, file_size = ?6, order_index = ?7, modified_ns = ?8, updated_at = ?9 "
+                "WHERE id = ?10 AND course_id = ?11"));
+        Statement insertLesson(
+            worker_->database_,
+            QStringLiteral(
+                "INSERT INTO lessons(id, course_id, section_id, name, path, relative_path, type, "
+                "duration, watched_time, last_position, file_size, order_index, completed, modified_ns, updated_at) "
+                "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, 0, 0, ?8, ?9, 0, ?10, ?11)"));
+        Statement deleteLesson(worker_->database_, QStringLiteral("DELETE FROM lessons WHERE id = ?1"));
+        Statement deleteSection(worker_->database_, QStringLiteral("DELETE FROM sections WHERE id = ?1"));
+        Statement updateSectionOrder(
+            worker_->database_,
+            QStringLiteral("UPDATE sections SET order_index = ?1 WHERE id = ?2 AND course_id = ?3"));
+        Statement markCourseMissing(
+            worker_->database_,
+            QStringLiteral(
+                "UPDATE courses SET missing_since = COALESCE(missing_since, ?1), last_scanned_at = ?2 WHERE id = ?3"));
         QHash<QString, QVector<int>> sectionsByCourse;
         QHash<QString, QVector<int>> lessonsByCourse;
         for (qsizetype index = 0; index < existingSections.size(); ++index) {
@@ -3298,30 +3332,22 @@ RequestId Library::scan(QString rootPath) {
             const auto oldCourseIndex = selectedCourses.at(courseIndex);
             if (oldCourseIndex >= 0) {
                 selectedExistingCourses.insert(oldCourseIndex);
-                Statement update(
-                    worker_->database_,
-                    QStringLiteral(
-                        "UPDATE courses SET name = ?1, path = ?2, fingerprint = ?3, last_scanned_at = ?4, "
-                        "missing_since = NULL WHERE id = ?5"));
-                update.bind(1, course.name);
-                update.bind(2, course.path);
-                update.bind(3, course.fingerprint);
-                update.bind(4, commitTime);
-                update.bind(5, courseId);
-                (void)update.step();
+                updateCourse.bind(1, course.name);
+                updateCourse.bind(2, course.path);
+                updateCourse.bind(3, course.fingerprint);
+                updateCourse.bind(4, commitTime);
+                updateCourse.bind(5, courseId);
+                (void)updateCourse.step();
+                updateCourse.reset();
             } else {
-                Statement insert(
-                    worker_->database_,
-                    QStringLiteral(
-                        "INSERT INTO courses(id, identity_id, name, path, fingerprint, last_scanned_at) "
-                        "VALUES (?1, ?2, ?3, ?4, ?5, ?6)"));
-                insert.bind(1, courseId);
-                insert.bind(2, courseIdentityIds.at(courseIndex));
-                insert.bind(3, course.name);
-                insert.bind(4, course.path);
-                insert.bind(5, course.fingerprint);
-                insert.bind(6, commitTime);
-                (void)insert.step();
+                insertCourse.bind(1, courseId);
+                insertCourse.bind(2, courseIdentityIds.at(courseIndex));
+                insertCourse.bind(3, course.name);
+                insertCourse.bind(4, course.path);
+                insertCourse.bind(5, course.fingerprint);
+                insertCourse.bind(6, commitTime);
+                (void)insertCourse.step();
+                insertCourse.reset();
             }
 
             const auto oldSectionIndexes = sectionsByCourse.value(oldCourseIndex >= 0 ? existingCourses.at(oldCourseIndex).id : QString{});
@@ -3373,23 +3399,19 @@ RequestId Library::scan(QString rootPath) {
                 sectionIds.push_back(sectionId);
                 if (selectedSection >= 0) {
                     usedSectionIndexes.insert(selectedSection);
-                    Statement update(
-                        worker_->database_,
-                        QStringLiteral("UPDATE sections SET name = ?1, order_index = ?2 WHERE id = ?3 AND course_id = ?4"));
-                    update.bind(1, section.name);
-                    update.bind(2, static_cast<std::uint64_t>(1'000'000'000ULL + static_cast<std::uint64_t>(sectionIndex)));
-                    update.bind(3, sectionId);
-                    update.bind(4, courseId);
-                    (void)update.step();
+                    updateSection.bind(1, section.name);
+                    updateSection.bind(2, static_cast<std::uint64_t>(1'000'000'000ULL + static_cast<std::uint64_t>(sectionIndex)));
+                    updateSection.bind(3, sectionId);
+                    updateSection.bind(4, courseId);
+                    (void)updateSection.step();
+                    updateSection.reset();
                 } else {
-                    Statement insert(
-                        worker_->database_,
-                        QStringLiteral("INSERT INTO sections(id, course_id, name, order_index) VALUES (?1, ?2, ?3, ?4)"));
-                    insert.bind(1, sectionId);
-                    insert.bind(2, courseId);
-                    insert.bind(3, section.name);
-                    insert.bind(4, static_cast<std::uint64_t>(1'000'000'000ULL + static_cast<std::uint64_t>(sectionIndex)));
-                    (void)insert.step();
+                    insertSection.bind(1, sectionId);
+                    insertSection.bind(2, courseId);
+                    insertSection.bind(3, section.name);
+                    insertSection.bind(4, static_cast<std::uint64_t>(1'000'000'000ULL + static_cast<std::uint64_t>(sectionIndex)));
+                    (void)insertSection.step();
+                    insertSection.reset();
                 }
 
                 for (qsizetype lessonIndex = 0; lessonIndex < section.lessons.size(); ++lessonIndex) {
@@ -3421,81 +3443,67 @@ RequestId Library::scan(QString rootPath) {
                                                                 : newId(QStringLiteral("lesson"));
                     if (selectedLesson >= 0) {
                         usedLessonIndexes.insert(selectedLesson);
-                        Statement update(
-                            worker_->database_,
-                            QStringLiteral(
-                                "UPDATE lessons SET section_id = ?1, name = ?2, path = ?3, relative_path = ?4, "
-                                "type = ?5, file_size = ?6, order_index = ?7, modified_ns = ?8, updated_at = ?9 "
-                                "WHERE id = ?10 AND course_id = ?11"));
-                        update.bind(1, sectionId);
-                        update.bind(2, lesson.name);
-                        update.bind(3, lesson.path);
-                        update.bind(4, lesson.relativePath);
-                        update.bind(5, lesson.type);
-                        update.bind(6, lesson.fileSize);
-                        update.bind(7, static_cast<std::uint64_t>(lessonIndex));
-                        update.bind(8, lesson.modifiedNs);
-                        update.bind(9, commitTime);
-                        update.bind(10, lessonId);
-                        update.bind(11, courseId);
-                        (void)update.step();
+                        updateLesson.bind(1, sectionId);
+                        updateLesson.bind(2, lesson.name);
+                        updateLesson.bind(3, lesson.path);
+                        updateLesson.bind(4, lesson.relativePath);
+                        updateLesson.bind(5, lesson.type);
+                        updateLesson.bind(6, lesson.fileSize);
+                        updateLesson.bind(7, static_cast<std::uint64_t>(lessonIndex));
+                        updateLesson.bind(8, lesson.modifiedNs);
+                        updateLesson.bind(9, commitTime);
+                        updateLesson.bind(10, lessonId);
+                        updateLesson.bind(11, courseId);
+                        (void)updateLesson.step();
+                        updateLesson.reset();
                     } else {
-                        Statement insert(
-                            worker_->database_,
-                            QStringLiteral(
-                                "INSERT INTO lessons(id, course_id, section_id, name, path, relative_path, type, "
-                                "duration, watched_time, last_position, file_size, order_index, completed, modified_ns, updated_at) "
-                                "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, 0, 0, ?8, ?9, 0, ?10, ?11)"));
-                        insert.bind(1, lessonId);
-                        insert.bind(2, courseId);
-                        insert.bind(3, sectionId);
-                        insert.bind(4, lesson.name);
-                        insert.bind(5, lesson.path);
-                        insert.bind(6, lesson.relativePath);
-                        insert.bind(7, lesson.type);
-                        insert.bind(8, lesson.fileSize);
-                        insert.bind(9, static_cast<std::uint64_t>(lessonIndex));
-                        insert.bind(10, lesson.modifiedNs);
-                        insert.bind(11, commitTime);
-                        (void)insert.step();
+                        insertLesson.bind(1, lessonId);
+                        insertLesson.bind(2, courseId);
+                        insertLesson.bind(3, sectionId);
+                        insertLesson.bind(4, lesson.name);
+                        insertLesson.bind(5, lesson.path);
+                        insertLesson.bind(6, lesson.relativePath);
+                        insertLesson.bind(7, lesson.type);
+                        insertLesson.bind(8, lesson.fileSize);
+                        insertLesson.bind(9, static_cast<std::uint64_t>(lessonIndex));
+                        insertLesson.bind(10, lesson.modifiedNs);
+                        insertLesson.bind(11, commitTime);
+                        (void)insertLesson.step();
+                        insertLesson.reset();
                     }
                 }
             }
             for (const auto oldLessonIndex : oldLessonIndexes) {
                 if (!usedLessonIndexes.contains(oldLessonIndex)) {
-                    Statement remove(worker_->database_, QStringLiteral("DELETE FROM lessons WHERE id = ?1"));
-                    remove.bind(1, existingLessons.at(oldLessonIndex).id);
-                    (void)remove.step();
+                    deleteLesson.bind(1, existingLessons.at(oldLessonIndex).id);
+                    (void)deleteLesson.step();
+                    deleteLesson.reset();
                 }
             }
             for (const auto oldSectionIndex : oldSectionIndexes) {
                 if (!usedSectionIndexes.contains(oldSectionIndex)) {
-                    Statement remove(worker_->database_, QStringLiteral("DELETE FROM sections WHERE id = ?1"));
-                    remove.bind(1, existingSections.at(oldSectionIndex).id);
-                    (void)remove.step();
+                    deleteSection.bind(1, existingSections.at(oldSectionIndex).id);
+                    (void)deleteSection.step();
+                    deleteSection.reset();
                 }
             }
             for (qsizetype sectionIndex = 0; sectionIndex < sectionIds.size(); ++sectionIndex) {
-                Statement update(
-                    worker_->database_,
-                    QStringLiteral("UPDATE sections SET order_index = ?1 WHERE id = ?2 AND course_id = ?3"));
-                update.bind(1, static_cast<std::uint64_t>(sectionIndex));
-                update.bind(2, sectionIds.at(sectionIndex));
-                update.bind(3, courseId);
-                (void)update.step();
+                updateSectionOrder.bind(1, static_cast<std::uint64_t>(sectionIndex));
+                updateSectionOrder.bind(2, sectionIds.at(sectionIndex));
+                updateSectionOrder.bind(3, courseId);
+                (void)updateSectionOrder.step();
+                updateSectionOrder.reset();
             }
         }
         for (qsizetype index = 0; index < existingCourses.size(); ++index) {
             if (selectedExistingCourses.contains(static_cast<int>(index))) {
                 continue;
             }
-            Statement missing(
-                worker_->database_,
-                QStringLiteral("UPDATE courses SET missing_since = COALESCE(missing_since, ?1), last_scanned_at = ?2 WHERE id = ?3"));
-            missing.bind(1, commitTime);
-            missing.bind(2, commitTime);
-            missing.bind(3, existingCourses.at(index).id);
-            (void)missing.step();
+            markCourseMissing.bind(1, commitTime);
+            markCourseMissing.bind(2, commitTime);
+            markCourseMissing.bind(3, existingCourses.at(index).id);
+            (void)markCourseMissing.step();
+            markCourseMissing.reset();
         }
         Statement root(
             worker_->database_,

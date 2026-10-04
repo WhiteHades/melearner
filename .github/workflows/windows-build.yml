@@ -359,11 +359,15 @@ jobs:
             $versionProcess.Kill()
             throw 'Application version check timed out'
           }
-          if ($versionProcess.ExitCode -ne 0 -or (Get-Content -LiteralPath $versionOutput -Raw).Trim() -ne 'melearner-cpp-v1 0.1.0') {
-            throw 'Built application does not report version 0.1.0'
+          if ($versionProcess.ExitCode -ne 0 -or (Get-Content -LiteralPath $versionOutput -Raw).Trim() -ne 'melearner-cpp-v1 0.1.1') {
+            throw 'Built application does not report version 0.1.1'
           }
           & $env:MELEARNER_CTEST --test-dir build\manual-windows --verbose --output-on-failure -R '^core_workflow$'
           if ($LASTEXITCODE -ne 0) { throw 'core workflow test failed' }
+          foreach ($testName in @('library_scan_test', 'update_workflow_test')) {
+            & (Resolve-Path "build\manual-windows\$testName.exe")
+            if ($LASTEXITCODE -ne 0) { throw "$testName failed" }
+          }
       - name: run the existing native playback checks
         if: inputs.run_playback
         timeout-minutes: 4

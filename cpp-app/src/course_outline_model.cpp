@@ -5,6 +5,9 @@
 #include <QSize>
 #include <QPixmap>
 #include <QPixmapCache>
+#include <QPainter>
+#include <QPainterPath>
+#include <QPen>
 
 #include <algorithm>
 #include <limits>
@@ -38,14 +41,39 @@ constexpr quintptr kSectionRowMask = (kFileTag - 1) >> kIndexRowBits;
 }
 
 [[nodiscard]] QPixmap completionMark(bool completed) {
-    const auto colour = roleColor(nullptr, completed ? shadcn::Role::Primary : shadcn::Role::MutedForeground);
+    const auto highContrastMode = highContrast();
+    const auto colour = roleColor(nullptr, completed
+        ? shadcn::Role::Primary : shadcn::Role::MutedForeground);
     // The native row's leading role accepts a pixmap, not a QIcon. Rasterize the
     // shared vector at the regular row's 20px size with supersampled edges.
-    const auto key = QStringLiteral("melearner-outline-smooth-%1-%2").arg(completed).arg(colour.rgba());
+    const auto key = QStringLiteral("melearner-outline-smooth-%1-%2-%3")
+        .arg(completed).arg(colour.rgba()).arg(highContrastMode);
     QPixmap cached;
     if (QPixmapCache::find(key, &cached)) return cached;
-    auto mark = studyIcon(completed ? StudyIcon::CircleCheck : StudyIcon::Circle, colour)
-      .pixmap(QSize(80, 80)).scaled(20, 20, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    QPixmap mark;
+    if (completed && !highContrastMode) {
+        mark = QPixmap(80, 80); mark.fill(Qt::transparent);
+        QPainter painter(&mark);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.scale(80.0 / 24.0, 80.0 / 24.0);
+        painter.setPen(Qt::NoPen); painter.setBrush(QColor("#a6e3a1"));
+        painter.drawEllipse(QRectF(3, 3, 18, 18));
+        QPen tick(QColor("#1e1e2e"));
+        tick.setWidthF(1.7);
+        tick.setCapStyle(Qt::RoundCap);
+        tick.setJoinStyle(Qt::RoundJoin);
+        painter.setPen(tick);
+        QPainterPath path;
+        path.moveTo(7.5, 12);
+        path.lineTo(10.5, 15);
+        path.lineTo(16.5, 9);
+        painter.drawPath(path);
+        painter.end();
+        mark = mark.scaled(20, 20, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    } else {
+        mark = studyIcon(completed ? StudyIcon::CircleCheck : StudyIcon::Circle, colour)
+            .pixmap(QSize(80, 80)).scaled(20, 20, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    }
     QPixmapCache::insert(key, mark);
     return mark;
 }

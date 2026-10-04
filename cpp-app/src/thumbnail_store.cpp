@@ -269,7 +269,7 @@ bool writeCache(const QString& path, const QImage& image, const QString& source,
     return true;
 }
 
-void pruneCache(const QString& exceptPath) {
+qint64 pruneCache(const QString& exceptPath) {
     const QDir directory(QDir(QStandardPaths::writableLocation(QStandardPaths::CacheLocation))
         .filePath(QStringLiteral("course-thumbnails")));
     auto files = directory.entryInfoList({QStringLiteral("*.png")}, QDir::Files, QDir::Time | QDir::Reversed);
@@ -281,6 +281,7 @@ void pruneCache(const QString& exceptPath) {
         const qint64 size = file.size();
         if (QFile::remove(file.absoluteFilePath())) total -= size;
     }
+    return total;
 }
 
 }  // namespace
@@ -425,10 +426,27 @@ private:
                 if (!image.isNull() && job.generation == currentGeneration()) {
                     const QFileInfo current(source);
                     if (!current.isFile() || current.size() != sourceSize ||
-                        current.lastModified().toMSecsSinceEpoch() != sourceModified ||
-                        !writeCache(path, image, source, sourceSize, sourceModified))
+                        current.lastModified().toMSecsSinceEpoch() != sourceModified) {
                         image = {};
-                    else pruneCache(path);
+                    } else {
+                        if (!cacheBytesKnown_) {
+                            cacheBytes_ = pruneCache(path);
+                            cacheBytesKnown_ = true;
+                        }
+                        const QFileInfo previous(path);
+                        const qint64 previousSize = previous.isFile() ? previous.size() : 0;
+                        if (!writeCache(path, image, source, sourceSize, sourceModified)) {
+                            image = {};
+                        } else {
+                            const QFileInfo written(path);
+                            cacheBytes_ += (written.isFile() ? written.size() : 0) - previousSize;
+                            ++writesSinceReconcile_;
+                            if (cacheBytes_ > kCacheLimit || writesSinceReconcile_ >= 64) {
+                                cacheBytes_ = pruneCache(path);
+                                writesSinceReconcile_ = 0;
+                            }
+                        }
+                    }
                 }
             }
             postReady(job.courseId, std::move(image), job.generation);
@@ -443,6 +461,9 @@ private:
     std::deque<Job> queue_;
     QSet<QString> queued_;
     QSet<QString> needed_;
+    qint64 cacheBytes_ = 0;
+    int writesSinceReconcile_ = 0;
+    bool cacheBytesKnown_ = false;
     bool stopping_ = false;
     std::thread worker_;
 };

@@ -1,0 +1,30 @@
+diff --git a/src/widgets.cpp b/src/widgets.cpp
+--- a/src/widgets.cpp
++++ b/src/widgets.cpp
+@@ -159,6 +159,8 @@
+     if (element == PE_PanelTipLabel && option && painter) {
+         painter->save();
+-        rounded(*painter, option->rect, 6, color(theme_, Role::Foreground));
++        const bool classic = qApp->property("melearnerClassicTooltips").toBool();
++        rounded(*painter, option->rect, 6, classic ? QColor("#111111") : color(theme_, Role::Foreground),
++                classic ? QColor("#424242") : QColor(Qt::transparent));
+         painter->restore();
+         return;
+     }
+@@ -171,4 +173,5 @@
+-    palette.setColor(QPalette::ToolTipBase, color(theme_, Role::Foreground));
+-    palette.setColor(QPalette::ToolTipText, color(theme_, Role::Background));
++    const bool classic = qApp->property("melearnerClassicTooltips").toBool();
++    palette.setColor(QPalette::ToolTipBase, classic ? QColor("#111111") : color(theme_, Role::Foreground));
++    palette.setColor(QPalette::ToolTipText, classic ? QColor("#ffffff") : color(theme_, Role::Background));
+ }
+ void Style::polish(QWidget* widget) {
+@@ -182,5 +185,6 @@
+             auto palette = widget->palette();
+-            const auto background = color(theme_, Role::Foreground);
+-            const auto foreground = color(theme_, Role::Background);
++            const bool classic = qApp->property("melearnerClassicTooltips").toBool();
++            const auto background = classic ? QColor("#111111") : color(theme_, Role::Foreground);
++            const auto foreground = classic ? QColor("#ffffff") : color(theme_, Role::Background);
+             if (palette.color(QPalette::ToolTipBase) != background ||
+                 palette.color(QPalette::ToolTipText) != foreground) {

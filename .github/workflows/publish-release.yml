@@ -8,11 +8,6 @@ on:
         type: boolean
         required: false
         default: false
-      replace_published:
-        description: Replace the four existing 0.1.0 installers after verification
-        type: boolean
-        required: false
-        default: false
       linux_run:
         description: Successful Linux build run ID with diagnostic package enabled
         type: string
@@ -52,10 +47,6 @@ jobs:
           MACOS_RUN: ${{ inputs.macos_run }}
         run: |
           set -euo pipefail
-          if [[ '${{ inputs.prepare_only }}' == true && '${{ inputs.replace_published }}' == true ]]; then
-            echo 'Choose either preparation or replacement, not both' >&2
-            exit 1
-          fi
           for run_id in "$LINUX_RUN" "$WINDOWS_RUN" "$MACOS_RUN"; do
             [[ "$run_id" =~ ^[0-9]+$ ]] || { echo "run IDs must contain digits only" >&2; exit 1; }
           done
@@ -76,7 +67,7 @@ jobs:
           linux_head="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${LINUX_RUN}" --jq .head_sha)"
           linux_sha="$(validate_run "$LINUX_RUN" .github/workflows/linux-build.yml "linux-diagnostic-${linux_head}" .tmp/release-delivery/linux)"
           windows_sha="$(validate_run "$WINDOWS_RUN" .github/workflows/windows-build.yml melearner-windows-diagnostic-installer .tmp/release-delivery/windows)"
-          macos_sha="$(validate_run "$MACOS_RUN" .github/workflows/macos-build.yml melearner-0.1.0-macos-arm64-diagnostic .tmp/release-delivery/macos)"
+          macos_sha="$(validate_run "$MACOS_RUN" .github/workflows/macos-build.yml melearner-0.1.1-macos-arm64-diagnostic .tmp/release-delivery/macos)"
           windows_profile="$(find .tmp/release-delivery/windows -type f -name reference-profiles-v1.json -print -quit)"
           [[ -n "$windows_profile" ]] || { echo "Windows notice evidence is missing" >&2; exit 1; }
           jq '.missingEvidence' "$windows_profile"
@@ -93,9 +84,9 @@ jobs:
         run: |
           set -euo pipefail
           root=.tmp/release-delivery
-          linux_file="$(find "$root/linux" -type f -name melearner_0.1.0_amd64.AppImage -print -quit)"
-          windows_file="$(find "$root/windows" -type f -name melearner-0.1.0-setup.exe -print -quit)"
-          macos_file="$(find "$root/macos" -type f -name melearner-0.1.0-macos-arm64.dmg -print -quit)"
+          linux_file="$(find "$root/linux" -type f -name melearner_0.1.1_amd64.AppImage -print -quit)"
+          windows_file="$(find "$root/windows" -type f -name melearner-0.1.1-setup.exe -print -quit)"
+          macos_file="$(find "$root/macos" -type f -name melearner-0.1.1-macos-arm64.dmg -print -quit)"
           [[ -n "$linux_file" && -n "$windows_file" && -n "$macos_file" ]] || { echo "one or more expected platform assets were not found" >&2; exit 1; }
           windows_sum="$windows_file.sha256"
           macos_sum="$macos_file.sha256"
@@ -129,10 +120,10 @@ jobs:
             -e MELEARNER_CPP_STAGE=/work/appdir \
             archlinux:base-devel@sha256:8edb44f40a0cb5d3e44ef474f02780098ce0084e591c8641bdc01f02f185cc40 \
             bash -euc 'stat -c "%a %u %g %n" /work/appdir /work/appdir/usr; stage_uid=$(stat -c %u /work/appdir); test "$stage_uid" -gt 0; useradd --uid "$stage_uid" --create-home builder; chown -R builder:builder /work/package; su - builder -c "test -d /work/appdir/usr && cd /work/package && MELEARNER_CPP_STAGE=/work/appdir makepkg --nodeps --noconfirm"; bad_dir=$(find /work/package/pkg/melearner-bin/usr -type d ! -perm 755 -print -quit); test -z "$bad_dir"; bad_file=$(find /work/package/pkg/melearner-bin/usr -type f ! -perm -004 -print -quit); test -z "$bad_file"; test -x /work/package/pkg/melearner-bin/usr/bin/melearner'
-          arch_pkg="$package_dir/melearner-bin-0.1.0-1-x86_64.pkg.tar.zst"
+          arch_pkg="$package_dir/melearner-bin-0.1.1-1-x86_64.pkg.tar.zst"
           [[ -s "$arch_pkg" && ! -L "$arch_pkg" ]] || { echo "makepkg did not produce expected Arch package" >&2; exit 1; }
           cp -- "$arch_pkg" "$out/"
-          (cd "$out" && sha256sum melearner-bin-0.1.0-1-x86_64.pkg.tar.zst > melearner-bin-0.1.0-1-x86_64.pkg.tar.zst.sha256)
+          (cd "$out" && sha256sum melearner-bin-0.1.1-1-x86_64.pkg.tar.zst > melearner-bin-0.1.1-1-x86_64.pkg.tar.zst.sha256)
 
           sources="$(find "$root/windows" -type d -path '*/windows-legal/sources' -print -quit)"
           [[ -n "$sources" && -d "$sources" && ! -L "$sources" ]] || { echo "Windows artifact lacks source archive, patch, and manifest directory" >&2; exit 1; }
@@ -140,21 +131,21 @@ jobs:
           [[ -s "$legal_dir/player-source-manifest.json" && ! -L "$legal_dir/player-source-manifest.json" ]] || { echo "Windows player source manifest is missing" >&2; exit 1; }
           find "$sources" -type f -name '*.tar.gz' -print -quit | grep -q . || { echo "Windows source archive is missing" >&2; exit 1; }
           find "$sources" -type f -name '*.patch' -print -quit | grep -q . || { echo "Windows source patch is missing" >&2; exit 1; }
-          tar -C "$legal_dir" -czf "$out/melearner-0.1.0-windows-sources.tar.gz" sources player-source-manifest.json
+          tar -C "$legal_dir" -czf "$out/melearner-0.1.1-windows-sources.tar.gz" sources player-source-manifest.json
           (cd "$out" && sha256sum \
-            melearner_0.1.0_amd64.AppImage \
-            melearner-0.1.0-setup.exe \
-            melearner-0.1.0-macos-arm64.dmg \
-            melearner-bin-0.1.0-1-x86_64.pkg.tar.zst \
-            melearner-0.1.0-windows-sources.tar.gz > SHA256SUMS)
+            melearner_0.1.1_amd64.AppImage \
+            melearner-0.1.1-setup.exe \
+            melearner-0.1.1-macos-arm64.dmg \
+            melearner-bin-0.1.1-1-x86_64.pkg.tar.zst \
+            melearner-0.1.1-windows-sources.tar.gz > SHA256SUMS)
 
       - name: Create or update draft release without overwriting assets
-        if: ${{ !inputs.prepare_only && !inputs.replace_published }}
+        if: ${{ !inputs.prepare_only }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tag=v0.1.0
+          tag=v0.1.1
           if gh release view "$tag" --json isDraft,assets >.tmp/release-delivery/release.json 2>/dev/null; then
             [[ "$(jq -r .isDraft .tmp/release-delivery/release.json)" == true ]] || { echo "refusing to modify a published release" >&2; exit 1; }
             existing="$(jq -r '.assets[].name' .tmp/release-delivery/release.json)"
@@ -166,33 +157,15 @@ jobs:
               fi
             done < <(find .tmp/release-delivery/out -maxdepth 1 -type f -printf '%f\n')
           else
-            gh release create "$tag" --draft --target "$GITHUB_SHA" --title 'meLearner 0.1.0' \
-              --notes 'Unsigned diagnostic installers assembled from successful platform build artifacts. The macOS DMG is ad hoc signed only and not notarized; the Windows installer is unsigned. Review source provenance and checksums before publishing.'
+            gh release create "$tag" --draft --target "$GITHUB_SHA" --title 'meLearner 0.1.1' \
+              --notes $'* Optional update notifications\n* Faster course scanning and thumbnail caching\n* Videos resume directly at the saved frame\n* Playback speed slider up to 3× with mouse wheel control\n* Saved volume, speed and scroll positions\n* Smoother sidebar and home transitions\n* Green completion marks and dark tooltips'
           fi
           gh release upload "$tag" \
-            .tmp/release-delivery/out/melearner_0.1.0_amd64.AppImage \
-            .tmp/release-delivery/out/melearner-bin-0.1.0-1-x86_64.pkg.tar.zst \
-            .tmp/release-delivery/out/melearner-0.1.0-setup.exe \
-            .tmp/release-delivery/out/melearner-0.1.0-macos-arm64.dmg \
+            .tmp/release-delivery/out/melearner_0.1.1_amd64.AppImage \
+            .tmp/release-delivery/out/melearner-bin-0.1.1-1-x86_64.pkg.tar.zst \
+            .tmp/release-delivery/out/melearner-0.1.1-setup.exe \
+            .tmp/release-delivery/out/melearner-0.1.1-macos-arm64.dmg \
             --repo "$GITHUB_REPOSITORY"
-
-      - name: Replace the approved published installers
-        if: ${{ inputs.replace_published }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          metadata="$(gh release view v0.1.0 --json isDraft,assets)"
-          jq -e '.isDraft == false and (.assets | length == 4)' <<<"$metadata" >/dev/null
-          expected='{"melearner_0.1.0_amd64.AppImage":"sha256:8428e78c80a287f021e5cc8852c7d2c2fdd0c3cc0975feafe61aedf410d54bd6","melearner-bin-0.1.0-1-x86_64.pkg.tar.zst":"sha256:20607707378c91bbd45a36bae35adebd6695e55954fb446a03e9371c07d6186f","melearner-0.1.0-setup.exe":"sha256:b01a533b4b60624696f6bae98cfae4cd6dbbd5f968050c09de95589ada2f1bee","melearner-0.1.0-macos-arm64.dmg":"sha256:d42aade363b33cd473ac3197ebc19edc35d9366cd463e65a2bddbeabd3e84290"}'
-          jq -e --argjson expected "$expected" 'all(.assets[]; $expected[.name] == .digest)' <<<"$metadata" >/dev/null
-          (cd .tmp/release-delivery/out && sha256sum --check SHA256SUMS)
-          gh release upload v0.1.0 \
-            .tmp/release-delivery/out/melearner_0.1.0_amd64.AppImage \
-            .tmp/release-delivery/out/melearner-bin-0.1.0-1-x86_64.pkg.tar.zst \
-            .tmp/release-delivery/out/melearner-0.1.0-setup.exe \
-            .tmp/release-delivery/out/melearner-0.1.0-macos-arm64.dmg \
-            --clobber --repo "$GITHUB_REPOSITORY"
 
       - name: Retain build records and corresponding sources outside release downloads
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -205,7 +178,7 @@ jobs:
             .tmp/release-delivery/out/*-sources.tar.gz
           if-no-files-found: error
 
-      - name: Retain prepared installers for an approved release replacement
+      - name: Retain prepared installers for release review
         if: ${{ inputs.prepare_only }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

@@ -35,8 +35,7 @@ checksums, extracts the AppImage without launching it, then builds the Arch
 package from its `usr` tree. The draft contains only the four installers.
 Checksums and source records stay in the Actions artifacts.
 
-Use `prepare_only` to retain a replacement bundle for one day without changing
-the release. Review it before replacing published downloads. No workflow
-publishes a public release automatically. The explicit `replace_published`
-input replaces only the four approved 0.1.0 installers and refuses changed
-release assets.
+Use `prepare_only` to retain a bundle for one day without changing the release.
+Otherwise, the workflow creates a new draft release and adds the four platform
+installers. It does not publish the release. Checksums and Windows source
+provenance stay in the internal release records artifact.

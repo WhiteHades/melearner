@@ -99,6 +99,12 @@ private:
   bool routePointerMotion_ = false;
   void revealRoute();
   void resetRouteReveal();
+  void saveScrollState();
+  void restoreLibraryScroll();
+  int pendingLibraryScroll_ = -1;
+  int pendingStatsScroll_ = -1;
+  int pendingOutlineScroll_ = -1;
+  int pendingPdfScroll_ = -1;
   void positionPlayerOverlays();
   QLabel* resumeCompletion_ = nullptr;
   quint64 previewRequestId_ = 0;
@@ -211,6 +217,7 @@ private:
   std::optional<double> requestedVolume_;
   std::optional<bool> requestedMuted_;
   quint64 volumeRequestId_ = 0, muteRequestId_ = 0;
+  quint64 restoreVolumeId_ = 0, restoreMuteId_ = 0;
   bool videoClickPaused_ = true;
   bool paused_ = true;
   bool muted_ = false;

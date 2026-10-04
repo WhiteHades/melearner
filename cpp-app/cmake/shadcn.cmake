@@ -29,6 +29,23 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(shadcn_cpp)
 
+# Apply the local tooltip adaptation to fresh and already populated snapshots.
+# Never reset the snapshot: fail if it differs from both expected patch states.
+set(shadcn_tooltip_patch "${CMAKE_CURRENT_LIST_DIR}/../patches/shadcn-tooltip.patch")
+execute_process(COMMAND git apply --reverse --check --unsafe-paths
+  "--directory=${shadcn_cpp_SOURCE_DIR}" "${shadcn_tooltip_patch}"
+  WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+  RESULT_VARIABLE shadcn_tooltip_applied OUTPUT_QUIET ERROR_QUIET)
+if(NOT shadcn_tooltip_applied EQUAL 0)
+  execute_process(COMMAND git apply --unsafe-paths
+    "--directory=${shadcn_cpp_SOURCE_DIR}" "${shadcn_tooltip_patch}"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    RESULT_VARIABLE shadcn_tooltip_result ERROR_VARIABLE shadcn_tooltip_error)
+  if(NOT shadcn_tooltip_result EQUAL 0)
+    message(FATAL_ERROR "Could not apply the local tooltip patch: ${shadcn_tooltip_error}")
+  endif()
+endif()
+
 if(NOT TARGET shadcn::widgets)
   message(FATAL_ERROR
     "The pinned shadcn-cpp snapshot did not provide the required shadcn::widgets target")

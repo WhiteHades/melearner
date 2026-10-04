@@ -105,6 +105,7 @@ inline void applySystemContrast(shadcn::Theme& theme) {
 /// modes to check that no component keeps a colour from the other one, and that
 /// check is worth having. The application itself only ever passes true.
 inline void installTheme(bool dark, int fontPixels = 0) {
+    qApp->setProperty("melearnerClassicTooltips", !highContrast());
     auto theme = shadcn::Theme::neutral(dark ? shadcn::ColorMode::Dark : shadcn::ColorMode::Light);
     if (highContrast()) detail::applySystemContrast(theme);
     shadcn::install(*qApp, std::move(theme),
@@ -113,7 +114,18 @@ inline void installTheme(bool dark, int fontPixels = 0) {
     // shadcn::install writes the Qt palette from the theme. Under high contrast
     // the platform palette is the user's choice, so it goes back afterwards for
     // the views that keep Qt's own painting.
-    if (highContrast()) QApplication::setPalette(QApplication::style()->standardPalette());
+    if (highContrast()) {
+        QApplication::setPalette(QApplication::style()->standardPalette());
+    } else {
+        auto palette = QApplication::palette();
+        const QColor tooltipBase("#111111");
+        const QColor tooltipText("#ffffff");
+        for (const auto group : {QPalette::Active, QPalette::Inactive, QPalette::Disabled}) {
+            palette.setColor(group, QPalette::ToolTipBase, tooltipBase);
+            palette.setColor(group, QPalette::ToolTipText, tooltipText);
+        }
+        QApplication::setPalette(palette);
+    }
 }
 
 /// The theme behind a widget's style, falling back to the application style and

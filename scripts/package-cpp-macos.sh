@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-version="0.1.0"
+version="0.1.1"
 build_dir="${repo_root}/build/macos"
 output="${repo_root}/dist/melearner-${version}-macos-arm64.dmg"
 
@@ -56,7 +56,7 @@ trap 'exit 143' TERM
 stage="$work_dir/stage"
 mkdir -p "$stage"
 install_root="$work_dir/install"
-cmake --install "$build_dir" --prefix "$install_root" --config Release
+cmake --install "$build_dir" --prefix "$install_root" --config Release --strip
 [[ -d "$install_root/melearner.app" ]] || { echo "CMake install did not produce melearner.app" >&2; exit 1; }
 ditto "$install_root/melearner.app" "$stage/melearner.app"
 # Homebrew splits Qt modules into separate prefixes. Plugins can load modules

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 4.4)
-project(melearner VERSION 0.1.0 LANGUAGES CXX)
+project(melearner VERSION 0.1.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -20,6 +20,7 @@ include(cpp-app/cmake/shadcn.cmake)
 
 add_library(melearner_app STATIC
   cpp-app/src/single_instance.cpp
+  cpp-app/src/update_checker.cpp
   cpp-app/src/main_window.cpp
   cpp-app/src/course_preview.cpp
   cpp-app/src/seek_feedback.cpp
@@ -54,6 +55,12 @@ qt_add_resources(melearner_app assets PREFIX / FILES
 
 add_executable(melearner cpp-app/src/main.cpp)
 target_link_libraries(melearner PRIVATE melearner_app)
+include(CheckIPOSupported)
+check_ipo_supported(RESULT melearner_ipo_supported LANGUAGES CXX)
+if(melearner_ipo_supported)
+  set_target_properties(melearner melearner_app PROPERTIES
+    INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
+endif()
 if(APPLE)
   set_target_properties(melearner PROPERTIES
     MACOSX_BUNDLE TRUE
@@ -69,6 +76,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}/melearner")
   add_executable(melearner_stage_validator cpp-app/tools/validate_stage.cpp)
   target_link_libraries(melearner_stage_validator PRIVATE Qt6::Core)
+  target_compile_definitions(melearner_stage_validator PRIVATE MELEARNER_VERSION="${PROJECT_VERSION}")
   target_compile_options(melearner_stage_validator PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic>)
 endif()
@@ -94,7 +102,7 @@ endif()
 if(BUILD_TESTING)
   find_package(Qt6 REQUIRED COMPONENTS Test)
   file(MAKE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.tmp/cpp-tests")
-  foreach(test IN ITEMS main_window main_playback)
+  foreach(test IN ITEMS main_window main_playback library_scan update_workflow)
     add_executable(${test}_test cpp-app/tests/${test}_test.cpp)
     target_link_libraries(${test}_test PRIVATE melearner_app Qt6::Test)
     target_compile_definitions(${test}_test PRIVATE MELEARNER_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")

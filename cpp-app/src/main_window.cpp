@@ -15,6 +15,7 @@
 #include "study_icons.hpp"
 #include "theme.hpp"
 #include "text_interaction.hpp"
+#include "update_checker.hpp"
 #include <shadcn/data.hpp>
 #include <shadcn/feedback.hpp>
 #include <QApplication>
@@ -64,14 +65,22 @@
 #include <QTextCursor>
 #include <QVBoxLayout>
 #include <QUrl>
+#include <QWidgetAction>
+#include <QWheelEvent>
+#include <QCryptographicHash>
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <memory>
 
 namespace lib = melearner::library;
 namespace {
 constexpr double transportScale = 1.12;
 QString tooltip(const QString& text) { return "<qt>" + text.toHtmlEscaped() + "</qt>"; }
+QString scrollKey(const QString& scope, const QString& identity) {
+  return "view/scroll/" + scope + "/" + QString::fromLatin1(
+    QCryptographicHash::hash(identity.toUtf8(), QCryptographicHash::Sha256).toHex());
+}
 /// Scale whichever size the font carries. The shadcn install sets a pixel size,
 /// so a point-size scale is silently ignored and every heading in the window
 /// renders at the body size.
@@ -323,6 +332,69 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   connect(&appearanceMenu->addItem(tr("Change root folder…")), &QAction::triggered, choose_, &QPushButton::click);
   connect(&appearanceMenu->addItem(tr("Rescan root")), &QAction::triggered, rescan_, &QPushButton::click);
   appearanceMenu->addSeparatorLine();
+  auto* updates = new UpdateChecker(this);
+  auto& checkUpdate = appearanceMenu->addItem(tr("Check for updates"));
+  checkUpdate.setObjectName("checkForUpdates");
+  auto& automaticUpdates = appearanceMenu->addItem(tr("Notify me about updates"));
+  automaticUpdates.setObjectName("automaticUpdates"); automaticUpdates.setCheckable(true);
+  automaticUpdates.setChecked(QSettings().value("updates/automatic", false).toBool());
+  auto* updateNotice = button({}, "updateAvailable", shadcn::Variant::Outline);
+  actionsLayout->addWidget(updateNotice); updateNotice->hide();
+  connect(&automaticUpdates, &QAction::toggled, this, [updates, updateNotice](bool enabled) {
+    QSettings().setValue("updates/automatic", enabled);
+    if (enabled) updates->check();
+    else updateNotice->hide();
+  });
+  auto updateVersion = std::make_shared<QString>();
+  auto updateInstaller = std::make_shared<QUrl>();
+  const auto showUpdate = [this, updateVersion, updateInstaller] {
+    auto* dialog = new shadcn::Dialog(this); dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setTitle(tr("meLearner %1 is available").arg(*updateVersion));
+    dialog->setDescription(tr("Download the update and install it over your current app. Your courses, progress and preferences stay on this device."));
+    auto* download = button(tr("Download update"), "downloadUpdate");
+    auto* later = button(tr("Later"), "dismissUpdate", shadcn::Variant::Ghost);
+    dialog->content().addWidget(download); dialog->content().addWidget(later);
+    connect(download, &QPushButton::clicked, dialog, [this, dialog, updateInstaller] {
+      if (QDesktopServices::openUrl(*updateInstaller)) dialog->accept();
+      else showError(tr("Your system could not open the download. Visit the meLearner GitHub releases page."));
+    });
+    connect(later, &QPushButton::clicked, dialog, &QDialog::reject); dialog->open();
+  };
+  connect(updateNotice, &QPushButton::clicked, this, showUpdate);
+  connect(&checkUpdate, &QAction::triggered, this, [updates, &checkUpdate] {
+    checkUpdate.setEnabled(false); updates->setProperty("manualCheck", true); updates->check();
+  });
+  connect(updates, &UpdateChecker::updateAvailable, this,
+    [updateNotice, updateVersion, updateInstaller, updates, showUpdate](const QString& version, const QUrl& installer, const QUrl&) {
+      if (!updates->property("manualCheck").toBool() && !QSettings().value("updates/automatic", false).toBool()) return;
+      *updateVersion = version; *updateInstaller = installer;
+      updateNotice->setText(QObject::tr("Update %1").arg(version)); updateNotice->show();
+      if (updates->property("manualCheck").toBool()) showUpdate();
+    });
+  connect(updates, &UpdateChecker::checked, this, [this, updates, &checkUpdate](bool newer) {
+    QSettings().setValue("updates/lastCheck", QDateTime::currentSecsSinceEpoch()); checkUpdate.setEnabled(true);
+    if (!newer && updates->property("manualCheck").toBool()) {
+      auto* dialog = new shadcn::Dialog(this); dialog->setAttribute(Qt::WA_DeleteOnClose);
+      dialog->setTitle(tr("You're up to date")); dialog->setDescription(tr("meLearner %1 is installed.").arg(QApplication::applicationVersion()));
+      auto* close = button(tr("Close"), "closeUpdateStatus"); dialog->content().addWidget(close);
+      connect(close, &QPushButton::clicked, dialog, &QDialog::accept); dialog->open();
+    }
+    updates->setProperty("manualCheck", false);
+  });
+  connect(updates, &UpdateChecker::failed, this, [this, updates, &checkUpdate](const QString& message) {
+    checkUpdate.setEnabled(true);
+    if (updates->property("manualCheck").toBool()) showError(message);
+    updates->setProperty("manualCheck", false);
+  });
+  const auto checkAutomatically = [updates] {
+    const QSettings preferences;
+    if (preferences.value("updates/automatic", false).toBool()
+        && QDateTime::currentSecsSinceEpoch() - preferences.value("updates/lastCheck", 0).toLongLong() >= 86400)
+      updates->check();
+  };
+  QTimer::singleShot(10000, updates, checkAutomatically);
+  auto* updateTimer = new QTimer(updates); updateTimer->setInterval(24 * 60 * 60 * 1000);
+  connect(updateTimer, &QTimer::timeout, updates, checkAutomatically); updateTimer->start();
   auto& aboutItem = appearanceMenu->addItem(tr("About melearner"));
   connect(&aboutItem, &QAction::triggered, this, [this] {
     shadcn::Dialog about(this);
@@ -458,6 +530,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   // stack, and the stack reports back, so a change from anywhere, including the
   // keyboard, keeps the rail's item in step with what is on screen.
   connect(statsNav_, &QPushButton::clicked, this, [this] {
+    saveScrollState();
     libraryStack_->setCurrentValue(statsNav_->isChecked() ? "stats" : "courses");
   });
   connect(libraryStack_, &shadcn::Tabs::currentChanged, this, [this](const QString& value) {
@@ -488,15 +561,25 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   });
   connect(outlineModel_, &melearner::CourseOutlineModel::lessonRevealed, this, [this](const QModelIndex& index) {
     lessons_->expand(index.parent()); lessons_->setCurrentIndex(index); lessons_->scrollTo(index);
+    if (pendingOutlineScroll_ >= 0) {
+      const int target = pendingOutlineScroll_; pendingOutlineScroll_ = -1;
+      const auto generation = routeGeneration_;
+      QTimer::singleShot(0, this, [this, target, generation] {
+        if (generation == routeGeneration_ && course_) lessons_->verticalScrollBar()->setValue(target);
+      });
+    }
   });
   connect(outlineModel_, &melearner::CourseOutlineModel::errorOccurred, this, &MainWindow::showError);
-  outlineLayout->addWidget(lessons_, 1); split_->addPanel(*outline_);
+  outlineLayout->addWidget(lessons_, 1); split_->addPanel(*outline_); split_->setCollapsible(0, true);
   outlineOpacity_ = new QGraphicsOpacityEffect(outline_); outlineOpacity_->setOpacity(1);
   outline_->setGraphicsEffect(outlineOpacity_);
   outlineFade_ = new QVariantAnimation(this);
   outlineFade_->setObjectName("outlineReveal"); outlineFade_->setEasingCurve(revealCurve());
   connect(outlineFade_, &QVariantAnimation::valueChanged, this, [this](const QVariant& value) {
     const int railWidth = value.toInt();
+    // The native 24px handle must leave with the rail, otherwise hiding the
+    // last pixel of the rail abruptly hands another 24px to the video canvas.
+    split_->setHandleWidth(qRound(24.0 * railWidth / std::max(1, outlineWidth_)));
     split_->setSizes({railWidth, std::max(1, split_->width() - split_->handleWidth() - railWidth)});
     outlineOpacity_->setOpacity(std::clamp(value.toDouble() / std::max(1, outlineWidth_), 0.0, 1.0));
     if (content_) {
@@ -628,6 +711,11 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   connect(pdf_, &PdfView::errorOccurred, this, [this](const QString& message) {
     if (lesson_ && lesson_->path.endsWith(".pdf", Qt::CaseInsensitive)) showError(message);
   });
+  connect(pdf_, &PdfView::pageChanged, this, [this](int, int total) {
+    if (total <= 0 || pendingPdfScroll_ < 0) return;
+    const int target = pendingPdfScroll_; pendingPdfScroll_ = -1;
+    pdf_->verticalScrollBar()->setValue(target);
+  });
   contentLayout->addWidget(media_, 1, Qt::AlignHCenter);
   contentLayout->addWidget(lessonLinks_, 0, Qt::AlignHCenter);
   lessonBottomSpace_ = new QWidget; contentLayout->addWidget(lessonBottomSpace_, 1);
@@ -683,7 +771,11 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     auto lesson = *next; lesson.lastPosition = 0;
     showLesson(lesson); autoplayStartPath_ = lesson.path;
   });
-  auto* volume = new shadcn::Slider(0, 100); volume->setValues({100});
+  auto* volume = new shadcn::Slider(0, 100);
+  const double savedVolume = std::clamp(QSettings().value("playback/volume", 100).toDouble(), 0.0, 100.0);
+  volume->setValues({savedVolume});
+  lastAudibleVolume_ = std::clamp(QSettings().value("playback/audibleVolume", 100).toDouble(), 1.0, 100.0);
+  muted_ = QSettings().value("playback/muted", false).toBool() || savedVolume == 0;
   volume->setOrientation(Qt::Horizontal); volume->setFixedSize(103, 40);
   volume->setObjectName("volume");
   volume->setAccessibleName(tr("Volume")); volume->setToolTip(tr("Volume"));
@@ -695,11 +787,21 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   rate->setAttribute(Qt::WA_TranslucentBackground);
   rate->setWindowFlag(Qt::FramelessWindowHint, true);
   rate->setWindowFlag(Qt::NoDropShadowWindowHint, true);
-  auto* rateGroup = new QActionGroup(rate);
-  for (double speed : {0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0}) {
-    auto* action = rate->addAction(QString::number(speed) + "×");
-    action->setData(speed); action->setCheckable(true); action->setChecked(speed == 1.0); rateGroup->addAction(action);
-  }
+  auto* speedPanel = new QWidget;
+  auto* speedLayout = new QVBoxLayout(speedPanel); speedLayout->setContentsMargins(16, 12, 16, 12);
+  auto* speedLabel = new QLabel(tr("Playback speed")); speedLayout->addWidget(speedLabel);
+  auto* speedSlider = new shadcn::Slider(.5, 3); speedSlider->setObjectName("speedSlider");
+  speedSlider->setSingleStep(.25); speedSlider->setPageStep(.25);
+  speedSlider->setAccessibleName(tr("Playback speed")); speedSlider->setFixedWidth(180);
+  speedSlider->setValues({std::clamp(QSettings().value("playback/rate", 1).toDouble(), .5, 3.0)});
+  rateButton->setText(QString::number(speedSlider->values().first()) + "×");
+  speedLayout->addWidget(speedSlider);
+  auto* limits = new QHBoxLayout;
+  limits->addWidget(new QLabel(tr("0.5×"))); limits->addStretch(); limits->addWidget(new QLabel(tr("3×")));
+  speedLayout->addLayout(limits);
+  auto* speedAction = new QWidgetAction(rate); speedAction->setDefaultWidget(speedPanel); rate->addAction(speedAction);
+  rateButton->installEventFilter(this);
+  connect(rate, &QMenu::aboutToShow, speedSlider, [speedSlider] { speedSlider->setFocus(); });
   auto* subtitleButton = button(tr("CC"), "subtitleTrackButton", shadcn::Variant::Ghost);
   subtitleButton->setAccessibleName(tr("Subtitles")); subtitleButton->setToolTip(tr("Subtitles"));
   subtitles_ = new shadcn::DropdownMenu(subtitleButton); subtitles_->setTitle(tr("Subtitles"));
@@ -847,6 +949,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     observeRevision(result.revision);
     settings_ = result.settings; applyPresentation();
     rootPath_ = result.root.path; rootLabel_->setText(QFileInfo(rootPath_).fileName()); rootLabel_->setToolTip(tooltip(rootPath_));
+    pendingLibraryScroll_ = QSettings().value(scrollKey("library", rootPath_ + settings_.libraryPresentation), 0).toInt();
     rootLabel_->setAccessibleDescription(rootPath_);
     updateLayout();
     choose_->setEnabled(true); rescan_->setEnabled(!rootPath_.isEmpty());
@@ -908,6 +1011,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     resumeGroup_->setVisible(resumeEntry_.has_value());
     if (!resumeEntry_) { preview_->clear(); preview_->hide(); }
     updateLayout();
+    restoreLibraryScroll();
     revealRoute();
   });
   connect(&library_, &lib::Library::previewVideoReady, this, [this](auto id, const lib::Lesson& item) {
@@ -949,6 +1053,12 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
       documentView_->moveCursor(QTextCursor::Start); documentView_->show();
       documentStatus_->setText(page.warnings.isEmpty() ? QString() : page.warnings.first());
       documentStatus_->setVisible(!page.warnings.isEmpty());
+      const QString selected = lesson_->id;
+      QTimer::singleShot(0, this, [this, selected] {
+        if (!lesson_ || lesson_->id != selected) return;
+        content_->verticalScrollBar()->setValue(QSettings().value(scrollKey("document", selected), 0).toInt());
+        documentView_->verticalScrollBar()->setValue(QSettings().value(scrollKey("prose", selected), 0).toInt());
+      });
     });
   connect(externalOpen_, &QPushButton::clicked, this, [this] {
     if (!lesson_) return;
@@ -989,6 +1099,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
       courses_->setCurrentIndex(courseModel_->index(target)); courses_->scrollTo(courses_->currentIndex());
       if (target >= static_cast<int>(page.offset) && target < static_cast<int>(page.offset + page.rows.size())) restoreCourseSelection_ = false;
     }
+    QTimer::singleShot(0, this, [this] { restoreLibraryScroll(); });
     if (rootPath_.isEmpty()) {
       empty_->setTitle(tr("Your courses stay on your computer"));
       empty_->setDescription(tr("Choose the folder that contains your Course folders to begin."));
@@ -1041,6 +1152,11 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     if (id != scanId_) return;
     scanId_ = 0; cancelScan_->hide();
     observeRevision(state.revision);
+    saveScrollState();
+    if (rootPath_ != state.rootPath) {
+      resumeEntry_.reset(); resumePanel_->hide(); resumeHeading_->hide(); resumeGroup_->hide();
+      pendingLibraryScroll_ = 0; // Do not save the outgoing library under the new root.
+    }
     rootPath_ = state.rootPath; rootLabel_->setText(QFileInfo(rootPath_).fileName()); rootLabel_->setToolTip(tooltip(rootPath_));
     rootLabel_->setAccessibleDescription(rootPath_);
     choose_->setEnabled(true); rescan_->setEnabled(true); showLibrary();
@@ -1129,6 +1245,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
         melearner::roleColor(this, shadcn::Role::Foreground), 1.125 * transportScale));
   };
   const auto requestMute = [this, updateMute](bool value) {
+    QSettings().setValue("playback/muted", value);
     requestedMuted_ = value;
     updateMute(value);
     muteRequestId_ = player_->setMuted(value);
@@ -1152,6 +1269,8 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
       volumeRequestId_ = player_->setVolume(values.first());
       if (!volumeRequestId_) requestedVolume_.reset();
       if (values.first() > 0) lastAudibleVolume_ = values.first();
+      QSettings().setValue("playback/volume", values.first());
+      QSettings().setValue("playback/audibleVolume", lastAudibleVolume_);
       requestMute(values.first() == 0);
     }
   });
@@ -1161,15 +1280,25 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     const QVector<double> target{value};
     if (volume->values() != target) volume->setValues(target);
   });
-  connect(rate, &QMenu::triggered, this, [this](QAction* action) { (void)player_->setRate(action->data().toDouble()); });
-  connect(player_, &melearner::Player::rateChanged, rate, [this, rate, rateButton](double value) {
-    for (auto* action : rate->actions()) action->setChecked(qFuzzyCompare(action->data().toDouble(), value));
+  connect(speedSlider, &shadcn::Slider::valuesChanged, this, [this, rateButton](const QVector<double>& values) {
+    if (values.isEmpty()) return;
+    QSettings().setValue("playback/rate", values.first()); rateButton->setText(QString::number(values.first()) + "×");
+    (void)player_->setRate(values.first()); updateControlsLayout();
+  });
+  connect(player_, &melearner::Player::rateChanged, rate, [this, speedSlider, rateButton](double value) {
+    const QSignalBlocker blocked(speedSlider); speedSlider->setValues({value});
     rateButton->setText(QString::number(value) + "×");
     updateControlsLayout();
   });
   connect(fullscreen, &QPushButton::clicked, this, &MainWindow::toggleVideoFullscreen);
   connect(subtitles_, &QMenu::triggered, this, [this](QAction* action) { (void)player_->selectSubtitleTrack(action->data().toInt()); });
-  connect(player_, &melearner::Player::initialized, this, &MainWindow::loadSelectedMedia);
+  updateMute(muted_);
+  connect(player_, &melearner::Player::initialized, this, [this, volume, speedSlider] {
+    requestedVolume_ = volume->values().first(); requestedMuted_ = muted_;
+    restoreVolumeId_ = volumeRequestId_ = player_->setVolume(*requestedVolume_);
+    restoreMuteId_ = muteRequestId_ = player_->setMuted(muted_);
+    (void)player_->setRate(speedSlider->values().first()); loadSelectedMedia();
+  });
   connect(player_, &melearner::Player::decoderChanged, this, [this](const QString& decoder) { decoder_ = decoder; });
   connect(video_, &melearner::MpvVideoWidget::renderContextReady, this, &MainWindow::loadSelectedMedia);
   connect(video_, &melearner::MpvVideoWidget::renderError, this, [this](const QString&, const QString& message) { showError(message); });
@@ -1243,6 +1372,10 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     if (id == muteRequestId_) { requestedMuted_.reset(); muteRequestId_ = 0; }
     showError(message);
   });
+  connect(player_, &melearner::Player::commandFinished, this, [this](auto id) {
+    if (id == restoreVolumeId_ && id == volumeRequestId_) requestedVolume_.reset();
+    if (id == restoreMuteId_ && id == muteRequestId_) requestedMuted_.reset();
+  });
   connect(player_, &melearner::Player::fatalError, this, [this](const QString&, const QString& message) { showError(message); });
   // Keep the command list as the single source for keyboard help.
   // Single-letter Vim motions are dispatched from keyPressEvent/eventFilter so
@@ -1302,6 +1435,13 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   connect(qApp, &QApplication::focusChanged, this, [this] { keyPrefix_ = KeyPrefix::None; });
   installKeyboardFilters();
   startupId_ = library_.open();
+  connect(courses_->verticalScrollBar(), &QScrollBar::rangeChanged, this, [this] { restoreLibraryScroll(); });
+  auto* statsBar = statsScroll_->verticalScrollBar();
+  pendingStatsScroll_ = QSettings().value("view/scroll/stats", -1).toInt();
+  connect(statsBar, &QScrollBar::rangeChanged, this, [this, statsBar](int, int maximum) {
+    if (pendingStatsScroll_ < 0 || maximum < pendingStatsScroll_) return;
+    const int target = pendingStatsScroll_; pendingStatsScroll_ = -1; statsBar->setValue(target);
+  });
   if (!startupId_) showError(tr("The Library could not start. Close and reopen melearner."));
   // Dark from the first frame, before the Library answers and before anything is
   // painted. A window that appears and then changes colour is a flash of the wrong
@@ -1310,6 +1450,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
 }
 
 MainWindow::~MainWindow() {
+  saveScrollState();
   hideControls_->stop(); controlsFade_->stop(); routeReveal_->stop(); outlineFade_->stop();
   browserDocument_->clear();
   preview_->clear();
@@ -1583,6 +1724,7 @@ void MainWindow::chooseRootWhenOpen(const QString& path) {
   chooseRoot(path);
 }
 void MainWindow::showLibrary() {
+  saveScrollState();
   browserDocument_->clear();
   routePointerMotion_ = !keyboardNavigation_;
   resetRouteReveal();
@@ -1602,9 +1744,33 @@ void MainWindow::showLibrary() {
   observeRevision(libraryRevision_);
   choose_->show(); rescan_->show();
   restoreCourseSelection_ = returnCourseRow_ >= 0;
+  pendingLibraryScroll_ = QSettings().value(scrollKey("library", rootPath_ + settings_.libraryPresentation), 0).toInt();
   courseModel_->reset(); refreshResume();
   if (libraryStack_->currentValue() == QLatin1String("courses")) courses_->setFocus(); else libraryStack_->setFocus();
   updateLayout();
+}
+void MainWindow::saveScrollState() {
+  QSettings preferences;
+  if (!course_) {
+    if (pendingLibraryScroll_ < 0)
+      preferences.setValue(scrollKey("library", rootPath_ + settings_.libraryPresentation), courses_->verticalScrollBar()->value());
+    if (pendingStatsScroll_ < 0) preferences.setValue("view/scroll/stats", statsScroll_->verticalScrollBar()->value());
+  } else {
+    if (pendingOutlineScroll_ < 0)
+      preferences.setValue(scrollKey("outline", course_->id), lessons_->verticalScrollBar()->value());
+    if (lesson_ && lesson_->type != "video" && lesson_->type != "audio") {
+      preferences.setValue(scrollKey("document", lesson_->id), content_->verticalScrollBar()->value());
+      preferences.setValue(scrollKey("prose", lesson_->id), documentView_->verticalScrollBar()->value());
+      if (media_->currentWidget()->isAncestorOf(pdf_) && pendingPdfScroll_ < 0)
+        preferences.setValue(scrollKey("pdf", lesson_->id), pdf_->verticalScrollBar()->value());
+    }
+  }
+}
+void MainWindow::restoreLibraryScroll() {
+  if (course_ || pendingLibraryScroll_ < 0) return;
+  auto* bar = courses_->verticalScrollBar();
+  if (bar->maximum() < pendingLibraryScroll_ && (resumeRequestId_ || courseModel_->rowCount() == 0)) return;
+  bar->setValue(pendingLibraryScroll_); pendingLibraryScroll_ = -1;
 }
 void MainWindow::observeRevision(quint64 revision) {
   libraryRevision_ = std::max(libraryRevision_, revision);
@@ -1615,11 +1781,17 @@ void MainWindow::trackMutation(quint64 requestId) {
   else showError(tr("The Library is busy. Try again shortly."));
 }
 void MainWindow::refreshResume() {
-  previewRequestId_ = 0; preview_->suspend(); preview_->hide();
-  resumeEntry_.reset(); resumePanel_->hide(); resumeHeading_->hide(); resumeGroup_->hide(); resumeGeneration_ = routeGeneration_;
+  previewRequestId_ = 0; preview_->suspend();
+  // Preserve the hero's geometry while the async resume request refreshes its
+  // contents. Removing it first makes the catalogue jump down midway through
+  // the home entrance when the database reply puts the hero back.
+  if (resumeEntry_) preview_->show();
+  else { preview_->hide(); resumePanel_->hide(); resumeHeading_->hide(); resumeGroup_->hide(); }
+  resumeGeneration_ = routeGeneration_;
   resumeRequestId_ = library_.resume(0, 1);
 }
 void MainWindow::showCourse(const lib::Course& course, const QString& requestedLesson) {
+  saveScrollState();
   routePointerMotion_ = !keyboardNavigation_;
   resetRouteReveal();
   if (course.missing) { showError(tr("Course folder missing: %1. Choose its root folder, then Rescan.").arg(course.path)); return; }
@@ -1634,6 +1806,7 @@ void MainWindow::showCourse(const lib::Course& course, const QString& requestedL
   if (player_->isReady()) (void)player_->stop();
   returnCourseRow_ = courses_->currentIndex().row(); returnCourseId_ = course.id;
   ++routeGeneration_; courseRequests_.clear(); course_ = course; lesson_.reset(); stepResolveId_ = 0; stepReadId_ = 0;
+  pendingOutlineScroll_ = QSettings().value(scrollKey("outline", course.id), -1).toInt();
   observeRevision(libraryRevision_);
   compactOutline_ = true; routes_->setCurrentIndex(1); back_->show(); title_->setText(course.name); title_->setToolTip(tooltip(course.name));
   playerControls_->hide();
@@ -1649,6 +1822,7 @@ void MainWindow::showCourse(const lib::Course& course, const QString& requestedL
   if (!entryRequestId_) showError(tr("Library is busy. Open the Course again to retry."));
 }
 void MainWindow::showLesson(const lib::Lesson& lesson) {
+  saveScrollState();
   browserDocument_->clear();
   cancelAutoplay();
   seekFeedback_->hide();
@@ -1662,6 +1836,7 @@ void MainWindow::showLesson(const lib::Lesson& lesson) {
   // frame and another command between adjacent videos.
   if (player_->isReady() && lesson.type != "video" && lesson.type != "audio") (void)player_->stop();
   lesson_ = lesson;
+  pendingPdfScroll_ = QSettings().value(scrollKey("pdf", lesson.id), 0).toInt();
   refreshNeighbors();
   content_->verticalScrollBar()->setValue(0);
   status_->clear(); status_->hide(); documentTools_->hide();
@@ -1723,7 +1898,11 @@ void MainWindow::requestDocumentPage(qsizetype offset) {
 void MainWindow::loadSelectedMedia() {
   if (!lesson_ || (lesson_->type != "video" && lesson_->type != "audio") || !player_->isReady() ||
       !video_->isRenderContextReady() || playerLoadRequested_) return;
-  playerLoadId_ = player_->loadFile(lesson_->path, positionMs_);
+  // At EOF, starting exactly at duration can end the file before the paused
+  // frame is presented. Resume on its last frame instead of unloading it.
+  const auto resumeMs = lesson_->completed && durationMs_ > 0 && positionMs_ >= durationMs_
+    ? std::max<qint64>(0, durationMs_ - 100) : positionMs_;
+  playerLoadId_ = player_->loadFile(lesson_->path, resumeMs);
   playerLoadRequested_ = playerLoadId_ != 0;
 }
 void MainWindow::savePosition(bool completed) {
@@ -1768,6 +1947,12 @@ void MainWindow::keyPressEvent(QKeyEvent* event) {
   QMainWindow::keyPressEvent(event);
 }
 bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+  if (event->type() == QEvent::Wheel && watched->objectName() == QLatin1String("playbackRate")) {
+    auto* wheel = static_cast<QWheelEvent*>(event);
+    auto* slider = findChild<shadcn::Slider*>("speedSlider");
+    const int delta = wheel->angleDelta().y() ? wheel->angleDelta().y() : wheel->angleDelta().x();
+    if (slider && delta) { slider->setValues({std::clamp(slider->values().first() + (delta > 0 ? .25 : -.25), .5, 3.0)}); wheel->accept(); return true; }
+  }
   if (statusHost_ && (watched == status_ || watched == cancelScan_) &&
       (event->type() == QEvent::ShowToParent || event->type() == QEvent::HideToParent))
     statusHost_->setVisible(!videoFullscreen_ && (!status_->isHidden() || !cancelScan_->isHidden()));
@@ -2058,6 +2243,7 @@ void MainWindow::updateLayout() {
   contentLayout->setContentsMargins(videoFullscreen_ ? 0 : railInset, 0, 0, 0);
   contentLayout->setSpacing(videoFullscreen_ ? 0 : 16);
   if (!course_) { updateMediaLayout(); updateControlsLayout(); return; }
+  if (outlineFade_->state() != QAbstractAnimation::Running) split_->setHandleWidth(24);
   outlineToggle_->setVisible(!videoFullscreen_);
   const auto outlineLabel = compactOutline_ ? tr("Hide lessons") : tr("Lessons");
   outlineToggle_->setText(compact ? QString{} : outlineLabel);
@@ -2090,7 +2276,7 @@ void MainWindow::openSearch() {
 void MainWindow::showError(const QString& message) {
   status_->setText(message); status_->setToolTip(tooltip(message)); status_->show(); qWarning().noquote() << message;
 }
-void MainWindow::closeEvent(QCloseEvent* event) { cancelAutoplay(); savePosition(); QMainWindow::closeEvent(event); }
+void MainWindow::closeEvent(QCloseEvent* event) { cancelAutoplay(); saveScrollState(); savePosition(); QSettings().sync(); QMainWindow::closeEvent(event); }
 void MainWindow::applyPresentation() {
   const bool list = settings_.libraryPresentation == "compact";
   courses_->setCompact(false);

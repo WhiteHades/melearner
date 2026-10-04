@@ -201,7 +201,12 @@ public:
         reduced = style && style->motion() == shadcn::MotionPolicy::Reduced;
         painter->setOpacity(painter->opacity() * progress);
         if (!reduced) painter->translate(0, 8.0 * (1.0 - progress));
-        native_.paint(painter, option, maskedIndex);
+        auto nativeOption = option;
+        // The upstream generic focus rect has list-row bounds and radius.
+        // Paint the card focus on the same card path as its selected border.
+        if (view_->presentation() == shadcn::ListPresentation::Cards && !highContrast())
+            nativeOption.state &= ~QStyle::State_HasFocus;
+        native_.paint(painter, nativeOption, maskedIndex);
 
         painter->setRenderHint(QPainter::Antialiasing);
         if (view_->presentation() == shadcn::ListPresentation::Cards) {
@@ -327,6 +332,21 @@ private:
             const auto line = QFontMetrics(bodyFont).elidedText(description, Qt::ElideRight, textWidth);
             painter->drawText(QRect(qRound(textX), qRound(y + 2), textWidth, bodyLine),
                               Qt::AlignLeft | Qt::AlignVCenter, line);
+        }
+
+        // RowDelegate owns the card fill. Match its exact bounds and radius so
+        // the selected outline follows the same corners as the native card.
+        const bool focus = option.state.testFlag(QStyle::State_HasFocus) && view_->property("shadcnKeyboardFocus").toBool();
+        if ((option.state.testFlag(QStyle::State_Selected) || focus) && !highContrast()) {
+            auto outline = roleColor(view_, focus ? shadcn::Role::Ring : shadcn::Role::AccentForeground);
+            if (!focus) outline.setAlphaF(outline.alphaF() * .38);
+            QPen pen(outline);
+            pen.setWidthF(1);
+            painter->setPen(pen);
+            painter->setBrush(Qt::NoBrush);
+            painter->drawRoundedRect(card.adjusted(.5, .5, -.5, -.5),
+                                     themeFor(view_).radius() * 1.4,
+                                     themeFor(view_).radius() * 1.4);
         }
     }
 

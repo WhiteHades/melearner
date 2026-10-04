@@ -3,8 +3,9 @@
 ## Privacy
 
 meLearner stores your library and progress on your computer. It has no accounts,
-telemetry, analytics, remote sync, update checks, or hosted course catalog. It
-does not send database contents, course files, paths, or identity markers.
+analytics, remote sync, or hosted course catalog. Manual update checks contact
+GitHub. Optional notifications check at startup and at most once a day. Checks
+send the app version, not your course files, paths, database or progress.
 
 The database `library-v1.sqlite3` lives in Qt's `AppLocalDataLocation` for
 organization `WhiteHades` and application

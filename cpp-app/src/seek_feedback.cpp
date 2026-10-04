@@ -70,10 +70,12 @@ void SeekFeedback::paintEvent(QPaintEvent*) {
     auto type = font(); type.setPixelSize(22); type.setWeight(QFont::DemiBold); p.setFont(type);
     p.setPen(Qt::white);
     const bool forward = seconds_ >= 0;
-    p.drawText(QRect(forward ? 24 : 36, 0, 78, height()), Qt::AlignCenter,
+    // Leave more breathing room ahead of the animated arrow than behind it.
+    const int contentOffset = forward ? -8 : 8;
+    p.drawText(QRect((forward ? 24 : 36) + contentOffset, 0, 78, height()), Qt::AlignCenter,
         QStringLiteral("%1%2 s").arg(seconds_ < 0 ? "−" : "+").arg(qAbs(seconds_)));
     const double direction = forward ? 1 : -1;
-    const double x = (forward ? width() - 28 : 28) + arrowOffset_;
+    const double x = (forward ? width() - 28 : 28) + contentOffset + arrowOffset_;
     QPen pen(Qt::white, 2.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin); p.setPen(pen);
     QPolygonF arrow; arrow << QPointF(x - direction * 5, 24) << QPointF(x + direction * 3, 32)
         << QPointF(x - direction * 5, 40); p.drawPolyline(arrow);

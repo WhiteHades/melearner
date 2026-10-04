@@ -18,12 +18,14 @@
 #include <QHBoxLayout>
 #include <QWindow>
 #include <QTimer>
+#include <QSettings>
 #include <algorithm>
 
 namespace melearner {
 
 CoursePreview::CoursePreview(QWidget* parent, bool softwareDecoding)
     : QWidget(parent), softwareDecoding_(softwareDecoding) {
+    muted_ = QSettings().value(QStringLiteral("playback/previewMuted"), true).toBool();
     setObjectName("coursePreview");
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 
@@ -71,6 +73,7 @@ CoursePreview::CoursePreview(QWidget* parent, bool softwareDecoding)
     updateMuteButton();
     connect(muteButton_, &QPushButton::clicked, this, [this] {
         muted_ = !muted_;
+        QSettings().setValue(QStringLiteral("playback/previewMuted"), muted_);
         if (player_) (void)player_->setMuted(muted_);
         updateMuteButton();
     });
@@ -94,7 +97,6 @@ void CoursePreview::setPreview(const QString& approvedRoot, const melearner::lib
         return;
     }
     clear();
-    muted_ = true;
     muteButton_->setEnabled(false);
     updateMuteButton();
     approvedRoot_ = approvedRoot;
@@ -116,12 +118,13 @@ void CoursePreview::suspend() {
     active_ = false;
     startupTimer_->stop();
     if (!player_) return;
-    (void)player_->pause();
-    if (!muted_ && loaded_) {
-        muted_ = true;
-        (void)player_->setMuted(true);
-        updateMuteButton();
-    }
+    // Keep the GL widget and player ready, but release the hidden file's
+    // decoder, audio buffers and demuxer cache while studying another lesson.
+    if (loaded_ || loadRequested_) (void)player_->stop();
+    else (void)player_->pause();
+    if (!muted_) (void)player_->setMuted(true);
+    loaded_ = false; loadRequested_ = false; initialMuteRequest_ = 0;
+    muteButton_->setEnabled(false);
 }
 
 void CoursePreview::startPreview() {
@@ -145,7 +148,7 @@ void CoursePreview::startPreview() {
     connect(video_, &MpvVideoWidget::renderContextReady, this, &CoursePreview::loadWhenReady);
     const QPointer<Player> instance = player_;
     connect(player_, &Player::fileLoaded, this, [this, instance] {
-        if (!instance || instance != player_) return;
+        if (!instance || instance != player_ || !active_) return;
         loaded_ = true; muteButton_->setEnabled(true);
         hint_->hide();
         // Player emits fileLoaded only after confirming its initial pause. Keep
@@ -156,7 +159,9 @@ void CoursePreview::startPreview() {
     connect(player_, &Player::commandFinished, this, [this, instance](auto id) {
         if (!instance || instance != player_ || id != initialMuteRequest_) return;
         initialMuteRequest_ = 0;
-        const auto savedMs = static_cast<qint64>(std::max(0.0, lesson_.lastPosition) * 1000);
+        const auto savedSeconds = lesson_.completed && lesson_.duration > 0 && lesson_.lastPosition >= lesson_.duration
+          ? std::min(lesson_.lastPosition, std::max(0.0, lesson_.duration - .1)) : lesson_.lastPosition;
+        const auto savedMs = static_cast<qint64>(std::max(0.0, savedSeconds) * 1000);
         loadRequested_ = player_->loadFile(lesson_.path, savedMs) != 0;
     });
     connect(player_, &Player::commandFailed, this, [this, instance](auto, const QString&, const QString&) {
@@ -167,7 +172,7 @@ void CoursePreview::startPreview() {
     player_->start();
 }
 void CoursePreview::loadWhenReady() {
-    if (!player_ || !video_ || loadRequested_ || initialMuteRequest_ ||
+    if (!active_ || !hasPreview_ || !player_ || !video_ || loadRequested_ || initialMuteRequest_ ||
         !player_->isReady() || !video_->isRenderContextReady()) return;
     // Mute commands coalesce separately from loads. Wait for acknowledgement,
     // rather than assuming enqueue order makes initial playback inaudible.
@@ -219,13 +224,20 @@ void CoursePreview::syncPlayback() {
         && qApp->applicationState() == Qt::ApplicationActive;
     if (active_) {
         if (player_) {
+            if (!loaded_) loadWhenReady();
             if (!wasActive) schedulePlayback();
         } else if (!startupTimer_->isActive()) {
             startPreview();
         }
     } else {
         startupTimer_->stop();
-        if (player_) (void)player_->pause();
+        if (player_) {
+            (void)player_->pause();
+            if (!muted_ && loaded_) (void)player_->setMuted(true);
+        }
+    }
+    if (active_ && !wasActive && player_ && loaded_) {
+        (void)player_->setMuted(muted_);
     }
 }
 
@@ -262,16 +274,7 @@ void CoursePreview::showEvent(QShowEvent* event) {
 }
 
 void CoursePreview::hideEvent(QHideEvent* event) {
-    active_ = false;
-    startupTimer_->stop();
-    if (player_) {
-        (void)player_->pause();
-        if (!muted_ && loaded_) {
-            muted_ = true;
-            (void)player_->setMuted(true);
-            updateMuteButton();
-        }
-    }
+    suspend();
     QWidget::hideEvent(event);
 }
 

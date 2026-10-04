@@ -6,17 +6,21 @@
 #include <QApplication>
 #include <QBuffer>
 #include <QColor>
+#include <QCryptographicHash>
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
 #include <QFutureWatcher>
 #include <QMimeDatabase>
 #include <QPointer>
+#include <QPointF>
 #include <QQuickWindow>
+#include <QSettings>
 #include <QRandomGenerator>
 #include <QScopeGuard>
 #include <QThreadPool>
 #include <QUrl>
+#include <QTimer>
 #include <QUuid>
 #include <QVBoxLayout>
 #include <QWebEngineDownloadRequest>
@@ -35,6 +39,7 @@
 #include <QtConcurrent/QtConcurrentRun>
 
 #include <algorithm>
+#include <cmath>
 
 #include <md4c-html.h>
 #include <md4c.h>
@@ -439,6 +444,12 @@ public:
   QVBoxLayout *layout = nullptr;
   QThreadPool pool;
   QFutureWatcher<PreparedDocument> *watcher = nullptr;
+  QTimer *scrollSaveTimer = nullptr;
+  QString scrollSettingsKey;
+  qreal pendingScrollY = 0;
+  qreal savedScrollY = 0;
+  bool scrollTrackingEnabled = false;
+  bool restoringScroll = false;
   quint64 generation = 0;
 
   Private() { pool.setMaxThreadCount(1); }
@@ -450,6 +461,15 @@ CourseDocumentView::CourseDocumentView(QWidget *parent)
   setObjectName(QStringLiteral("courseDocumentView"));
   d_->layout = new QVBoxLayout(this);
   d_->layout->setContentsMargins(0, 0, 0, 0);
+  d_->scrollSaveTimer = new QTimer(this);
+  d_->scrollSaveTimer->setSingleShot(true);
+  d_->scrollSaveTimer->setInterval(300);
+  connect(d_->scrollSaveTimer, &QTimer::timeout, this, [this] {
+    if (!d_->scrollTrackingEnabled || d_->restoringScroll ||
+        d_->scrollSettingsKey.isEmpty())
+      return;
+    QSettings().setValue(d_->scrollSettingsKey, d_->pendingScrollY);
+  });
 }
 
 CourseDocumentView::~CourseDocumentView() {
@@ -458,6 +478,14 @@ CourseDocumentView::~CourseDocumentView() {
 }
 
 void CourseDocumentView::clear() {
+  if (d_->view && d_->scrollTrackingEnabled && !d_->restoringScroll && !d_->scrollSettingsKey.isEmpty())
+    QSettings().setValue(d_->scrollSettingsKey, std::max(0.0, d_->view->page()->scrollPosition().y()));
+  d_->scrollSaveTimer->stop();
+  d_->scrollSettingsKey.clear();
+  d_->pendingScrollY = 0;
+  d_->savedScrollY = 0;
+  d_->scrollTrackingEnabled = false;
+  d_->restoringScroll = false;
   ++d_->generation;
   d_->pool.clear();
   if (d_->watcher != nullptr) {
@@ -504,6 +532,18 @@ void CourseDocumentView::open(const QString &courseRoot,
         configurePrivateWebEngineRuntime();
         d_->token = freshToken();
         const QString relative = prepared.relativePath;
+        const QString canonicalPath = QFileInfo(
+            QDir(prepared.root.path).filePath(relative)).canonicalFilePath();
+        if (!canonicalPath.isEmpty()) {
+          const auto pathHash = QCryptographicHash::hash(
+              canonicalPath.toUtf8(), QCryptographicHash::Sha256).toHex();
+          d_->scrollSettingsKey = QStringLiteral("documents/scroll/%1")
+              .arg(QString::fromLatin1(pathHash));
+          bool validSavedPosition = false;
+          const auto savedPosition = QSettings().value(d_->scrollSettingsKey).toDouble(&validSavedPosition);
+          if (validSavedPosition && std::isfinite(savedPosition))
+            d_->savedScrollY = std::max(0.0, savedPosition);
+        }
         d_->profile =
             new QWebEngineProfile(this); // unnamed profile is off-the-record
         d_->profile->setHttpCacheType(QWebEngineProfile::NoCache);
@@ -523,6 +563,13 @@ void CourseDocumentView::open(const QString &courseRoot,
         d_->view->setObjectName(QStringLiteral("documentBrowser"));
         auto *page = new CoursePage(d_->profile, d_->token, d_->view);
         d_->view->setPage(page);
+        connect(page, &QWebEnginePage::scrollPositionChanged, this,
+                [this](const QPointF &position) {
+                  if (!d_->scrollTrackingEnabled || d_->restoringScroll)
+                    return;
+                  d_->pendingScrollY = std::max(0.0, position.y());
+                  d_->scrollSaveTimer->start();
+                });
         auto *settings = page->settings();
         settings->setAttribute(QWebEngineSettings::JavascriptCanOpenWindows,
                                false);
@@ -562,9 +609,23 @@ void CourseDocumentView::open(const QString &courseRoot,
             "try{Object.defineProperty(globalThis,k,{value:undefined,writable:"
             "false,configurable:false})}catch(e){}})();"));
         page->scripts().insert(disableRtc);
-        connect(d_->view, &QWebEngineView::loadFinished, this, [this](bool ok) {
+        connect(d_->view, &QWebEngineView::loadFinished, this, [this, generation](bool ok) {
           if (!ok)
             emit error(QStringLiteral("The course document failed to load."));
+          if (ok && d_->savedScrollY > 0) {
+            d_->restoringScroll = true;
+            const QPointer<CourseDocumentView> self(this);
+            d_->view->page()->runJavaScript(
+                QStringLiteral("window.scrollTo(0, %1)").arg(d_->savedScrollY, 0, 'f', 1),
+                [self, generation](const QVariant &) {
+                  if (!self || self->d_->generation != generation)
+                    return;
+                  self->d_->restoringScroll = false;
+                  self->d_->scrollTrackingEnabled = true;
+                });
+          } else if (ok) {
+            d_->scrollTrackingEnabled = true;
+          }
           emit loaded(ok);
         });
         d_->layout->addWidget(d_->view);
