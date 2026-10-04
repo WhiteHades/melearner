@@ -172,7 +172,7 @@ jobs:
             done < <(find .tmp/release-delivery/out -maxdepth 1 -type f -printf '%f\n')
           else
             gh release create "$tag" --draft --target "$GITHUB_SHA" --title 'meLearner 0.1.2' \
-              --notes $'* Staggered course and home transitions.\n* Matching rounded video and reading canvases.\n* Faster repeated HTML and Markdown opening.\n* Reliable replay from saved end positions.\n* PDF page text is available to accessibility tools.\n* Learning totals are readable by screen readers.\n* Automatic update notices, with saved preferences preserved.'
+              --notes $'* Staggered course and home transitions.\n* Matching rounded video and reading canvases.\n* Faster repeated HTML and Markdown opening.\n* Reliable replay from saved end positions.\n* PDF page text and learning totals are available to accessibility tools.\n* Automatic update notices, with saved preferences preserved.'
           fi
           gh release upload "$tag" \
             .tmp/release-delivery/out/melearner_0.1.2_amd64.AppImage \

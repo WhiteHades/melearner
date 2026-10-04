@@ -869,7 +869,9 @@ private slots:
     auto* pdfText = pdfAccessible->textInterface();
     QVERIFY(pdfText);
     const QString firstPageText = QStringLiteral("Local PDF lesson · page 1 café 東京");
-    QTRY_VERIFY(pdfText->text(0, pdfText->characterCount()).contains(firstPageText));
+    QTRY_VERIFY2(pdfText->text(0, pdfText->characterCount()).contains(firstPageText),
+                 qPrintable(QStringLiteral("Extracted PDF text: <%1>")
+                   .arg(pdfText->text(0, pdfText->characterCount()))));
     QVERIFY(pdfText->characterCount() >= firstPageText.size());
     QTRY_VERIFY(!pdfText->characterRect(0).isEmpty());
     QVERIFY(pdfText->offsetAtPoint(pdfText->characterRect(0).center()) >= 0);
