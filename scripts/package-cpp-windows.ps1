@@ -30,10 +30,10 @@ $legalPath = Resolve-RepoPath $LegalRoot
 $cachePath = Join-Path $buildPath 'CMakeCache.txt'
 $appExe = Join-Path $buildPath 'melearner.exe'
 Require-File $cachePath 'configured CMake cache'
-Require-File $appExe 'Release application executable'
+Require-File $appExe 'Optimized application executable'
 
 $cache = (Get-Content -LiteralPath $cachePath -Raw).Replace("`r`n", "`n")
-if ($cache -notmatch '(?m)^CMAKE_BUILD_TYPE:STRING=Release$') { throw 'Build directory must be configured with CMAKE_BUILD_TYPE=Release.' }
+if ($cache -notmatch '(?m)^CMAKE_BUILD_TYPE:STRING=(Release|MinSizeRel)$') { throw 'Build directory must use an optimized Release or MinSizeRel configuration.' }
 $configuredSource = [regex]::Match($cache, '(?m)^CMAKE_HOME_DIRECTORY:INTERNAL=(.+)$').Groups[1].Value.Replace('/', '\').TrimEnd('\')
 if (-not $configuredSource -or -not [string]::Equals($configuredSource, $repoRoot.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)) {
   throw 'Build directory was not configured from this source tree.'
@@ -162,7 +162,7 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'Inno Setup compilation failed.' }
   Require-File $outputPath 'built installer'
   Write-Host "Built unsigned installer: $outputPath"
-  Write-Host 'Per-user install; no updater or runtime network download. No code signing was requested or performed.'
+  Write-Host 'Per-user install with bundled runtimes and optional update notifications. No code signing was requested or performed.'
 } finally {
   if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
 }

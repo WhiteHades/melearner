@@ -248,7 +248,9 @@ jobs:
           $env:Path = "$env:MELEARNER_QT_ROOT\bin;$env:MPV_SDK\bin;$vcpkgInstalled\bin;$env:Path"
           & $pkgconf --exists mpv libzip md4c md4c-html libavformat libavcodec libavutil libswscale
           if ($LASTEXITCODE -ne 0) { throw 'pkgconf dependency validation failed' }
-          & $env:MELEARNER_CMAKE -S . -B build\manual-windows -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON `
+          # MinSizeRel keeps the shipped app optimized without the MSVC /GL
+          # path that fails to link Qt WebEngine's permission value type.
+          & $env:MELEARNER_CMAKE -S . -B build\manual-windows -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel -DBUILD_TESTING=ON `
             -DCMAKE_PREFIX_PATH="$env:MELEARNER_QT_ROOT" `
             -DCMAKE_TOOLCHAIN_FILE=D:\v\scripts\buildsystems\vcpkg.cmake `
             -DVCPKG_TARGET_TRIPLET=x64-windows-release `
