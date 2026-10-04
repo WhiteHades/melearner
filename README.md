@@ -11,9 +11,7 @@
 
 </div>
 
-Organize and view your downloaded courses in one local library.
-
-Browse videos, audio and readings, then pick up where you left off.
+Organise, watch and complete your downloaded courses from one place without having to manually figure out what to watch next. Browse videos, audio and readings, then pick up where you left off.
 
 ![Your course library in meLearner](docs/images/home.png)
 
