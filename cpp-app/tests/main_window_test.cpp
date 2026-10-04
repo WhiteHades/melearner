@@ -968,7 +968,8 @@ private slots:
     MainWindow reopened(database);
     reopened.resize(560, 620); reopened.show();
     QTRY_VERIFY(reopened.findChild<QPushButton*>("chooseRoot")->isEnabled());
-    reopened.chooseRoot(root);
+    // The saved root opens with the database. Rescanning here races startup
+    // restoration and measures a second reset instead of an ordinary restart.
     auto* courses = reopened.findChild<QListView*>("courses");
     QTRY_COMPARE(courses->model()->rowCount(), 24);
     QTRY_COMPARE(courses->verticalScrollBar()->value(), coursesPosition);
