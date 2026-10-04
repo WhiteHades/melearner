@@ -59,8 +59,20 @@ bool hasValidVideoFrame(const QImage& image) {
 
 class MainPlaybackTest final : public QObject {
   Q_OBJECT
+  QTemporaryDir preferences_{QStringLiteral(MELEARNER_SOURCE_DIR) + "/.tmp/cpp-tests/playback-preferences-XXXXXX"};
 private slots:
-  void initTestCase() { Q_INIT_RESOURCE(assets); melearner::installTheme(true, 14); }
+  void initTestCase() {
+    QVERIFY(preferences_.isValid());
+    QCoreApplication::setOrganizationName("melearner-playback-tests");
+    QCoreApplication::setApplicationName("main-playback");
+    QSettings::setDefaultFormat(QSettings::IniFormat);
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, preferences_.path());
+    QSettings settings;
+    settings.setValue("test/writable", true); settings.sync();
+    QCOMPARE(settings.status(), QSettings::NoError);
+    QVERIFY(settings.value("test/writable").toBool()); settings.remove("test/writable");
+    Q_INIT_RESOURCE(assets); melearner::installTheme(true, 14);
+  }
   void firstPresentedFrameUsesSavedPosition() {
     const QString root = QStringLiteral(MELEARNER_SOURCE_DIR) + "/fixtures/parity/media";
     melearner::Player player(nullptr, melearner::Player::DecodeMode::Software);

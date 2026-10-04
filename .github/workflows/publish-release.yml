@@ -71,11 +71,25 @@ jobs:
           windows_profile="$(find .tmp/release-delivery/windows -type f -name reference-profiles-v1.json -print -quit)"
           [[ -n "$windows_profile" ]] || { echo "Windows notice evidence is missing" >&2; exit 1; }
           jq '.missingEvidence' "$windows_profile"
+          # Compare compiled inputs and each platform's installer inputs.
+          # Test isolation fixes and prose edits do not change the shipped app.
+          application_inputs=(cpp-app/src cpp-app/assets cpp-app/schema cpp-app/patches cpp-app/cmake cpp-app/tools cmake CMakeLists.txt LICENSE)
           for head in "$linux_sha" "$windows_sha" "$macos_sha"; do
-            [[ "$(git ls-tree "$head" -- cpp-app cmake CMakeLists.txt)" == "$(git ls-tree "$GITHUB_SHA" -- cpp-app cmake CMakeLists.txt)" ]] || {
+            [[ "$(git ls-tree "$head" -- "${application_inputs[@]}")" == "$(git ls-tree "$GITHUB_SHA" -- "${application_inputs[@]}")" ]] || {
               echo "run commit $head has a different C++ application source tree" >&2; exit 1;
             }
           done
+          validate_package_inputs() {
+            local head="$1"; shift
+            [[ "$(git ls-tree "$head" -- "$@")" == "$(git ls-tree "$GITHUB_SHA" -- "$@")" ]] || {
+              echo "run commit $head has different platform packaging inputs" >&2; return 1;
+            }
+          }
+          validate_package_inputs "$linux_sha" packaging/linux packaging/arch \
+            scripts/package-cpp-appimage.sh scripts/stage-cpp-linux.cmake scripts/collect-cpp-linux-notices.sh .github/workflows/linux-build.yml
+          validate_package_inputs "$windows_sha" packaging/windows \
+            scripts/package-cpp-windows.ps1 scripts/build-cpp-windows-mpv.ps1 scripts/collect-cpp-windows-notices.ps1 .github/workflows/windows-build.yml
+          validate_package_inputs "$macos_sha" scripts/package-cpp-macos.sh .github/workflows/macos-build.yml
           jq -n --arg linux "$linux_sha" --arg windows "$windows_sha" --arg macos "$macos_sha" \
             '{linux_head_sha:$linux,windows_head_sha:$windows,macos_head_sha:$macos}' \
             > .tmp/release-delivery/out/source-heads.json
