@@ -416,6 +416,7 @@ _remember_runtime_origin("${_binary}" "${_binary}" "application-build")
 # left to the host: QFileDialog and QDesktopServices have native fallbacks and
 # this application does not link QtDBus directly.
 set(_required_qt_plugins
+  "tls|libqopensslbackend.so"
   "platforms|libqxcb.so"
   "platforms|libqwayland.so"
   "platforminputcontexts|libcomposeplatforminputcontextplugin.so"
