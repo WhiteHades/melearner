@@ -154,4 +154,20 @@ jobs:
             gh release create "$tag" --draft --target "$GITHUB_SHA" --title 'meLearner 0.1.0' \
               --notes 'Unsigned diagnostic installers assembled from successful platform build artifacts. The macOS DMG is ad hoc signed only and not notarized; the Windows installer is unsigned. Review source provenance and checksums before publishing.'
           fi
-          gh release upload "$tag" .tmp/release-delivery/out/* --repo "$GITHUB_REPOSITORY"
+          gh release upload "$tag" \
+            .tmp/release-delivery/out/melearner_0.1.0_amd64.AppImage \
+            .tmp/release-delivery/out/melearner-bin-0.1.0-1-x86_64.pkg.tar.zst \
+            .tmp/release-delivery/out/melearner-0.1.0-setup.exe \
+            .tmp/release-delivery/out/melearner-0.1.0-macos-arm64.dmg \
+            --repo "$GITHUB_REPOSITORY"
+
+      - name: Retain build records and corresponding sources outside release downloads
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: melearner-release-records
+          path: |
+            .tmp/release-delivery/out/*.sha256
+            .tmp/release-delivery/out/SHA256SUMS
+            .tmp/release-delivery/out/source-heads.json
+            .tmp/release-delivery/out/*-sources.tar.gz
+          if-no-files-found: error

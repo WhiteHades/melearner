@@ -37,10 +37,12 @@ while (($#)); do
     *) shift ;;
   esac
 done
-[[ "$url" == https://github.com/WhiteHades/melearner/releases/download/v0.1.0/* && "$strict_https" == 1 && "$tls12" == 1 ]] || exit 22
+[[ "$url" == https://github.com/WhiteHades/melearner/releases/download/v0.1.0/* || \
+   "$url" == https://raw.githubusercontent.com/WhiteHades/melearner/main/packaging/checksums/v0.1.0/*.sha256 ]] || exit 22
+[[ "$strict_https" == 1 && "$tls12" == 1 ]] || exit 22
 printf '%s\n' "$url" >>"$INSTALLER_TEST_URLS"
 case "$url" in
-  *.sha256)
+  https://raw.githubusercontent.com/WhiteHades/melearner/main/packaging/checksums/v0.1.0/*.sha256)
     if [[ ${INSTALLER_TEST_MALFORMED_CHECKSUM:-} == 1 ]]; then
       printf 'not-a-valid-checksum\n' >"$out"
     elif [[ ${INSTALLER_TEST_MALFORMED_CHECKSUM_NAME:-} == 1 ]]; then
@@ -174,7 +176,7 @@ logical_launcher="$HOME/.local/bin/melearner"
 [[ -x "$app" && "$(sha256sum "$app" | cut -d ' ' -f 1)" == "$expected_hash" ]] || fail 'installed AppImage missing or incorrect'
 [[ -x "$launcher" ]] || fail 'launcher missing or not executable'
 grep -Fqx "Exec=\"$logical_launcher\"" "$desktop" || fail 'desktop entry has wrong or unescaped Exec target'
-[[ "$(cat "$fixture/urls")" == $'https://github.com/WhiteHades/melearner/releases/download/v0.1.0/melearner_0.1.0_amd64.AppImage\nhttps://github.com/WhiteHades/melearner/releases/download/v0.1.0/melearner_0.1.0_amd64.AppImage.sha256' ]] || fail 'AppImage download URLs were not exact'
+[[ "$(cat "$fixture/urls")" == $'https://github.com/WhiteHades/melearner/releases/download/v0.1.0/melearner_0.1.0_amd64.AppImage\nhttps://raw.githubusercontent.com/WhiteHades/melearner/main/packaging/checksums/v0.1.0/melearner_0.1.0_amd64.AppImage.sha256' ]] || fail 'AppImage download URLs were not exact'
 INSTALLER_TEST_ARGS="$fixture/args" bwrap --ro-bind / / --tmpfs /tmp --dir /tmp/repo --ro-bind "$repo_root" /tmp/repo --proc /proc --dev /dev \
   --bind "$fixture" "$sandbox_fixture" --bind "$fixture/home" "$HOME" \
   --setenv INSTALLER_TEST_ARGS "$sandbox_fixture/args" \
@@ -266,7 +268,7 @@ unset TEST_HASH
 pass 'Arch checksum failure prevents sudo and pacman'
 rm -f "$fixture/urls"
 run_installer --arch >"$fixture/arch-install.out" || fail 'Arch install failed'
-[[ "$(cat "$fixture/urls")" == $'https://github.com/WhiteHades/melearner/releases/download/v0.1.0/melearner-bin-0.1.0-1-x86_64.pkg.tar.zst\nhttps://github.com/WhiteHades/melearner/releases/download/v0.1.0/melearner-bin-0.1.0-1-x86_64.pkg.tar.zst.sha256' ]] || fail 'Arch download URLs were not exact'
+[[ "$(cat "$fixture/urls")" == $'https://github.com/WhiteHades/melearner/releases/download/v0.1.0/melearner-bin-0.1.0-1-x86_64.pkg.tar.zst\nhttps://raw.githubusercontent.com/WhiteHades/melearner/main/packaging/checksums/v0.1.0/melearner-bin-0.1.0-1-x86_64.pkg.tar.zst.sha256' ]] || fail 'Arch download URLs were not exact'
 rg -q '^pacman -U .*/melearner-bin-0.1.0-1-x86_64.pkg.tar.zst$' "$fixture/sudo.log" || fail 'Arch package was not passed to sudo pacman -U'
 rg -q '^-U .*/melearner-bin-0.1.0-1-x86_64.pkg.tar.zst$' "$fixture/pacman.log" || fail 'pacman arguments changed'
 [[ -z "$(find "$fixture/tmp" -mindepth 1 -print -quit)" ]] || fail 'Arch install left temporary files'

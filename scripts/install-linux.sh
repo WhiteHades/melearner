@@ -3,6 +3,7 @@ set -euo pipefail
 
 version=0.1.0
 release_url="https://github.com/WhiteHades/melearner/releases/download/v${version}"
+checksum_url="https://raw.githubusercontent.com/WhiteHades/melearner/main/packaging/checksums/v${version}"
 appimage_asset="melearner_${version}_amd64.AppImage"
 arch_asset="melearner-bin-${version}-1-x86_64.pkg.tar.zst"
 
@@ -74,7 +75,8 @@ download() {
 }
 
 download "$asset" "$work_dir/$asset"
-download "$asset.sha256" "$work_dir/$asset.sha256"
+curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
+  --output "$work_dir/$asset.sha256" "$checksum_url/$asset.sha256"
 
 mapfile -t checksum_lines < "$work_dir/$asset.sha256"
 asset_pattern="${asset//./\\.}"
