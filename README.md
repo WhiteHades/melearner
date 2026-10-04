@@ -34,4 +34,6 @@ Screenshots show sample courses.
 2. Choose your course folder.
 3. Pick a lesson.
 
-[Install](docs/install.md) · [Help](docs/usage.md) · [Advanced setup](docs/advanced.md) · [License](LICENSE)
+For technical details and more ways to install, see [Advanced setup](docs/advanced.md).
+
+[Install](docs/install.md) · [Help](docs/usage.md) · [License](LICENSE)
