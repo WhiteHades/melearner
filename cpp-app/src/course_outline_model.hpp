@@ -12,6 +12,9 @@
 
 namespace melearner {
 
+/// Label to replace with a shadcn Badge in the course outline row delegate.
+inline constexpr int courseOutlineBadgeRole = Qt::UserRole + 41;
+
 class CourseOutlineModel final : public QAbstractItemModel {
     Q_OBJECT
 

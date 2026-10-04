@@ -11,6 +11,7 @@
 #include "pdf_view.hpp"
 #include "stats_panel.hpp"
 #include "course_outline_model.hpp"
+#include "course_outline_badges.hpp"
 #include "study_icons.hpp"
 #include "theme.hpp"
 #include "text_interaction.hpp"
@@ -64,10 +65,12 @@
 #include <QVBoxLayout>
 #include <QUrl>
 #include <algorithm>
+#include <cmath>
 #include <limits>
 
 namespace lib = melearner::library;
 namespace {
+constexpr double transportScale = 1.12;
 QString tooltip(const QString& text) { return "<qt>" + text.toHtmlEscaped() + "</qt>"; }
 /// Scale whichever size the font carries. The shadcn install sets a pixel size,
 /// so a point-size scale is silently ignored and every heading in the window
@@ -474,6 +477,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   lessons_ = new shadcn::TreeView; lessons_->setObjectName("lessons");
   lessons_->setAccessibleName(tr("Course sections and lessons"));
   lessons_->setModel(outlineModel_); lessons_->hideProgress();
+  lessons_->setItemDelegate(new melearner::CourseOutlineBadgeDelegate(lessons_->itemDelegate(), lessons_));
   lessons_->setCompact(false); lessons_->setAnimated(false);
   // Keep the shared shadcn handle colours and states, with a quieter local width.
   melearner::styleCourseScrollBars(lessons_);
@@ -497,6 +501,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     outlineOpacity_->setOpacity(std::clamp(value.toDouble() / std::max(1, outlineWidth_), 0.0, 1.0));
     if (content_) {
       content_->widget()->layout()->setContentsMargins(qRound(20.0 * railWidth / std::max(1, outlineWidth_)), 0, 0, 0);
+      content_->widget()->layout()->activate();
       updateMediaLayout();
     }
   });
@@ -629,8 +634,8 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   lessonBottomSpace_->hide();
   playerControls_ = new PlayerPill(video_); playerControls_->setObjectName("playerControls");
   static_cast<PlayerPill*>(playerControls_)->translucent = true;
-  auto* controlsLayout = new QVBoxLayout(playerControls_); controlsLayout->setContentsMargins(20, 10, 20, 12);
-  controlsLayout->setSpacing(6); playerControls_->hide();
+  auto* controlsLayout = new QVBoxLayout(playerControls_); controlsLayout->setContentsMargins(22, 11, 22, 13);
+  controlsLayout->setSpacing(7); playerControls_->hide();
   seek_ = new shadcn::Slider(0, 10000); seek_->setAccessibleName(tr("Playback position"));
   seek_->setObjectName("playbackPosition");
   seek_->setEnabled(false); controlsLayout->addWidget(seek_);
@@ -641,11 +646,15 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   time_ = new shadcn::Label("0:00:00"); durationTime_ = new shadcn::Label("0:00:00");
   time_->setObjectName("playbackTime");
   durationTime_->setObjectName("playbackDuration");
-  auto clockFont = font(); clockFont.setFeature(QFont::Tag("tnum"), 1);
-  for (auto* field : {time_, durationTime_}) { field->setFont(clockFont); timeLayout->addWidget(field); }
+  auto clockFont = font(); scaleFont(clockFont, transportScale); clockFont.setFeature(QFont::Tag("tnum"), 1);
+  for (auto* field : {time_, durationTime_}) {
+    field->setFont(clockFont); field->setMargin(0); field->setIndent(0); timeLayout->addWidget(field);
+  }
   time_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
   durationTime_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-  timeLayout->insertWidget(1, new shadcn::Label("/")); updatePlaybackTime(0, 0);
+  auto* timeSeparator = new shadcn::Label("/"); timeSeparator->setFont(clockFont);
+  timeSeparator->setObjectName("playbackTimeSeparator");
+  timeLayout->insertWidget(1, timeSeparator); updatePlaybackTime(0, 0);
   autoplay_ = new shadcn::Switch; autoplay_->setObjectName("autoplay");
   autoplay_->setAccessibleName(tr("Autoplay"));
   autoplay_->setChecked(QSettings().value("playback/autoplay", false).toBool());
@@ -675,15 +684,18 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     showLesson(lesson); autoplayStartPath_ = lesson.path;
   });
   auto* volume = new shadcn::Slider(0, 100); volume->setValues({100});
-  volume->setOrientation(Qt::Horizontal); volume->setFixedSize(92, 36);
+  volume->setOrientation(Qt::Horizontal); volume->setFixedSize(103, 40);
   volume->setObjectName("volume");
   volume->setAccessibleName(tr("Volume")); volume->setToolTip(tr("Volume"));
   auto* fullscreen = button(tr("Fullscreen"), "fullscreen", shadcn::Variant::Ghost, shadcn::ButtonSize::Icon);
   auto* rateButton = button(tr("1×"), "playbackRate", shadcn::Variant::Ghost);
   rateButton->setAccessibleName(tr("Playback speed")); rateButton->setToolTip(tr("Playback speed"));
   auto* rate = new shadcn::DropdownMenu(rateButton); rate->setObjectName("playbackSpeed"); rateButton->setMenu(rate);
+  // QMenu's native window background otherwise fills the stylesheet's rounded corners.
+  rate->setAttribute(Qt::WA_TranslucentBackground);
+  rate->setWindowFlag(Qt::NoDropShadowWindowHint, true);
   auto* rateGroup = new QActionGroup(rate);
-  for (double speed : {0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0}) {
+  for (double speed : {0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0}) {
     auto* action = rate->addAction(QString::number(speed) + "×");
     action->setData(speed); action->setCheckable(true); action->setChecked(speed == 1.0); rateGroup->addAction(action);
   }
@@ -710,6 +722,14 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   for (auto* control : {play_, volumeButton, subtitleButton, frame, addSubtitles, screenshot, fullscreen})
     control->setButtonSize(shadcn::ButtonSize::IconLg);
   rateButton->setButtonSize(shadcn::ButtonSize::Default);
+  for (auto* widget : playbackWidgets_) {
+    if (auto* control = qobject_cast<shadcn::Button*>(widget)) {
+      auto controlFont = control->font(); scaleFont(controlFont, transportScale); control->setFont(controlFont);
+      const auto size = control->sizeHint();
+      control->setMinimumHeight(qRound(size.height() * transportScale));
+      if (control != rateButton) control->setFixedWidth(qRound(size.width() * transportScale));
+    }
+  }
   connect(frame, &QPushButton::clicked, this, [this] { if (playerLoaded_) (void)player_->frameStep(); });
   connect(addSubtitles, &QPushButton::clicked, this, [this] {
     if (!playerLoaded_) return;
@@ -1105,7 +1125,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     volumeButton->setAccessibleName(value ? tr("Unmute") : tr("Mute"));
     volumeButton->setToolTip(volumeButton->accessibleName());
     volumeButton->setIcon(melearner::studyIcon(value ? melearner::StudyIcon::Muted : melearner::StudyIcon::Volume,
-        melearner::roleColor(this, shadcn::Role::Foreground), 1.125));
+        melearner::roleColor(this, shadcn::Role::Foreground), 1.125 * transportScale));
   };
   const auto requestMute = [this, updateMute](bool value) {
     requestedMuted_ = value;
@@ -1186,7 +1206,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
     paused_ = paused; play_->setText(paused ? tr("Play") : tr("Pause")); if (paused && playerLoaded_) savePosition();
     play_->setAccessibleName(play_->text());
     play_->setIcon(melearner::studyIcon(paused ? melearner::StudyIcon::Play : melearner::StudyIcon::Pause,
-      melearner::roleColor(this, shadcn::Role::Foreground), 1.125));
+      melearner::roleColor(this, shadcn::Role::Foreground), 1.125 * transportScale));
     revealPlayerControls(!keyboardNavigation_);
   });
   connect(player_, &melearner::Player::tracksChanged, this, [this, subtitleGroup](const auto& tracks) {
@@ -1807,10 +1827,20 @@ void MainWindow::seekVideo(qint64 deltaMs) {
 void MainWindow::updatePlaybackTime(qint64 position, qint64 duration) {
   // Right-align elapsed time against a stationary separator. Reserve hours from
   // the whole lesson so neither the separator nor duration moves during playback.
-  const auto sample = clockText(std::max(position, duration));
-  const int fieldWidth = time_->fontMetrics().horizontalAdvance(sample);
+  auto sample = clockText(std::max(position, duration));
+  const QFontMetricsF metrics(time_->font());
+  QChar widest = '0';
+  for (QChar digit = '1'; digit <= QChar('9'); digit = QChar(digit.unicode() + 1))
+    if (metrics.horizontalAdvance(digit) > metrics.horizontalAdvance(widest)) widest = digit;
+  for (auto& digit : sample) if (digit.isDigit()) digit = widest;
+  // Round up fractional advances and retain glyph bearings at every DPI/font.
+  const int fieldWidth = static_cast<int>(std::ceil(std::max(metrics.horizontalAdvance(sample),
+    metrics.boundingRect(sample).width()))) + 4;
   for (auto* field : {time_, durationTime_}) if (field->width() != fieldWidth) field->setFixedWidth(fieldWidth);
   time_->setText(clockText(position)); durationTime_->setText(clockText(duration));
+  if (auto* readout = time_->parentWidget()) {
+    readout->layout()->activate(); readout->setFixedWidth(readout->sizeHint().width());
+  }
 }
 void MainWindow::toggleLessonOutline() {
   const int currentWidth = outline_->isVisible() ? split_->sizes().value(0) : 0;
@@ -1847,14 +1877,22 @@ void MainWindow::updateControlsLayout() {
     return widget->minimumWidth() == widget->maximumWidth()
       ? widget->width() : widget->sizeHint().width();
   };
+  // Keep the enlarged controls inside short canvases at large text sizes.
+  // Only their outer padding contracts; the text and hit areas stay unchanged.
+  const bool tightCanvas = video_->width() < 600 && video_->height() < 240;
+  const int inset = tightCanvas ? 11 : 22;
+  if (playerControls_->layout()->contentsMargins().left() != inset) {
+    playerControls_->layout()->setContentsMargins(inset, 11, inset, 13);
+    playbackLayoutWidth_ = 0;
+  }
   constexpr int slotWidth = 4;
-  int naturalWidth = 40;
+  int naturalWidth = inset * 2;
   QList<QSize> metrics;
   for (const auto* widget : playbackWidgets_) {
     metrics.append(QSize(controlWidth(widget), widget->sizeHint().height()));
     naturalWidth += ((metrics.last().width() + 8 + slotWidth - 1) / slotWidth) * slotWidth;
   }
-  const int controlsWidth = std::max(1, std::min(naturalWidth, video_->width() - 32));
+  const int controlsWidth = std::max(1, std::min(naturalWidth, video_->width() - (tightCanvas ? 16 : 32)));
   // Drawer frames frequently resize the video without changing the transport.
   // Reflowing its buttons every frame invalidates the whole layout.
   if (controlsWidth != playbackLayoutWidth_ || metrics != playbackMetrics_) {
@@ -1862,7 +1900,7 @@ void MainWindow::updateControlsLayout() {
     for (auto* widget : playbackWidgets_) playbackLayout_->removeWidget(widget);
     // Small grid slots let rows wrap without sharing unrelated column widths.
     // A conventional grid otherwise widens every row to its longest cell above.
-    const int gridSlots = std::max(1, (controlsWidth - 40) / slotWidth);
+    const int gridSlots = std::max(1, (controlsWidth - inset * 2) / slotWidth);
     playbackLayout_->setHorizontalSpacing(0);
     for (int col = 0; col < std::max(gridSlots, playbackLayout_->columnCount()); ++col)
       playbackLayout_->setColumnMinimumWidth(col, col < gridSlots ? slotWidth : 0);
@@ -1909,7 +1947,8 @@ void MainWindow::toggleVideoFullscreen() {
   updateLayout(); video_->setFocus(); revealPlayerControls();
 }
 void MainWindow::updateMediaLayout() {
-  if (!media_ || !content_) return;
+  if (!media_ || !content_ || mediaLayoutUpdating_) return;
+  const QScopedValueRollback<bool> updating(mediaLayoutUpdating_, true);
   const bool video = lesson_ && (lesson_->type == "video" || lesson_->type == "audio");
   auto* layout = static_cast<QVBoxLayout*>(content_->widget()->layout());
   if (layout->indexOf(media_) != (video ? 0 : 1)) {
@@ -1954,6 +1993,7 @@ void MainWindow::updateMediaLayout() {
     media_->setFixedWidth(std::max(1, width));
     for (auto* widget : {lessonHeader_, lessonLinks_}) widget->setFixedWidth(std::max(1, width));
   }
+  layout->activate();
 }
 void MainWindow::updateLayout() {
   if (!rescan_ || !choose_) return;
@@ -2091,7 +2131,7 @@ void MainWindow::applyAppearance(bool resetTheme) {
                           target->variant() == shadcn::Variant::Destructive;
     target->setIcon(melearner::studyIcon(icon, onAccent
       ? melearner::roleColor(this, shadcn::Role::PrimaryForeground) : foreground,
-      playerControls_->isAncestorOf(target) ? 1.125 : 1.0));
+      playerControls_->isAncestorOf(target) ? 1.125 * transportScale : 1.0));
     target->setIconSize(QSize(16, 16));
     // An icon-only button carries no label. The accessible name and the tooltip
     // carry it instead, and the text is cleared so it is not painted into a

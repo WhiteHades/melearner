@@ -272,7 +272,7 @@ QVariant CourseOutlineModel::data(const QModelIndex& modelIndex, int role) const
         || role == Qt::AccessibleDescriptionRole || role == Qt::ToolTipRole || role == Qt::UserRole
         || role == Qt::SizeHintRole || role == Qt::FontRole || role == shadcnRowDescription
         || role == shadcnRowProgress || role == shadcnRowHeading || role == shadcnRowLeading
-        || role == shadcnRowTrailing || role == shadcnRowTrailingText;
+        || role == shadcnRowTrailing || role == shadcnRowTrailingText || role == courseOutlineBadgeRole;
     if (!supportedRole) {
         return {};
     }
@@ -283,21 +283,21 @@ QVariant CourseOutlineModel::data(const QModelIndex& modelIndex, int role) const
         const auto sectionRow = sectionRowForLessonId(modelIndex.internalId());
         const auto group = groupForIndex(modelIndex);
         if (!group.has_value()) {
-            return role == Qt::UserRole ? QVariant{} : QVariant(tr("Loading…"));
+            return role == Qt::UserRole || role == courseOutlineBadgeRole ? QVariant{} : QVariant(tr("Loading…"));
         }
         // A video's row is its place among the Section's rows, which is not its
         // place among the Section's Lessons: five Lessons under three videos are
         // rows 0, 1 and 2. The group carries the order that finds the Lesson.
         const auto order = lessonOrderForIndex(modelIndex);
         if (!order.has_value()) {
-            return role == Qt::UserRole ? QVariant{} : QVariant(tr("Loading…"));
+            return role == Qt::UserRole || role == courseOutlineBadgeRole ? QVariant{} : QVariant(tr("Loading…"));
         }
         const auto item = loadedLesson(sectionRow, *order);
         if (role == Qt::SizeHintRole) {
             return QSize(180, kLessonRowHeight);
         }
         if (!item.has_value()) {
-            return role == Qt::UserRole ? QVariant{} : QVariant(tr("Loading…"));
+            return role == Qt::UserRole || role == courseOutlineBadgeRole ? QVariant{} : QVariant(tr("Loading…"));
         }
         const auto description = lessonMetadata(*item);
         if (role == Qt::DisplayRole) {
@@ -311,6 +311,10 @@ QVariant CourseOutlineModel::data(const QModelIndex& modelIndex, int role) const
         }
         if (role == shadcnRowLeading) {
             return completionMark(item->completed);
+        }
+        if (role == courseOutlineBadgeRole) {
+            return item->type == QStringLiteral("video") ? tr("Video")
+                : item->type == QStringLiteral("audio") ? tr("Audio") : tr("Reading");
         }
         if (role == Qt::AccessibleTextRole || role == Qt::AccessibleDescriptionRole) {
             return item->name + QStringLiteral(", ") + item->sectionName + QStringLiteral(", ") + description
@@ -337,7 +341,7 @@ QVariant CourseOutlineModel::data(const QModelIndex& modelIndex, int role) const
     }
     const auto item = loadedSection(modelIndex.row());
     if (!item.has_value()) {
-        return role == Qt::UserRole ? QVariant{} : QVariant(tr("Loading…"));
+        return role == Qt::UserRole || role == courseOutlineBadgeRole ? QVariant{} : QVariant(tr("Loading…"));
     }
     const auto description = QStringLiteral("%1 of %2 lessons complete")
         .arg(item->completedLessons).arg(item->lessonCount);

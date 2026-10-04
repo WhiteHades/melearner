@@ -69,10 +69,11 @@ void SeekFeedback::paintEvent(QPaintEvent*) {
     p.drawRoundedRect(QRectF(rect()).adjusted(1, 1, -1, -1), 20, 20);
     auto type = font(); type.setPixelSize(22); type.setWeight(QFont::DemiBold); p.setFont(type);
     p.setPen(Qt::white);
-    p.drawText(QRect(30, 0, 78, height()), Qt::AlignCenter,
+    const bool forward = seconds_ >= 0;
+    p.drawText(QRect(forward ? 24 : 36, 0, 78, height()), Qt::AlignCenter,
         QStringLiteral("%1%2 s").arg(seconds_ < 0 ? "−" : "+").arg(qAbs(seconds_)));
-    const double x = (seconds_ < 0 ? 20 : width() - 20) + arrowOffset_;
-    const double direction = seconds_ < 0 ? -1 : 1;
+    const double direction = forward ? 1 : -1;
+    const double x = (forward ? width() - 28 : 28) + arrowOffset_;
     QPen pen(Qt::white, 2.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin); p.setPen(pen);
     QPolygonF arrow; arrow << QPointF(x - direction * 5, 24) << QPointF(x + direction * 3, 32)
         << QPointF(x - direction * 5, 40); p.drawPolyline(arrow);

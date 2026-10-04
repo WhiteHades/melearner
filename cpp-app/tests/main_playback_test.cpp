@@ -167,6 +167,7 @@ private slots:
       QVERIFY(!window.findChild<QPushButton*>("playbackOptions"));
       QVERIFY(!window.findChild<QMenu*>("videoSettings"));
       auto* speed = window.findChild<QMenu*>("playbackSpeed"); QVERIFY(speed);
+      auto* speedButton = window.findChild<QPushButton*>("playbackRate"); QVERIFY(speedButton);
       auto* timeline = window.findChild<shadcn::Slider*>("playbackPosition"); QVERIFY(timeline);
       QVERIFY(controls->isAncestorOf(timeline));
       for (const auto* name : {"volumeButton", "playbackRate", "subtitleTrackButton",
@@ -184,7 +185,7 @@ private slots:
       auto* volumeButton = window.findChild<QPushButton*>("volumeButton"); QVERIFY(volumeButton);
       auto* volume = window.findChild<shadcn::Slider*>("volume"); QVERIFY(volume);
       QCOMPARE(volume->orientation(), Qt::Horizontal);
-      QCOMPARE(volume->size(), QSize(92, 36));
+      QCOMPARE(volume->size(), QSize(103, 40));
       QVERIFY(controls->isAncestorOf(volume));
       QVERIFY(!window.findChild<QWidget*>("volumeMenu"));
       QTRY_COMPARE(volume->values().first(), 0.0);
@@ -317,7 +318,7 @@ private slots:
         // Every frequently used operation is now a visible shadcn button. The
         // only popups are focused choices such as playback speed.
         phase = "player controls";
-        auto* speedButton = window.findChild<QPushButton*>("playbackRate"); QVERIFY(speedButton);
+        QVERIFY(speedButton);
         QVERIFY(speedButton->menu() == speed);
         QVERIFY(controls->isAncestorOf(volumeButton));
         surface->setFocus();
@@ -389,7 +390,7 @@ private slots:
           QVERIFY(surface->width() <= lessonScroll->viewport()->width());
           QCOMPARE(surface->height(), surface->width() * 9 / 16);
           QVERIFY(surface->rect().contains(controls->geometry()));
-          QTRY_COMPARE(timeline->width(), controls->width() - 40);
+          QTRY_COMPARE(timeline->width(), controls->width() - 44);
           if (width == 1280) {
             QVERIFY(controls->width() <= 820 * fontScale);
             QVERIFY(qAbs(controls->geometry().center().x() - surface->rect().center().x()) <= 1);
@@ -482,6 +483,25 @@ private slots:
         QVERIFY(next->mapTo(&window, QPoint(0, next->height())).y() <= window.height());
         QVERIFY(previous->mapTo(&window, QPoint(0, previous->height())).y() <= window.height());
         QSignalSpy rates(player, &melearner::Player::rateChanged);
+        const QList<double> expectedRates{0.5, 0.75, 1.0, 1.25, 1.5, 1.75,
+                                           2.0, 2.25, 2.5, 2.75, 3.0};
+        QCOMPARE(speed->actions().size(), expectedRates.size());
+        for (qsizetype index = 0; index < expectedRates.size(); ++index) {
+          QCOMPARE(speed->actions().at(index)->data().toDouble(), expectedRates.at(index));
+          QCOMPARE(speed->actions().at(index)->text(), QString::number(expectedRates.at(index)) + QChar(0x00d7));
+        }
+        QVERIFY(speedButton);
+        speed->popup(speedButton->mapToGlobal(QPoint(0, speedButton->height())));
+        QTRY_VERIFY(speed->isVisible());
+        QVERIFY(speed->testAttribute(Qt::WA_TranslucentBackground));
+        auto* popupScreen = QApplication::screenAt(speed->geometry().center()); QVERIFY(popupScreen);
+        const auto available = popupScreen->availableGeometry();
+        QVERIFY2(available.contains(speed->geometry()),
+                 "Playback speed popup extends beyond the available screen geometry");
+        for (auto* action : speed->actions()) QVERIFY(speed->actionGeometry(action).isValid());
+        const auto popupCaptures = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
+        if (!popupCaptures.isEmpty()) QVERIFY(speed->grab().save(popupCaptures + "/playback-speed-menu.png"));
+        speed->hide();
         speed->actions().at(4)->trigger();
         QTRY_VERIFY(!rates.isEmpty()); QCOMPARE(rates.last().first().toDouble(), 1.5);
         const auto captureDirectory = qEnvironmentVariable("MELEARNER_TEST_SCREENSHOTS");
@@ -727,12 +747,42 @@ private slots:
     QCOMPARE(playClicks.size(), 1);
     heartbeatSamples = 0; previousHeartbeat = 0; worstHeartbeatGap = 0;
     heartbeatClock.restart(); routeHeartbeat.start();
+    const int expandedRailWidth = rail->width();
+    const auto videoRect = [&] { return QRect(surface->mapTo(&window, QPoint()), surface->size()); };
+    const auto expandedVideoRect = videoRect();
+    QVector<int> closingRailSamples;
+    QVector<int> openingRailSamples;
+    QVector<QRect> closingVideoSamples;
+    auto geometryConnection = connect(drawer, &QVariantAnimation::valueChanged, &window, [&](const QVariant&) {
+      if (drawer->state() != QAbstractAnimation::Running) return;
+      if (closingRailSamples.isEmpty() || closingRailSamples.last() != rail->width())
+        closingRailSamples.append(rail->width());
+      closingVideoSamples.append(videoRect());
+    });
     QTest::mouseClick(railToggle, Qt::LeftButton);
+    QTRY_COMPARE(drawer->state(), QAbstractAnimation::Running);
     QTRY_COMPARE(drawer->state(), QAbstractAnimation::Stopped);
     QVERIFY(!rail->isVisible());
+    QVERIFY(std::any_of(closingRailSamples.cbegin(), closingRailSamples.cend(),
+      [expandedRailWidth](int width) { return width > 0 && width < expandedRailWidth; }));
+    const auto collapsedVideoRect = videoRect();
+    QVERIFY(expandedVideoRect != collapsedVideoRect);
+    QVERIFY(std::any_of(closingVideoSamples.cbegin(), closingVideoSamples.cend(),
+      [&](const QRect& rect) { return rect != expandedVideoRect && rect != collapsedVideoRect; }));
+    disconnect(geometryConnection);
+    const int collapsedRailWidth = rail->width();
+    geometryConnection = connect(drawer, &QVariantAnimation::valueChanged, &window, [&](const QVariant&) {
+      if (drawer->state() == QAbstractAnimation::Running) openingRailSamples.append(rail->width());
+    });
     QTest::mouseClick(railToggle, Qt::LeftButton);
+    QTRY_COMPARE(drawer->state(), QAbstractAnimation::Running);
     QTRY_COMPARE(drawer->state(), QAbstractAnimation::Stopped);
     QVERIFY(rail->isVisible());
+    QCOMPARE(rail->width(), expandedRailWidth);
+    QVERIFY(std::any_of(openingRailSamples.cbegin(), openingRailSamples.cend(),
+      [collapsedRailWidth, expandedRailWidth](int width) {
+        return width > collapsedRailWidth && width < expandedRailWidth;
+      }));
     routeHeartbeat.stop();
     qInfo("Playing-video sidebar toggle: %d heartbeat samples, longest gap %lld ms",
           heartbeatSamples, worstHeartbeatGap);
@@ -749,8 +799,41 @@ private slots:
     QVERIFY(time && duration && readout);
     QCOMPARE(time->parentWidget(), duration->parentWidget());
     QVERIFY(readout->isAncestorOf(time) && readout->isAncestorOf(duration));
-    const auto clockWidth = time->width(); const auto durationWidth = duration->width();
+    const auto baselineClockWidth = time->width();
+    const auto baselineDurationWidth = duration->width();
     QVERIFY(!time->text().contains(' ') && !duration->text().contains(' '));
+    QLabel* separator = nullptr;
+    for (auto* label : readout->findChildren<QLabel*>())
+      if (label->text() == QStringLiteral("/")) separator = label;
+    QVERIFY(separator);
+    player->positionChanged(3599000, 10800000);
+    QCOMPARE(time->text(), QString("0:59:59"));
+    QCOMPARE(duration->text(), QString("3:00:00"));
+    const auto hourClockWidth = time->width(); const auto hourDurationWidth = duration->width();
+    QCOMPARE(separator->text(), QString("/"));
+    const auto separatorGeometry = separator->geometry();
+    QVERIFY(time->geometry().right() < separator->geometry().left());
+    QVERIFY(separator->geometry().right() < duration->geometry().left());
+    for (const auto* field : {time, duration}) {
+      const auto contents = field->contentsRect();
+      QVERIFY(field->fontMetrics().horizontalAdvance(field->text()) <= contents.width());
+      QVERIFY(contents.contains(field->fontMetrics().boundingRect(
+        contents, field->alignment(), field->text())));
+    }
+    player->positionChanged(3600000, 7200000);
+    QCOMPARE(time->text(), QString("1:00:00"));
+    QCOMPARE(time->width(), hourClockWidth);
+    QCOMPARE(duration->width(), hourDurationWidth);
+    QCOMPARE(separator->geometry(), separatorGeometry);
+    for (const auto* field : {time, duration}) {
+      const auto contents = field->contentsRect();
+      QVERIFY(field->fontMetrics().horizontalAdvance(field->text()) <= contents.width());
+      QVERIFY(contents.contains(field->fontMetrics().boundingRect(
+        contents, field->alignment(), field->text())));
+    }
+    player->positionChanged(0, 0);
+    const auto clockWidth = baselineClockWidth;
+    const auto durationWidth = baselineDurationWidth;
     QVERIFY(player->seek(7000)); QTRY_VERIFY(!positions.empty() && positions.last()[0].toLongLong() >= 6800);
     surface->setFocus();
     QTest::keyClick(surface, Qt::Key_Right);

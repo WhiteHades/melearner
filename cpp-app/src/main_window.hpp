@@ -171,6 +171,7 @@ private:
   QBoxLayout* lessonLinksLayout_ = nullptr;
   QWidget* lessonBottomSpace_ = nullptr;
   int preferredVideoHeight_ = 180;
+  bool mediaLayoutUpdating_ = false;
   bool videoFullscreen_ = false;
   Qt::WindowStates previousWindowState_;
   QWidget* headerHost_ = nullptr;
