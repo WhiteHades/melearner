@@ -6,10 +6,13 @@ Download version `0.1.9` for your system:
 
 | System | Download |
 | --- | --- |
-| Linux x86_64 with glibc 2.39 or newer | [AppImage](https://github.com/WhiteHades/melearner/releases/download/v0.1.9/melearner_0.1.9_amd64.AppImage) |
-| Arch Linux x86_64 | [Package](https://github.com/WhiteHades/melearner/releases/download/v0.1.9/melearner-bin-0.1.9-1-x86_64.pkg.tar.zst) |
-| Windows x64 | [Setup installer](https://github.com/WhiteHades/melearner/releases/download/v0.1.9/melearner-0.1.9-setup.exe) |
-| macOS Apple silicon with macOS 15 or newer | [Disk image](https://github.com/WhiteHades/melearner/releases/download/v0.1.9/melearner-0.1.9-macos-arm64.dmg) |
+| Linux | [AppImage](https://github.com/WhiteHades/melearner/releases/download/v0.1.9/melearner_0.1.9_amd64.AppImage) |
+| Linux (Arch) | [Package](https://github.com/WhiteHades/melearner/releases/download/v0.1.9/melearner-bin-0.1.9-1-x86_64.pkg.tar.zst) |
+| Windows | [Setup installer](https://github.com/WhiteHades/melearner/releases/download/v0.1.9/melearner-0.1.9-setup.exe) |
+| macOS | [Disk image](https://github.com/WhiteHades/melearner/releases/download/v0.1.9/melearner-0.1.9-macos-arm64.dmg) |
+
+Linux requires x86_64 and glibc 2.39 or newer. Windows requires x64.
+macOS requires Apple silicon and macOS 15 or newer.
 
 The installers include the app runtime, including its browser engine, database
 and media playback support. You do not need to install a separate browser,

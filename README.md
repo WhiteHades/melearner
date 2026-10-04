@@ -21,21 +21,19 @@ Browse videos, audio and readings, then pick up where you left off.
 
 Screenshots show sample courses.
 
+## Downloads
+
+| Platform | Download |
+| --- | --- |
+| Linux | [AppImage](https://github.com/WhiteHades/melearner/releases/download/v0.1.9/melearner_0.1.9_amd64.AppImage) |
+| Linux (Arch) | [Package](https://github.com/WhiteHades/melearner/releases/download/v0.1.9/melearner-bin-0.1.9-1-x86_64.pkg.tar.zst) |
+| Windows | [Setup installer](https://github.com/WhiteHades/melearner/releases/download/v0.1.9/melearner-0.1.9-setup.exe) |
+| macOS | [Disk image](https://github.com/WhiteHades/melearner/releases/download/v0.1.9/melearner-0.1.9-macos-arm64.dmg) |
+
 ## Get started
 
 1. Open meLearner.
 2. Choose your course folder.
 3. Pick a lesson.
 
-## Downloads
-
-| Platform | Download |
-| --- | --- |
-| Linux x86_64, glibc 2.39 or newer | [AppImage](https://github.com/WhiteHades/melearner/releases/download/v0.1.9/melearner_0.1.9_amd64.AppImage) |
-| Arch Linux x86_64 | [Package](https://github.com/WhiteHades/melearner/releases/download/v0.1.9/melearner-bin-0.1.9-1-x86_64.pkg.tar.zst) |
-| Windows x64 | [Setup installer](https://github.com/WhiteHades/melearner/releases/download/v0.1.9/melearner-0.1.9-setup.exe) |
-| macOS Apple silicon, macOS 15 or newer | [Disk image](https://github.com/WhiteHades/melearner/releases/download/v0.1.9/melearner-0.1.9-macos-arm64.dmg) |
-
-For source installation, see [install instructions](docs/install.md). For more
-details, read the [advanced setup](docs/advanced.md) or [help](docs/usage.md).
-[License](LICENSE)
+[Install](docs/install.md) · [Help](docs/usage.md) · [Advanced setup](docs/advanced.md) · [License](LICENSE)
