@@ -77,7 +77,7 @@ download "$asset" "$work_dir/$asset"
 download "$asset.sha256" "$work_dir/$asset.sha256"
 
 mapfile -t checksum_lines < "$work_dir/$asset.sha256"
-asset_pattern="${asset//./\.}"
+asset_pattern="${asset//./\\.}"
 if ((${#checksum_lines[@]} != 1)) || [[ ! "${checksum_lines[0]}" =~ ^([[:xdigit:]]{64})([[:space:]]+${asset_pattern})?$ ]]; then
   fail "The official checksum file for $asset has an invalid format."
 fi

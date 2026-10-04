@@ -43,8 +43,12 @@ case "$url" in
   *.sha256)
     if [[ ${INSTALLER_TEST_MALFORMED_CHECKSUM:-} == 1 ]]; then
       printf 'not-a-valid-checksum\n' >"$out"
+    elif [[ ${INSTALLER_TEST_MALFORMED_CHECKSUM_NAME:-} == 1 ]]; then
+      printf '%s  melearner_0X1Y0_amd64ZAppImage\n' "$INSTALLER_TEST_HASH" >"$out"
     else
-      printf '%s\n' "$INSTALLER_TEST_HASH" >"$out"
+      asset_name="${url##*/}"
+      asset_name="${asset_name%.sha256}"
+      printf '%s  %s\n' "$INSTALLER_TEST_HASH" "$asset_name" >"$out"
     fi
     ;;
   *) cp "$INSTALLER_TEST_PAYLOAD" "$out" ;;
@@ -92,6 +96,7 @@ run_installer() {
     --setenv INSTALLER_TEST_PACMAN_LOG "$sandbox_fixture/pacman.log" \
     --setenv INSTALLER_TEST_FAIL_STAGE "${TEST_FAIL_STAGE:-}" \
     --setenv INSTALLER_TEST_MALFORMED_CHECKSUM "${TEST_MALFORMED_CHECKSUM:-}" \
+    --setenv INSTALLER_TEST_MALFORMED_CHECKSUM_NAME "${TEST_MALFORMED_CHECKSUM_NAME:-}" \
     --setenv INSTALLER_TEST_GLIBC "${TEST_GLIBC:-2.39}" \
     --setenv INSTALLER_TEST_MACHINE "${TEST_MACHINE:-x86_64}" \
     /bin/bash /tmp/repo/scripts/install-linux.sh "$@"
@@ -144,6 +149,15 @@ assert_no_install
 [[ -z "$(find "$fixture/tmp" -mindepth 1 -print -quit)" ]] || fail 'malformed checksum left temporary files'
 unset TEST_MALFORMED_CHECKSUM
 pass 'malformed checksum is rejected and cleaned up'
+
+TEST_MALFORMED_CHECKSUM_NAME=1
+export TEST_MALFORMED_CHECKSUM_NAME
+if run_installer >"$fixture/malformed-checksum-name.out" 2>&1; then fail 'checksum with a malformed asset filename was accepted'; fi
+rg -q 'invalid format' "$fixture/malformed-checksum-name.out" || fail 'malformed checksum filename message missing'
+assert_no_install
+[[ -z "$(find "$fixture/tmp" -mindepth 1 -print -quit)" ]] || fail 'malformed checksum filename left temporary files'
+unset TEST_MALFORMED_CHECKSUM_NAME
+pass 'checksum with a malformed asset filename is rejected and cleaned up'
 
 # Successful install: verify exact release URLs, installed modes/content, wrapper argv,
 # desktop integration, and untouched SQLite-like user data.
