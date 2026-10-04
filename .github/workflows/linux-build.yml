@@ -58,7 +58,9 @@ jobs:
             libxcomposite libxdamage libxrender libxkbcommon libxcb \
             xorgproto libxcursor libxi libxshmfence libxscrnsaver
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y libffmpeg-nvenc-dev libdisplay-info-dev
+          # The PDF accessibility fixture writes Japanese text with QPdfWriter.
+          # Missing source glyphs produce a broken fixture, not an unreadable PDF.
+          sudo apt-get install --no-install-recommends -y libffmpeg-nvenc-dev libdisplay-info-dev fonts-noto-cjk
 
       - name: Install AppImage tooling
         if: inputs.package == true
