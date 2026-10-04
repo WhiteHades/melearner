@@ -67,7 +67,7 @@ jobs:
             -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
             -DBUILD_TESTING=ON
           cmake --build build/macos --parallel 3
-          test "$(build/macos/melearner.app/Contents/MacOS/melearner --version)" = 'melearner-cpp-v1 0.1.1'
+          test "$(build/macos/melearner.app/Contents/MacOS/melearner --version)" = 'melearner-cpp-v1 0.1.2'
           ctest --test-dir build/macos --output-on-failure -R '^core_workflow$'
           build/macos/library_scan_test
           build/macos/update_workflow_test
@@ -84,9 +84,9 @@ jobs:
         if: ${{ always() && inputs.package }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: melearner-0.1.1-macos-arm64-diagnostic
+          name: melearner-0.1.2-macos-arm64-diagnostic
           path: |
-            dist/melearner-0.1.1-macos-arm64.dmg*
+            dist/melearner-0.1.2-macos-arm64.dmg*
             dist/macos-package.log
           if-no-files-found: warn
           retention-days: 3

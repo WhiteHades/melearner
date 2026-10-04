@@ -67,7 +67,7 @@ jobs:
           linux_head="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${LINUX_RUN}" --jq .head_sha)"
           linux_sha="$(validate_run "$LINUX_RUN" .github/workflows/linux-build.yml "linux-diagnostic-${linux_head}" .tmp/release-delivery/linux)"
           windows_sha="$(validate_run "$WINDOWS_RUN" .github/workflows/windows-build.yml melearner-windows-diagnostic-installer .tmp/release-delivery/windows)"
-          macos_sha="$(validate_run "$MACOS_RUN" .github/workflows/macos-build.yml melearner-0.1.1-macos-arm64-diagnostic .tmp/release-delivery/macos)"
+          macos_sha="$(validate_run "$MACOS_RUN" .github/workflows/macos-build.yml melearner-0.1.2-macos-arm64-diagnostic .tmp/release-delivery/macos)"
           windows_profile="$(find .tmp/release-delivery/windows -type f -name reference-profiles-v1.json -print -quit)"
           [[ -n "$windows_profile" ]] || { echo "Windows notice evidence is missing" >&2; exit 1; }
           jq '.missingEvidence' "$windows_profile"
@@ -98,9 +98,9 @@ jobs:
         run: |
           set -euo pipefail
           root=.tmp/release-delivery
-          linux_file="$(find "$root/linux" -type f -name melearner_0.1.1_amd64.AppImage -print -quit)"
-          windows_file="$(find "$root/windows" -type f -name melearner-0.1.1-setup.exe -print -quit)"
-          macos_file="$(find "$root/macos" -type f -name melearner-0.1.1-macos-arm64.dmg -print -quit)"
+          linux_file="$(find "$root/linux" -type f -name melearner_0.1.2_amd64.AppImage -print -quit)"
+          windows_file="$(find "$root/windows" -type f -name melearner-0.1.2-setup.exe -print -quit)"
+          macos_file="$(find "$root/macos" -type f -name melearner-0.1.2-macos-arm64.dmg -print -quit)"
           [[ -n "$linux_file" && -n "$windows_file" && -n "$macos_file" ]] || { echo "one or more expected platform assets were not found" >&2; exit 1; }
           windows_sum="$windows_file.sha256"
           macos_sum="$macos_file.sha256"
@@ -134,10 +134,10 @@ jobs:
             -e MELEARNER_CPP_STAGE=/work/appdir \
             archlinux:base-devel@sha256:8edb44f40a0cb5d3e44ef474f02780098ce0084e591c8641bdc01f02f185cc40 \
             bash -euc 'stat -c "%a %u %g %n" /work/appdir /work/appdir/usr; stage_uid=$(stat -c %u /work/appdir); test "$stage_uid" -gt 0; useradd --uid "$stage_uid" --create-home builder; chown -R builder:builder /work/package; su - builder -c "test -d /work/appdir/usr && cd /work/package && MELEARNER_CPP_STAGE=/work/appdir makepkg --nodeps --noconfirm"; bad_dir=$(find /work/package/pkg/melearner-bin/usr -type d ! -perm 755 -print -quit); test -z "$bad_dir"; bad_file=$(find /work/package/pkg/melearner-bin/usr -type f ! -perm -004 -print -quit); test -z "$bad_file"; test -x /work/package/pkg/melearner-bin/usr/bin/melearner'
-          arch_pkg="$package_dir/melearner-bin-0.1.1-1-x86_64.pkg.tar.zst"
+          arch_pkg="$package_dir/melearner-bin-0.1.2-1-x86_64.pkg.tar.zst"
           [[ -s "$arch_pkg" && ! -L "$arch_pkg" ]] || { echo "makepkg did not produce expected Arch package" >&2; exit 1; }
           cp -- "$arch_pkg" "$out/"
-          (cd "$out" && sha256sum melearner-bin-0.1.1-1-x86_64.pkg.tar.zst > melearner-bin-0.1.1-1-x86_64.pkg.tar.zst.sha256)
+          (cd "$out" && sha256sum melearner-bin-0.1.2-1-x86_64.pkg.tar.zst > melearner-bin-0.1.2-1-x86_64.pkg.tar.zst.sha256)
 
           sources="$(find "$root/windows" -type d -path '*/windows-legal/sources' -print -quit)"
           [[ -n "$sources" && -d "$sources" && ! -L "$sources" ]] || { echo "Windows artifact lacks source archive, patch, and manifest directory" >&2; exit 1; }
@@ -145,13 +145,13 @@ jobs:
           [[ -s "$legal_dir/player-source-manifest.json" && ! -L "$legal_dir/player-source-manifest.json" ]] || { echo "Windows player source manifest is missing" >&2; exit 1; }
           find "$sources" -type f -name '*.tar.gz' -print -quit | grep -q . || { echo "Windows source archive is missing" >&2; exit 1; }
           find "$sources" -type f -name '*.patch' -print -quit | grep -q . || { echo "Windows source patch is missing" >&2; exit 1; }
-          tar -C "$legal_dir" -czf "$out/melearner-0.1.1-windows-sources.tar.gz" sources player-source-manifest.json
+          tar -C "$legal_dir" -czf "$out/melearner-0.1.2-windows-sources.tar.gz" sources player-source-manifest.json
           (cd "$out" && sha256sum \
-            melearner_0.1.1_amd64.AppImage \
-            melearner-0.1.1-setup.exe \
-            melearner-0.1.1-macos-arm64.dmg \
-            melearner-bin-0.1.1-1-x86_64.pkg.tar.zst \
-            melearner-0.1.1-windows-sources.tar.gz > SHA256SUMS)
+            melearner_0.1.2_amd64.AppImage \
+            melearner-0.1.2-setup.exe \
+            melearner-0.1.2-macos-arm64.dmg \
+            melearner-bin-0.1.2-1-x86_64.pkg.tar.zst \
+            melearner-0.1.2-windows-sources.tar.gz > SHA256SUMS)
 
       - name: Create or update draft release without overwriting assets
         if: ${{ !inputs.prepare_only }}
@@ -159,7 +159,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tag=v0.1.1
+          tag=v0.1.2
           if gh release view "$tag" --json isDraft,assets >.tmp/release-delivery/release.json 2>/dev/null; then
             [[ "$(jq -r .isDraft .tmp/release-delivery/release.json)" == true ]] || { echo "refusing to modify a published release" >&2; exit 1; }
             existing="$(jq -r '.assets[].name' .tmp/release-delivery/release.json)"
@@ -171,14 +171,14 @@ jobs:
               fi
             done < <(find .tmp/release-delivery/out -maxdepth 1 -type f -printf '%f\n')
           else
-            gh release create "$tag" --draft --target "$GITHUB_SHA" --title 'meLearner 0.1.1' \
-              --notes $'* Optional update notifications\n* Faster course scanning and thumbnail caching\n* Videos resume directly at the saved frame\n* Playback speed slider up to 3× with mouse wheel control\n* Saved volume, speed and scroll positions\n* Smoother sidebar and home transitions\n* Green completion marks and dark tooltips'
+            gh release create "$tag" --draft --target "$GITHUB_SHA" --title 'meLearner 0.1.2' \
+              --notes $'* Staggered course and home transitions.\n* Matching rounded video and reading canvases.\n* Faster repeated HTML and Markdown opening.\n* Reliable replay from saved end positions.\n* PDF page text is available to accessibility tools.\n* Learning totals are readable by screen readers.\n* Automatic update notices, with saved preferences preserved.'
           fi
           gh release upload "$tag" \
-            .tmp/release-delivery/out/melearner_0.1.1_amd64.AppImage \
-            .tmp/release-delivery/out/melearner-bin-0.1.1-1-x86_64.pkg.tar.zst \
-            .tmp/release-delivery/out/melearner-0.1.1-setup.exe \
-            .tmp/release-delivery/out/melearner-0.1.1-macos-arm64.dmg \
+            .tmp/release-delivery/out/melearner_0.1.2_amd64.AppImage \
+            .tmp/release-delivery/out/melearner-bin-0.1.2-1-x86_64.pkg.tar.zst \
+            .tmp/release-delivery/out/melearner-0.1.2-setup.exe \
+            .tmp/release-delivery/out/melearner-0.1.2-macos-arm64.dmg \
             --repo "$GITHUB_REPOSITORY"
 
       - name: Retain build records and corresponding sources outside release downloads

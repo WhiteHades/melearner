@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-version="0.1.1"
+version="0.1.2"
 pkgrel="1"
 build_dir="${repo_root}/build/cpp-release"
 legal_root="${repo_root}/packaging"
@@ -22,7 +22,7 @@ Options:
   --build-dir <path>  configured CMake release build (default: build/cpp-release)
   --legal-root <path> legal inputs (default: packaging)
   --stage-dir <path>  existing final C++ package stage (default: stage release build)
-  --output <path>     output package (default: dist/melearner-bin-0.1.1-1-x86_64.pkg.tar.zst)
+  --output <path>     output package (default: dist/melearner-bin-0.1.2-1-x86_64.pkg.tar.zst)
   -h, --help          show this help
 EOF
 }

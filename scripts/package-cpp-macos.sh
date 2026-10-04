@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-version="0.1.1"
+version="0.1.2"
 build_dir="${repo_root}/build/macos"
 output="${repo_root}/dist/melearner-${version}-macos-arm64.dmg"
 

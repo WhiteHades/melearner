@@ -361,8 +361,8 @@ jobs:
             $versionProcess.Kill()
             throw 'Application version check timed out'
           }
-          if ($versionProcess.ExitCode -ne 0 -or (Get-Content -LiteralPath $versionOutput -Raw).Trim() -ne 'melearner-cpp-v1 0.1.1') {
-            throw 'Built application does not report version 0.1.1'
+          if ($versionProcess.ExitCode -ne 0 -or (Get-Content -LiteralPath $versionOutput -Raw).Trim() -ne 'melearner-cpp-v1 0.1.2') {
+            throw 'Built application does not report version 0.1.2'
           }
           & $env:MELEARNER_CTEST --test-dir build\manual-windows --verbose --output-on-failure -R '^core_workflow$'
           if ($LASTEXITCODE -ne 0) { throw 'core workflow test failed' }
