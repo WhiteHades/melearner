@@ -13,14 +13,7 @@
 
 Organise, watch and complete your downloaded courses from one place without having to manually figure out what to watch next. Browse videos, audio and readings, then pick up where you left off.
 
-![Your course library in meLearner](docs/images/home.png)
-
-![A lesson in meLearner](docs/images/course.png)
-
-Screenshots show sample courses.
-
-In Settings, enable **Notify me about updates** or choose **Check for updates**.
-Install an update over the current app. Your progress and preferences stay saved.
+https://github.com/user-attachments/assets/672a65f5-9c69-45f6-bcbd-17ecec261f7e
 
 ## Install or download
 
