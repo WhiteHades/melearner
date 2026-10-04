@@ -87,7 +87,7 @@ QSet<QString> validateInventory(const QString& stage, const QString& usrRoot) {
     if (error.error != QJsonParseError::NoError || !document.isObject()) fail(QStringLiteral("runtime binary inventory must be a JSON object"));
     const auto inventory = document.object();
     if (inventory.value(QStringLiteral("schemaVersion")).toDouble(-1) != 1
-        || inventory.value(QStringLiteral("version")).toString() != QStringLiteral("0.1.9")) {
+        || inventory.value(QStringLiteral("version")).toString() != QStringLiteral("0.1.0")) {
         fail(QStringLiteral("runtime binary inventory schema/version mismatch"));
     }
     const auto files = inventory.value(QStringLiteral("files"));
@@ -194,7 +194,7 @@ void validate(const QString& stage, bool appImage) {
     if (!metadataDoc.isObject()) fail(QStringLiteral("runtime-stage.json must be a JSON object"));
     const auto metadata = metadataDoc.object();
     if (metadata.value(QStringLiteral("schemaVersion")).toDouble(-1) != 1 || !metadata.value(QStringLiteral("schemaVersion")).isDouble()) fail(QStringLiteral("runtime-stage.json schemaVersion must be 1"));
-    if (metadata.value(QStringLiteral("version")).toString() != QStringLiteral("0.1.9")) fail(QStringLiteral("runtime-stage.json version must be 0.1.9"));
+    if (metadata.value(QStringLiteral("version")).toString() != QStringLiteral("0.1.0")) fail(QStringLiteral("runtime-stage.json version must be 0.1.0"));
     if (metadata.value(QStringLiteral("architecture")).toString() != QStringLiteral("x86_64")) fail(QStringLiteral("runtime-stage.json architecture must be x86_64"));
     if (!metadata.value(QStringLiteral("releaseQualified")).isBool() || metadata.value(QStringLiteral("releaseQualified")).toBool()) fail(QStringLiteral("runtime-stage.json must keep releaseQualified false"));
     if (metadata.value(QStringLiteral("binaryInventory")).toString() != QStringLiteral("runtime-binaries.json")) fail(QStringLiteral("runtime-stage.json must name runtime-binaries.json"));

@@ -1,5 +1,5 @@
 pkgname=melearner-bin
-pkgver=0.1.9
+pkgver=0.1.0
 pkgrel=1
 pkgdesc="local course learner"
 arch=("x86_64")

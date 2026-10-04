@@ -135,7 +135,9 @@ jobs:
         run: cmake --build build/linux --parallel 3
 
       - name: Run core workflow test
-        run: ctest --test-dir build/linux --output-on-failure -R '^core_workflow$'
+        run: |
+          test "$(build/linux/melearner --version)" = 'melearner-cpp-v1 0.1.0'
+          ctest --test-dir build/linux --output-on-failure -R '^core_workflow$'
 
       - name: Collect Linux package notice evidence
         if: inputs.package == true
@@ -148,7 +150,7 @@ jobs:
           APPIMAGE_EXTRACT_AND_RUN: '1'
         run: |
           set -euo pipefail
-          bash scripts/package-cpp-appimage.sh --build-dir build/linux --legal-root .tmp/manual-ci/legal --output .tmp/manual-ci/melearner_0.1.9_amd64.AppImage
+          bash scripts/package-cpp-appimage.sh --build-dir build/linux --legal-root .tmp/manual-ci/legal --output .tmp/manual-ci/melearner_0.1.0_amd64.AppImage
 
       - name: Upload diagnostic output and notice evidence
         if: ${{ always() && inputs.package == true }}
@@ -156,7 +158,7 @@ jobs:
         with:
           name: linux-diagnostic-${{ github.sha }}
           path: |
-            .tmp/manual-ci/melearner_0.1.9_amd64.AppImage
+            .tmp/manual-ci/melearner_0.1.0_amd64.AppImage
             .tmp/manual-ci/legal/
             .tmp/manual-ci/notice-evidence/
             .tmp/manual-ci/packages.jsonl

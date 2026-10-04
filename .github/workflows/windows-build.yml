@@ -353,6 +353,15 @@ jobs:
             if ($loadJob.State -eq 'Running') { Stop-Job $loadJob }
             Remove-Job $loadJob -Force
           }
+          $versionOutput = Join-Path $env:RUNNER_TEMP 'melearner-version.txt'
+          $versionProcess = Start-Process -FilePath $appExe -ArgumentList '--version' -NoNewWindow -PassThru -RedirectStandardOutput $versionOutput
+          if (-not $versionProcess.WaitForExit(15000)) {
+            $versionProcess.Kill()
+            throw 'Application version check timed out'
+          }
+          if ($versionProcess.ExitCode -ne 0 -or (Get-Content -LiteralPath $versionOutput -Raw).Trim() -ne 'melearner-cpp-v1 0.1.0') {
+            throw 'Built application does not report version 0.1.0'
+          }
           & $env:MELEARNER_CTEST --test-dir build\manual-windows --verbose --output-on-failure -R '^core_workflow$'
           if ($LASTEXITCODE -ne 0) { throw 'core workflow test failed' }
       - name: run the existing native playback checks

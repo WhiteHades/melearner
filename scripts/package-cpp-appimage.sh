@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-version="0.1.9"
+version="0.1.0"
 build_dir="${repo_root}/build/cpp-release"
 legal_root="${repo_root}/packaging"
 output="${repo_root}/dist/melearner_${version}_amd64.AppImage"
@@ -20,7 +20,7 @@ into an AppImage. The Qt WebEngine document viewer is bundled. No updater is bun
 Options:
   --build-dir <path>  configured CMake release build (default: build/cpp-release)
   --legal-root <path> canonical legal inputs (default: packaging)
-  --output <path>     output AppImage (default: dist/melearner_0.1.9_amd64.AppImage)
+  --output <path>     output AppImage (default: dist/melearner_0.1.0_amd64.AppImage)
   -h, --help          show this help
 EOF
 }
