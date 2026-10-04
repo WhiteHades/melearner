@@ -140,7 +140,8 @@ if [[ -e "$desktop_path" || -L "$desktop_path" ]]; then
   [[ -f "$desktop_path" && ! -L "$desktop_path" ]] || fail "Refusing to replace non-file install target: $desktop_path"
   if grep -Fqx '# Managed by scripts/install-linux.sh for meLearner.' "$desktop_path" || \
      { grep -Fqx 'Name=meLearner' "$desktop_path" && \
-       { grep -Fqx "Exec=$desktop_exec" "$desktop_path" || grep -Fqx "Exec=$launcher_path" "$desktop_path"; }; }; then
+       { grep -Fqx "Exec=$desktop_exec" "$desktop_path" || grep -Fqx "Exec=$launcher_path" "$desktop_path" || \
+         grep -Fqx "Exec=$desktop_exec %F" "$desktop_path" || grep -Fqx "Exec=$launcher_path %F" "$desktop_path"; }; }; then
     desktop_backup=true
   else
     fail "Refusing to replace an unrelated desktop entry: $desktop_path"
@@ -173,7 +174,10 @@ exec $appimage_shell --appimage-extract-and-run "\$@"
 EOF
 chmod 755 "$launcher_stage"
 
-cat >"$desktop_stage" <<EOF
+if [[ "$desktop_backup" == true ]]; then
+  cp -- "$desktop_path" "$desktop_stage"
+else
+  cat >"$desktop_stage" <<EOF
 [Desktop Entry]
 # Managed by scripts/install-linux.sh for meLearner.
 Type=Application
@@ -182,6 +186,7 @@ Exec=$desktop_exec
 Terminal=false
 Categories=Education;
 EOF
+fi
 chmod 644 "$desktop_stage"
 
 if [[ "$launcher_backup" == true || "$desktop_backup" == true ]]; then

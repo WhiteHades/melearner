@@ -191,16 +191,21 @@ progress_after="$(sha256sum "$fixture/home/.local/share/melearner/library.sqlite
 pass 'valid AppImage install creates expected files, preserves args/progress, and downloads exact assets'
 
 # A known old install may have an exact launcher symlink and a legacy desktop entry.
-legacy_exec="$(sed -n 's/^Exec=//p' "$desktop")"
 rm "$launcher"
 ln -s "$logical_app" "$launcher"
-printf '[Desktop Entry]\nName=meLearner\nExec=%s\n' "$legacy_exec" >"$desktop"
+printf '[Desktop Entry]\nName=meLearner\nExec=%s %%F\nIcon=io.github.whitehades.melearner\nMimeType=inode/directory;\n' "$logical_launcher" >"$desktop"
 run_installer >"$fixture/reinstall.out" || fail 'recognized existing launcher/desktop was rejected'
 [[ -x "$launcher" && ! -L "$launcher" ]] || fail 'official launcher symlink was not replaced'
+grep -Fqx "Exec=$logical_launcher %F" "$desktop" || fail 'recognized desktop Exec arguments were not preserved'
+grep -Fqx 'Icon=io.github.whitehades.melearner' "$desktop" || fail 'recognized desktop icon was not preserved'
+grep -Fqx 'MimeType=inode/directory;' "$desktop" || fail 'recognized desktop MIME type was not preserved'
 backup_parent="$fixture/home/.local/state/melearner/backups"
 backup_dir="$(find "$backup_parent" -mindepth 1 -maxdepth 1 -type d -print -quit)"
 [[ -n "$backup_dir" && -L "$backup_dir/melearner-launcher" ]] || fail 'recognized launcher symlink was not backed up'
 [[ -s "$backup_dir/io.github.whitehades.melearner.desktop" ]] || fail 'recognized desktop entry was not backed up'
+grep -Fqx "Exec=$logical_launcher %F" "$backup_dir/io.github.whitehades.melearner.desktop" || fail 'recognized desktop backup lost Exec arguments'
+grep -Fqx 'Icon=io.github.whitehades.melearner' "$backup_dir/io.github.whitehades.melearner.desktop" || fail 'recognized desktop backup lost icon'
+grep -Fqx 'MimeType=inode/directory;' "$backup_dir/io.github.whitehades.melearner.desktop" || fail 'recognized desktop backup lost MIME type'
 pass 'recognized official symlink and legacy desktop are backed up on reinstall'
 
 # An older official launcher may still point at its versioned AppImage. It must
