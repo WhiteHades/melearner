@@ -22,7 +22,9 @@ opening it.
 On Windows, open the EXE and follow the installer. On macOS, open the DMG and
 drag meLearner to Applications.
 
-On Linux, mark the AppImage executable in your file manager and open it. If
+On Linux, keep the AppImage in a folder such as `Applications`, mark it
+executable in your file manager and open it. Installing it in your user account
+does not need administrator privileges. If
 your desktop lacks FUSE, run it from a terminal with `--appimage-extract-and-run`.
 The glibc requirement does not guarantee compatibility with every distribution
 or graphics driver.

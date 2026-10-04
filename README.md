@@ -36,10 +36,6 @@ Screenshots show sample courses.
 | Windows x64 | [Setup installer](https://github.com/WhiteHades/melearner/releases/download/v0.1.9/melearner-0.1.9-setup.exe) |
 | macOS Apple silicon, macOS 15 or newer | [Disk image](https://github.com/WhiteHades/melearner/releases/download/v0.1.9/melearner-0.1.9-macos-arm64.dmg) |
 
-The downloads include the app runtime. You do not need a separate browser,
-database server or codec pack. The Windows installer is unsigned. The macOS app
-is not notarized.
-
 For source installation, see [install instructions](docs/install.md). For more
 details, read the [advanced setup](docs/advanced.md) or [help](docs/usage.md).
 [License](LICENSE)
