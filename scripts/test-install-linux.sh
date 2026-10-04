@@ -37,12 +37,12 @@ while (($#)); do
     *) shift ;;
   esac
 done
-[[ "$url" == https://github.com/WhiteHades/melearner/releases/download/v0.1.0/* || \
-   "$url" == https://raw.githubusercontent.com/WhiteHades/melearner/main/packaging/checksums/v0.1.0/*.sha256 ]] || exit 22
+[[ "$url" == https://github.com/WhiteHades/melearner/releases/download/v0.1.1/* || \
+   "$url" == https://raw.githubusercontent.com/WhiteHades/melearner/main/packaging/checksums/v0.1.1/*.sha256 ]] || exit 22
 [[ "$strict_https" == 1 && "$tls12" == 1 ]] || exit 22
 printf '%s\n' "$url" >>"$INSTALLER_TEST_URLS"
 case "$url" in
-  https://raw.githubusercontent.com/WhiteHades/melearner/main/packaging/checksums/v0.1.0/*.sha256)
+  https://raw.githubusercontent.com/WhiteHades/melearner/main/packaging/checksums/v0.1.1/*.sha256)
     if [[ ${INSTALLER_TEST_MALFORMED_CHECKSUM:-} == 1 ]]; then
       printf 'not-a-valid-checksum\n' >"$out"
     elif [[ ${INSTALLER_TEST_MALFORMED_CHECKSUM_NAME:-} == 1 ]]; then
@@ -81,6 +81,16 @@ if [[ ${INSTALLER_TEST_FAIL_STAGE:-} == launcher && ${1-} == *melearner-launcher
 fi
 exec /usr/bin/mktemp "$@"
 EOF
+cat >"$fixture/bin/sha256sum" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+for arg in "$@"; do file="$arg"; done
+if [[ ${INSTALLER_TEST_LEGACY_HASH:-} && ${file##*/} =~ ^melearner_0\.1\.(0|9)_amd64\.AppImage$ ]]; then
+  printf '%s  %s\n' "$INSTALLER_TEST_LEGACY_HASH" "$file"
+else
+  exec /usr/bin/sha256sum "$@"
+fi
+EOF
 chmod 755 "$fixture/bin/"*
 
 run_installer() {
@@ -97,6 +107,7 @@ run_installer() {
     --setenv INSTALLER_TEST_SUDO_LOG "$sandbox_fixture/sudo.log" \
     --setenv INSTALLER_TEST_PACMAN_LOG "$sandbox_fixture/pacman.log" \
     --setenv INSTALLER_TEST_FAIL_STAGE "${TEST_FAIL_STAGE:-}" \
+    --setenv INSTALLER_TEST_LEGACY_HASH "${TEST_LEGACY_HASH:-}" \
     --setenv INSTALLER_TEST_MALFORMED_CHECKSUM "${TEST_MALFORMED_CHECKSUM:-}" \
     --setenv INSTALLER_TEST_MALFORMED_CHECKSUM_NAME "${TEST_MALFORMED_CHECKSUM_NAME:-}" \
     --setenv INSTALLER_TEST_GLIBC "${TEST_GLIBC:-2.39}" \
@@ -107,7 +118,7 @@ run_installer() {
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 pass() { printf 'PASS: %s\n' "$*"; }
 assert_no_install() {
-  [[ ! -e "$fixture/home/Applications/meLearner/melearner_0.1.0_amd64.AppImage" ]] || fail 'unexpected AppImage install'
+  [[ ! -e "$fixture/home/Applications/meLearner/melearner_0.1.1_amd64.AppImage" ]] || fail 'unexpected AppImage install'
   [[ ! -e "$fixture/home/.local/bin/melearner" ]] || fail 'unexpected launcher install'
   [[ ! -e "$fixture/home/.local/share/applications/io.github.whitehades.melearner.desktop" ]] || fail 'unexpected desktop install'
 }
@@ -168,15 +179,15 @@ mkdir -p "$fixture/home/.local/share/melearner"
 printf 'existing progress database bytes\n' >"$fixture/home/.local/share/melearner/library.sqlite"
 progress_before="$(sha256sum "$fixture/home/.local/share/melearner/library.sqlite" | cut -d ' ' -f 1)"
 run_installer >"$fixture/install.out" || fail 'valid AppImage install failed'
-app="$fixture/home/Applications/meLearner/melearner_0.1.0_amd64.AppImage"
+app="$fixture/home/Applications/meLearner/melearner_0.1.1_amd64.AppImage"
 launcher="$fixture/home/.local/bin/melearner"
 desktop="$fixture/home/.local/share/applications/io.github.whitehades.melearner.desktop"
-logical_app="$HOME/Applications/meLearner/melearner_0.1.0_amd64.AppImage"
+logical_app="$HOME/Applications/meLearner/melearner_0.1.1_amd64.AppImage"
 logical_launcher="$HOME/.local/bin/melearner"
 [[ -x "$app" && "$(sha256sum "$app" | cut -d ' ' -f 1)" == "$expected_hash" ]] || fail 'installed AppImage missing or incorrect'
 [[ -x "$launcher" ]] || fail 'launcher missing or not executable'
 grep -Fqx "Exec=\"$logical_launcher\"" "$desktop" || fail 'desktop entry has wrong or unescaped Exec target'
-[[ "$(cat "$fixture/urls")" == $'https://github.com/WhiteHades/melearner/releases/download/v0.1.0/melearner_0.1.0_amd64.AppImage\nhttps://raw.githubusercontent.com/WhiteHades/melearner/main/packaging/checksums/v0.1.0/melearner_0.1.0_amd64.AppImage.sha256' ]] || fail 'AppImage download URLs were not exact'
+[[ "$(cat "$fixture/urls")" == $'https://github.com/WhiteHades/melearner/releases/download/v0.1.1/melearner_0.1.1_amd64.AppImage\nhttps://raw.githubusercontent.com/WhiteHades/melearner/main/packaging/checksums/v0.1.1/melearner_0.1.1_amd64.AppImage.sha256' ]] || fail 'AppImage download URLs were not exact'
 INSTALLER_TEST_ARGS="$fixture/args" bwrap --ro-bind / / --tmpfs /tmp --dir /tmp/repo --ro-bind "$repo_root" /tmp/repo --proc /proc --dev /dev \
   --bind "$fixture" "$sandbox_fixture" --bind "$fixture/home" "$HOME" \
   --setenv INSTALLER_TEST_ARGS "$sandbox_fixture/args" \
@@ -212,16 +223,33 @@ pass 'recognized official symlink and legacy desktop are backed up on reinstall'
 
 # An older official launcher may still point at its versioned AppImage. It must
 # be accepted only when the previous AppImage matches the verified fixture hash.
-previous_app="$fixture/home/Applications/meLearner/melearner_0.0.0_amd64.AppImage"
-logical_previous_app="$HOME/Applications/meLearner/melearner_0.0.0_amd64.AppImage"
+previous_app="$fixture/home/Applications/meLearner/melearner_0.1.0_amd64.AppImage"
+logical_previous_app="$HOME/Applications/meLearner/melearner_0.1.0_amd64.AppImage"
 cp "$fixture/payload" "$previous_app"
 chmod 755 "$previous_app"
 rm "$launcher"
 ln -s "$logical_previous_app" "$launcher"
+TEST_LEGACY_HASH=458ede022af3a54fd44186a803ece682710e6b4c025666bb7f4b36d5ff9a3891
+export TEST_LEGACY_HASH
 run_installer >"$fixture/previous-version-reinstall.out" || fail 'recognized previous-version AppImage symlink was rejected'
+unset TEST_LEGACY_HASH
 [[ -x "$launcher" && ! -L "$launcher" ]] || fail 'previous-version launcher symlink was not replaced'
 [[ -f "$previous_app" && "$(sha256sum "$previous_app" | cut -d ' ' -f 1)" == "$expected_hash" ]] || fail 'previous official AppImage was not preserved'
-pass 'verified previous-version AppImage symlink is upgraded while preserving old binary'
+pass 'verified official 0.1.0 AppImage symlink is upgraded while preserving old binary'
+
+previous_app="$fixture/home/Applications/meLearner/melearner_0.1.9_amd64.AppImage"
+logical_previous_app="$HOME/Applications/meLearner/melearner_0.1.9_amd64.AppImage"
+cp "$fixture/payload" "$previous_app"
+chmod 755 "$previous_app"
+rm "$launcher"
+ln -s "$logical_previous_app" "$launcher"
+TEST_LEGACY_HASH=a7140578c6fa8f35514353bd09585595356f2ae64aecc12d602b11c868942bff
+export TEST_LEGACY_HASH
+run_installer >"$fixture/0.1.9-reinstall.out" || fail 'recognized previous 0.1.9 AppImage symlink was rejected'
+unset TEST_LEGACY_HASH
+[[ -x "$launcher" && ! -L "$launcher" ]] || fail 'previous 0.1.9 launcher symlink was not replaced'
+[[ -f "$previous_app" && "$(sha256sum "$previous_app" | cut -d ' ' -f 1)" == "$expected_hash" ]] || fail 'previous 0.1.9 AppImage was not preserved'
+pass 'verified official 0.1.9 AppImage symlink is upgraded while preserving old binary'
 
 # A matching versioned filename is not sufficient: unknown content must not
 # make the launcher symlink eligible for replacement.
@@ -252,7 +280,7 @@ export TEST_FIXTURE_HOME TEST_FAIL_STAGE
 if run_installer >"$fixture/stage-failure.out" 2>&1; then fail 'stage-creation failure was ignored'; fi
 [[ -z "$(find "$fixture/tmp" -mindepth 1 -print -quit)" ]] || fail 'stage failure left download temporary files'
 [[ -z "$(find "$fixture/failhome/Applications" -name '.melearner-*' -print -quit 2>/dev/null)" ]] || fail 'stage failure left staged install files'
-[[ ! -e "$fixture/failhome/Applications/meLearner/melearner_0.1.0_amd64.AppImage" ]] || fail 'stage failure installed an incomplete AppImage'
+[[ ! -e "$fixture/failhome/Applications/meLearner/melearner_0.1.1_amd64.AppImage" ]] || fail 'stage failure installed an incomplete AppImage'
 unset TEST_FIXTURE_HOME TEST_FAIL_STAGE
 pass 'staging failure cleans prior stage and download temporary files'
 
@@ -268,9 +296,9 @@ unset TEST_HASH
 pass 'Arch checksum failure prevents sudo and pacman'
 rm -f "$fixture/urls"
 run_installer --arch >"$fixture/arch-install.out" || fail 'Arch install failed'
-[[ "$(cat "$fixture/urls")" == $'https://github.com/WhiteHades/melearner/releases/download/v0.1.0/melearner-bin-0.1.0-1-x86_64.pkg.tar.zst\nhttps://raw.githubusercontent.com/WhiteHades/melearner/main/packaging/checksums/v0.1.0/melearner-bin-0.1.0-1-x86_64.pkg.tar.zst.sha256' ]] || fail 'Arch download URLs were not exact'
-rg -q '^pacman -U .*/melearner-bin-0.1.0-1-x86_64.pkg.tar.zst$' "$fixture/sudo.log" || fail 'Arch package was not passed to sudo pacman -U'
-rg -q '^-U .*/melearner-bin-0.1.0-1-x86_64.pkg.tar.zst$' "$fixture/pacman.log" || fail 'pacman arguments changed'
+[[ "$(cat "$fixture/urls")" == $'https://github.com/WhiteHades/melearner/releases/download/v0.1.1/melearner-bin-0.1.1-1-x86_64.pkg.tar.zst\nhttps://raw.githubusercontent.com/WhiteHades/melearner/main/packaging/checksums/v0.1.1/melearner-bin-0.1.1-1-x86_64.pkg.tar.zst.sha256' ]] || fail 'Arch download URLs were not exact'
+rg -q '^pacman -U .*/melearner-bin-0.1.1-1-x86_64.pkg.tar.zst$' "$fixture/sudo.log" || fail 'Arch package was not passed to sudo pacman -U'
+rg -q '^-U .*/melearner-bin-0.1.1-1-x86_64.pkg.tar.zst$' "$fixture/pacman.log" || fail 'pacman arguments changed'
 [[ -z "$(find "$fixture/tmp" -mindepth 1 -print -quit)" ]] || fail 'Arch install left temporary files'
 pass 'Arch mode downloads exact verified package and invokes normal sudo pacman -U'
 

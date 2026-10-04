@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-version=0.1.0
+version=0.1.1
 release_url="https://github.com/WhiteHades/melearner/releases/download/v${version}"
 checksum_url="https://raw.githubusercontent.com/WhiteHades/melearner/main/packaging/checksums/v${version}"
 appimage_asset="melearner_${version}_amd64.AppImage"
@@ -16,7 +16,7 @@ usage() {
   cat <<'EOF'
 Usage: bash scripts/install-linux.sh [--arch] [--help]
 
-Install the v0.1.0 AppImage for the current user, or use --arch to install
+Install the v0.1.1 AppImage for the current user, or use --arch to install
 the official Arch package with pacman.
 EOF
 }
@@ -118,7 +118,7 @@ desktop_exec+='"'
 if [[ -e "$app_path" || -L "$app_path" ]]; then
   [[ -f "$app_path" && ! -L "$app_path" ]] || fail "Refusing to replace non-file install target: $app_path"
   existing_hash="$(sha256sum -- "$app_path" | cut -d ' ' -f 1)"
-  [[ "$existing_hash" == "$expected_hash" || "$existing_hash" == 8428e78c80a287f021e5cc8852c7d2c2fdd0c3cc0975feafe61aedf410d54bd6 ]] || fail "Refusing to replace an unrecognized AppImage: $app_path"
+  [[ "$existing_hash" == "$expected_hash" || "$existing_hash" == 8428e78c80a287f021e5cc8852c7d2c2fdd0c3cc0975feafe61aedf410d54bd6 || "$existing_hash" == 458ede022af3a54fd44186a803ece682710e6b4c025666bb7f4b36d5ff9a3891 ]] || fail "Refusing to replace an unrecognized AppImage: $app_path"
 fi
 
 if [[ -e "$launcher_path" || -L "$launcher_path" ]]; then
@@ -129,7 +129,7 @@ if [[ -e "$launcher_path" || -L "$launcher_path" ]]; then
       [[ "$launcher_target" == "$app_dir/"* && "$previous_name" =~ ^melearner_[0-9]+\.[0-9]+\.[0-9]+_amd64\.AppImage$ && -f "$launcher_target" && ! -L "$launcher_target" ]] || fail "Refusing to replace an unrelated launcher link: $launcher_path"
       previous_hash="$(sha256sum -- "$launcher_target" | cut -d ' ' -f 1)"
       # Recognize the previously published official AppImage without trusting its filename.
-      [[ "$previous_hash" == "$expected_hash" || "$previous_hash" == a7140578c6fa8f35514353bd09585595356f2ae64aecc12d602b11c868942bff ]] || fail "Refusing to replace an unrecognized launcher target: $launcher_target"
+      [[ "$previous_hash" == "$expected_hash" || "$previous_hash" == a7140578c6fa8f35514353bd09585595356f2ae64aecc12d602b11c868942bff || "$previous_hash" == 8428e78c80a287f021e5cc8852c7d2c2fdd0c3cc0975feafe61aedf410d54bd6 || "$previous_hash" == 458ede022af3a54fd44186a803ece682710e6b4c025666bb7f4b36d5ff9a3891 ]] || fail "Refusing to replace an unrecognized launcher target: $launcher_target"
     fi
   elif [[ -f "$launcher_path" ]] && grep -Fqx '# Managed by scripts/install-linux.sh for meLearner.' "$launcher_path"; then
     :

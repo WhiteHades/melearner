@@ -27,6 +27,8 @@ Run these commands from the repository root:
 cmake --preset linux-dev
 cmake --build --preset linux-dev --parallel 4
 ctest --preset linux-dev --no-tests=error
+build/cpp-dev/library_scan_test
+build/cpp-dev/update_workflow_test
 ```
 
 Use `linux-release` instead of `linux-dev` for a release build. CTest runs the
