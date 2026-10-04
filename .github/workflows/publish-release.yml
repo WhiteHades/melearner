@@ -8,6 +8,11 @@ on:
         type: boolean
         required: false
         default: false
+      replace_published:
+        description: Replace the four existing 0.1.0 installers after verification
+        type: boolean
+        required: false
+        default: false
       linux_run:
         description: Successful Linux build run ID with diagnostic package enabled
         type: string
@@ -47,6 +52,10 @@ jobs:
           MACOS_RUN: ${{ inputs.macos_run }}
         run: |
           set -euo pipefail
+          if [[ '${{ inputs.prepare_only }}' == true && '${{ inputs.replace_published }}' == true ]]; then
+            echo 'Choose either preparation or replacement, not both' >&2
+            exit 1
+          fi
           for run_id in "$LINUX_RUN" "$WINDOWS_RUN" "$MACOS_RUN"; do
             [[ "$run_id" =~ ^[0-9]+$ ]] || { echo "run IDs must contain digits only" >&2; exit 1; }
           done
@@ -140,7 +149,7 @@ jobs:
             melearner-0.1.0-windows-sources.tar.gz > SHA256SUMS)
 
       - name: Create or update draft release without overwriting assets
-        if: ${{ !inputs.prepare_only }}
+        if: ${{ !inputs.prepare_only && !inputs.replace_published }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -166,6 +175,24 @@ jobs:
             .tmp/release-delivery/out/melearner-0.1.0-setup.exe \
             .tmp/release-delivery/out/melearner-0.1.0-macos-arm64.dmg \
             --repo "$GITHUB_REPOSITORY"
+
+      - name: Replace the approved published installers
+        if: ${{ inputs.replace_published }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          metadata="$(gh release view v0.1.0 --json isDraft,assets)"
+          jq -e '.isDraft == false and (.assets | length == 4)' <<<"$metadata" >/dev/null
+          expected='{"melearner_0.1.0_amd64.AppImage":"sha256:8428e78c80a287f021e5cc8852c7d2c2fdd0c3cc0975feafe61aedf410d54bd6","melearner-bin-0.1.0-1-x86_64.pkg.tar.zst":"sha256:20607707378c91bbd45a36bae35adebd6695e55954fb446a03e9371c07d6186f","melearner-0.1.0-setup.exe":"sha256:b01a533b4b60624696f6bae98cfae4cd6dbbd5f968050c09de95589ada2f1bee","melearner-0.1.0-macos-arm64.dmg":"sha256:d42aade363b33cd473ac3197ebc19edc35d9366cd463e65a2bddbeabd3e84290"}'
+          jq -e --argjson expected "$expected" 'all(.assets[]; $expected[.name] == .digest)' <<<"$metadata" >/dev/null
+          (cd .tmp/release-delivery/out && sha256sum --check SHA256SUMS)
+          gh release upload v0.1.0 \
+            .tmp/release-delivery/out/melearner_0.1.0_amd64.AppImage \
+            .tmp/release-delivery/out/melearner-bin-0.1.0-1-x86_64.pkg.tar.zst \
+            .tmp/release-delivery/out/melearner-0.1.0-setup.exe \
+            .tmp/release-delivery/out/melearner-0.1.0-macos-arm64.dmg \
+            --clobber --repo "$GITHUB_REPOSITORY"
 
       - name: Retain build records and corresponding sources outside release downloads
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
