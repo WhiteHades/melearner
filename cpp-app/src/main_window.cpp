@@ -693,6 +693,7 @@ MainWindow::MainWindow(const QString& databasePath, QWidget* parent, bool softwa
   auto* rate = new shadcn::DropdownMenu(rateButton); rate->setObjectName("playbackSpeed"); rateButton->setMenu(rate);
   // QMenu's native window background otherwise fills the stylesheet's rounded corners.
   rate->setAttribute(Qt::WA_TranslucentBackground);
+  rate->setWindowFlag(Qt::FramelessWindowHint, true);
   rate->setWindowFlag(Qt::NoDropShadowWindowHint, true);
   auto* rateGroup = new QActionGroup(rate);
   for (double speed : {0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0}) {

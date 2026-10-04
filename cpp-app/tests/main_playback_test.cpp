@@ -494,6 +494,7 @@ private slots:
         speed->popup(speedButton->mapToGlobal(QPoint(0, speedButton->height())));
         QTRY_VERIFY(speed->isVisible());
         QVERIFY(speed->testAttribute(Qt::WA_TranslucentBackground));
+        QVERIFY(speed->windowFlags().testFlag(Qt::FramelessWindowHint));
         auto* popupScreen = QApplication::screenAt(speed->geometry().center()); QVERIFY(popupScreen);
         const auto available = popupScreen->availableGeometry();
         QVERIFY2(available.contains(speed->geometry()),
