@@ -25,6 +25,15 @@ Open the DMG and drag meLearner to Applications. The app is not notarized, so ma
 
 ### Linux
 
+To download, verify and install the AppImage for your user:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/WhiteHades/melearner/main/scripts/install-linux.sh | bash
+```
+
+The script adds an app menu entry and a launcher at `$HOME/.local/bin/melearner`. It keeps your courses and saved progress unchanged. You can [read the script](../scripts/install-linux.sh) before running it.
+
+For manual installation, download the AppImage above.
 Make the AppImage executable and open it:
 
 ```bash
@@ -35,6 +44,14 @@ chmod +x melearner_0.1.9_amd64.AppImage
 If FUSE is unavailable, run it with `--appimage-extract-and-run`.
 
 ### Linux (Arch)
+
+To download, verify and install through `pacman`:
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/WhiteHades/melearner/main/scripts/install-linux.sh)" -- --arch
+```
+
+The command asks for administrator access and package confirmation.
 
 Install the downloaded package:
 

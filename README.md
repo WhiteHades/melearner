@@ -19,14 +19,18 @@ Organise, watch and complete your downloaded courses from one place without havi
 
 Screenshots show sample courses.
 
-## Downloads
+## Install or download
 
-| Platform | Download |
-| --- | --- |
-| Linux | [AppImage](https://github.com/WhiteHades/melearner/releases/download/v0.1.9/melearner_0.1.9_amd64.AppImage) |
-| Linux (Arch) | [Package](https://github.com/WhiteHades/melearner/releases/download/v0.1.9/melearner-bin-0.1.9-1-x86_64.pkg.tar.zst) |
-| Windows | [Setup installer](https://github.com/WhiteHades/melearner/releases/download/v0.1.9/melearner-0.1.9-setup.exe) |
-| macOS | [Disk image](https://github.com/WhiteHades/melearner/releases/download/v0.1.9/melearner-0.1.9-macos-arm64.dmg) |
+Choose your system for version 0.1.9. On Linux, paste the command into a terminal to download, verify and install the app.
+
+| Platform | Download | Install |
+| --- | --- | --- |
+| Linux | [AppImage](https://github.com/WhiteHades/melearner/releases/download/v0.1.9/melearner_0.1.9_amd64.AppImage) | `curl -fsSL https://raw.githubusercontent.com/WhiteHades/melearner/main/scripts/install-linux.sh \| bash` |
+| Linux (Arch) | [Package](https://github.com/WhiteHades/melearner/releases/download/v0.1.9/melearner-bin-0.1.9-1-x86_64.pkg.tar.zst) | `bash -c "$(curl -fsSL https://raw.githubusercontent.com/WhiteHades/melearner/main/scripts/install-linux.sh)" -- --arch` |
+| Windows | [Setup installer](https://github.com/WhiteHades/melearner/releases/download/v0.1.9/melearner-0.1.9-setup.exe) | Open the installer. |
+| macOS | [Disk image](https://github.com/WhiteHades/melearner/releases/download/v0.1.9/melearner-0.1.9-macos-arm64.dmg) | Open the disk image and drag the app to Applications. |
+
+The AppImage command installs for your user and adds an app menu entry. The Arch command uses `pacman` and asks for administrator access. [Requirements and manual installation](docs/install.md).
 
 ## Get started
 
