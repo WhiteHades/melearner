@@ -33,6 +33,6 @@ run delivery soon after the builds.
 It checks Windows and macOS SHA-256 files, calculates Linux and Arch
 checksums, extracts the AppImage without launching it, then builds the Arch
 package from its `usr` tree. It puts four installers, checksums, dependency
-records and the Windows player source files in a `v0.1.9` draft. It will not
+records and the Windows player source files in a `v0.1.0` draft. It will not
 change a published release or replace assets. Review the draft before manual
 publication. No workflow publishes a public release automatically.
